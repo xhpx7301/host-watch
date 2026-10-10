@@ -1,0 +1,7 @@
+{
+  "enabled": false,
+  "interval_seconds": 600,
+  "notify_current_stock_on_start": false,
+  "affiliate_id": "",
+  "products": []
+}

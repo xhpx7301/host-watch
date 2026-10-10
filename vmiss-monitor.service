@@ -1,0 +1,26 @@
+[Unit]
+Description=VMISS stock monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vmiss-monitor
+Group=vmiss-monitor
+WorkingDirectory=/opt/vmiss-monitor
+EnvironmentFile=/etc/vmiss-monitor.env
+Environment=PYTHONUNBUFFERED=1
+Environment=VMISS_CONFIG=/var/lib/vmiss-monitor/config.json
+Environment=VMISS_STATUS=/var/lib/vmiss-monitor/status.json
+Environment=STATE_FILE=/var/lib/vmiss-monitor/state.json
+ExecStart=/opt/vmiss-monitor/.venv/bin/python /opt/vmiss-monitor/monitor.py
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/vmiss-monitor
+
+[Install]
+WantedBy=multi-user.target

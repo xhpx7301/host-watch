@@ -1,0 +1,24 @@
+[Unit]
+Description=VMISS stock monitor local admin
+After=network.target
+
+[Service]
+Type=simple
+User=vmiss-monitor
+Group=vmiss-monitor
+WorkingDirectory=/opt/vmiss-monitor
+Environment=VMISS_CONFIG=/var/lib/vmiss-monitor/config.json
+Environment=VMISS_STATUS=/var/lib/vmiss-monitor/status.json
+Environment=ADMIN_HOST=127.0.0.1
+Environment=ADMIN_PORT=8765
+ExecStart=/opt/vmiss-monitor/.venv/bin/python /opt/vmiss-monitor/admin.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/vmiss-monitor
+
+[Install]
+WantedBy=multi-user.target

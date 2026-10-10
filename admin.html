@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VMISS 库存监控配置</title>
+  <style>
+    :root { color-scheme: light; --ink:#20242a; --muted:#68717c; --line:#d9dee5; --paper:#fff; --canvas:#f3f5f7; --accent:#315f9b; --good:#23734d; --warn:#945b00; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--canvas); color:var(--ink); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    main { max-width:1120px; margin:0 auto; padding:28px 20px 56px; }
+    header { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; border-bottom:1px solid var(--line); padding-bottom:18px; }
+    h1 { font-size:24px; margin:0 0 4px; } h2 { font-size:17px; margin:0 0 14px; }
+    p { margin:0; color:var(--muted); }
+    section { margin-top:22px; padding:18px 0; border-bottom:1px solid var(--line); }
+    .toolbar { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px 18px; }
+    label { display:grid; gap:5px; color:#39414a; font-size:13px; font-weight:600; }
+    input,select { min-width:0; width:100%; height:38px; padding:7px 9px; border:1px solid #b9c2cc; border-radius:4px; background:white; color:var(--ink); font:inherit; }
+    input:focus,select:focus { outline:2px solid #a7c2e5; border-color:var(--accent); }
+    .check { display:flex; align-items:center; gap:9px; font-weight:500; font-size:14px; }
+    .check input { width:17px; height:17px; margin:0; }
+    button { min-height:36px; border:1px solid #aeb8c3; border-radius:4px; padding:7px 12px; background:white; color:var(--ink); font:inherit; cursor:pointer; }
+    button.primary { background:var(--accent); color:white; border-color:var(--accent); }
+    button.danger { color:#9b3030; }
+    .product { padding:16px 0; border-top:1px solid var(--line); }
+    .product-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
+    .product-head strong { overflow-wrap:anywhere; }
+    .preview { margin-top:12px; padding:10px 12px; background:#e9eef4; overflow-wrap:anywhere; font:13px/1.5 ui-monospace,monospace; }
+    .status { display:flex; flex-wrap:wrap; gap:14px; align-items:center; }
+    .pill { font-size:13px; font-weight:700; color:var(--muted); }
+    .pill.ok { color:var(--good); } .pill.blocked,.pill.error { color:#a32e2e; }
+    #message { min-height:24px; margin-top:10px; color:var(--muted); }
+    .actions { display:flex; gap:8px; }
+    @media(max-width:680px) { main { padding:20px 14px 40px; } header { display:block; } .grid { grid-template-columns:1fr; } .toolbar { align-items:flex-start; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div><h1>VMISS 库存监控</h1><p>管理监控商品与 Telegram 推广跳转设置</p></div>
+    <div class="status"><span id="state" class="pill">状态读取中</span><span id="last-checked" class="pill"></span><button id="refresh-status" type="button" title="刷新监控状态">刷新状态</button></div>
+  </header>
+
+  <section>
+    <h2>监控设置</h2>
+    <div class="grid">
+      <label class="check"><input id="enabled" type="checkbox">启用库存检查</label>
+      <label>检查间隔（秒，至少 300）<input id="interval" type="number" min="300" max="86400" step="60"></label>
+      <label>推广 ID（aff）<input id="affiliate" inputmode="text" autocomplete="off" placeholder="例如 2762"></label>
+      <label class="check"><input id="notify-current" type="checkbox">首次启动时，有库存也通知</label>
+    </div>
+  </section>
+
+  <section>
+    <div class="toolbar"><div><h2>监控商品</h2><p>选择商品用 slug、完整名称或商品卡片 ID，例如 basic、US.LA.TRI.Basic、product44。</p></div><button id="add" type="button">添加商品</button></div>
+    <div id="products"></div>
+  </section>
+
+  <section>
+    <div class="toolbar"><p>Telegram bot token 和 chat_id 保存在服务器 `.env`，此页面不会读取或显示它们。</p><div class="actions"><button id="reload" type="button">重新载入</button><button id="save" class="primary" type="button">保存配置</button></div></div>
+    <p>网站拒绝自动访问时，监控会停止并告警；请联系 VMISS 确认允许的检查方式。管理页不会发起商品页请求。</p>
+    <div id="message" role="status" aria-live="polite"></div>
+  </section>
+</main>
+<script src="/admin.js"></script>
+</body>
+</html>
