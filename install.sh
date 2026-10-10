@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ARCHIVE_URL="https://codeload.github.com/xhpx7301/jiankong/tar.gz/refs/heads/main"
+INSTALL_DIR="/opt/vmiss-monitor"
+DATA_DIR="/var/lib/vmiss-monitor"
+ENV_FILE="/etc/vmiss-monitor.env"
+SERVICE_USER="vmiss-monitor"
+SERVICE_GROUP="vmiss-monitor"
+
+log() { printf '[vmiss-monitor] %s\n' "$*"; }
+fail() { printf '[vmiss-monitor] ERROR: %s\n' "$*" >&2; exit 1; }
+
+[[ "${EUID}" -eq 0 ]] || fail "请使用 root 运行，例如：curl -fsSL https://raw.githubusercontent.com/xhpx7301/jiankong/main/install.sh | sudo bash"
+[[ -f /etc/debian_version && -f /etc/os-release ]] || fail "此安装脚本仅支持 Debian 12/13。"
+# shellcheck disable=SC1091
+. /etc/os-release
+case "${ID:-}:${VERSION_ID:-}" in
+  debian:12|debian:13) ;;
+  *) fail "检测到 ${PRETTY_NAME:-未知系统}；此安装脚本仅支持 Debian 12/13。" ;;
+esac
+command -v systemctl >/dev/null 2>&1 || fail "未找到 systemd/systemctl。"
+
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl python3 python3-venv tar
+
+if ! getent group "$SERVICE_GROUP" >/dev/null; then
+  groupadd --system "$SERVICE_GROUP"
+fi
+if ! id "$SERVICE_USER" >/dev/null 2>&1; then
+  useradd --system --gid "$SERVICE_GROUP" --home-dir "$INSTALL_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
+fi
+
+TEMP_DIR="$(mktemp -d)"
+cleanup() { rm -rf -- "$TEMP_DIR"; }
+trap cleanup EXIT
+
+log "正在下载 GitHub main 分支源码。"
+curl --fail --location --silent --show-error "$ARCHIVE_URL" --output "$TEMP_DIR/source.tar.gz"
+tar -xzf "$TEMP_DIR/source.tar.gz" -C "$TEMP_DIR"
+SOURCE_DIR="$(find "$TEMP_DIR" -mindepth 1 -maxdepth 1 -type d -name 'jiankong-*' -print -quit)"
+[[ -n "$SOURCE_DIR" ]] || fail "源码压缩包格式不正确。"
+
+for file in monitor.py admin.py admin.html admin.js requirements.txt config.example.json .env.example vmiss-monitor.service vmiss-monitor-admin.service; do
+  [[ -f "$SOURCE_DIR/$file" ]] || fail "源码缺少必需文件：$file"
+done
+
+install -d -o root -g root -m 0755 "$INSTALL_DIR"
+[[ ! -L "$DATA_DIR" ]] || fail "$DATA_DIR 不能是符号链接。"
+[[ ! -L "$ENV_FILE" ]] || fail "$ENV_FILE 不能是符号链接。"
+install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$DATA_DIR"
+[[ ! -L "$DATA_DIR/config.json" ]] || fail "$DATA_DIR/config.json 不能是符号链接。"
+install -o root -g root -m 0644 \
+  "$SOURCE_DIR/monitor.py" "$SOURCE_DIR/admin.py" "$SOURCE_DIR/admin.html" \
+  "$SOURCE_DIR/admin.js" "$SOURCE_DIR/requirements.txt" "$SOURCE_DIR/config.example.json" \
+  "$SOURCE_DIR/.env.example" "$SOURCE_DIR/vmiss-monitor.service" \
+  "$SOURCE_DIR/vmiss-monitor-admin.service" "$INSTALL_DIR/"
+
+if [[ ! -e "$DATA_DIR/config.json" ]]; then
+  install -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0600 \
+    "$SOURCE_DIR/config.example.json" "$DATA_DIR/config.json"
+else
+  [[ -f "$DATA_DIR/config.json" && ! -L "$DATA_DIR/config.json" ]] || fail "$DATA_DIR/config.json 必须是普通文件。"
+  chown "$SERVICE_USER:$SERVICE_GROUP" "$DATA_DIR/config.json"
+  chmod 0600 "$DATA_DIR/config.json"
+fi
+
+[[ ! -L "$ENV_FILE" ]] || fail "$ENV_FILE 不能是符号链接。"
+if [[ ! -e "$ENV_FILE" ]]; then
+  install -o root -g "$SERVICE_GROUP" -m 0640 "$SOURCE_DIR/.env.example" "$ENV_FILE"
+  log "已创建空凭据文件 $ENV_FILE；请编辑并填写 Telegram bot token。"
+else
+  [[ -f "$ENV_FILE" && ! -L "$ENV_FILE" ]] || fail "$ENV_FILE 必须是普通文件。"
+  chown "root:$SERVICE_GROUP" "$ENV_FILE"
+  chmod 0640 "$ENV_FILE"
+fi
+
+install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$INSTALL_DIR/.venv"
+chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR/.venv"
+if [[ ! -x "$INSTALL_DIR/.venv/bin/python" ]]; then
+  runuser -u "$SERVICE_USER" -- python3 -m venv "$INSTALL_DIR/.venv"
+fi
+runuser -u "$SERVICE_USER" -- "$INSTALL_DIR/.venv/bin/python" -m pip install --disable-pip-version-check -r "$INSTALL_DIR/requirements.txt"
+
+install -o root -g root -m 0644 "$SOURCE_DIR/vmiss-monitor.service" /etc/systemd/system/vmiss-monitor.service
+install -o root -g root -m 0644 "$SOURCE_DIR/vmiss-monitor-admin.service" /etc/systemd/system/vmiss-monitor-admin.service
+systemctl daemon-reload
+systemctl enable --now vmiss-monitor-admin.service
+systemctl restart vmiss-monitor-admin.service
+
+log "安装完成。库存监控仍为关闭状态，未启用或启动 vmiss-monitor.service。"
+log "填写 Telegram 凭据：sudoedit $ENV_FILE"
+log "管理页：在本地电脑运行 ssh -L 8765:127.0.0.1:8765 your-user@your-server，然后打开 http://127.0.0.1:8765"
+log "确认 VMISS 允许访问并在管理页配置商品后，手动运行：sudo systemctl enable --now vmiss-monitor.service"
