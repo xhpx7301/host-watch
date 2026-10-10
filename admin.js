@@ -107,6 +107,15 @@ async function loadConfig() {
   document.querySelector("#interval").value = config.interval_seconds || 600;
   document.querySelector("#affiliate").value = config.affiliate_id || "";
   document.querySelector("#notify-current").checked = Boolean(config.notify_current_stock_on_start);
+  const telegram = config.telegram || {};
+  document.querySelector("#telegram-token").value = "";
+  document.querySelector("#telegram-chat-id").value = telegram.chat_id || "";
+  document.querySelector("#telegram-disabled").checked = Boolean(telegram.disabled);
+  document.querySelector("#telegram-clear").checked = false;
+  document.querySelector("#telegram-status").textContent = telegram.configured
+    ? "Telegram 已配置（token 不会回显）。"
+    : (telegram.disabled ? "Telegram 已停用。" : "Telegram 尚未完整配置。保存后才会生效。 ");
+  document.querySelector("#telegram-chats").replaceChildren();
   renderProducts();
   messageNode.textContent = "配置已载入。保存商品设置不会自动访问 VMISS。";
 }
@@ -127,6 +136,54 @@ document.querySelector("#add").addEventListener("click", () => {
 document.querySelector("#affiliate").addEventListener("input", () => productsNode.querySelectorAll(".product").forEach(updatePreview));
 document.querySelector("#reload").addEventListener("click", () => loadConfig().catch((error) => { messageNode.textContent = error.message; }));
 document.querySelector("#refresh-status").addEventListener("click", () => loadStatus().catch((error) => { messageNode.textContent = error.message; }));
+document.querySelector("#telegram-test").addEventListener("click", async () => {
+  const button = document.querySelector("#telegram-test");
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/telegram/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bot_token: document.querySelector("#telegram-token").value.trim(),
+        chat_id: document.querySelector("#telegram-chat-id").value.trim(),
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Telegram 测试失败");
+    messageNode.textContent = "Telegram 测试消息已发送，请检查目标聊天。";
+  } catch (error) { messageNode.textContent = error.message; }
+  finally { button.disabled = false; }
+});
+document.querySelector("#telegram-load-chats").addEventListener("click", async () => {
+  const button = document.querySelector("#telegram-load-chats");
+  const chatsNode = document.querySelector("#telegram-chats");
+  button.disabled = true;
+  chatsNode.replaceChildren();
+  try {
+    const response = await fetch("/api/telegram/chats", { cache: "no-store" });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "读取聊天失败");
+    if (!result.chats.length) {
+      chatsNode.append(text("p", "暂时没有找到聊天。请先打开 bot 并发送 /start 或一条消息，再点击读取；也可以直接填写 Chat ID。", "hint"));
+      return;
+    }
+    for (const chat of result.chats) {
+      const option = text("button", "", "chat-option");
+      option.type = "button";
+      option.append(
+        text("span", `${chat.name}（${chat.type}）`),
+        text("span", chat.id),
+      );
+      option.addEventListener("click", () => {
+        document.querySelector("#telegram-chat-id").value = chat.id;
+        messageNode.textContent = `已选择 ${chat.name}。保存配置后生效。`;
+      });
+      chatsNode.append(option);
+    }
+    messageNode.textContent = `已读取 ${result.chats.length} 个聊天，点击一项可填入 Chat ID。`;
+  } catch (error) { messageNode.textContent = error.message; }
+  finally { button.disabled = false; }
+});
 document.querySelector("#save").addEventListener("click", async () => {
   const products = [...productsNode.children].map((article) => {
     const get = (key) => article.querySelector(`[data-key="${key}"]`);
@@ -143,13 +200,21 @@ document.querySelector("#save").addEventListener("click", async () => {
     interval_seconds: Number(document.querySelector("#interval").value),
     affiliate_id: document.querySelector("#affiliate").value.trim(),
     notify_current_stock_on_start: document.querySelector("#notify-current").checked,
+    telegram: {
+      bot_token: document.querySelector("#telegram-token").value.trim(),
+      chat_id: document.querySelector("#telegram-chat-id").value.trim(),
+      disabled: document.querySelector("#telegram-disabled").checked,
+      clear: document.querySelector("#telegram-clear").checked,
+    },
     products,
   };
   try {
     const response = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "保存失败");
-    config = next;
+    config = result.config || next;
+    document.querySelector("#telegram-token").value = "";
+    await loadConfig();
     messageNode.textContent = "配置已保存。若启用监控，请在获准的访问方式下手动启动/重启监控服务。";
   } catch (error) { messageNode.textContent = error.message; }
 });

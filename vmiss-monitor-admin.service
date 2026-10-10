@@ -7,6 +7,8 @@ Type=simple
 User=vmiss-monitor
 Group=vmiss-monitor
 WorkingDirectory=/opt/vmiss-monitor
+EnvironmentFile=-/etc/vmiss-monitor.env
+EnvironmentFile=-/etc/vmiss-monitor-admin.env
 Environment=VMISS_CONFIG=/var/lib/vmiss-monitor/config.json
 Environment=VMISS_STATUS=/var/lib/vmiss-monitor/status.json
 Environment=ADMIN_HOST=127.0.0.1

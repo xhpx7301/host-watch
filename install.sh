@@ -5,6 +5,7 @@ ARCHIVE_URL="https://codeload.github.com/xhpx7301/jiankong/tar.gz/refs/heads/mai
 INSTALL_DIR="/opt/vmiss-monitor"
 DATA_DIR="/var/lib/vmiss-monitor"
 ENV_FILE="/etc/vmiss-monitor.env"
+ADMIN_ENV_FILE="/etc/vmiss-monitor-admin.env"
 SERVICE_USER="vmiss-monitor"
 SERVICE_GROUP="vmiss-monitor"
 
@@ -41,7 +42,7 @@ tar -xzf "$TEMP_DIR/source.tar.gz" -C "$TEMP_DIR"
 SOURCE_DIR="$(find "$TEMP_DIR" -mindepth 1 -maxdepth 1 -type d -name 'jiankong-*' -print -quit)"
 [[ -n "$SOURCE_DIR" ]] || fail "源码压缩包格式不正确。"
 
-for file in monitor.py admin.py admin.html admin.js requirements.txt config.example.json .env.example vmiss-monitor.service vmiss-monitor-admin.service; do
+for file in monitor.py admin.py admin.html admin.js requirements.txt config.example.json .env.example admin.env.example vmiss-monitor.service vmiss-monitor-admin.service; do
   [[ -f "$SOURCE_DIR/$file" ]] || fail "源码缺少必需文件：$file"
 done
 
@@ -54,7 +55,7 @@ install -o root -g root -m 0644 \
   "$SOURCE_DIR/monitor.py" "$SOURCE_DIR/admin.py" "$SOURCE_DIR/admin.html" \
   "$SOURCE_DIR/admin.js" "$SOURCE_DIR/requirements.txt" "$SOURCE_DIR/config.example.json" \
   "$SOURCE_DIR/.env.example" "$SOURCE_DIR/vmiss-monitor.service" \
-  "$SOURCE_DIR/vmiss-monitor-admin.service" "$INSTALL_DIR/"
+  "$SOURCE_DIR/vmiss-monitor-admin.service" "$SOURCE_DIR/admin.env.example" "$INSTALL_DIR/"
 
 if [[ ! -e "$DATA_DIR/config.json" ]]; then
   install -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0600 \
@@ -68,11 +69,20 @@ fi
 [[ ! -L "$ENV_FILE" ]] || fail "$ENV_FILE 不能是符号链接。"
 if [[ ! -e "$ENV_FILE" ]]; then
   install -o root -g "$SERVICE_GROUP" -m 0640 "$SOURCE_DIR/.env.example" "$ENV_FILE"
-  log "已创建空凭据文件 $ENV_FILE；请编辑并填写 Telegram bot token。"
+  log "已创建兼容用空环境文件 $ENV_FILE；Telegram 凭据可在管理页配置。"
 else
   [[ -f "$ENV_FILE" && ! -L "$ENV_FILE" ]] || fail "$ENV_FILE 必须是普通文件。"
   chown "root:$SERVICE_GROUP" "$ENV_FILE"
   chmod 0640 "$ENV_FILE"
+fi
+
+[[ ! -L "$ADMIN_ENV_FILE" ]] || fail "$ADMIN_ENV_FILE 不能是符号链接。"
+if [[ ! -e "$ADMIN_ENV_FILE" ]]; then
+  install -o root -g "$SERVICE_GROUP" -m 0640 "$SOURCE_DIR/admin.env.example" "$ADMIN_ENV_FILE"
+else
+  [[ -f "$ADMIN_ENV_FILE" && ! -L "$ADMIN_ENV_FILE" ]] || fail "$ADMIN_ENV_FILE 必须是普通文件。"
+  chown "root:$SERVICE_GROUP" "$ADMIN_ENV_FILE"
+  chmod 0640 "$ADMIN_ENV_FILE"
 fi
 
 install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$INSTALL_DIR/.venv"
@@ -89,6 +99,7 @@ systemctl enable --now vmiss-monitor-admin.service
 systemctl restart vmiss-monitor-admin.service
 
 log "安装完成。库存监控仍为关闭状态，未启用或启动 vmiss-monitor.service。"
-log "填写 Telegram 凭据：sudoedit $ENV_FILE"
-log "管理页：在本地电脑运行 ssh -L 8765:127.0.0.1:8765 your-user@your-server，然后打开 http://127.0.0.1:8765"
+log "Telegram、商品和推广设置请在管理页配置。"
+log "管理页：在本地电脑运行 ssh -N -L 8765:127.0.0.1:8765 your-user@your-server，然后打开 http://127.0.0.1:8765"
+log "若使用反向代理域名，请在 $ADMIN_ENV_FILE 设置 ADMIN_ALLOWED_HOSTS 和 ADMIN_PASSWORD。"
 log "确认 VMISS 允许访问并在管理页配置商品后，手动运行：sudo systemctl enable --now vmiss-monitor.service"

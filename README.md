@@ -8,63 +8,94 @@
 
 适用于 Debian 12/13，要求 systemd 和 root/sudo 权限。脚本会安装依赖、创建 `vmiss-monitor` 系统用户、安装程序和 systemd 单元，并启动仅监听 `127.0.0.1:8765` 的管理页。库存监控默认关闭，安装脚本不会启用或启动它。
 
-先在 Telegram 创建 bot 并向它发送 `/start`。然后在服务器执行：
-
 ```sh
 curl -fsSL https://raw.githubusercontent.com/xhpx7301/jiankong/main/install.sh | sudo bash
 ```
 
-脚本可重复执行用于升级。已有的 `/var/lib/vmiss-monitor/config.json` 和 `/etc/vmiss-monitor.env` 会保留。升级后如监控服务已经在运行，手动重启以载入新程序：
+脚本可重复执行用于升级，已有的 `/var/lib/vmiss-monitor/config.json`、`/etc/vmiss-monitor.env` 和 `/etc/vmiss-monitor-admin.env` 会保留。
+
+## 管理页访问
+
+### SSH 隧道（推荐）
+
+管理页默认只接受本机 Host，不暴露到公网。从自己的电脑建立隧道：
 
 ```sh
-sudo systemctl restart vmiss-monitor.service
+ssh -N -L 8765:127.0.0.1:8765 your-user@your-server
 ```
 
-安装完成后，按下面步骤填写 Telegram 设置并打开管理页。
+保持 SSH 窗口运行，然后打开 [http://127.0.0.1:8765](http://127.0.0.1:8765)。
 
-## Telegram 设置
+### 反向代理域名
 
-Bot token 与 chat ID 只保存在服务器 `/etc/vmiss-monitor.env`，不要放进管理页或提交到 GitHub：
+如果使用 Nginx、Caddy 或面板把 `jiankong.example.com` 转发到 `http://127.0.0.1:8765`，管理服务会因为 Host 校验返回 403。需要为管理服务设置允许的域名和 Basic Auth 密码：
 
 ```sh
-sudoedit /etc/vmiss-monitor.env
+sudoedit /etc/vmiss-monitor-admin.env
 ```
 
-设置 `TELEGRAM_BOT_TOKEN`。私聊或群组的 `TELEGRAM_CHAT_ID` 可稍后用以下命令查询；先在目标私聊/群组向 bot 发送 `/start` 或一条消息：
+至少填写：
+
+```env
+ADMIN_ALLOWED_HOSTS=127.0.0.1,localhost,jiankong.example.com
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=替换为足够长的随机密码
+```
+
+同时确认反向代理传递原始 `Host`，然后重载并重启管理服务：
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl restart vmiss-monitor-admin.service
+```
+
+浏览器打开域名后会弹出 Basic Auth，用户名和密码就是上面设置的值。不要把管理页直接绑定到公网 IP，也不要使用 `ADMIN_ALLOWED_HOSTS=*`。
+
+## 在管理页配置 Telegram
+
+管理页的“Telegram 通知”区域可以填写 bot token、chat ID，并临时停用通知。已保存的 token 不会回显；输入框留空表示保留原 token，勾选“清除已保存的 Telegram 凭据”才会删除它。配置保存在 `/var/lib/vmiss-monitor/config.json`，权限为 `0600`。
+
+保存前可以点击“测试 Telegram”发送一条测试消息。点击“读取最近聊天”会读取 bot 收到的消息，从列表选择 chat ID；如果 bot 使用 webhook，Telegram 不允许读取 updates，此时请直接填写 chat ID。
+
+先在 Telegram 中打开 bot 并发送 `/start`。私聊或群组的 chat ID 可以从 Bot API 查询，也可以先临时在服务器执行：
 
 ```sh
 sudo -u vmiss-monitor bash -c 'set -a; . /etc/vmiss-monitor.env; set +a; cd /opt/vmiss-monitor; .venv/bin/python monitor.py --show-chat-ids'
 ```
 
-将输出的 ID 写入 `/etc/vmiss-monitor.env` 的 `TELEGRAM_CHAT_ID`。频道可填写频道用户名（如 `@my_channel`），并确保 bot 是该频道管理员。已运行的监控服务需要重启才能读取更新后的凭据：
+频道可填写频道用户名（如 `@my_channel`），并确保 bot 是该频道管理员。保存 Telegram 配置后，重启监控服务即可载入：
 
 ```sh
 sudo systemctl restart vmiss-monitor.service
 ```
 
-## 打开管理页
+旧版本仍支持 `/etc/vmiss-monitor.env` 中的 `TELEGRAM_BOT_TOKEN` 和 `TELEGRAM_CHAT_ID`，但推荐改用管理页配置。真实 token 不要提交到 GitHub。
 
-管理页不暴露到公网。从自己的电脑建立 SSH 隧道：
+## 配置商品
 
-```sh
-ssh -L 8765:127.0.0.1:8765 your-user@your-server
-```
+在管理页设置：
 
-然后访问 [http://127.0.0.1:8765](http://127.0.0.1:8765)。
+- `aff` 推广 ID，例如 `2762`
+- 分类页，例如 `https://app.vmiss.com/store/dedicated-server`
+- 商品选择标识：商品卡片 ID（如 `product44`）、完整名称，或订购链接路径末段 slug
+- `gid` 或 `pid`，只能填写一个
+- 检查间隔，最少 300 秒
 
-页面可设置轮询间隔、`aff` 推广 ID、分类页 URL、商品选择标识及 `gid/pid`。分类页需填写 `https://app.vmiss.com/store/...`。商品选择标识可用卡片 ID（例如 `product44`）、完整商品名称，或订购链接路径末段的 slug。保存设置不会访问 VMISS。
+保存配置不会访问 VMISS。确认 VMISS 允许当前访问方式后，再打开总开关并启用商品。
 
-## 启用库存监控
-
-确认 VMISS 允许当前访问方式后，在管理页添加并启用至少一个商品，填写推广 ID，打开“启用库存检查”并保存。然后在服务器运行：
+## 启用监控
 
 ```sh
 sudo systemctl enable --now vmiss-monitor.service
 ```
 
-后续配置发生变更时，运行 `sudo systemctl restart vmiss-monitor.service` 立即重新载入。管理页关闭总开关后，监控会在当前检查周期结束时退出。安装时不会启用监控服务。
+后续修改配置后：
 
-首次检查默认只记录库存基线，不会因已有库存而通知。如果需要首次检测到有货也通知，请勾选“首次启动时，有库存也通知”。之后库存增加时才会通知。
+```sh
+sudo systemctl restart vmiss-monitor.service
+```
+
+首次检查默认只记录库存基线，不会因已有库存而通知。如需首次发现已有库存也通知，勾选页面中的对应选项。
 
 ## 运维
 
@@ -74,34 +105,25 @@ sudo journalctl -u vmiss-monitor.service -f
 sudo journalctl -u vmiss-monitor-admin.service -f
 ```
 
-程序安装在 `/opt/vmiss-monitor/`；商品配置和运行状态在 `/var/lib/vmiss-monitor/`；Telegram 凭据在权限受限的 `/etc/vmiss-monitor.env`。停止服务：
+程序安装在 `/opt/vmiss-monitor/`；配置和状态在 `/var/lib/vmiss-monitor/`；兼容用 Telegram 环境文件在 `/etc/vmiss-monitor.env`；反向代理访问设置在 `/etc/vmiss-monitor-admin.env`。
+
+停止服务：
 
 ```sh
 sudo systemctl disable --now vmiss-monitor.service
 sudo systemctl disable --now vmiss-monitor-admin.service
 ```
 
-## 从源码安装
+## 升级
 
-如不使用一键脚本，可在 Debian 12/13 上手动安装：
+重新执行一键安装命令即可。升级不会覆盖商品配置、Telegram 配置或管理页环境文件。升级后如果监控正在运行，执行：
 
 ```sh
-sudo apt update
-sudo apt install -y python3 python3-venv
-sudo useradd --system --home /opt/vmiss-monitor --shell /usr/sbin/nologin vmiss-monitor
-sudo install -d -o vmiss-monitor -g vmiss-monitor /opt/vmiss-monitor /var/lib/vmiss-monitor
-sudo cp monitor.py admin.py admin.html admin.js requirements.txt .env.example config.example.json vmiss-monitor.service vmiss-monitor-admin.service /opt/vmiss-monitor/
-sudo chown -R vmiss-monitor:vmiss-monitor /opt/vmiss-monitor /var/lib/vmiss-monitor
-sudo -u vmiss-monitor python3 -m venv /opt/vmiss-monitor/.venv
-sudo -u vmiss-monitor /opt/vmiss-monitor/.venv/bin/pip install -r /opt/vmiss-monitor/requirements.txt
-sudo install -o root -g vmiss-monitor -m 0640 /opt/vmiss-monitor/.env.example /etc/vmiss-monitor.env
-sudo install -m 0644 /opt/vmiss-monitor/vmiss-monitor.service /etc/systemd/system/
-sudo install -m 0644 /opt/vmiss-monitor/vmiss-monitor-admin.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now vmiss-monitor-admin.service
+sudo systemctl restart vmiss-monitor.service
 ```
 
-手动安装也不会自动启用库存监控。离线语法检查命令：
+## 离线语法检查
 
 ```sh
 python3 -m py_compile monitor.py admin.py

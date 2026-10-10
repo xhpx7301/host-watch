@@ -32,6 +32,10 @@
     .pill.ok { color:var(--good); } .pill.blocked,.pill.error { color:#a32e2e; }
     #message { min-height:24px; margin-top:10px; color:var(--muted); }
     .actions { display:flex; gap:8px; }
+    .chat-list { display:grid; gap:8px; margin-top:12px; }
+    .chat-option { display:flex; justify-content:space-between; align-items:center; gap:12px; text-align:left; }
+    .chat-option span { overflow-wrap:anywhere; }
+    .hint { margin-top:10px; }
     @media(max-width:680px) { main { padding:20px 14px 40px; } header { display:block; } .grid { grid-template-columns:1fr; } .toolbar { align-items:flex-start; } }
   </style>
 </head>
@@ -53,12 +57,28 @@
   </section>
 
   <section>
+    <h2>Telegram 通知</h2>
+    <div class="grid">
+      <label>Bot token（保存后不会回显）<input id="telegram-token" type="password" autocomplete="new-password" placeholder="输入 token；留空表示保持原值"></label>
+      <label>Chat ID 或频道用户名<input id="telegram-chat-id" inputmode="text" autocomplete="off" placeholder="例如 -1001234567890 或 @my_channel"></label>
+      <label class="check"><input id="telegram-disabled" type="checkbox">暂时停用 Telegram 通知</label>
+      <label class="check"><input id="telegram-clear" type="checkbox">清除已保存的 Telegram 凭据</label>
+    </div>
+    <p id="telegram-status" class="hint">Telegram 状态读取中</p>
+    <div class="actions" style="margin-top:12px">
+      <button id="telegram-test" type="button">测试 Telegram</button>
+      <button id="telegram-load-chats" type="button">读取最近聊天</button>
+    </div>
+    <div id="telegram-chats" class="chat-list" aria-live="polite"></div>
+  </section>
+
+  <section>
     <div class="toolbar"><div><h2>监控商品</h2><p>选择商品用 slug、完整名称或商品卡片 ID，例如 basic、US.LA.TRI.Basic、product44。</p></div><button id="add" type="button">添加商品</button></div>
     <div id="products"></div>
   </section>
 
   <section>
-    <div class="toolbar"><p>Telegram bot token 和 chat_id 保存在服务器 `.env`，此页面不会读取或显示它们。</p><div class="actions"><button id="reload" type="button">重新载入</button><button id="save" class="primary" type="button">保存配置</button></div></div>
+    <div class="toolbar"><p>Bot token 只写入服务器配置文件，页面不会回显已保存的 token。反向代理访问时请启用管理页密码。</p><div class="actions"><button id="reload" type="button">重新载入</button><button id="save" class="primary" type="button">保存配置</button></div></div>
     <p>网站拒绝自动访问时，监控会停止并告警；请联系 VMISS 确认允许的检查方式。管理页不会发起商品页请求。</p>
     <div id="message" role="status" aria-live="polite"></div>
   </section>

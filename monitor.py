@@ -15,7 +15,7 @@ from urllib.parse import urlencode, urljoin, urlsplit
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-from admin import validate_config
+from admin import effective_telegram, validate_config
 
 
 ROOT = Path(__file__).resolve().parent
@@ -116,7 +116,14 @@ def affiliate_url(product_url: str, affiliate_id: str, gid: str, pid: str) -> st
 
 def read_config(path: Path) -> dict:
     if not path.exists():
-        return {"enabled": False, "interval_seconds": 600, "notify_current_stock_on_start": False, "affiliate_id": "", "products": []}
+        return {
+            "enabled": False,
+            "interval_seconds": 600,
+            "notify_current_stock_on_start": False,
+            "affiliate_id": "",
+            "telegram": {"bot_token": "", "chat_id": "", "disabled": False},
+            "products": [],
+        }
     try:
         config = json.loads(path.read_text(encoding="utf-8"))
         return validate_config(config)
@@ -272,7 +279,7 @@ def check_once(
                 reply_markup=reply_markup,
             )
             logging.info("已发送补货通知：%s，目前 %s 台", product.name, product.available)
-    elif notifications:
+    elif notifications and not config.get("telegram", {}).get("disabled", False):
         for _, product, _ in notifications:
             logging.warning("发现库存增加但未设置 Telegram：%s，目前 %s 台，%s", product.name, product.available, product.url)
 
@@ -304,8 +311,6 @@ def main() -> int:
         state_path = ROOT / state_path
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-    if bool(bot_token) != bool(chat_id) and not args.show_chat_ids:
-        parser.error("TELEGRAM_BOT_TOKEN 和 TELEGRAM_CHAT_ID 必须同时填写，或同时留空")
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     session = requests.Session()
@@ -315,9 +320,11 @@ def main() -> int:
     })
 
     if args.show_chat_ids:
-        if not bot_token:
-            parser.error("先在 .env 中设置 TELEGRAM_BOT_TOKEN")
         try:
+            config = read_config(config_path)
+            bot_token, _ = effective_telegram(config)
+            if not bot_token:
+                parser.error("先在管理页或环境变量中设置 TELEGRAM_BOT_TOKEN")
             show_chat_ids(session, bot_token)
             return 0
         except MonitorError as exc:
@@ -330,6 +337,10 @@ def main() -> int:
             if not config.get("enabled", False):
                 logging.info("监控总开关关闭，不访问 VMISS")
                 return 0
+            bot_token, chat_id = effective_telegram(config)
+            telegram_config = config.get("telegram", {})
+            if not telegram_config.get("disabled", False) and (not bot_token or not chat_id):
+                raise MonitorError("Telegram bot token 和 chat_id 必须同时填写，或在管理页停用 Telegram")
             interval = int(config.get("interval_seconds", 600))
             if interval < MIN_INTERVAL_SECONDS:
                 raise MonitorError(f"检查间隔不能低于 {MIN_INTERVAL_SECONDS} 秒")
