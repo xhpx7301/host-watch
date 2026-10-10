@@ -3,6 +3,11 @@
   "interval_seconds": 600,
   "notify_current_stock_on_start": false,
   "affiliate_id": "",
+  "fetcher": {
+    "mode": "requests",
+    "flaresolverr_url": "http://127.0.0.1:8191/v1",
+    "timeout_seconds": 60
+  },
   "telegram": {
     "bot_token": "",
     "chat_id": "",

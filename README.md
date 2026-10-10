@@ -2,7 +2,7 @@
 
 按配置检查 VMISS 商品库存，并在库存增加时通过 Telegram bot 通知。每条通知带有 `aff.php` 推广链接，可为商品指定 `gid`（商品组）或 `pid`（单品）。程序不会下单。
 
-> VMISS 曾对自动化访问返回拦截页。部署前请先向 VMISS 确认允许的访问方式。本项目不绕过 Cloudflare；遇到 HTTP 403、429 或验证页会记录状态、尝试发送告警并停止访问，不会自动重试。检查间隔不能低于 5 分钟。
+> VMISS 曾对自动化访问返回拦截页。部署前请先向 VMISS 确认允许的访问方式。普通请求模式不会绕过 Cloudflare；遇到 HTTP 403、429 或验证页会记录状态、尝试发送告警并停止访问，不会自动重试。FlareSolverr 仅适用于你拥有或明确获准测试的站点，默认关闭。检查间隔不能低于 5 分钟。
 
 ## 一键安装
 
@@ -83,6 +83,32 @@ sudo systemctl restart vmiss-monitor.service
 
 保存配置不会访问 VMISS。确认 VMISS 允许当前访问方式后，再打开总开关并启用商品。
 
+## FlareSolverr（可选）
+
+如果这是你自己搭建的测试站点，并且测试环境确实需要通过 FlareSolverr 取得页面，可以在 Debian 服务器上只绑定本机地址运行 FlareSolverr。下面示例使用 Docker，API 不暴露到公网：
+
+以下命令假设服务器已经安装 Docker；FlareSolverr 不会由本项目的一键安装脚本自动安装。
+
+```sh
+docker run -d --name flaresolverr --restart unless-stopped \
+  -e LOG_LEVEL=info \
+  -p 127.0.0.1:8191:8191 \
+  ghcr.io/flaresolverr/flaresolverr:latest
+```
+
+在管理页“网页请求方式”中选择“FlareSolverr”，填写 `http://127.0.0.1:8191/v1` 和超时（10 至 180 秒），保存后重启监控服务：
+
+```sh
+sudo systemctl restart vmiss-monitor.service
+sudo journalctl -u vmiss-monitor.service -n 50 --no-pager
+```
+
+程序向 FlareSolverr 发送 `request.get`，复用返回的页面、Cookie 和 User-Agent，再使用现有商品解析逻辑。FlareSolverr API 请求失败、响应格式异常、最终 URL 离开 `app.vmiss.com`，或返回仍是 Cloudflare 拦截页时，监控会停止并告警；不会无限重试，也不会把 API 地址或响应内容发送到 Telegram。需要停用时，在管理页切回“普通 HTTP 请求”并保存，再重启服务。
+
+不要将 FlareSolverr 的 `8191` 端口映射到公网，也不要把 FlareSolverr 用于没有授权的第三方站点。
+
+管理页中的“启用监控并保存”和“停用监控并保存”会保存监控总开关；“重新载入”和“保存配置”会在页面顶部显示进行中、成功或失败提示。首次安装后需要在服务器启动一次监控服务：
+
 ## 启用监控
 
 ```sh
@@ -96,6 +122,23 @@ sudo systemctl restart vmiss-monitor.service
 ```
 
 首次检查默认只记录库存基线，不会因已有库存而通知。如需首次发现已有库存也通知，勾选页面中的对应选项。
+
+## 遇到 Cloudflare 或 HTTP 403
+
+如果 Telegram 收到“VMISS 监控已停止”，或管理页状态显示“因网站拦截已停止”，说明目标网站返回了 Cloudflare 安全验证、HTTP 403 或 HTTP 429。程序会停止当前监控周期，不会连续重试或绕过验证。
+
+处理步骤：
+
+1. 暂停监控，不要反复重启服务或更换 IP 撞站。
+2. 把服务器公网 IP、访问时间和页面截图发给 VMISS，确认允许的监控方式、访问频率和服务器 IP。
+3. 获得明确许可后，在管理页点击“启用监控并保存”，再执行：
+
+```sh
+sudo systemctl restart vmiss-monitor.service
+sudo journalctl -u vmiss-monitor.service -n 50 --no-pager
+```
+
+如果 VMISS 不允许服务器自动检查，应保持监控关闭，不要尝试绕过 Cloudflare 验证。
 
 ## 运维
 

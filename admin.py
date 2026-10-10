@@ -27,6 +27,11 @@ def default_config() -> dict:
         "interval_seconds": 600,
         "notify_current_stock_on_start": False,
         "affiliate_id": "",
+        "fetcher": {
+            "mode": "requests",
+            "flaresolverr_url": "http://127.0.0.1:8191/v1",
+            "timeout_seconds": 60,
+        },
         "telegram": {"bot_token": "", "chat_id": "", "disabled": False},
         "products": [],
     }
@@ -55,6 +60,44 @@ def normalize_telegram(value: object) -> dict:
     if chat_id and (len(chat_id) > 128 or not re.fullmatch(r"(?:-?\d{1,32}|@[A-Za-z0-9_]{5,64})", chat_id)):
         raise ValueError("Telegram chat_id 格式无效")
     return {"bot_token": token, "chat_id": chat_id, "disabled": disabled}
+
+
+def normalize_fetcher(value: object) -> dict:
+    if value is None:
+        value = {}
+    if not isinstance(value, dict):
+        raise ValueError("请求方式配置必须是对象")
+    mode = str(value.get("mode", "requests")).strip().casefold()
+    if mode not in {"requests", "flaresolverr"}:
+        raise ValueError("请求方式必须是 requests 或 flaresolverr")
+    endpoint = str(value.get("flaresolverr_url", "http://127.0.0.1:8191/v1")).strip()
+    parsed = urlsplit(endpoint)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or len(endpoint) > 2048
+    ):
+        raise ValueError("FlareSolverr API 地址必须是没有查询参数的 HTTP(S) URL")
+    timeout_value = value.get("timeout_seconds", 60)
+    if isinstance(timeout_value, bool):
+        raise ValueError("FlareSolverr 超时必须是整数") from None
+    try:
+        timeout_seconds = int(timeout_value)
+    except (ValueError, TypeError):
+        raise ValueError("FlareSolverr 超时必须是整数") from None
+    if str(timeout_seconds) != str(timeout_value).strip():
+        raise ValueError("FlareSolverr 超时必须是整数")
+    if timeout_seconds < 10 or timeout_seconds > 180:
+        raise ValueError("FlareSolverr 超时范围是 10 到 180 秒")
+    return {
+        "mode": mode,
+        "flaresolverr_url": endpoint.rstrip("/"),
+        "timeout_seconds": timeout_seconds,
+    }
 
 
 def effective_telegram(value: object) -> tuple[str, str]:
@@ -156,12 +199,14 @@ def validate_config(value: object) -> dict:
         raise ValueError("启用监控前至少启用一个产品")
     if enabled and not affiliate_id:
         raise ValueError("启用监控前请填写推广 ID（aff）")
+    fetcher = normalize_fetcher(value.get("fetcher", {}))
     telegram = normalize_telegram(value.get("telegram", {}))
     return {
         "enabled": enabled,
         "interval_seconds": interval,
         "notify_current_stock_on_start": value.get("notify_current_stock_on_start", False),
         "affiliate_id": affiliate_id,
+        "fetcher": fetcher,
         "telegram": telegram,
         "products": normalized,
     }
@@ -390,6 +435,8 @@ class Handler(BaseHTTPRequestHandler):
                     "chat_id": submitted_chat_id or current_chat_id,
                     "disabled": submitted_disabled,
                 }
+            if "fetcher" not in submitted:
+                submitted["fetcher"] = current["fetcher"]
             value = validate_config(submitted)
             save_config(value)
         except (OSError, ValueError, json.JSONDecodeError) as exc:

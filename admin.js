@@ -1,6 +1,20 @@
-let config = { enabled: false, interval_seconds: 600, notify_current_stock_on_start: false, affiliate_id: "", products: [] };
+let config = {
+  enabled: false,
+  interval_seconds: 600,
+  notify_current_stock_on_start: false,
+  affiliate_id: "",
+  fetcher: { mode: "requests", flaresolverr_url: "http://127.0.0.1:8191/v1", timeout_seconds: 60 },
+  products: [],
+};
 const productsNode = document.querySelector("#products");
 const messageNode = document.querySelector("#message");
+const blockedHelpNode = document.querySelector("#blocked-help");
+let lastStatus = null;
+
+function setMessage(message, kind = "") {
+  messageNode.textContent = message;
+  messageNode.className = kind;
+}
 
 function text(tag, value, className) {
   const node = document.createElement(tag);
@@ -78,6 +92,18 @@ function updatePreview(article) {
   article.querySelectorAll(".grid label")[3].firstChild.textContent = kind === "pid" ? "pid（商品 ID）" : "gid（商品组 ID）";
 }
 
+function updateFetcherStatus() {
+  const mode = document.querySelector("#fetcher-mode").value;
+  const endpoint = document.querySelector("#flaresolverr-url");
+  const timeout = document.querySelector("#flaresolverr-timeout");
+  const enabled = mode === "flaresolverr";
+  endpoint.disabled = !enabled;
+  timeout.disabled = !enabled;
+  document.querySelector("#fetcher-status").textContent = enabled
+    ? "FlareSolverr 已选中。请确认 API 只在本机或受信任网络可访问，并保存后重启监控服务。"
+    : "普通 HTTP 请求已启用。保存后监控服务会读取新设置。";
+}
+
 function renderProducts() {
   productsNode.replaceChildren(...config.products.map(productCard));
   productsNode.querySelectorAll("input,select").forEach((input) => {
@@ -100,13 +126,19 @@ function renderProducts() {
 }
 
 async function loadConfig() {
+  setMessage("正在重新载入配置…", "pending");
   const response = await fetch("/api/config", { cache: "no-store" });
-  if (!response.ok) throw new Error("读取配置失败");
+  if (!response.ok) throw new Error(`读取配置失败（HTTP ${response.status}）`);
   config = await response.json();
   document.querySelector("#enabled").checked = Boolean(config.enabled);
   document.querySelector("#interval").value = config.interval_seconds || 600;
   document.querySelector("#affiliate").value = config.affiliate_id || "";
   document.querySelector("#notify-current").checked = Boolean(config.notify_current_stock_on_start);
+  const fetcher = config.fetcher || {};
+  document.querySelector("#fetcher-mode").value = fetcher.mode || "requests";
+  document.querySelector("#flaresolverr-url").value = fetcher.flaresolverr_url || "http://127.0.0.1:8191/v1";
+  document.querySelector("#flaresolverr-timeout").value = fetcher.timeout_seconds || 60;
+  updateFetcherStatus();
   const telegram = config.telegram || {};
   document.querySelector("#telegram-token").value = "";
   document.querySelector("#telegram-chat-id").value = telegram.chat_id || "";
@@ -117,25 +149,41 @@ async function loadConfig() {
     : (telegram.disabled ? "Telegram 已停用。" : "Telegram 尚未完整配置。保存后才会生效。 ");
   document.querySelector("#telegram-chats").replaceChildren();
   renderProducts();
-  messageNode.textContent = "配置已载入。保存商品设置不会自动访问 VMISS。";
+  if (!lastStatus || !["blocked", "error"].includes(lastStatus.state)) {
+    setMessage("配置已载入。保存设置不会访问 VMISS。", "success");
+  }
 }
 
 async function loadStatus() {
+  setMessage("正在读取监控状态…", "pending");
   const response = await fetch("/api/status", { cache: "no-store" });
+  if (!response.ok) throw new Error(`读取监控状态失败（HTTP ${response.status}）`);
   const status = await response.json();
+  lastStatus = status;
   const state = document.querySelector("#state");
   state.textContent = ({ ok: "最近检查成功", blocked: "因网站拦截已停止", error: "检查出错", unknown: "尚无检查记录" })[status.state] || status.state;
   state.className = `pill ${status.state || ""}`;
   document.querySelector("#last-checked").textContent = status.last_checked ? `上次检查：${status.last_checked}` : "";
+  const blocked = status.state === "blocked";
+  blockedHelpNode.hidden = !blocked;
+  if (blocked) {
+    setMessage(`监控已停止：${status.message || "VMISS 返回了安全拦截页面"}`, "error");
+  } else if (status.state === "error") {
+    setMessage(`监控错误：${status.message || "请查看服务器日志"}`, "error");
+  } else if (status.state === "ok") {
+    setMessage("监控最近一次检查成功。", "success");
+  }
 }
 
 document.querySelector("#add").addEventListener("click", () => {
   config.products.push({ id: crypto.randomUUID(), name: "", category_url: "", selector: "", gid: "", pid: "", enabled: false });
   renderProducts();
+  setMessage("已添加商品，请填写商品信息后保存。", "pending");
 });
 document.querySelector("#affiliate").addEventListener("input", () => productsNode.querySelectorAll(".product").forEach(updatePreview));
-document.querySelector("#reload").addEventListener("click", () => loadConfig().catch((error) => { messageNode.textContent = error.message; }));
-document.querySelector("#refresh-status").addEventListener("click", () => loadStatus().catch((error) => { messageNode.textContent = error.message; }));
+document.querySelector("#fetcher-mode").addEventListener("change", updateFetcherStatus);
+document.querySelector("#reload").addEventListener("click", () => loadConfig().catch((error) => setMessage(error.message, "error")));
+document.querySelector("#refresh-status").addEventListener("click", () => loadStatus().catch((error) => setMessage(error.message, "error")));
 document.querySelector("#telegram-test").addEventListener("click", async () => {
   const button = document.querySelector("#telegram-test");
   button.disabled = true;
@@ -150,8 +198,8 @@ document.querySelector("#telegram-test").addEventListener("click", async () => {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Telegram 测试失败");
-    messageNode.textContent = "Telegram 测试消息已发送，请检查目标聊天。";
-  } catch (error) { messageNode.textContent = error.message; }
+    setMessage("Telegram 测试消息已发送，请检查目标聊天。", "success");
+  } catch (error) { setMessage(error.message, "error"); }
   finally { button.disabled = false; }
 });
 document.querySelector("#telegram-load-chats").addEventListener("click", async () => {
@@ -176,15 +224,22 @@ document.querySelector("#telegram-load-chats").addEventListener("click", async (
       );
       option.addEventListener("click", () => {
         document.querySelector("#telegram-chat-id").value = chat.id;
-        messageNode.textContent = `已选择 ${chat.name}。保存配置后生效。`;
+        setMessage(`已选择 ${chat.name}。保存配置后生效。`, "pending");
       });
       chatsNode.append(option);
     }
-    messageNode.textContent = `已读取 ${result.chats.length} 个聊天，点击一项可填入 Chat ID。`;
-  } catch (error) { messageNode.textContent = error.message; }
+    setMessage(`已读取 ${result.chats.length} 个聊天，点击一项可填入 Chat ID。`, "success");
+  } catch (error) { setMessage(error.message, "error"); }
   finally { button.disabled = false; }
 });
-document.querySelector("#save").addEventListener("click", async () => {
+async function saveConfig(forceEnabled = null) {
+  setMessage("正在保存配置…", "pending");
+  const saveButton = document.querySelector("#save");
+  saveButton.disabled = true;
+  const enableButton = document.querySelector("#enable-monitor");
+  const disableButton = document.querySelector("#disable-monitor");
+  enableButton.disabled = true;
+  disableButton.disabled = true;
   const products = [...productsNode.children].map((article) => {
     const get = (key) => article.querySelector(`[data-key="${key}"]`);
     const target = get("target").value;
@@ -196,10 +251,15 @@ document.querySelector("#save").addEventListener("click", async () => {
     };
   });
   const next = {
-    enabled: document.querySelector("#enabled").checked,
+    enabled: forceEnabled === null ? document.querySelector("#enabled").checked : forceEnabled,
     interval_seconds: Number(document.querySelector("#interval").value),
     affiliate_id: document.querySelector("#affiliate").value.trim(),
     notify_current_stock_on_start: document.querySelector("#notify-current").checked,
+    fetcher: {
+      mode: document.querySelector("#fetcher-mode").value,
+      flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(),
+      timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value),
+    },
     telegram: {
       bot_token: document.querySelector("#telegram-token").value.trim(),
       chat_id: document.querySelector("#telegram-chat-id").value.trim(),
@@ -215,8 +275,25 @@ document.querySelector("#save").addEventListener("click", async () => {
     config = result.config || next;
     document.querySelector("#telegram-token").value = "";
     await loadConfig();
-    messageNode.textContent = "配置已保存。若启用监控，请在获准的访问方式下手动启动/重启监控服务。";
-  } catch (error) { messageNode.textContent = error.message; }
-});
-loadConfig().catch((error) => { messageNode.textContent = error.message; });
-loadStatus().catch(() => {});
+    document.querySelector("#enabled").checked = next.enabled;
+    if (!next.enabled) blockedHelpNode.hidden = true;
+    const blockedAfterSave = next.enabled && lastStatus?.state === "blocked";
+    setMessage(blockedAfterSave
+      ? "配置已保存，但监控仍因 VMISS 安全拦截而停止。获得 VMISS 许可后，再重启监控服务。"
+      : next.enabled
+      ? "配置已保存，监控开关已启用。若服务当前未运行，请在服务器执行 systemctl restart vmiss-monitor.service。"
+      : "配置已保存，监控开关已停用。正在运行的服务会在下一次读取配置时退出。", blockedAfterSave ? "error" : "success");
+  } catch (error) {
+    setMessage(error.message, "error");
+    throw error;
+  } finally {
+    saveButton.disabled = false;
+    enableButton.disabled = false;
+    disableButton.disabled = false;
+  }
+}
+document.querySelector("#save").addEventListener("click", () => saveConfig().catch(() => {}));
+document.querySelector("#enable-monitor").addEventListener("click", () => saveConfig(true).catch(() => {}));
+document.querySelector("#disable-monitor").addEventListener("click", () => saveConfig(false).catch(() => {}));
+loadConfig().catch((error) => setMessage(error.message, "error"));
+loadStatus().catch((error) => setMessage(error.message, "error"));

@@ -90,22 +90,86 @@ def parse_products(html: str, page_url: str, selectors: list[str]) -> list[Produ
     return products
 
 
-def fetch_products(session: requests.Session, url: str, selectors: list[str]) -> list[Product]:
-    response = session.get(url, timeout=(10, 25), allow_redirects=True)
-    body = response.text
+def _blocked_body(body: str) -> bool:
     blocked_markers = (
-        "Attention Required! | Cloudflare",
-        "Sorry, you have been blocked",
+        "attention required! | cloudflare",
+        "sorry, you have been blocked",
         "cf-chl-",
-        "Enable JavaScript and cookies to continue",
+        "enable javascript and cookies to continue",
     )
-    if response.status_code in (403, 429) or any(marker in body for marker in blocked_markers):
-        raise SiteBlocked(f"网站返回 HTTP {response.status_code} 或 Cloudflare 风控页面；监控已停止，请先联系 VMISS 确认允许的访问方式")
-    response.raise_for_status()
-    final_url = urlsplit(response.url)
+    lowered = body.casefold()
+    return any(marker in lowered for marker in blocked_markers)
+
+
+def _validate_page_response(status_code: int, body: str, final_url: str) -> tuple[str, str]:
+    if status_code in (403, 429) or _blocked_body(body):
+        raise SiteBlocked(f"网站返回 HTTP {status_code} 或 Cloudflare 风控页面；监控已停止，请先联系 VMISS 确认允许的访问方式")
+    if status_code < 200 or status_code >= 300:
+        raise MonitorError(f"商品页返回 HTTP {status_code}，监控已停止")
+    parsed_url = urlsplit(final_url)
+    if parsed_url.scheme != "https" or parsed_url.hostname != "app.vmiss.com":
+        raise MonitorError("商品页重定向离开 app.vmiss.com；已停止，未处理页面内容")
+    return body, final_url
+
+
+def fetch_with_requests(session: requests.Session, url: str) -> tuple[str, str]:
+    try:
+        response = session.get(url, timeout=(10, 25), allow_redirects=True)
+    except requests.RequestException:
+        raise SiteBlocked("访问商品页失败，监控已停止；请检查网络或联系 VMISS 确认允许的访问方式") from None
+    return _validate_page_response(response.status_code, response.text, response.url)
+
+
+def fetch_with_flaresolverr(session: requests.Session, url: str, fetcher: dict) -> tuple[str, str]:
+    endpoint = str(fetcher["flaresolverr_url"])
+    timeout_seconds = int(fetcher["timeout_seconds"])
+    try:
+        response = session.post(
+            endpoint,
+            json={"cmd": "request.get", "url": url, "maxTimeout": timeout_seconds * 1000},
+            timeout=(10, timeout_seconds + 15),
+        )
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        raise SiteBlocked("FlareSolverr 请求失败，监控已停止；请检查 FlareSolverr 服务") from None
+    if not response.ok or not isinstance(payload, dict) or payload.get("status") != "ok":
+        raise SiteBlocked("FlareSolverr 返回异常，监控已停止；请检查 FlareSolverr 服务日志")
+    solution = payload.get("solution")
+    if not isinstance(solution, dict):
+        raise SiteBlocked("FlareSolverr 响应缺少页面结果，监控已停止")
+    body = solution.get("response")
+    final_url = solution.get("url")
+    status_code = solution.get("status")
+    if not isinstance(body, str) or not isinstance(final_url, str) or not isinstance(status_code, int):
+        raise SiteBlocked("FlareSolverr 响应格式异常，监控已停止")
+    user_agent = solution.get("userAgent")
+    if isinstance(user_agent, str) and user_agent.strip() and len(user_agent) <= 512:
+        session.headers["User-Agent"] = user_agent.strip()
+    cookies = solution.get("cookies", [])
+    if isinstance(cookies, list):
+        for cookie in cookies:
+            if not isinstance(cookie, dict):
+                continue
+            name, value = cookie.get("name"), cookie.get("value")
+            if not isinstance(name, str) or not isinstance(value, str) or not name:
+                continue
+            try:
+                session.cookies.set(name, value, domain=cookie.get("domain"), path=cookie.get("path", "/"))
+            except (TypeError, ValueError):
+                continue
+    return _validate_page_response(status_code, body, final_url)
+
+
+def fetch_products(session: requests.Session, url: str, selectors: list[str], fetcher: dict | None = None) -> list[Product]:
+    fetcher = fetcher or {"mode": "requests"}
+    if fetcher.get("mode") == "flaresolverr":
+        body, final_url_text = fetch_with_flaresolverr(session, url, fetcher)
+    else:
+        body, final_url_text = fetch_with_requests(session, url)
+    final_url = urlsplit(final_url_text)
     if final_url.scheme != "https" or final_url.hostname != "app.vmiss.com":
         raise MonitorError("商品页重定向离开 app.vmiss.com；已停止，未处理页面内容")
-    return parse_products(body, response.url, selectors)
+    return parse_products(body, final_url_text, selectors)
 
 
 def affiliate_url(product_url: str, affiliate_id: str, gid: str, pid: str) -> str:
@@ -121,6 +185,11 @@ def read_config(path: Path) -> dict:
             "interval_seconds": 600,
             "notify_current_stock_on_start": False,
             "affiliate_id": "",
+            "fetcher": {
+                "mode": "requests",
+                "flaresolverr_url": "http://127.0.0.1:8191/v1",
+                "timeout_seconds": 60,
+            },
             "telegram": {"bot_token": "", "chat_id": "", "disabled": False},
             "products": [],
         }
@@ -233,7 +302,7 @@ def check_once(
         by_category.setdefault(item["category_url"].strip(), []).append(item)
     found: dict[str, Product] = {}
     for category_url, items in by_category.items():
-        page_products = fetch_products(session, category_url, [])
+        page_products = fetch_products(session, category_url, [], config.get("fetcher"))
         for item in items:
             selector = str(item["selector"]).strip().casefold()
             candidates = [p for p in page_products if selector in {

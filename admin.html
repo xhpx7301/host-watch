@@ -30,7 +30,17 @@
     .status { display:flex; flex-wrap:wrap; gap:14px; align-items:center; }
     .pill { font-size:13px; font-weight:700; color:var(--muted); }
     .pill.ok { color:var(--good); } .pill.blocked,.pill.error { color:#a32e2e; }
-    #message { min-height:24px; margin-top:10px; color:var(--muted); }
+    #message { min-height:24px; margin-top:16px; padding:10px 12px; border:1px solid var(--line); border-radius:4px; background:var(--paper); color:var(--muted); }
+    #message.pending { color:var(--accent); border-color:#a7c2e5; }
+    #message.success { color:var(--good); border-color:#9bc9ae; }
+    #message.error { color:#a32e2e; border-color:#e0aaaa; background:#fff8f8; }
+    .monitor-control { background:var(--paper); border:1px solid var(--line); border-radius:5px; padding:16px; }
+    .monitor-control h2 { margin-bottom:4px; }
+    .monitor-control .toolbar { margin-bottom:0; }
+    .blocked-help { margin-top:14px; padding:12px; border-left:4px solid #b43b3b; background:#fff5f5; color:#6e2525; }
+    .blocked-help strong { display:block; margin-bottom:4px; }
+    .command { display:block; margin-top:8px; padding:8px; overflow-wrap:anywhere; background:#f0f1f3; color:#30343a; font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; }
+    button:disabled { cursor:wait; opacity:.6; }
     .actions { display:flex; gap:8px; }
     .chat-list { display:grid; gap:8px; margin-top:12px; }
     .chat-option { display:flex; justify-content:space-between; align-items:center; gap:12px; text-align:left; }
@@ -45,6 +55,7 @@
     <div><h1>VMISS 库存监控</h1><p>管理监控商品与 Telegram 推广跳转设置</p></div>
     <div class="status"><span id="state" class="pill">状态读取中</span><span id="last-checked" class="pill"></span><button id="refresh-status" type="button" title="刷新监控状态">刷新状态</button></div>
   </header>
+  <div id="message" class="pending" role="status" aria-live="polite">正在读取配置…</div>
 
   <section>
     <h2>监控设置</h2>
@@ -53,6 +64,40 @@
       <label>检查间隔（秒，至少 300）<input id="interval" type="number" min="300" max="86400" step="60"></label>
       <label>推广 ID（aff）<input id="affiliate" inputmode="text" autocomplete="off" placeholder="例如 2762"></label>
       <label class="check"><input id="notify-current" type="checkbox">首次启动时，有库存也通知</label>
+    </div>
+  </section>
+
+  <section>
+    <h2>网页请求方式</h2>
+    <div class="grid">
+      <label>请求方式
+        <select id="fetcher-mode">
+          <option value="requests">普通 HTTP 请求</option>
+          <option value="flaresolverr">FlareSolverr（已授权测试站点）</option>
+        </select>
+      </label>
+      <label>FlareSolverr API 地址
+        <input id="flaresolverr-url" type="url" inputmode="url" autocomplete="off" placeholder="http://127.0.0.1:8191/v1">
+      </label>
+      <label>FlareSolverr 超时（秒，10 至 180）
+        <input id="flaresolverr-timeout" type="number" min="10" max="180" step="1">
+      </label>
+    </div>
+    <p id="fetcher-status" class="hint">普通 HTTP 请求已启用。保存后监控服务会读取新设置。</p>
+  </section>
+
+  <section class="monitor-control">
+    <div class="toolbar">
+      <div><h2>监控控制</h2><p>按钮会保存页面中的监控开关。首次部署仍需在服务器启动一次 systemd 服务。</p></div>
+      <div class="actions">
+        <button id="enable-monitor" class="primary" type="button">启用监控并保存</button>
+        <button id="disable-monitor" type="button">停用监控并保存</button>
+      </div>
+    </div>
+    <div id="blocked-help" class="blocked-help" hidden>
+      <strong>VMISS 暂停了本次监控</strong>
+      <span>检测到 HTTP 403、429 或 Cloudflare 安全验证。程序已停止继续访问，请先联系 VMISS 确认允许的服务器 IP 和监控方式；不要连续重试或尝试绕过验证。获得许可后，再点击“启用监控并保存”，并按下方命令重启服务。</span>
+      <code class="command">sudo systemctl restart vmiss-monitor.service</code>
     </div>
   </section>
 
@@ -80,7 +125,6 @@
   <section>
     <div class="toolbar"><p>Bot token 只写入服务器配置文件，页面不会回显已保存的 token。反向代理访问时请启用管理页密码。</p><div class="actions"><button id="reload" type="button">重新载入</button><button id="save" class="primary" type="button">保存配置</button></div></div>
     <p>网站拒绝自动访问时，监控会停止并告警；请联系 VMISS 确认允许的检查方式。管理页不会发起商品页请求。</p>
-    <div id="message" role="status" aria-live="polite"></div>
   </section>
 </main>
 <script src="/admin.js"></script>
