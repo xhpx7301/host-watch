@@ -15,6 +15,8 @@ let lastStatus = null;
 const toastNode = document.querySelector("#toast");
 let toastTimer;
 let actionRunning = false;
+let updateUnit = sessionStorage.getItem("hostwatch-update-unit") || "";
+let managementUsers = [];
 
 function setMessage(message, kind = "", notify = true) {
   messageNode.textContent = message;
@@ -57,6 +59,7 @@ async function requestJSON(url, options = {}) {
 async function runAction(button, label, message, action, notify = true) {
   if (actionRunning) return;
   actionRunning = true;
+  document.querySelector(".shell").inert = true;
   const controls = [...document.querySelectorAll("button,input,select")].filter((control) => control.id !== "toast-close");
   const previousStates = controls.map((control) => control.disabled);
   const previousLabel = button?.textContent;
@@ -75,6 +78,7 @@ async function runAction(button, label, message, action, notify = true) {
       button.removeAttribute("aria-busy");
     }
     actionRunning = false;
+    document.querySelector(".shell").inert = false;
   }
 }
 
@@ -83,6 +87,152 @@ function text(tag, value, className) {
   node.textContent = value;
   if (className) node.className = className;
   return node;
+}
+
+async function managementRequest(value) {
+  return requestJSON("/api/manage", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) });
+}
+
+async function refreshManagement() {
+  const state = await requestJSON("/api/manage");
+  const serviceLabel = (value) => ({ active: "运行中", inactive: "已停止", failed: "运行失败", activating: "启动中", deactivating: "停止中", unknown: "未知" })[value] || value;
+  const monitorState = document.querySelector("#manage-monitor-state");
+  monitorState.textContent = serviceLabel(state.monitor.active);
+  monitorState.className = state.monitor.active === "active" ? "state ok" : "state error";
+  document.querySelector("#manage-monitor-enabled").textContent = ` · 开机启动：${state.monitor.enabled === "enabled" ? "已开启" : state.monitor.enabled === "disabled" ? "已关闭" : state.monitor.enabled}`;
+  const adminState = document.querySelector("#manage-admin-state");
+  adminState.textContent = serviceLabel(state.admin.active);
+  adminState.className = state.admin.active === "active" ? "state ok" : "state error";
+  managementUsers = state.users;
+  renderManagementUsers();
+  const backups = document.querySelector("#manage-backups");
+  backups.replaceChildren(...(state.backups.length ? state.backups.map((item) => text("span", `${item.name} · ${formatBytes(item.size)}`)) : [text("span", "暂无备份")]));
+  if (updateUnit) await refreshUpdateStatus();
+  return state;
+}
+
+function renderManagementUsers() {
+  const users = document.querySelector("#manage-users");
+  users.replaceChildren(...managementUsers.map((username) => {
+    if (username.startsWith("(")) return text("span", username);
+    const button = text("button", username);
+    button.type = "button";
+    button.addEventListener("click", () => { document.querySelector("#manager-username").value = username; });
+    return button;
+  }));
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function refreshUpdateStatus() {
+  const result = await managementRequest({ action: "update-status", unit: updateUnit });
+  const finished = result.ActiveState === "failed" || (result.ActiveState === "active" && result.SubState === "exited");
+  const label = finished ? (result.Result === "success" ? "更新完成。" : `更新失败：${result.Result}`) : `更新任务：${result.ActiveState || result.LoadState || "等待中"}`;
+  document.querySelector("#manage-task-status").textContent = label;
+  if (result.logs) document.querySelector("#manage-logs").textContent = result.logs;
+  return { ...result, finished };
+}
+
+async function performManagementAction(action, extra = {}) {
+  const result = await managementRequest({ action, ...extra });
+  if (result.update_unit) {
+    updateUnit = result.update_unit;
+    sessionStorage.setItem("hostwatch-update-unit", updateUnit);
+    document.querySelector("#manage-task-status").textContent = result.message;
+    setMessage(result.message, "success");
+    pollUpdateStatus();
+  } else {
+    setMessage(result.message || "管理员操作已完成。", "success");
+  }
+  if (action.startsWith("monitor-")) {
+    await loadConfig();
+    await loadStatus();
+  }
+  if (action.startsWith("admin-")) {
+    document.querySelector("#manager-password").value = "";
+    document.querySelector("#manager-confirm").value = "";
+    if (action === "admin-add") managementUsers = [...managementUsers.filter((name) => !name.startsWith("(")), extra.username].sort();
+    if (action === "admin-delete") managementUsers = managementUsers.filter((name) => name !== extra.username);
+    renderManagementUsers();
+    if (action !== "admin-restart") {
+      setMessage(`${result.message}后续请求如出现登录提示，请使用新的管理员凭据登录。`, "success");
+      return;
+    }
+  }
+  if (!result.update_unit && action !== "admin-restart") {
+    try { await refreshManagement(); }
+    catch (error) { setMessage(`${result.message || "操作已完成。"}状态刷新失败：${error.message}`, "error"); }
+  }
+}
+
+function pollUpdateStatus() {
+  let polling = false;
+  const timer = setInterval(async () => {
+    if (polling || actionRunning) return;
+    polling = true;
+    try {
+      const result = await refreshUpdateStatus();
+      if (result.finished || result.LoadState === "not-found") {
+        clearInterval(timer);
+        setMessage(result.Result === "success" ? "HostWatch 更新完成。管理页可能需要重新载入。" : `HostWatch 更新结束：${result.Result || result.LoadState}`, result.Result === "success" ? "success" : "error");
+        updateUnit = "";
+        sessionStorage.removeItem("hostwatch-update-unit");
+        await refreshManagement();
+      }
+    } catch (error) {
+      document.querySelector("#manage-task-status").textContent = `更新可能正在重启服务，等待管理页恢复：${error.message}`;
+    } finally { polling = false; }
+  }, 4000);
+  setTimeout(() => {
+    clearInterval(timer);
+    if (updateUnit) document.querySelector("#manage-task-status").textContent = "更新仍未返回最终结果，请点击刷新状态核对，或查看服务器更新任务日志。";
+  }, 10 * 60 * 1000);
+}
+
+function bindManagementActions() {
+  document.querySelector("#manage-refresh").addEventListener("click", (event) => runAction(event.currentTarget, "刷新中…", "正在读取服务器服务和账号状态…", async () => {
+    await refreshManagement();
+    setMessage("服务器服务、管理员账号和备份列表已刷新。", "success");
+  }));
+  for (const [id, action, label, message] of [
+    ["manage-start", "monitor-start", "启动中…", "正在启用并启动库存监控…"],
+    ["manage-stop", "monitor-stop", "停止中…", "正在停止库存监控…"],
+    ["manage-restart", "monitor-restart", "重启中…", "正在重启库存监控并载入配置…"],
+    ["manage-restart-admin", "admin-restart", "安排中…", "正在安排管理页服务重启…"],
+    ["manage-backup", "backup", "备份中…", "正在备份程序和配置…"],
+    ["manage-update", "update", "启动中…", "正在启动 HostWatch 更新任务…"],
+  ]) {
+    document.querySelector(`#${id}`).addEventListener("click", (event) => runAction(event.currentTarget, label, message, () => performManagementAction(action)));
+  }
+  document.querySelector("#manage-load-logs").addEventListener("click", (event) => runAction(event.currentTarget, "载入中…", "正在读取最近服务日志…", async () => {
+    const result = await requestJSON("/api/manage/logs");
+    document.querySelector("#manage-logs").textContent = result.logs || "暂无日志。";
+    setMessage("最近服务日志已载入。", "success");
+  }));
+  document.querySelector("#manage-add-user").addEventListener("click", (event) => runAction(event.currentTarget, "添加中…", "正在添加管理页管理员…", () => performManagementAction("admin-add", managerCredentials())));
+  document.querySelector("#manage-change-password").addEventListener("click", (event) => runAction(event.currentTarget, "更新中…", "正在更新管理员密码…", () => performManagementAction("admin-passwd", managerCredentials())));
+  document.querySelector("#manage-delete-user").addEventListener("click", (event) => {
+    const username = document.querySelector("#manager-username").value.trim();
+    if (!username || !window.confirm(`确认删除管理员 ${username}？该账号将立即失去访问权限。`)) return;
+    runAction(event.currentTarget, "删除中…", "正在删除管理员…", () => performManagementAction("admin-delete", { username }));
+  });
+  document.querySelector("#open-management").addEventListener("click", () => {
+    const panel = document.querySelector("#management-panel");
+    panel.open = true;
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
+
+function managerCredentials() {
+  return {
+    username: document.querySelector("#manager-username").value.trim(),
+    password: document.querySelector("#manager-password").value,
+    confirmation: document.querySelector("#manager-confirm").value,
+  };
 }
 
 function inputField(labelText, value, key, type = "text", placeholder = "") {
@@ -291,8 +441,8 @@ function updateFetcherStatus() {
   document.querySelector("#flaresolverr-url").disabled = !enabled;
   document.querySelector("#flaresolverr-timeout").disabled = !enabled;
   document.querySelector("#fetcher-status").textContent = enabled
-    ? "只用于你拥有或明确获准测试的站点。保存后重启监控服务。"
-    : "VMISS 普通 HTTPS 请求已启用。保存后重启监控服务。";
+    ? "只用于你拥有或明确获准测试的站点。保存配置会自动应用到监控服务。"
+    : "VMISS 普通 HTTPS 请求已启用。保存配置会自动应用到监控服务。";
 }
 
 async function loadConfig() {
@@ -393,7 +543,16 @@ async function saveConfig() {
   const result = await requestJSON("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
   document.querySelector("#telegram-token").value = "";
   applyConfig(result.config);
-  setMessage("配置已保存到服务器。请通过 hw 菜单启动或重启监控服务，使配置生效。", "success");
+  if (result.service?.ok) {
+    setMessage(next.enabled ? "配置已保存并应用，监控服务已启动。" : "配置已保存并应用，监控服务已停止。", "success");
+  } else {
+    setMessage(`配置已保存，但自动应用服务失败：${result.service?.error || "请在管理员管理中重试"}`, "error");
+  }
+  try { await refreshManagement(); }
+  catch (error) { document.querySelector("#manage-task-status").textContent = `配置已保存，管理状态刷新失败：${error.message}`; }
 }
 document.querySelector("#save").addEventListener("click", (event) => runAction(event.currentTarget, "保存中…", "正在保存配置…", saveConfig));
 runAction(null, "", "正在载入配置和监控状态…", () => reloadConfig(false), false);
+bindManagementActions();
+refreshManagement().catch((error) => { document.querySelector("#manage-task-status").textContent = error.message; });
+if (updateUnit) pollUpdateStatus();

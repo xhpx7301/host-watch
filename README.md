@@ -104,11 +104,7 @@ sudo systemctl restart vmiss-monitor-admin.service
 sudo -u vmiss-monitor bash -c 'set -a; . /etc/vmiss-monitor.env; set +a; cd /opt/vmiss-monitor; .venv/bin/python monitor.py --show-chat-ids'
 ```
 
-频道可填写频道用户名（如 `@my_channel`），并确保 bot 是该频道管理员。保存 Telegram 配置后，重启监控服务即可载入：
-
-```sh
-sudo systemctl restart vmiss-monitor.service
-```
+频道可填写频道用户名（如 `@my_channel`），并确保 bot 是该频道管理员。保存 Telegram 配置后会自动应用到监控服务。
 
 旧版本仍支持 `/etc/vmiss-monitor.env` 中的 `TELEGRAM_BOT_TOKEN` 和 `TELEGRAM_CHAT_ID`，但推荐改用管理页配置。真实 token 不要提交到 GitHub。
 
@@ -144,7 +140,7 @@ VMISS 商品在管理页设置：
 
 VMISS 的推广 ID 是全局配置；通用网页可各自设置购买链接。两类商品可以同时监控。
 
-保存配置不会访问 VMISS。确认 VMISS 允许当前访问方式后，再打开总开关并启用商品。
+确认厂商允许当前访问方式后，再打开总开关并启用商品。保存配置会自动应用：总开关开启时启动或重启监控，关闭时停止服务并取消开机启动。
 
 ## FlareSolverr（可选）
 
@@ -159,30 +155,27 @@ docker run -d --name flaresolverr --restart unless-stopped \
   ghcr.io/flaresolverr/flaresolverr:latest
 ```
 
-在管理页“网页请求方式”中选择“FlareSolverr”，填写 `http://127.0.0.1:8191/v1` 和超时（10 至 180 秒），保存后重启监控服务：
+在管理页“网页请求方式”中选择“FlareSolverr”，填写 `http://127.0.0.1:8191/v1` 和超时（10 至 180 秒），保存后自动应用。可在管理员管理区查看最近日志，或执行：
 
 ```sh
-sudo systemctl restart vmiss-monitor.service
 sudo journalctl -u vmiss-monitor.service -n 50 --no-pager
 ```
 
-程序向 FlareSolverr 发送 `request.get`，复用返回的页面、Cookie 和 User-Agent，再使用现有商品解析逻辑。FlareSolverr API 请求失败、响应格式异常、最终 URL 离开 `app.vmiss.com`，或返回仍是 Cloudflare 拦截页时，监控会停止并告警；不会无限重试，也不会把 API 地址或响应内容发送到 Telegram。需要停用时，在管理页切回“普通 HTTP 请求”并保存，再重启服务。
+程序向 FlareSolverr 发送 `request.get`，复用返回的页面、Cookie 和 User-Agent，再使用现有商品解析逻辑。FlareSolverr API 请求失败、响应格式异常、最终 URL 离开 `app.vmiss.com`，或返回仍是 Cloudflare 拦截页时，监控会停止并告警；不会无限重试，也不会把 API 地址或响应内容发送到 Telegram。需要停用时，在管理页切回“普通 HTTP 请求”并保存，网页会自动应用。
 
 不要将 FlareSolverr 的 `8191` 端口映射到公网，也不要把 FlareSolverr 用于没有授权的第三方站点。
 
-管理页勾选或取消“启用库存检查”后，点击“保存配置”保存监控总开关。保存、重新载入、刷新状态、Telegram 测试和读取聊天时，按钮会显示处理中并暂时禁用，避免重复请求；结果通过固定浮动提示显示，滚动到页面下方也能看到。成功提示约 6 秒后收起，失败提示保留到手动关闭，页面顶部也保留最近的操作结果。添加、移除商品及选择聊天会提示尚需保存。保存配置后仍需通过 `hw` 菜单启动或重启监控服务；刷新状态只读取最近记录。首次安装后需要在服务器启动一次监控服务：
+管理页勾选或取消“启用库存检查”后，点击“保存配置”保存监控总开关。保存、重新载入、刷新状态、Telegram 测试和读取聊天时，按钮会显示处理中并暂时禁用，避免重复请求；结果通过固定浮动提示显示，滚动到页面下方也能看到。成功提示约 6 秒后收起，失败提示保留到手动关闭，页面顶部也保留最近的操作结果。添加、移除商品及选择聊天会提示尚需保存。保存配置会自动应用，无需再登录服务器重启；刷新状态只读取最近记录。
 
-## 启用监控
+## 网页管理员管理
 
-```sh
-sudo systemctl enable --now vmiss-monitor.service
-```
+点击页面右上角“管理员管理”进入管理区，可启动、停止或重启库存监控，重启管理页，管理管理员账号，查看最近 100 条服务日志，备份程序和配置，以及从 GitHub 更新 HostWatch。修改密码和删除账号立即生效；不能删除最后一个管理员。添加首个账号后会接管旧认证，后续请求使用新账号登录。网页管理员均具备完整管理权限。
 
-后续修改配置后：
+在监控设置中勾选“启用库存检查”并保存，网页会自动启动或重启监控并设置开机启动；取消勾选后保存会停止服务并取消开机启动。配置已保存但服务应用失败时，网页会显示两者的区别，可在管理区重试并查看日志。
 
-```sh
-sudo systemctl restart vmiss-monitor.service
-```
+从旧版本首次升级仍需在服务器执行一次 `hw update`，以安装网页管理所需的 sudoers 和 systemd 配置；此后可在网页更新。更新先备份，再由独立 systemd 任务执行，管理页短暂中断时页面会等待恢复。备份保存在 `/var/backups/stockwatch/`，包含凭据，仅 root 可访问。
+
+管理服务仍以普通用户运行，sudoers 仅允许固定的 `/usr/bin/python3 /opt/vmiss-monitor/manage.py web-action` 命令；该入口校验固定动作、用户名和参数，不接受任意 shell 命令。管理文件由 root 持有，网页与终端操作共用互斥锁。自定义 `ADMIN_USERS_FILE` 的安装继续通过终端管理账号。
 
 首次检查默认只记录库存基线，不会因已有库存而通知。如需首次发现已有库存也通知，勾选页面中的对应选项。
 
@@ -194,12 +187,7 @@ sudo systemctl restart vmiss-monitor.service
 
 1. 暂停监控，不要反复重启服务或更换 IP 撞站。
 2. 把服务器公网 IP、访问时间和页面截图发给 VMISS，确认允许的监控方式、访问频率和服务器 IP。
-3. 获得明确许可后，在管理页点击“启用监控并保存”，再执行：
-
-```sh
-sudo systemctl restart vmiss-monitor.service
-sudo journalctl -u vmiss-monitor.service -n 50 --no-pager
-```
+3. 获得明确许可后，在管理页勾选“启用库存检查”并保存，再在管理员管理区查看日志。
 
 如果 VMISS 不允许服务器自动检查，应保持监控关闭，不要尝试绕过 Cloudflare 验证。
 
@@ -222,12 +210,7 @@ sudo systemctl disable --now vmiss-monitor-admin.service
 
 ## 升级
 
-重新执行一键安装命令即可。升级不会覆盖商品配置、Telegram 配置或管理页环境文件。升级后如果监控正在运行，执行：
-
-```sh
-sudo systemctl daemon-reload
-sudo systemctl restart vmiss-monitor.service
-```
+在网页管理员管理区点击“更新 HostWatch”，或在服务器运行 `hw update`。升级不会覆盖商品、Telegram 或管理员配置；更新前自动备份，成功后恢复原来正在运行的监控。旧版本首次升级请先运行一次 `hw update`。
 
 ## 离线语法检查
 

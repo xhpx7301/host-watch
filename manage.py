@@ -8,9 +8,12 @@ import getpass
 import grp
 import json
 import os
+import pwd
 from pathlib import Path
 import re
+import secrets
 import subprocess
+import sys
 import tarfile
 import tempfile
 from datetime import datetime, timezone
@@ -32,7 +35,7 @@ def run(*args: str) -> None:
     subprocess.run(args, check=True)
 
 
-def atomic_write(path: Path, contents: str, mode: int = 0o640, group: int | None = None) -> None:
+def atomic_write(path: Path, contents: str, mode: int = 0o640, group: int | None = None, owner: int = 0) -> None:
     if path.is_symlink() or (path.exists() and not path.is_file()):
         raise ValueError(f"拒绝写入非普通文件：{path}")
     fd, name = tempfile.mkstemp(prefix=f".{path.name}-", dir=path.parent)
@@ -43,7 +46,7 @@ def atomic_write(path: Path, contents: str, mode: int = 0o640, group: int | None
             os.fsync(stream.fileno())
             os.fchmod(stream.fileno(), mode)
             if group is not None:
-                os.fchown(stream.fileno(), 0, group)
+                os.fchown(stream.fileno(), owner, group)
         os.replace(name, path)
     finally:
         if os.path.exists(name):
@@ -146,6 +149,7 @@ def backup() -> Path:
     target = Path(name)
     paths = [DATA_DIR, Path("/etc/vmiss-monitor.env"), ADMIN_ENV, DEFAULT_USERS_PATH,
              Path("/etc/systemd/system") / MONITOR, Path("/etc/systemd/system") / ADMIN,
+             Path("/etc/sudoers.d/host-watch-admin"), Path("/etc/tmpfiles.d/host-watch.conf"),
              Path("/usr/local/bin/host-watch"), Path("/usr/local/bin/stockwatch"), Path("/usr/local/bin/hw")]
     if INSTALL_DIR.exists():
         paths.extend(path for path in INSTALL_DIR.iterdir() if path.name not in {".venv", "__pycache__"})
@@ -181,6 +185,7 @@ def update() -> None:
                 run("systemctl", "start", MONITOR)
         except subprocess.CalledProcessError:
             print(f"更新失败；未自动恢复监控运行。原程序和配置备份：{snapshot}")
+            subprocess.run(["systemctl", "start", ADMIN], check=False)
             raise
     print("更新完成。" + ("已恢复原本运行中的监控服务。" if was_active else "监控服务保持停用。"))
 
@@ -209,6 +214,109 @@ def restart_monitor() -> None:
         raise ValueError("请先在管理页勾选“启用库存检查”并保存")
     run("systemctl", "restart", MONITOR)
     print("监控服务已重启，将重新读取配置。")
+
+
+def apply_monitor() -> None:
+    """Make the service state match the enabled flag saved by the web admin."""
+    config = json.loads((DATA_DIR / "config.json").read_text(encoding="utf-8"))
+    if config.get("enabled") is True:
+        run("systemctl", "enable", MONITOR)
+        run("systemctl", "restart", MONITOR)
+        print("监控配置已应用：服务已重启并设置开机自启。")
+    else:
+        run("systemctl", "disable", "--now", MONITOR)
+        print("监控配置已应用：服务已停止并取消开机自启。")
+
+
+def set_monitor_enabled(enabled: bool) -> None:
+    config_path = DATA_DIR / "config.json"
+    if config_path.is_symlink():
+        raise ValueError("监控配置不能是符号链接")
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    if not isinstance(config, dict):
+        raise ValueError("监控配置格式无效")
+    config["enabled"] = enabled
+    atomic_write(config_path, json.dumps(config, ensure_ascii=False, indent=2) + "\n", mode=0o600,
+                 group=grp.getgrnam("vmiss-monitor").gr_gid, owner=pwd.getpwnam("vmiss-monitor").pw_uid)
+
+
+def web_action(payload: dict) -> dict:
+    action = payload.get("action")
+    if not isinstance(action, str):
+        raise ValueError("管理操作无效")
+    if action == "status":
+        def unit_state(unit: str) -> dict:
+            active = subprocess.run(["systemctl", "is-active", unit], text=True, capture_output=True, check=False).stdout.strip()
+            enabled = subprocess.run(["systemctl", "is-enabled", unit], text=True, capture_output=True, check=False).stdout.strip()
+            return {"active": active or "unknown", "enabled": enabled or "unknown"}
+        users = read_accounts()
+        if not users:
+            users = {"(当前使用旧版单账号认证；添加管理员后启用账号管理)": {}}
+        backups = []
+        if BACKUP_DIR.is_dir() and not BACKUP_DIR.is_symlink():
+            for path in sorted(BACKUP_DIR.glob("host-watch-*.tar.gz"), key=lambda item: item.stat().st_mtime, reverse=True)[:20]:
+                if path.is_file() and not path.is_symlink():
+                    backups.append({"name": path.name, "size": path.stat().st_size, "modified": int(path.stat().st_mtime)})
+        return {"monitor": unit_state(MONITOR), "admin": unit_state(ADMIN), "users": sorted(users), "backups": backups}
+    if action == "logs":
+        result = subprocess.run(["journalctl", "--no-pager", "-o", "short-iso", "-u", MONITOR, "-u", ADMIN, "-n", "100"], text=True, capture_output=True, check=False, timeout=15)
+        if result.returncode:
+            raise ValueError(result.stderr.strip()[:500] or "读取日志失败")
+        return {"logs": result.stdout[-40_000:]}
+    if action in {"monitor-start", "monitor-stop", "monitor-restart", "monitor-apply"}:
+        if action == "monitor-start":
+            set_monitor_enabled(True)
+            start_monitor()
+        elif action == "monitor-stop":
+            set_monitor_enabled(False)
+            stop_monitor()
+        else:
+            {"monitor-restart": restart_monitor, "monitor-apply": apply_monitor}[action]()
+        return {"ok": True, "message": "监控服务操作已完成。"}
+    if action == "backup":
+        path = backup()
+        return {"ok": True, "message": f"备份完成：{path.name}"}
+    if action == "update":
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        unit = f"host-watch-web-update-{stamp}-{secrets.token_hex(4)}.service"
+        run("systemd-run", "--quiet", "--no-block", f"--unit={unit.removesuffix('.service')}",
+            "--property=Type=oneshot", "--property=RemainAfterExit=yes", "--property=TimeoutStartSec=15min",
+            "/usr/bin/python3", str(INSTALL_DIR / "manage.py"), "web-update-worker")
+        return {"ok": True, "message": "更新任务已启动。管理页和监控可能短暂重启。", "update_unit": unit}
+    if action == "admin-restart":
+        run("systemd-run", "--quiet", "--on-active=2s", "/usr/bin/systemctl", "restart", ADMIN)
+        return {"ok": True, "message": "管理页将在 2 秒后重启，连接将短暂中断。"}
+    if action == "update-status":
+        unit = payload.get("unit", "")
+        if not isinstance(unit, str) or not re.fullmatch(r"host-watch-web-update-[0-9]{14}-[0-9a-f]{8}\.service", unit):
+            raise ValueError("更新任务编号无效")
+        result = subprocess.run(["systemctl", "show", unit, "--property=LoadState", "--property=ActiveState", "--property=SubState", "--property=Result"], text=True, capture_output=True, check=False, timeout=10)
+        values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        logs = subprocess.run(["journalctl", "--no-pager", "-u", unit, "-n", "30"], text=True, capture_output=True, check=False, timeout=10)
+        return {"unit": unit, **values, "logs": logs.stdout[-12_000:]}
+    if action in {"admin-add", "admin-passwd", "admin-delete"}:
+        username = validate_username(str(payload.get("username", "")))
+        users = read_accounts()
+        if action == "admin-add":
+            if username in users:
+                raise ValueError("管理员账号已存在")
+            if len(users) >= 50:
+                raise ValueError("最多支持 50 个管理页账号")
+        elif username not in users:
+            raise ValueError("管理员账号不存在")
+        if action == "admin-delete":
+            if len(users) == 1:
+                raise ValueError("不能删除最后一个管理员")
+            del users[username]
+        else:
+            password = payload.get("password")
+            confirmation = payload.get("confirmation")
+            if not isinstance(password, str) or password != confirmation:
+                raise ValueError("两次密码不一致")
+            users[username] = password_record(password)
+        save_accounts(users)
+        return {"ok": True, "message": {"admin-add": "管理员已添加。", "admin-passwd": "管理员密码已更新。", "admin-delete": "管理员已删除。"}[action]}
+    raise ValueError("不支持此管理操作")
 
 
 def menu() -> None:
@@ -250,7 +358,7 @@ def menu() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="HostWatch Debian 管理菜单；用户指管理页账号。")
-    parser.add_argument("command", nargs="?", default="menu", choices=["menu", "status", "update", "backup", "users", "add-user", "passwd", "delete-user"])
+    parser.add_argument("command", nargs="?", default="menu", choices=["menu", "status", "update", "backup", "users", "add-user", "passwd", "delete-user", "web-action", "web-update-worker"])
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error("请使用 sudo hw 或切换至 root")
@@ -268,15 +376,30 @@ def main() -> int:
     with os.fdopen(lock_fd, "w", encoding="utf-8") as lock:
         os.fchmod(lock.fileno(), 0o600)
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if args.command == "web-update-worker":
+                fcntl.flock(lock, fcntl.LOCK_EX)
+            else:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            parser.error("已有管理菜单正在运行，请先退出另一个终端中的菜单")
-        actions = {"menu": menu, "status": service_status, "update": update, "backup": backup,
-                   "users": list_accounts, "add-user": add_account, "passwd": change_password, "delete-user": delete_account}
+            parser.error("已有管理菜单或网页操作正在运行，请稍后重试")
         try:
-            actions[args.command]()
-        except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as exc:
-            print(f"操作失败：{exc}")
+            if args.command == "web-action":
+                payload = json.loads(sys.stdin.read(16_385))
+                if not isinstance(payload, dict) or len(json.dumps(payload)) > 16_384:
+                    raise ValueError("管理请求无效或过大")
+                print(json.dumps(web_action(payload), ensure_ascii=False))
+            elif args.command == "web-update-worker":
+                update()
+            else:
+                actions = {"menu": menu, "status": service_status, "update": update, "backup": backup,
+                           "users": list_accounts, "add-user": add_account, "passwd": change_password,
+                           "delete-user": delete_account}
+                actions[args.command]()
+        except (OSError, ValueError, KeyError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            if args.command == "web-action":
+                print(json.dumps({"error": str(exc)[:1000]}, ensure_ascii=False))
+            else:
+                print(f"操作失败：{exc}")
             return 1
         except (KeyboardInterrupt, EOFError):
             print("\n已退出管理菜单。")

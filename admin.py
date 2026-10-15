@@ -4,7 +4,9 @@ import ipaddress
 import json
 import os
 import re
+import subprocess
 import tempfile
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
 from pathlib import Path
@@ -12,7 +14,7 @@ from urllib.parse import urlsplit
 
 import requests
 
-from auth import authentication_required, authorized
+from auth import DEFAULT_USERS_PATH, authentication_required, authorized, users_path
 
 
 ROOT = Path(__file__).resolve().parent
@@ -20,6 +22,8 @@ CONFIG_PATH = Path(os.getenv("VMISS_CONFIG", str(ROOT / "config.json")))
 STATUS_PATH = Path(os.getenv("VMISS_STATUS", str(CONFIG_PATH.parent / "status.json")))
 PAGE_PATH = ROOT / "admin.html"
 MAX_BODY = 64 * 1024
+MANAGER = Path("/opt/vmiss-monitor/manage.py")
+MUTATION_LOCK = threading.Lock()
 
 
 def default_config() -> dict:
@@ -384,6 +388,30 @@ def request_body(handler: BaseHTTPRequestHandler) -> dict:
     return value
 
 
+def manager_action(value: dict) -> dict:
+    try:
+        result = subprocess.run(
+            ["/usr/bin/sudo", "-n", "/usr/bin/python3", str(MANAGER), "web-action"],
+            input=json.dumps(value, ensure_ascii=False),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        raise ValueError("服务器管理命令不可用或超时，请更新 HostWatch 安装后重试") from None
+    lines = result.stdout.splitlines()
+    try:
+        response = json.loads(lines[-1]) if lines else {}
+    except json.JSONDecodeError:
+        response = {}
+    if result.returncode or not isinstance(response, dict) or not response:
+        message = response.get("error") if isinstance(response, dict) else None
+        detail = message or result.stderr.strip() or "操作失败，请检查安装版本和系统权限"
+        raise ValueError(detail[-1000:])
+    return response
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "HostWatchAdmin/1.0"
 
@@ -446,6 +474,20 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/status":
             data = json.dumps(read_json(STATUS_PATH, {"state": "unknown", "products": []}), ensure_ascii=False).encode("utf-8")
             self._send(200, "application/json; charset=utf-8", data)
+        elif self.path == "/api/manage":
+            try:
+                data = json.dumps(manager_action({"action": "status"}), ensure_ascii=False).encode("utf-8")
+            except ValueError as exc:
+                self._send(503, "application/json; charset=utf-8", json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"))
+                return
+            self._send(200, "application/json; charset=utf-8", data)
+        elif self.path == "/api/manage/logs":
+            try:
+                data = json.dumps(manager_action({"action": "logs"}), ensure_ascii=False).encode("utf-8")
+            except ValueError as exc:
+                self._send(503, "application/json; charset=utf-8", json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"))
+                return
+            self._send(200, "application/json; charset=utf-8", data)
         elif self.path == "/api/telegram/chats":
             try:
                 token, _ = telegram_credentials()
@@ -463,11 +505,38 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         if not self._guard():
             return
-        if self.path not in {"/api/config", "/api/telegram/test"}:
+        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+            self._send(415, "application/json; charset=utf-8", b'{"error":"Content-Type must be application/json"}')
+            return
+        if self.headers.get("Sec-Fetch-Site") == "cross-site":
+            self.send_error(403)
+            return
+        origin = self.headers.get("Origin")
+        if origin and urlsplit(origin).netloc.casefold() != self.headers.get("Host", "").casefold():
+            self.send_error(403)
+            return
+        if not MUTATION_LOCK.acquire(blocking=False):
+            self._send(409, "application/json; charset=utf-8", json.dumps({"error": "另一个管理操作正在执行，请稍后重试"}, ensure_ascii=False).encode("utf-8"))
+            return
+        try:
+            self._post_action()
+        finally:
+            MUTATION_LOCK.release()
+
+    def _post_action(self) -> None:
+        if self.path not in {"/api/config", "/api/telegram/test", "/api/manage"}:
             self.send_error(404)
             return
         try:
             submitted = request_body(self)
+            if self.path == "/api/manage":
+                if submitted.get("action") in {"admin-add", "admin-passwd", "admin-delete"} and users_path() not in {None, DEFAULT_USERS_PATH}:
+                    raise ValueError("当前使用自定义账号文件，请使用终端管理该文件中的管理员")
+                if submitted.get("action") == "monitor-start":
+                    validate_config({**current_config(), "enabled": True})
+                data = json.dumps(manager_action(submitted), ensure_ascii=False).encode("utf-8")
+                self._send(200, "application/json; charset=utf-8", data)
+                return
             if self.path == "/api/telegram/test":
                 token, chat_id = telegram_credentials(
                     str(submitted.get("bot_token", "")),
@@ -510,7 +579,11 @@ class Handler(BaseHTTPRequestHandler):
             status = 502 if isinstance(exc, TelegramAPIError) else (413 if "请求体大小" in str(exc) else 400)
             self._send(status, "application/json; charset=utf-8", json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"))
             return
-        self._send(200, "application/json; charset=utf-8", json.dumps({"ok": True, "config": public_config(value)}, ensure_ascii=False).encode("utf-8"))
+        try:
+            service = manager_action({"action": "monitor-apply"})
+        except ValueError as exc:
+            service = {"ok": False, "error": str(exc)}
+        self._send(200, "application/json; charset=utf-8", json.dumps({"ok": True, "config": public_config(value), "service": service}, ensure_ascii=False).encode("utf-8"))
 
     def log_message(self, format: str, *args) -> None:
         print("%s - %s" % (self.address_string(), format % args))

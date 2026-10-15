@@ -85,8 +85,17 @@
     .blocked-help strong { display:block; margin-bottom:3px; }
     .chat-list { display:grid; gap:7px; margin-top:10px; }
     .chat-option { display:flex; justify-content:space-between; text-align:left; }
+    .manage-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px 18px; margin-top:14px; }
+    .manage-service { padding:12px 0; border-top:1px solid var(--line); }
+    .manage-service strong { display:inline-block; min-width:115px; }
+    .manage-form { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); align-items:end; gap:12px; margin:14px 0; }
+    .manage-users { display:flex; flex-wrap:wrap; gap:7px; margin:12px 0; }
+    .manage-users span { padding:5px 8px; border:1px solid var(--line); border-radius:4px; background:#fff; }
+    .manage-logs { max-height:320px; overflow:auto; padding:12px; border:1px solid var(--line); border-radius:4px; background:#fff; color:var(--ink); font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .manage-actions { display:flex; flex-wrap:wrap; gap:8px; margin:14px 0; }
     .savebar { position:sticky; bottom:10px; z-index:2; display:flex; justify-content:space-between; align-items:center; gap:14px; margin-top:18px; padding:10px 12px; border:1px solid #ccd6d5; border-radius:5px; background:rgba(255,255,255,.96); box-shadow:0 4px 18px rgba(25,43,42,.08); }
     @media(max-width:780px) { .shell { padding:16px 14px 40px; } .overview { grid-template-columns:repeat(2,minmax(0,1fr)); } .overview-item { padding:14px 10px 14px 0; min-height:85px; } .overview-item + .overview-item { padding-left:12px; } .overview-item:nth-child(3) { padding-left:0; border-left:0; } .product { grid-template-columns:1fr 1fr; gap:11px; } .product-name { grid-column:1/-1; } .product-actions { grid-column:1/-1; justify-content:flex-start; } }
+    @media(max-width:780px) { .manage-grid { grid-template-columns:1fr; } .manage-form { grid-template-columns:1fr; } }
     @media(max-width:520px) { .topbar,.section-head { align-items:flex-start; flex-direction:column; } .status-line { justify-content:flex-start; } .form-grid { grid-template-columns:1fr; } .span-2 { grid-column:auto; } .savebar { align-items:stretch; flex-direction:column; } .savebar .actions button { flex:1; } }
   </style>
 </head>
@@ -94,7 +103,7 @@
 <main class="shell">
   <header class="topbar">
     <div class="brand"><span class="brand-mark" aria-hidden="true">H</span><div><h1>HostWatch</h1><p>自托管商品库存监控</p></div></div>
-    <div class="status-line"><span id="state" class="state">状态读取中</span><span id="last-checked"></span><button id="refresh-status" type="button" title="刷新状态">刷新</button></div>
+    <div class="status-line"><span id="state" class="state">状态读取中</span><span id="last-checked"></span><button id="refresh-status" type="button" title="刷新状态">刷新</button><button id="open-management" type="button">管理员管理</button></div>
   </header>
   <div id="message"></div>
   <section class="overview" aria-label="监控摘要">
@@ -117,7 +126,7 @@
       <label class="check span-2"><input id="notify-current" type="checkbox">首次运行时，已有库存也发送提醒</label>
     </div>
     <div id="blocked-help" class="blocked-help" hidden><strong>监控因网站拦截而停止</strong><span id="blocked-message">检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。</span></div>
-    <p class="hint">安装后需在服务器启动 systemd 服务；修改配置后需要重启监控服务。</p>
+    <p class="hint">保存配置会自动应用到监控服务；启用库存检查时启动服务，关闭时停止服务。</p>
   </details>
 
   <details class="section">
@@ -150,7 +159,46 @@
     <div id="product-editors"></div>
   </details>
 
-  <footer class="savebar"><span class="subtle">配置保存在服务器；网页保存不会访问商品页。</span><div class="actions"><button id="reload" type="button">重新载入</button><button id="save" class="primary" type="button">保存配置</button></div></footer>
+  <details class="section" id="management-panel">
+    <summary>管理员管理</summary>
+    <p class="hint">在网页查看服务状态、启停监控、管理管理员账号、查看日志、备份配置或更新程序。</p>
+    <div class="manage-grid">
+      <div class="manage-service"><strong>库存监控</strong><span id="manage-monitor-state">读取中</span><span id="manage-monitor-enabled" class="subtle"></span></div>
+      <div class="manage-service"><strong>管理页面</strong><span id="manage-admin-state">读取中</span></div>
+    </div>
+    <div class="manage-actions">
+      <button id="manage-refresh" type="button">刷新状态</button>
+      <button id="manage-start" type="button" class="primary">启动监控</button>
+      <button id="manage-stop" type="button" class="danger">停止监控</button>
+      <button id="manage-restart" type="button">重启监控</button>
+      <button id="manage-restart-admin" type="button">重启管理页</button>
+      <button id="manage-backup" type="button">立即备份</button>
+      <button id="manage-update" type="button">更新 HostWatch</button>
+    </div>
+    <p class="hint">服务操作使用服务器已保存的配置；编辑后请先保存。启动和停止监控也会同步更新“启用库存检查”开关。</p>
+    <p id="manage-task-status" class="hint" aria-live="polite"></p>
+    <h3>管理页管理员</h3>
+    <p class="hint">密码至少 12 个字符。账号立即生效；删除最后一个管理员会被拒绝。</p>
+    <div id="manage-users" class="manage-users"></div>
+    <div class="manage-form">
+      <label>用户名<input id="manager-username" autocomplete="username" maxlength="64" placeholder="英文字母、数字、_ . @ -"></label>
+      <label>新密码<input id="manager-password" type="password" autocomplete="new-password" minlength="12" maxlength="256"></label>
+      <label>确认密码<input id="manager-confirm" type="password" autocomplete="new-password" minlength="12" maxlength="256"></label>
+    </div>
+    <div class="manage-actions">
+      <button id="manage-add-user" type="button" class="primary">添加管理员</button>
+      <button id="manage-change-password" type="button">修改该管理员密码</button>
+      <button id="manage-delete-user" type="button" class="danger">删除该管理员</button>
+    </div>
+    <h3>最近日志</h3>
+    <div class="manage-actions"><button id="manage-load-logs" type="button">载入日志</button></div>
+    <pre id="manage-logs" class="manage-logs">点击“载入日志”查看监控和管理服务最近记录。</pre>
+    <h3>最近备份</h3>
+    <div id="manage-backups" class="manage-users"><span>读取中</span></div>
+    <p class="hint">更新会先备份并重启相关服务；备份包含配置凭据，请按敏感文件保管。</p>
+  </details>
+
+  <footer class="savebar"><span class="subtle">保存后自动应用配置；启用监控后会按设定间隔检查商品。</span><div class="actions"><button id="reload" type="button">重新载入</button><button id="save" class="primary" type="button">保存配置</button></div></footer>
 </main>
 <aside id="toast" class="toast" hidden aria-label="操作提示"><div><strong id="toast-label" class="toast-label"></strong><div id="toast-message" role="status" aria-live="polite" aria-atomic="true"></div></div><button id="toast-close" type="button" aria-label="关闭操作提示">×</button></aside>
 <script src="/admin.js"></script>

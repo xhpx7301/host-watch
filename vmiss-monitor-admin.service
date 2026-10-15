@@ -16,11 +16,10 @@ Environment=ADMIN_PORT=8765
 ExecStart=/opt/vmiss-monitor/.venv/bin/python /opt/vmiss-monitor/admin.py
 Restart=on-failure
 RestartSec=5
-NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/vmiss-monitor
+ReadWritePaths=/var/lib/vmiss-monitor /etc /var/backups /run/stockwatch-manager.lock
 
 [Install]
 WantedBy=multi-user.target

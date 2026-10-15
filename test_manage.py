@@ -67,6 +67,55 @@ class ManagementTests(unittest.TestCase):
                 self.manage.start_monitor()
             run.assert_not_called()
 
+    def test_web_apply_restarts_running_monitor_to_read_new_config(self):
+        (self.directory / "config.json").write_text(json.dumps({"enabled": True}))
+        with patch.object(self.manage, "DATA_DIR", self.directory), patch.object(self.manage, "run") as run:
+            self.manage.web_action({"action": "monitor-apply"})
+        self.assertEqual([call.args for call in run.call_args_list], [
+            ("systemctl", "enable", self.manage.MONITOR), ("systemctl", "restart", self.manage.MONITOR)])
+
+    def test_web_apply_disabled_config_stops_monitor(self):
+        (self.directory / "config.json").write_text(json.dumps({"enabled": False}))
+        with patch.object(self.manage, "DATA_DIR", self.directory), patch.object(self.manage, "run") as run:
+            self.manage.web_action({"action": "monitor-apply"})
+        run.assert_called_once_with("systemctl", "disable", "--now", self.manage.MONITOR)
+
+    def test_web_rejects_arbitrary_actions_and_update_unit_names(self):
+        for payload in ({"action": "shell", "command": "id"}, {"action": "update-status", "unit": "ssh.service"}):
+            with self.subTest(payload=payload), patch.object(self.manage, "run") as run:
+                with self.assertRaises(ValueError):
+                    self.manage.web_action(payload)
+                run.assert_not_called()
+
+    def test_web_cannot_delete_last_administrator(self):
+        with patch.object(self.manage, "read_accounts", return_value={"alice": {}}), patch.object(self.manage, "save_accounts") as save:
+            with self.assertRaisesRegex(ValueError, "最后一个"):
+                self.manage.web_action({"action": "admin-delete", "username": "alice"})
+            save.assert_not_called()
+
+    def test_web_password_confirmation_failure_keeps_accounts(self):
+        with patch.object(self.manage, "read_accounts", return_value={"alice": {}}), patch.object(self.manage, "save_accounts") as save:
+            with self.assertRaises(ValueError):
+                self.manage.web_action({"action": "admin-passwd", "username": "alice", "password": "password long enough", "confirmation": "different"})
+            save.assert_not_called()
+
+    def test_web_update_runs_in_independent_systemd_unit(self):
+        with patch.object(self.manage, "run") as run:
+            result = self.manage.web_action({"action": "update"})
+        self.assertRegex(result["update_unit"], r"^host-watch-web-update-[0-9]{14}-[0-9a-f]{8}\.service$")
+        self.assertEqual(run.call_args.args[0], "systemd-run")
+        self.assertEqual(run.call_args.args[-1], "web-update-worker")
+
+    def test_web_start_stop_persists_enabled_state_with_service_owner(self):
+        config = self.directory / "config.json"
+        config.write_text(json.dumps({"enabled": False}))
+        with patch.object(self.manage, "DATA_DIR", self.directory), patch.object(self.manage, "run"), patch.object(self.manage.grp, "getgrnam", return_value=SimpleNamespace(gr_gid=123)), patch.object(self.manage.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=456)), patch.object(self.manage.os, "fchown") as chown:
+            self.manage.web_action({"action": "monitor-start"})
+            self.assertTrue(json.loads(config.read_text())["enabled"])
+            self.manage.web_action({"action": "monitor-stop"})
+            self.assertFalse(json.loads(config.read_text())["enabled"])
+        self.assertEqual(chown.call_args.args[1:], (456, 123))
+
     def test_update_network_error_keeps_services_untouched(self):
         with patch.object(self.manage, "urlopen", side_effect=OSError("offline")), patch.object(self.manage, "run") as run, patch.object(self.manage, "backup") as backup:
             with self.assertRaises(OSError):

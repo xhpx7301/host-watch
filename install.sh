@@ -23,7 +23,7 @@ esac
 command -v systemctl >/dev/null 2>&1 || fail "未找到 systemd/systemctl。"
 
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl python3 python3-venv tar
+DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl python3 python3-venv sudo tar
 
 if ! getent group "$SERVICE_GROUP" >/dev/null; then
   groupadd --system "$SERVICE_GROUP"
@@ -42,7 +42,7 @@ tar -xzf "$TEMP_DIR/source.tar.gz" -C "$TEMP_DIR"
 SOURCE_DIR="$(find "$TEMP_DIR" -mindepth 1 -maxdepth 1 -type d -name 'host-watch-*' -print -quit)"
 [[ -n "$SOURCE_DIR" ]] || fail "源码压缩包格式不正确。"
 
-for file in monitor.py admin.py auth.py manage.py stockwatch.sh admin.html admin.js requirements.txt config.example.json .env.example admin.env.example vmiss-monitor.service vmiss-monitor-admin.service; do
+for file in monitor.py admin.py auth.py manage.py stockwatch.sh admin.html admin.js requirements.txt config.example.json .env.example admin.env.example vmiss-monitor.service vmiss-monitor-admin.service host-watch-admin.sudoers; do
   [[ -f "$SOURCE_DIR/$file" ]] || fail "源码缺少必需文件：$file"
 done
 
@@ -55,7 +55,7 @@ install -o root -g root -m 0644 \
   "$SOURCE_DIR/monitor.py" "$SOURCE_DIR/admin.py" "$SOURCE_DIR/auth.py" "$SOURCE_DIR/manage.py" "$SOURCE_DIR/admin.html" \
   "$SOURCE_DIR/admin.js" "$SOURCE_DIR/requirements.txt" "$SOURCE_DIR/config.example.json" \
   "$SOURCE_DIR/.env.example" "$SOURCE_DIR/vmiss-monitor.service" \
-  "$SOURCE_DIR/vmiss-monitor-admin.service" "$SOURCE_DIR/admin.env.example" "$INSTALL_DIR/"
+  "$SOURCE_DIR/vmiss-monitor-admin.service" "$SOURCE_DIR/admin.env.example" "$SOURCE_DIR/host-watch-admin.sudoers" "$INSTALL_DIR/"
 install -d -o root -g root -m 0755 /usr/local/bin
 if [[ -f /usr/local/bin/jk && ! -L /usr/local/bin/jk ]] && \
   cmp -s /usr/local/bin/jk <(sed 's/运行 hw/运行 jk/g' "$SOURCE_DIR/stockwatch.sh"); then
@@ -64,6 +64,15 @@ fi
 install -o root -g root -m 0755 "$SOURCE_DIR/stockwatch.sh" /usr/local/bin/host-watch
 install -o root -g root -m 0755 "$SOURCE_DIR/stockwatch.sh" /usr/local/bin/stockwatch
 install -o root -g root -m 0755 "$SOURCE_DIR/stockwatch.sh" /usr/local/bin/hw
+install -o root -g root -m 0440 "$SOURCE_DIR/host-watch-admin.sudoers" /etc/sudoers.d/host-watch-admin
+visudo -cf /etc/sudoers.d/host-watch-admin >/dev/null || fail "HostWatch 管理权限配置校验失败。"
+install -d -o root -g root -m 0700 /var/backups/stockwatch
+[[ ! -L /run/stockwatch-manager.lock ]] || fail "管理锁不能是符号链接。"
+if [[ ! -e /run/stockwatch-manager.lock ]]; then
+  install -o root -g root -m 0600 /dev/null /run/stockwatch-manager.lock
+fi
+install -d -o root -g root -m 0755 /etc/tmpfiles.d
+printf 'f /run/stockwatch-manager.lock 0600 root root -\n' > /etc/tmpfiles.d/host-watch.conf
 
 if [[ ! -e "$DATA_DIR/config.json" ]]; then
   install -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0600 \
@@ -111,4 +120,4 @@ log "Debian 管理菜单：hw（更新、服务管理、管理页用户管理；
 log "Telegram、厂商、商品和人工购买入口请在管理页配置。"
 log "管理页：在本地电脑运行 ssh -N -L 8765:127.0.0.1:8765 your-user@your-server，然后打开 http://127.0.0.1:8765"
 log "若使用反向代理域名，请设置 ADMIN_ALLOWED_HOSTS，并用 hw add-user 创建账号（也兼容原 ADMIN_PASSWORD）。"
-log "确认各厂商允许自动访问并在管理页配置商品后，手动运行：sudo systemctl enable --now vmiss-monitor.service"
+log "在管理页配置商品并勾选启用库存检查，保存后会自动启动或重启监控；管理员管理区提供服务、账号、日志、备份和更新操作。"
