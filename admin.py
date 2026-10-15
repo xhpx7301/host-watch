@@ -585,7 +585,7 @@ def validate_config(value: object) -> dict:
             legacy = item.get("enabled", False) if not any(k in item for k in ("watch_enabled", "notify_enabled")) else False
             normalized_item[flag] = item.get(flag, legacy)
         normalized_item["enabled"] = normalized_item["watch_enabled"] or normalized_item["notify_enabled"]
-        for field in ("remarks", "line_label"):
+        for field in ("remarks", "line_label", "line_telecom", "line_unicom", "line_mobile"):
             text = item.get(field, "")
             if not isinstance(text, str) or len(text) > 500:
                 raise ValueError(f"产品 {name} 的备注和线路必须是 500 字以内的文本")

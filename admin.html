@@ -290,6 +290,21 @@
     .catalog-row-actions small { width:100%; }
     .catalog-row-actions a { color:var(--purple); background:var(--purple-soft); }
     .catalog-table td:nth-child(5) { color:var(--blue); }
+    .watch-table th,.watch-table td,.catalog-table th,.catalog-table td { text-align:center; vertical-align:middle; }
+    .watch-operations,.catalog-row-actions { justify-content:center; margin-inline:auto; }
+    .catalog-table .check { justify-content:center; }
+    .watch-table .manual-field { text-align:center; }
+    .catalog-network { margin-top:5px; }
+    .network-detail,.price-main,.watch-table td:nth-child(3) { white-space:nowrap; }
+    .carrier-lines { display:flex; flex-wrap:wrap; justify-content:center; gap:5px; min-width:270px; max-width:300px; margin-inline:auto; }
+    .carrier-line { display:flex; align-items:center; gap:2px; padding:3px 5px; border:1px solid #d6eddf; border-radius:5px; color:var(--green); background:#f0faf4; font-size:11px; }
+    .carrier-line.unicom { color:var(--blue); border-color:#dce6ff; background:#f2f6ff; }
+    .carrier-line.mobile { color:var(--purple); border-color:#e8e0ff; background:#f7f3ff; }
+    .carrier-input { width:52px; height:23px; padding:2px; color:inherit; background:transparent; border:1px solid transparent; font-size:11px; }
+    .carrier-input:hover,.carrier-input:focus { border-color:currentColor; background:white; }
+    .carrier-input::placeholder { color:inherit; opacity:.7; }
+    .legacy-line { flex-basis:100%; color:var(--muted); font-size:11px; }
+    .notification-result-row > td { text-align:left; }
     #monitor-start { color:var(--green); border-color:#c7e4d8; background:var(--green-soft); }
     #save { box-shadow:0 2px 5px #3267df20; }
     .watchlist-filters { gap:10px; margin:10px 0; }

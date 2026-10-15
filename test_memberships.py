@@ -46,17 +46,24 @@ class MembershipTests(unittest.TestCase):
             with self.subTest(watch=watch, notify=notify):
                 value = admin.validate_config({"products": [html_product(
                     enabled=True, watch_enabled=watch, notify_enabled=notify,
-                    remarks="自用", line_label="CN2 GIA",
+                    remarks="自用", line_label="CN2 GIA", line_telecom="CN2 GIA", line_unicom="9929", line_mobile="CMIN2",
                     snapshot={"price": "USD 5 / 月", "specs": "1 核", "traffic": "1 TB", "available": 3,
                               "url": "https://shop.example.com/item"})]})
                 product = admin.validate_config(json.loads(json.dumps(value)))["products"][0]
                 self.assertEqual(product["enabled"], watch or notify)
                 self.assertEqual(product["remarks"], "自用")
                 self.assertEqual(product["line_label"], "CN2 GIA")
+                self.assertEqual([product[f"line_{carrier}"] for carrier in ("telecom", "unicom", "mobile")], ["CN2 GIA", "9929", "CMIN2"])
                 self.assertEqual(product["snapshot"]["traffic"], "1 TB")
                 self.assertEqual(len(monitor.selected_products(value)), int(watch or notify))
         product = admin.validate_config({"products": [html_product(watch_enabled=True)]})["products"][0]
         self.assertFalse(product["notify_enabled"])
+
+    def test_carrier_line_fields_validate_text_and_length(self):
+        for field in ("line_telecom", "line_unicom", "line_mobile"):
+            for invalid in (None, {}, 123, "x" * 501):
+                with self.subTest(field=field, value=type(invalid).__name__), self.assertRaises(ValueError):
+                    admin.validate_config({"products": [html_product(**{field: invalid})]})
 
     def test_watch_only_never_notifies_but_notification_only_does(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -132,7 +139,7 @@ class MembershipAPITests(unittest.TestCase):
 
     def test_save_reload_preserves_independent_selections_and_manual_fields(self):
         value = admin.default_config()
-        value["products"] = [html_product(watch_enabled=True, notify_enabled=False, remarks="备注", line_label="手动线路")]
+        value["products"] = [html_product(watch_enabled=True, notify_enabled=False, remarks="备注", line_label="手动线路", line_telecom="CN2 GIA", line_unicom="9929", line_mobile="CMIN2")]
         with patch.object(admin, "manager_action", return_value={"ok": True}):
             code, body = self.request("/api/config", value)
         self.assertEqual(code, 200)
@@ -148,6 +155,7 @@ class MembershipAPITests(unittest.TestCase):
         self.assertFalse(saved["notify_enabled"])
         self.assertEqual(saved["remarks"], "备注")
         self.assertEqual(saved["line_label"], "手动线路")
+        self.assertEqual([saved[f"line_{carrier}"] for carrier in ("telecom", "unicom", "mobile")], ["CN2 GIA", "9929", "CMIN2"])
 
 
 if __name__ == "__main__":

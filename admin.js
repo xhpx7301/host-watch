@@ -942,14 +942,54 @@ function compactDate(value) {
 }
 function renderSpecs(cell, raw, network = false) {
   const value = raw || "—";
-  const label = value.split(/\s*·\s*/).join(" / ").replace(/(\d)\s+(核|MB|GB|TB|Mbps|Gbps)\b/gi, "$1$2").replace(/(\d)\s+核/g, "$1核");
+  const label = network ? formatNetwork(value) : compactUnits(value.split(/\s*·\s*/).join(" / "));
   const chip = text("span", label, network ? "network-detail" : "spec-chip"); chip.title = value; cell.append(chip);
+}
+function compactUnits(value) {
+  return value.replace(/(\d)\s+(核|[KMGT]i?B|[KMGT]?bps)\b/gi, "$1$2").replace(/(\d)\s+核/g, "$1核");
+}
+function formatNetwork(raw) {
+  const parts = String(raw || "—").split(/\s*(?:·|@|\||\n)\s*|\s+\/\s+/).map(value => compactUnits(value
+    .replace(/^(?:流量|带宽|traffic|bandwidth)\s*[:：]?\s*/i, "").replace(/(?:流量|带宽|\s+(?:traffic|bandwidth|port))$/i, "").trim())).filter(Boolean);
+  // Some sites list bandwidth first; keep the display as traffic@bandwidth.
+  const bandwidth = value => /[KMGT]?bps|[KMGT]?B\/s|带宽|bandwidth/i.test(value);
+  return [...parts.filter(value => !bandwidth(value)), ...parts.filter(bandwidth)].join("@") || "—";
+}
+const currencySymbols = {
+  CNY: "¥", CNH: "¥", RMB: "¥", USD: "$", CAD: "CA$", AUD: "A$", NZD: "NZ$", HKD: "HK$", SGD: "S$", TWD: "NT$",
+  JPY: "JP¥", EUR: "€", GBP: "£", KRW: "₩", RUB: "₽", INR: "₹", TRY: "₺", THB: "฿", VND: "₫", IDR: "Rp", MYR: "RM",
+  BRL: "R$", PHP: "₱", CHF: "Fr.",
+};
+function formatPrice(raw) {
+  const codes = Object.keys(currencySymbols).join("|"), amount = "([+-]?\\d[\\d,]*(?:\\.\\d+)?)";
+  return String(raw || "—")
+    .replace(new RegExp(`(?<![A-Za-z])(?:${codes})\\s*[$¥￥]?\\s*${amount}`, "gi"), (match, value) => currencySymbols[match.match(/[A-Za-z]+/)[0].toUpperCase()] + value)
+    .replace(new RegExp(`[$¥￥]?\\s*${amount}\\s*(${codes})(?![A-Za-z])`, "gi"), (_, value, code) => currencySymbols[code.toUpperCase()] + value)
+    .replace(/￥/g, "¥").replace(/([¥$€£₩₽₹₺฿₫₱])\s+(?=\d)/g, "$1").replace(/(¥\d[\d,.]*)\s*元/g, "$1");
+}
+function renderLineEditor(cell, item) {
+  const lines = text("div", "", "carrier-lines");
+  for (const [key, label, name] of [["telecom", "电", "电信"], ["unicom", "联", "联通"], ["mobile", "移", "移动"]]) {
+    const field = `line_${key}`, wrap = text("label", "", `carrier-line ${key}`), input = document.createElement("input");
+    wrap.append(text("span", `${label}:`)); input.className = "carrier-input"; input.value = item[field] || "";
+    input.placeholder = "填写线路"; input.maxLength = 500; input.disabled = actionRunning;
+    input.setAttribute("aria-label", `${item.name} ${name}线路`);
+    input.addEventListener("input", () => { item[field] = input.value; updateDraftState(); });
+    wrap.append(input); lines.append(wrap);
+  }
+  if (item.line_label) {
+    const legacy = text("div", "", "legacy-line"), input = document.createElement("input");
+    legacy.append(text("span", "原线路：")); input.className = "manual-field"; input.value = item.line_label; input.maxLength = 500;
+    input.setAttribute("aria-label", `${item.name} 原线路`); input.disabled = actionRunning;
+    input.addEventListener("input", () => { item.line_label = input.value; updateDraftState(); }); legacy.append(input); lines.append(legacy);
+  }
+  cell.append(lines);
 }
 function expandedPrices(target) {
   return new Set([...target.querySelectorAll(".price-options[open]")].map(detail => detail.closest("[data-id]")?.dataset.id));
 }
 function renderPrice(cell, raw, expanded = false) {
-  const prices = (raw || "—").split(/[；;]/).map(p => p.trim()).filter(Boolean);
+  const prices = formatPrice(raw).split(/[；;]/).map(p => p.trim()).filter(Boolean);
   if (prices.length < 2) { cell.append(text("span", prices[0], "price-main")); return; }
   const details = text("details", "", "price-options"), summary = text("summary", prices[0], "price-main");
   details.open = expanded;
@@ -994,7 +1034,7 @@ function renderProductList() {
   const provider = document.querySelector("#watchlist-provider").value, stock = document.querySelector("#watchlist-stock").value;
   const visible = watched.filter(item => {
     const p = productSnapshot(item, latest.get(item.id));
-    return (!search || [item.name, item.provider, p.region, item.remarks, item.line_label].join(" ").toLowerCase().includes(search)) &&
+    return (!search || [item.name, item.provider, p.region, item.remarks, item.line_label, item.line_telecom, item.line_unicom, item.line_mobile].join(" ").toLowerCase().includes(search)) &&
       (provider === "all" || provider === item.adapter || provider === "other" && !merchantNames[item.adapter]) &&
       (stock === "all" || stock === "in" && p.available > 0 || stock === "out" && p.available === 0 || stock === "unknown" && !Number.isInteger(p.available));
   }).sort((a,b) => (merchantOrder().indexOf(a.adapter) + 1 || 99) - (merchantOrder().indexOf(b.adapter) + 1 || 99));
@@ -1011,11 +1051,12 @@ function renderProductList() {
     cell(item.provider); const identity = cell(); identity.append(text("strong", p.name || item.name));
     const time = runtime ? runtime.checked_at || lastStatus?.last_checked : p.checked_at;
     const updated = text("small", time ? `读取 ${compactDate(time)}` : "等待首次读取"); updated.title = time ? new Date(time).toLocaleString() : "尚无商品快照"; identity.append(updated); cell(p.region || "—");
-    for (const [key, label] of [["remarks", "备注"], ["line_label", "线路"]]) {
+    for (const [key, label] of [["remarks", "备注"]]) {
       const input = document.createElement("input"); input.className = "manual-field"; input.value = item[key] || ""; input.maxLength = 500; input.placeholder = "管理员填写";
       input.setAttribute("aria-label", `${item.name} ${label}`); input.disabled = actionRunning;
       input.addEventListener("input", () => { item[key] = input.value; updateDraftState(); }); cell().append(input);
     }
+    renderLineEditor(cell(), item);
     renderSpecs(cell("", "watch-specs"), p.specs); renderSpecs(cell("", "watch-specs"), p.traffic, true); renderPrice(cell("", "watch-price"), p.price, expanded.has(item.id));
     cell().append(text("span", Number.isInteger(p.available) ? stockLabel(p) : "未知", `state ${!Number.isInteger(p.available) ? "pending" : p.available > 0 ? "ok" : "error"}`));
     const actions = text("div", "", "watch-operations");

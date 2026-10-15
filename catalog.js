@@ -68,8 +68,9 @@
     if (signature === tableSignature) { renderSelection(visible); renderReminders(); return; }
     tableSignature = signature;
     const body = get("catalog-rows");
+    const expanded = expandedPrices(body);
     body.replaceChildren(...visible.map((row) => {
-      const tr = document.createElement("tr");
+      const tr = document.createElement("tr"); tr.dataset.id = row.key;
       const cell = () => { const td = document.createElement("td"); tr.append(td); return td; };
       const choice = document.createElement("input");
       choice.type = "checkbox"; choice.checked = selected.has(row.key);
@@ -80,8 +81,12 @@
       const identity = cell(); identity.append(text("strong", row.name), text("small", row.provider));
       const region = cell(); region.append(text("span", row.region || "—"));
       if (row.line && row.line !== row.region) region.append(text("small", row.line));
-      cell().textContent = [row.specs, row.traffic].filter(Boolean).join(" · ") || "商家未提供配置";
-      cell().textContent = row.price || "以商家页面为准";
+      const hardware = cell();
+      const metadata = productSnapshot({ snapshot: row });
+      if (metadata.specs) renderSpecs(hardware, metadata.specs);
+      if (metadata.traffic) { const network = text("div", "", "catalog-network"); renderSpecs(network, metadata.traffic, true); hardware.append(network); }
+      if (!metadata.specs && !metadata.traffic) hardware.textContent = "商家未提供配置";
+      renderPrice(cell(), row.price || "以商家页面为准", expanded.has(row.key));
       const stock = cell();
       stock.append(text("span", row.available === null ? "未知" : row.available > 0 ? (row.stock_mode === "availability" ? "有货" : `有货 ${row.available}`) : "缺货", `state ${row.available === null ? "pending" : row.available > 0 ? "ok" : "error"}`));
       if (row.error) { const error = text("small", row.error); stock.append(error); stock.style.whiteSpace = "normal"; }
