@@ -37,7 +37,10 @@ cleanup() { rm -rf -- "$TEMP_DIR"; }
 trap cleanup EXIT
 
 log "正在下载 GitHub main 分支源码。"
-curl --fail --location --silent --show-error "$ARCHIVE_URL" --output "$TEMP_DIR/source.tar.gz"
+curl --fail --location --silent --show-error --connect-timeout 20 --max-time 120 \
+  --retry 2 --retry-delay 2 --retry-max-time 300 \
+  "$ARCHIVE_URL" --output "$TEMP_DIR/source.tar.gz" \
+  || fail "GitHub 源码下载失败，请检查到 codeload.github.com 的网络、DNS 和代理；应用文件尚未替换。"
 tar -xzf "$TEMP_DIR/source.tar.gz" -C "$TEMP_DIR"
 SOURCE_DIR="$(find "$TEMP_DIR" -mindepth 1 -maxdepth 1 -type d -name 'host-watch-*' -print -quit)"
 [[ -n "$SOURCE_DIR" ]] || fail "源码压缩包格式不正确。"

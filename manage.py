@@ -12,12 +12,16 @@ import pwd
 from pathlib import Path
 import re
 import secrets
+import socket
+import ssl
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from datetime import datetime, timezone
 from urllib.request import urlopen
+from urllib.error import HTTPError, URLError
 
 from auth import DEFAULT_USERS_PATH, load_users, password_record, validate_username
 
@@ -29,6 +33,7 @@ BACKUP_DIR = Path("/var/backups/stockwatch")
 MONITOR = "vmiss-monitor.service"
 ADMIN = "vmiss-monitor-admin.service"
 INSTALLER_URL = "https://raw.githubusercontent.com/xhpx7301/host-watch/main/install.sh"
+INSTALLER_FALLBACK_URL = "https://github.com/xhpx7301/host-watch/raw/refs/heads/main/install.sh"
 
 
 def run(*args: str) -> None:
@@ -165,13 +170,43 @@ def backup() -> Path:
     return target
 
 
+def download_installer() -> bytes:
+    """Retry transient downloads using only official GitHub HTTPS endpoints."""
+    for attempt, url in enumerate((INSTALLER_URL, INSTALLER_URL, INSTALLER_FALLBACK_URL), 1):
+        print(f"正在下载更新脚本（{attempt}/3，{('GitHub 官方备用入口' if url == INSTALLER_FALLBACK_URL else 'raw.githubusercontent.com')}）…", flush=True)
+        try:
+            with urlopen(url, timeout=60) as response:
+                script = response.read(1024 * 1024 + 1)
+            if len(script) > 1024 * 1024 or not script.startswith(b"#!/usr/bin/env bash"):
+                raise ValueError("更新脚本格式异常，已取消；现有程序、配置和服务未改动")
+            return script
+        except (OSError, URLError) as exc:
+            reason = getattr(exc, "reason", exc)
+            retryable = True
+            if isinstance(exc, HTTPError):
+                detail = f"GitHub 返回 HTTP {exc.code}"
+                retryable = exc.code in {408, 429} or 500 <= exc.code < 600
+                exc.close()
+            elif isinstance(reason, ssl.SSLCertVerificationError):
+                detail = "TLS 证书校验失败，请检查系统时间、ca-certificates 和代理证书"
+                retryable = False
+            elif isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in str(reason).lower():
+                detail = "连接或 TLS 握手超时，请检查服务器到 GitHub 的网络、IPv4/IPv6 路由及代理"
+            elif isinstance(reason, socket.gaierror):
+                detail = "GitHub 域名解析失败，请检查服务器 DNS"
+            else:
+                detail = "无法完成 GitHub HTTPS 下载，请检查服务器网络和代理"
+            if attempt == 3 or not retryable:
+                raise OSError(f"更新脚本下载失败：{detail}。现有程序、配置和服务未改动；网络恢复后可重新执行 hw update") from None
+            print(f"下载失败：{detail}；{attempt * 2} 秒后重试。", flush=True)
+            time.sleep(attempt * 2)
+    raise AssertionError("unreachable")
+
+
 def update() -> None:
     print("将从 GitHub main 更新程序，保留商品、Telegram 和管理员配置。")
     # Download completely before stopping services; a network error changes nothing.
-    with urlopen(INSTALLER_URL, timeout=60) as response:
-        script = response.read(1024 * 1024 + 1)
-    if len(script) > 1024 * 1024 or not script.startswith(b"#!/usr/bin/env bash"):
-        raise ValueError("更新脚本格式异常，已取消")
+    script = download_installer()
     was_active = subprocess.run(["systemctl", "is-active", "--quiet", MONITOR], check=False).returncode == 0
     snapshot = backup()
     with tempfile.TemporaryDirectory(prefix="host-watch-update-") as temporary:

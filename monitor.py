@@ -7,6 +7,7 @@ import os
 import re
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -132,11 +133,52 @@ def fetch_with_requests(session: requests.Session, url: str, expected_host: str 
     return _validate_page_response(response.status_code, response.text, response.url, expected_host, getattr(response, "headers", {}))
 
 
+@contextmanager
+def browser_request_slot(wait: bool = False):
+    """Serialize Chromium across the admin and monitor services on Debian."""
+    if sys.platform != "linux":
+        yield
+        return
+    import fcntl
+    lock_path = Path(os.getenv("VMISS_CONFIG", str(CONFIG_PATH))).parent / ".browser-request.lock"
+    with lock_path.open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+        except BlockingIOError:
+            raise RequestServiceError("另一个浏览器请求正在执行，请等待完成或停止测试后重试") from None
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def check_browser_memory(fetcher: dict) -> None:
+    if urlsplit(fetcher["flaresolverr_url"]).hostname not in {"localhost", "127.0.0.1", "::1"}:
+        return
+    try:
+        info = Path("/proc/meminfo").read_text()
+    except OSError:
+        return
+    match = re.search(r"^MemAvailable:\s+(\d+)\s+kB", info, re.MULTILINE)
+    if match and int(match.group(1)) < 256 * 1024:
+        raise RequestServiceError("服务器可用内存不足 256 MiB，已取消启动浏览器；请释放内存或使用普通 HTTPS 请求")
+
+
 def fetch_with_flaresolverr(session: requests.Session, url: str, fetcher: dict, expected_host: str = "app.vmiss.com") -> tuple[str, str]:
+    if fetcher.get("_browser_slot_held"):
+        return _fetch_with_flaresolverr(session, url, fetcher, expected_host)
+    with browser_request_slot(wait=True):
+        check_browser_memory(fetcher)
+        return _fetch_with_flaresolverr(session, url, fetcher, expected_host)
+
+
+def _fetch_with_flaresolverr(session: requests.Session, url: str, fetcher: dict, expected_host: str) -> tuple[str, str]:
     endpoint = str(fetcher["flaresolverr_url"])
     timeout_seconds = int(fetcher["timeout_seconds"])
     wait = int(fetcher.get("wait_seconds", 0))
     request = {"cmd": "request.get", "url": url, "maxTimeout": timeout_seconds * 1000}
+    if fetcher.get("_test_browser_session"):
+        request["session"] = fetcher["_test_browser_session"]
     if wait:
         request["waitInSeconds"] = wait
     try:

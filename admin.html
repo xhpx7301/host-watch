@@ -134,6 +134,7 @@
     <div class="status-line"><span id="state" class="state">状态读取中</span><span id="last-checked"></span><button id="refresh-status" type="button" title="刷新状态">刷新</button><button id="open-management" type="button">管理员管理</button></div>
   </header>
   <div id="message"></div>
+  <div id="stock-test-bar" class="section actions" hidden><span id="stock-test-status" role="status"></span><button id="stock-test-stop" class="product-test-stop danger" type="button">停止测试</button></div>
   <section class="overview" aria-label="监控摘要">
     <div class="overview-item"><span class="eyebrow">监控服务</span><strong id="overview-state" class="overview-value">读取中</strong><span id="overview-state-note" class="overview-note">等待状态数据</span></div>
     <div class="overview-item"><span class="eyebrow">商品总数</span><strong id="overview-total" class="overview-value">0</strong><span id="overview-total-note" class="overview-note">0 个厂商</span></div>
@@ -207,7 +208,7 @@
   <details class="section" data-tone="purple">
     <summary><span>商品配置</span><span class="section-toggle" aria-hidden="true"></span></summary>
     <div class="section-body">
-    <p class="hint">点击商品标题展开配置。可直接“测试此商品”查看库存或错误；测试无需开启监控，不发送 Telegram 提醒。VMISS、VPS.SOY、Akile 和通用网页仅显示对应适配器的字段。</p>
+    <p class="hint">点击商品标题展开配置。可直接“测试此商品”查看库存或错误，也可随时“停止测试”；测试期间页面仍可操作，无需开启监控，不发送 Telegram 提醒。VMISS、VPS.SOY、Akile 和通用网页仅显示对应适配器的字段。</p>
     <div id="product-editors"></div>
     </div>
   </details>

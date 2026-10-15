@@ -21,6 +21,7 @@ let monitorService = null;
 let savedConfig = null;
 const openProducts = new Set();
 const productTests = new Map();
+let activeTest = null;
 
 function setMessage(message, kind = "", notify = true) {
   messageNode.textContent = message;
@@ -52,7 +53,7 @@ async function requestJSON(url, options = {}) {
       if (!response.ok) throw new Error(`请求失败（HTTP ${response.status}），请检查登录状态或服务器。`);
       throw new Error("服务器响应无法识别，请刷新状态核对结果。");
     }
-    if (!response.ok) throw new Error(result.error || `请求失败（HTTP ${response.status}）`);
+    if (!response.ok) throw Object.assign(new Error(result.error || `请求失败（HTTP ${response.status}）`), { status: response.status });
     return result;
   } catch (error) {
     if (controller.signal.aborted) throw new Error("请求超时，请核对结果及反向代理超时设置后重试。");
@@ -64,8 +65,8 @@ async function requestJSON(url, options = {}) {
 async function runAction(button, label, message, action, notify = true) {
   if (actionRunning) return;
   actionRunning = true;
-  document.querySelector(".shell").inert = true;
-  const controls = [...document.querySelectorAll("button,input,select")].filter((control) => control.id !== "toast-close");
+  document.querySelector(".shell").inert = !activeTest;
+  const controls = [...document.querySelectorAll("button,input,select")].filter((control) => control.id !== "toast-close" && !control.classList.contains("product-test-stop"));
   const previousStates = controls.map((control) => control.disabled);
   const previousLabel = button?.textContent;
   controls.forEach((control) => { control.disabled = true; });
@@ -84,6 +85,7 @@ async function runAction(button, label, message, action, notify = true) {
     }
     actionRunning = false;
     document.querySelector(".shell").inert = false;
+    syncTestControls();
   }
 }
 
@@ -308,6 +310,10 @@ function productEditor(item, index) {
   test.type = "button";
   test.addEventListener("click", () => testProduct(item.id, test));
   actions.append(test);
+  const stop = text("button", "停止测试", "product-test-stop danger");
+  stop.type = "button";
+  stop.addEventListener("click", () => stopProductTest());
+  actions.append(stop);
   const remove = text("button", "移除", "danger");
   remove.type = "button";
   remove.addEventListener("click", () => {
@@ -417,7 +423,7 @@ function syncEditor(article) {
     item.unavailable_pattern = get("unavailable_pattern").value.trim();
   }
   updateProductEditorTitle(article, item);
-  if (productTests.has(item.id)) {
+  if (productTests.has(item.id) && activeTest?.id !== item.id) {
     productTests.delete(item.id);
     renderProductTest(article, item.id);
   }
@@ -434,28 +440,111 @@ function renderProductTest(article, id) {
   const result = productTests.get(id);
   node.hidden = !result;
   if (!result) { node.textContent = ""; return; }
-  node.className = `product-test-result ${result.pending ? "pending" : result.ok ? "success" : "error"}`;
-  node.textContent = result.pending ? "正在读取此商品库存，请稍候…" : result.ok
+  node.className = `product-test-result ${result.pending || result.cancelled ? "pending" : result.ok ? "success" : "error"}`;
+  node.textContent = result.pending ? (result.stopping ? "正在停止测试并释放浏览器资源…" : "正在读取此商品库存，可点击“停止测试”，页面其他功能仍可使用。") : result.cancelled ? "测试已停止，未改动自动监控和库存历史。" : result.ok
     ? `测试成功：${stockLabel(result)}。${new Date(result.checked_at).toLocaleString()} · 耗时 ${result.duration_seconds} 秒。自动监控状态保持不变。`
     : `测试失败：${result.error}${result.checked_at ? `（${new Date(result.checked_at).toLocaleString()}）` : ""}`;
+  if (result.warning) node.textContent += ` ${result.warning}`;
 }
 
-async function testProduct(id, button) {
-  await runAction(button, "测试中…", "正在单次读取商品库存，无需开启监控…", async () => {
-    const article = editorNode.querySelector(`[data-id="${CSS.escape(id)}"]`);
-    const item = config.products.find((product) => product.id === id);
-    const fetcher = collectConfig().fetcher;
-    productTests.set(id, { pending: true });
-    renderProductTest(article, id);
-    try {
-      const result = await requestJSON("/api/products/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ product: item, fetcher }), timeoutMs: (fetcher.timeout_seconds + fetcher.wait_seconds + 40) * 1000 });
-      productTests.set(id, result);
-      setMessage(result.ok ? "单次库存测试完成，结果已显示在该商品配置内。" : `单次库存测试失败：${result.error}`, result.ok ? "success" : "error");
-    } catch (error) {
-      productTests.set(id, { ok: false, error: error.message });
-      throw error;
-    } finally { renderProductTest(article, id); }
+function syncTestControls() {
+  document.querySelector("#stock-test-bar").hidden = !activeTest;
+  document.querySelector("#stock-test-status").textContent = activeTest?.stopping ? "正在停止测试并释放资源…" : "商品测试正在运行，页面仍可操作。";
+  const globalStop = document.querySelector("#stock-test-stop");
+  globalStop.disabled = Boolean(activeTest?.stopping);
+  editorNode.querySelectorAll(".product-editor").forEach((article) => {
+    const running = activeTest?.id === article.dataset.id;
+    const test = article.querySelector(".product-test");
+    test.disabled = Boolean(activeTest) || actionRunning;
+    test.textContent = running ? "测试中…" : "测试此商品";
+    const stop = article.querySelector(".product-test-stop");
+    stop.hidden = !running;
+    stop.disabled = Boolean(activeTest?.stopping);
+    stop.textContent = activeTest?.stopping ? "停止中…" : "停止测试";
+    article.querySelector(".actions > .danger:not(.product-test-stop)").disabled = running || actionRunning;
+    renderProductTest(article, article.dataset.id);
   });
+}
+
+async function stopProductTest() {
+  const task = activeTest;
+  if (!task || task.stopping) return;
+  task.stopping = true;
+  productTests.set(task.id, { pending: true, stopping: true });
+  setMessage("正在停止本次测试并释放资源…", "pending");
+  syncTestControls();
+  try {
+    try { await task.start; } catch { /* Still stop a task whose start response was lost. */ }
+    await requestJSON("/api/products/test/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: task.taskId }), timeoutMs: 15000 });
+  } catch (error) {
+    if (activeTest !== task) return;
+    task.stopping = false;
+    setMessage(`停止请求失败：${error.message} 可再次点击停止测试。`, "error");
+    syncTestControls();
+  }
+}
+
+async function testProduct(id) {
+  if (activeTest || actionRunning) return;
+  const task = { id, taskId: crypto.randomUUID(), stopping: false };
+  const item = structuredClone(config.products.find((product) => product.id === id));
+  const fetcher = collectConfig().fetcher;
+  task.draft = JSON.stringify({ product: item, fetcher });
+  activeTest = task;
+  sessionStorage.setItem("hostwatch-stock-test", JSON.stringify({ id, taskId: task.taskId }));
+  productTests.set(id, { pending: true });
+  setMessage("正在单次测试商品，可随时点击“停止测试”；页面其他功能仍可使用。", "pending");
+  syncTestControls();
+  task.start = requestJSON("/api/products/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: task.taskId, product: item, fetcher }), timeoutMs: 15000 });
+  await followProductTest(task, task.start);
+}
+
+async function followProductTest(task, initial) {
+  try {
+    let result;
+    try { result = await initial; }
+    catch (startError) {
+      try { result = await requestJSON(`/api/products/test/status/${encodeURIComponent(task.taskId)}`); }
+      catch (statusError) {
+        if (statusError.status === 404) throw startError;
+        result = { pending: true };
+      }
+    }
+    while (result.pending) {
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      try { result = await requestJSON(`/api/products/test/status/${encodeURIComponent(task.taskId)}`, { timeoutMs: 10000 }); }
+      catch (error) {
+        if (error.status === 404) { result = { ok: false, error: "测试任务已不存在，服务器可能已重启" }; break; }
+        setMessage(`测试状态暂时无法读取：${error.message} 仍可尝试停止测试。`, "error");
+        await new Promise((resolve) => setTimeout(resolve, 2300));
+      }
+    }
+    if (task.draft && task.draft !== JSON.stringify({ product: config.products.find((product) => product.id === task.id), fetcher: collectConfig().fetcher })) {
+      result.warning = [result.warning, "此结果使用测试开始时的配置；页面已修改，请按需重新测试。"].filter(Boolean).join(" ");
+    }
+    productTests.set(task.id, result);
+    setMessage(result.warning || (result.cancelled ? "测试已停止。" : result.ok ? "单次库存测试完成，结果已显示在该商品配置内。" : `单次库存测试失败：${result.error}`), result.warning || (!result.ok && !result.cancelled) ? "error" : "success");
+  } catch (error) {
+    productTests.set(task.id, { ok: false, error: error.message });
+    setMessage(error.message, "error");
+  } finally {
+    if (activeTest === task) activeTest = null;
+    sessionStorage.removeItem("hostwatch-stock-test");
+    syncTestControls();
+  }
+}
+document.querySelector("#stock-test-stop").addEventListener("click", stopProductTest);
+
+function restoreProductTest() {
+  if (activeTest) return;
+  try {
+    const saved = JSON.parse(sessionStorage.getItem("hostwatch-stock-test"));
+    if (!saved?.id || !/^[a-zA-Z0-9-]{16,64}$/.test(saved.taskId)) return;
+    activeTest = { ...saved, stopping: false, start: Promise.resolve() };
+    productTests.set(saved.id, { pending: true });
+    syncTestControls();
+    void followProductTest(activeTest, requestJSON(`/api/products/test/status/${encodeURIComponent(saved.taskId)}`));
+  } catch { sessionStorage.removeItem("hostwatch-stock-test"); }
 }
 
 function updateAdapterFields(article) {
@@ -475,6 +564,7 @@ function renderProducts() {
   editorNode.replaceChildren(...config.products.map(productEditor));
   renderProductList();
   renderOverview();
+  syncTestControls();
 }
 
 function stockLabel(product) {
@@ -657,6 +747,7 @@ async function reloadConfig(notify = true) {
     ? `${["配置", "检查结果", "服务状态"][index]}载入失败：${result.reason.message}` : "").filter(Boolean);
   if (failures.length) throw new Error(failures.join("；"));
   setMessage("配置和监控状态已载入。", "success", notify);
+  restoreProductTest();
 }
 
 function addProduct(item) {

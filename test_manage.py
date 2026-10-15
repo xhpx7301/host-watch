@@ -5,6 +5,8 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+import ssl
+from urllib.error import URLError, HTTPError
 from unittest.mock import patch, MagicMock
 
 
@@ -117,11 +119,30 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(chown.call_args.args[1:], (456, 123))
 
     def test_update_network_error_keeps_services_untouched(self):
-        with patch.object(self.manage, "urlopen", side_effect=OSError("offline")), patch.object(self.manage, "run") as run, patch.object(self.manage, "backup") as backup:
+        with patch.object(self.manage, "urlopen", side_effect=OSError("offline")) as download, patch.object(self.manage.time, "sleep"), patch.object(self.manage, "run") as run, patch.object(self.manage, "backup") as backup:
             with self.assertRaises(OSError):
                 self.manage.update()
+            self.assertEqual(download.call_count, 3)
             run.assert_not_called()
             backup.assert_not_called()
+
+    def test_download_recovers_from_handshake_timeout_and_official_fallback(self):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b"#!/usr/bin/env bash\nexit 0\n"
+        with patch.object(self.manage, "urlopen", side_effect=[URLError(TimeoutError("handshake timed out")), URLError(TimeoutError()), response]) as download, patch.object(self.manage.time, "sleep"):
+            self.assertTrue(self.manage.download_installer().startswith(b"#!/"))
+        self.assertEqual(download.call_args.args[0], self.manage.INSTALLER_FALLBACK_URL)
+
+    def test_certificate_http404_and_invalid_script_are_not_retried(self):
+        for error in [URLError(ssl.SSLCertVerificationError("invalid cert")), HTTPError(self.manage.INSTALLER_URL, 404, "Not found", {}, None)]:
+            with self.subTest(error=error), patch.object(self.manage, "urlopen", side_effect=error) as download, self.assertRaises(OSError):
+                self.manage.download_installer()
+            download.assert_called_once()
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b"<html>error</html>"
+        with patch.object(self.manage, "urlopen", return_value=response) as download, self.assertRaises(ValueError):
+            self.manage.download_installer()
+        download.assert_called_once()
 
     def test_update_only_restores_previously_active_monitor(self):
         for active in (True, False):

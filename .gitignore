@@ -6,3 +6,4 @@ state.json
 state.json.tmp
 config.json
 status.json
+.browser-request.lock

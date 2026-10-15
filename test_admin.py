@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 import admin
 
@@ -109,35 +109,61 @@ class AdminAPITests(unittest.TestCase):
             admin.validate_config({"products": [{**item, "request_mode": "unknown"}]})
 
     def test_single_product_test_uses_unsaved_disabled_product_without_side_effects(self):
-        from monitor import Product
-        item = {"id": "test", "name": "test", "adapter": "html", "url": "https://shop.example.com/item", "stock_selector": ".stock", "enabled": False}
-        with patch("monitor.inspect_product", return_value=Product("test", "test", 7, item["url"], stock_mode="quantity")) as inspect, patch.object(admin, "manager_action") as manager, patch("monitor.write_state") as history, patch("monitor.write_status") as status, patch("monitor.telegram_request") as telegram:
-            code, body = self.request("/api/products/test", {"product": item, "fetcher": {"mode": "flaresolverr", "wait_seconds": 3}})
-        result = json.loads(body)
+        item = {"id": "test", "name": "test", "adapter": "html", "url": "https://shop.example.com/item", "stock_selector": ".stock", "enabled": False, "request_mode": "requests"}
+        task_id = "test-1234567890123456"
+        process = Mock()
+        process.communicate.return_value = (json.dumps({"ok": True, "available": 7, "stock_mode": "quantity"}), None)
+        process.poll.return_value = 0
+        with patch.dict(admin.TEST_TASKS, {}, clear=True), patch.object(admin.subprocess, "Popen", return_value=process), patch.object(admin, "manager_action") as manager, patch("monitor.write_state") as history, patch("monitor.write_status") as status, patch("monitor.telegram_request") as telegram:
+            code, _ = self.request("/api/products/test", {"task_id": task_id, "product": item, "fetcher": {"mode": "flaresolverr", "wait_seconds": 3}})
+            self.assertTrue(admin.TEST_TASKS[task_id].done.wait(3))
+            result = admin.TEST_TASKS[task_id].snapshot()
         self.assertEqual(code, 200)
         self.assertTrue(result["ok"])
         self.assertEqual(result["available"], 7)
         self.assertIn("checked_at", result)
-        self.assertFalse(inspect.call_args.args[1]["enabled"])
-        self.assertEqual(inspect.call_args.args[2]["wait_seconds"], 3)
+        submitted = json.loads(process.communicate.call_args.args[0])
+        self.assertFalse(submitted["product"]["enabled"])
+        self.assertEqual(submitted["fetcher"]["wait_seconds"], 3)
         for action in [manager, history, status, telegram]:
             action.assert_not_called()
         self.assertFalse(self.config.exists())
 
     def test_single_product_test_returns_inline_error(self):
-        from monitor import SiteBlocked
         item = {"id": "test", "name": "test", "adapter": "html", "url": "https://shop.example.com/item", "stock_selector": ".stock"}
-        with patch("monitor.inspect_product", side_effect=SiteBlocked("HTTP 403")):
-            code, body = self.request("/api/products/test", {"product": item})
+        task_id = "test-1234567890123456"
+        process = Mock()
+        process.communicate.return_value = (json.dumps({"ok": False, "error": "HTTP 403"}), None)
+        process.poll.return_value = 0
+        with patch.dict(admin.TEST_TASKS, {}, clear=True), patch.object(admin.subprocess, "Popen", return_value=process):
+            code, _ = self.request("/api/products/test", {"task_id": task_id, "product": item})
+            self.assertTrue(admin.TEST_TASKS[task_id].done.wait(3))
+            result = admin.TEST_TASKS[task_id].snapshot()
         self.assertEqual(code, 200)
-        self.assertFalse(json.loads(body)["ok"])
-        self.assertEqual(json.loads(body)["error"], "HTTP 403")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "HTTP 403")
 
     def test_single_product_validation_prevents_network_request(self):
         with patch("monitor.inspect_product") as inspect:
-            code, _ = self.request("/api/products/test", {"product": {"id": "bad"}})
+            code, _ = self.request("/api/products/test", {"task_id": "test-1234567890123456", "product": {"id": "bad"}})
         self.assertEqual(code, 400)
         inspect.assert_not_called()
+
+    def test_async_start_and_stop_work_while_management_lock_is_held(self):
+        item = {"id": "test", "name": "test", "adapter": "html", "url": "https://shop.example.com/item", "stock_selector": ".stock"}
+        task_id = "test-1234567890123456"
+        with patch.dict(admin.TEST_TASKS, {}, clear=True), patch.object(admin.StockTestTask, "run"), admin.MUTATION_LOCK:
+            code, body = self.request("/api/products/test", {"task_id": task_id, "product": item})
+            self.assertEqual(code, 200)
+            self.assertTrue(json.loads(body)["pending"])
+            code, body = self.request("/api/products/test/stop", {"task_id": task_id})
+            self.assertEqual(code, 200)
+            self.assertTrue(admin.TEST_TASKS[task_id].cancelled.is_set())
+        self.assertFalse(self.config.exists())
+
+    def test_cross_site_request_cannot_cancel_test(self):
+        code, _ = self.request("/api/products/test/stop", {"task_id": "test-1234567890123456"}, {"Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(code, 403)
 
     def test_save_cannot_change_monitoring_switch(self):
         value = admin.default_config()

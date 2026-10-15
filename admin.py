@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -26,6 +27,139 @@ PAGE_PATH = ROOT / "admin.html"
 MAX_BODY = 64 * 1024
 MANAGER = Path("/opt/vmiss-monitor/manage.py")
 MUTATION_LOCK = threading.Lock()
+TEST_LOCK = threading.Lock()
+TEST_TASKS = {}
+
+
+def destroy_test_browser(endpoint: str, session_id: str, creation_uncertain: bool = False) -> str:
+    """Only destroy this task's session, never other browser users' sessions."""
+    for attempt in range(3):
+        try:
+            response = requests.post(endpoint, json={"cmd": "sessions.destroy", "session": session_id}, timeout=(2, 5))
+            payload = response.json()
+            if isinstance(payload, dict) and (payload.get("status") == "ok" or (not creation_uncertain and "doesn't exist" in str(payload.get("message", "")))):
+                return ""
+        except (requests.RequestException, ValueError):
+            pass
+        if attempt < 2:
+            time.sleep(1)
+    return "本地测试已结束，但未能确认 FlareSolverr 浏览器释放；请检查服务日志，必要时重启 FlareSolverr"
+
+
+def stock_test_worker() -> None:
+    from monitor import MonitorError, inspect_product
+    value = json.loads(sys.stdin.read(MAX_BODY + 1))
+    try:
+        with requests.Session() as session:
+            session.headers["User-Agent"] = "HostWatch/1.0 (manual stock test)"
+            result = inspect_product(session, value["product"], value["fetcher"])
+        output = {"ok": True, "available": result.available, "stock_mode": result.stock_mode}
+    except MonitorError as exc:
+        output = {"ok": False, "error": str(exc)}
+    print(json.dumps(output))
+
+
+class StockTestTask:
+    def __init__(self, task_id: str, product: dict, fetcher: dict):
+        self.id = task_id
+        self.product = product
+        self.fetcher = fetcher
+        self.started = time.monotonic()
+        self.cancelled = threading.Event()
+        self.done = threading.Event()
+        self.lock = threading.Lock()
+        self.process = None
+        self.output = {"pending": True}
+        self.browser = product.get("request_mode", "inherit") == "flaresolverr" or (product.get("request_mode", "inherit") == "inherit" and fetcher["mode"] == "flaresolverr")
+        self.session_id = f"hostwatch-test-{task_id}"
+
+    def snapshot(self) -> dict:
+        with self.lock:
+            return {"task_id": self.id, "product_id": self.product["id"], **self.output}
+
+    def cancel(self) -> None:
+        with self.lock:
+            if self.done.is_set():
+                return
+            self.cancelled.set()
+            if self.process is not None and self.process.poll() is None:
+                self.process.terminate()
+
+    def run(self) -> None:
+        from contextlib import nullcontext
+        from monitor import MonitorError, browser_request_slot, check_browser_memory
+        result = {"ok": False, "error": "测试任务未完成"}
+        cleanup_warning = ""
+        browser_attempted = False
+        browser_created = False
+        try:
+            with browser_request_slot() if self.browser else nullcontext():
+                if self.browser:
+                    check_browser_memory(self.fetcher)
+                try:
+                    if self.browser and not self.cancelled.is_set():
+                        browser_attempted = True
+                        try:
+                            response = requests.post(self.fetcher["flaresolverr_url"], json={"cmd": "sessions.create", "session": self.session_id}, timeout=(3, 35))
+                            payload = response.json()
+                            if not response.ok or not isinstance(payload, dict) or payload.get("status") != "ok":
+                                raise ValueError("browser creation failed")
+                            browser_created = True
+                        except (requests.RequestException, ValueError):
+                            raise MonitorError("FlareSolverr 浏览器启动失败或超时，请检查服务内存及日志") from None
+                    with self.lock:
+                        if self.cancelled.is_set():
+                            return
+                        fetcher = dict(self.fetcher)
+                        if self.browser:
+                            fetcher.update({"_test_browser_session": self.session_id, "_browser_slot_held": True})
+                        self.process = subprocess.Popen([sys.executable, str(ROOT / "admin.py"), "--stock-test-worker"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
+                    try:
+                        stdout, _ = self.process.communicate(json.dumps({"product": self.product, "fetcher": fetcher}), timeout=self.fetcher["timeout_seconds"] + self.fetcher["wait_seconds"] + 40)
+                        if not self.cancelled.is_set():
+                            result = json.loads(stdout)
+                            if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
+                                raise ValueError("invalid result")
+                    except subprocess.TimeoutExpired:
+                        self.process.kill()
+                        self.process.communicate()
+                        result = {"ok": False, "error": "测试超时，已终止本地任务"}
+                finally:
+                    if self.process is not None and self.process.poll() is None:
+                        self.process.kill()
+                        self.process.communicate()
+                    if browser_attempted:
+                        cleanup_warning = destroy_test_browser(self.fetcher["flaresolverr_url"], self.session_id, not browser_created)
+        except MonitorError as exc:
+            result = {"ok": False, "error": str(exc)}
+        except (OSError, ValueError):
+            result = {"ok": False, "error": "测试进程异常退出，请检查服务器内存及管理页日志"}
+        finally:
+            with self.lock:
+                if self.cancelled.is_set():
+                    result = {"ok": False, "cancelled": True, "error": "测试已停止"}
+                if cleanup_warning:
+                    result["warning"] = cleanup_warning
+                self.output = {**result, "pending": False, "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"), "duration_seconds": round(time.monotonic() - self.started, 1)}
+                self.done.set()
+
+
+def start_stock_test(submitted: dict) -> dict:
+    task_id = str(submitted.get("task_id", ""))
+    if not re.fullmatch(r"[a-zA-Z0-9-]{16,64}", task_id):
+        raise ValueError("测试任务编号无效")
+    value = validate_config({"products": [submitted.get("product")], "fetcher": submitted.get("fetcher", {})})
+    with TEST_LOCK:
+        if task_id in TEST_TASKS:
+            raise ValueError("测试任务编号已使用，请重新测试")
+        if any(not task.done.is_set() for task in TEST_TASKS.values()):
+            raise ValueError("已有商品测试正在执行，请先停止或等待完成")
+        for old_id in list(TEST_TASKS)[:-19]:
+            del TEST_TASKS[old_id]
+        task = StockTestTask(task_id, value["products"][0], value["fetcher"])
+        TEST_TASKS[task_id] = task
+        threading.Thread(target=task.run, daemon=True).start()
+        return task.snapshot()
 
 
 def default_config() -> dict:
@@ -529,6 +663,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(503, "application/json; charset=utf-8", json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"))
                 return
             self._send(200, "application/json; charset=utf-8", data)
+        elif self.path.startswith("/api/products/test/status/"):
+            task_id = self.path.rsplit("/", 1)[-1]
+            with TEST_LOCK:
+                task = TEST_TASKS.get(task_id)
+            if task is None:
+                self._send(404, "application/json; charset=utf-8", b'{"error":"Test task not found"}')
+                return
+            self._send(200, "application/json; charset=utf-8", json.dumps(task.snapshot(), ensure_ascii=False).encode("utf-8"))
         elif self.path == "/api/telegram/chats":
             try:
                 token, _ = telegram_credentials()
@@ -556,6 +698,10 @@ class Handler(BaseHTTPRequestHandler):
         if origin and urlsplit(origin).netloc.casefold() != self.headers.get("Host", "").casefold():
             self.send_error(403)
             return
+        # Stopping and polling tests must never wait behind config/service locks.
+        if self.path in {"/api/products/test", "/api/products/test/stop"}:
+            self._post_action()
+            return
         if not MUTATION_LOCK.acquire(blocking=False):
             self._send(409, "application/json; charset=utf-8", json.dumps({"error": "另一个管理操作正在执行，请稍后重试"}, ensure_ascii=False).encode("utf-8"))
             return
@@ -565,26 +711,23 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if self.path not in {"/api/config", "/api/telegram/test", "/api/manage", "/api/fetcher/test", "/api/products/test"}:
+        if self.path not in {"/api/config", "/api/telegram/test", "/api/manage", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop"}:
             self.send_error(404)
             return
         try:
             submitted = request_body(self)
+            if self.path == "/api/products/test/stop":
+                with TEST_LOCK:
+                    task = TEST_TASKS.get(str(submitted.get("task_id", "")))
+                if task is None:
+                    raise ValueError("测试任务不存在，请刷新状态核对")
+                task.cancel()
+                self._send(200, "application/json; charset=utf-8", json.dumps(task.snapshot(), ensure_ascii=False).encode("utf-8"))
+                return
             if self.path == "/api/products/test":
-                # Validate only the selected draft; other unfinished products and
-                # Telegram settings must not prevent a standalone stock test.
-                from monitor import MonitorError, inspect_product
-                product = submitted.get("product")
-                value = validate_config({"products": [product], "fetcher": submitted.get("fetcher", {})})
-                started = time.monotonic()
-                try:
-                    with requests.Session() as session:
-                        session.headers["User-Agent"] = "HostWatch/1.0 (manual stock test)"
-                        result = inspect_product(session, value["products"][0], value["fetcher"])
-                    output = {"ok": True, "available": result.available, "stock_mode": result.stock_mode}
-                except MonitorError as exc:
-                    output = {"ok": False, "error": str(exc)}
-                output.update({"checked_at": datetime.now().astimezone().isoformat(timespec="seconds"), "duration_seconds": round(time.monotonic() - started, 1)})
+                if not submitted.get("task_id"):
+                    raise ValueError("请刷新管理页后重试，以使用可停止的商品测试")
+                output = start_stock_test(submitted)
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/fetcher/test":
@@ -670,4 +813,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:] == ["--stock-test-worker"]:
+        stock_test_worker()
+    else:
+        main()
