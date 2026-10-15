@@ -12,10 +12,70 @@ const listNode = document.querySelector("#product-list");
 const messageNode = document.querySelector("#message");
 const blockedHelpNode = document.querySelector("#blocked-help");
 let lastStatus = null;
+const toastNode = document.querySelector("#toast");
+let toastTimer;
+let actionRunning = false;
 
-function setMessage(message, kind = "") {
+function setMessage(message, kind = "", notify = true) {
   messageNode.textContent = message;
   messageNode.className = kind;
+  if (!notify) return;
+  clearTimeout(toastTimer);
+  toastNode.className = `toast ${kind}`;
+  toastNode.hidden = false;
+  document.querySelector("#toast-label").textContent = ({ pending: "操作提示", success: "操作成功", error: "操作失败" })[kind] || "操作提示";
+  document.querySelector("#toast-message").textContent = message;
+  // Errors and in-progress actions stay visible until dismissed or replaced.
+  if (kind === "success") toastTimer = setTimeout(() => { toastNode.hidden = true; }, 6500);
+}
+
+document.querySelector("#toast-close").addEventListener("click", () => {
+  clearTimeout(toastTimer);
+  toastNode.hidden = true;
+});
+
+async function requestJSON(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 40000);
+  try {
+    const response = await fetch(url, { cache: "no-store", ...options, signal: controller.signal });
+    let result;
+    try { result = await response.json(); }
+    catch {
+      if (!response.ok) throw new Error(`请求失败（HTTP ${response.status}），请检查登录状态或服务器。`);
+      throw new Error("服务器响应无法识别，请重新载入核对结果。");
+    }
+    if (!response.ok) throw new Error(result.error || `请求失败（HTTP ${response.status}）`);
+    return result;
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error("请求超时，请重新载入核对结果后重试。");
+    if (error instanceof TypeError) throw new Error("网络连接失败，请检查连接并重新载入核对结果。");
+    throw error;
+  } finally { clearTimeout(timer); }
+}
+
+async function runAction(button, label, message, action, notify = true) {
+  if (actionRunning) return;
+  actionRunning = true;
+  const controls = [...document.querySelectorAll("button,input,select")].filter((control) => control.id !== "toast-close");
+  const previousStates = controls.map((control) => control.disabled);
+  const previousLabel = button?.textContent;
+  controls.forEach((control) => { control.disabled = true; });
+  if (button) {
+    button.textContent = label;
+    button.setAttribute("aria-busy", "true");
+  }
+  setMessage(message, "pending", notify);
+  try { await action(); }
+  catch (error) { setMessage(error.message, "error"); }
+  finally {
+    controls.forEach((control, index) => { control.disabled = previousStates[index]; });
+    if (button) {
+      button.textContent = previousLabel;
+      button.removeAttribute("aria-busy");
+    }
+    actionRunning = false;
+  }
 }
 
 function text(tag, value, className) {
@@ -236,9 +296,11 @@ function updateFetcherStatus() {
 }
 
 async function loadConfig() {
-  const response = await fetch("/api/config", { cache: "no-store" });
-  if (!response.ok) throw new Error(`读取配置失败（HTTP ${response.status}）`);
-  config = await response.json();
+  applyConfig(await requestJSON("/api/config"));
+}
+
+function applyConfig(value) {
+  config = value;
   document.querySelector("#enabled").checked = Boolean(config.enabled);
   document.querySelector("#interval").value = config.interval_seconds || 600;
   document.querySelector("#affiliate").value = config.affiliate_id || "";
@@ -259,9 +321,7 @@ async function loadConfig() {
 }
 
 async function loadStatus() {
-  const response = await fetch("/api/status", { cache: "no-store" });
-  if (!response.ok) throw new Error(`读取监控状态失败（HTTP ${response.status}）`);
-  lastStatus = await response.json();
+  lastStatus = await requestJSON("/api/status");
   const state = document.querySelector("#state");
   state.textContent = ({ ok: "最近检查成功", blocked: "因网站拦截已停止", error: "检查出错", unknown: "尚无检查记录" })[lastStatus.state] || lastStatus.state || "尚无检查记录";
   state.className = `state ${lastStatus.state || ""}`;
@@ -270,9 +330,14 @@ async function loadStatus() {
   document.querySelector("#blocked-message").textContent = lastStatus.message || "检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。";
   renderProductList();
   renderOverview();
-  if (lastStatus.state === "blocked") setMessage(`监控已停止：${lastStatus.message || "网站拒绝自动访问"}`, "error");
-  else if (lastStatus.state === "error") setMessage(`监控错误：${lastStatus.message || "请查看服务器日志"}`, "error");
-  else if (lastStatus.state === "ok") setMessage("监控最近一次检查成功。", "success");
+}
+
+async function reloadConfig(notify = true) {
+  const results = await Promise.allSettled([loadConfig(), loadStatus()]);
+  const failures = results.map((result, index) => result.status === "rejected"
+    ? `${index === 0 ? "配置" : "监控状态"}载入失败：${result.reason.message}` : "").filter(Boolean);
+  if (failures.length) throw new Error(failures.join("；"));
+  setMessage(notify ? "配置和状态已重新载入，未保存的修改已丢弃；此次操作不会触发库存检查。" : "配置和监控状态已载入。", "success", notify);
 }
 
 document.querySelector("#add").addEventListener("click", () => {
@@ -283,47 +348,38 @@ document.querySelector("#add").addEventListener("click", () => {
   editorNode.lastElementChild?.scrollIntoView({ behavior: "smooth", block: "center" });
   setMessage("商品已添加，请填写商品信息后保存。", "pending");
 });
-document.querySelector("#reload").addEventListener("click", () => Promise.all([loadConfig(), loadStatus()]).then(() => setMessage("配置和状态已重新载入。", "success")).catch((error) => setMessage(error.message, "error")));
-document.querySelector("#refresh-status").addEventListener("click", () => loadStatus().catch((error) => setMessage(error.message, "error")));
+document.querySelector("#reload").addEventListener("click", (event) => runAction(event.currentTarget, "载入中…", "正在重新载入配置和状态…", () => reloadConfig()));
+document.querySelector("#refresh-status").addEventListener("click", (event) => runAction(event.currentTarget, "刷新中…", "正在刷新监控状态…", async () => {
+  await loadStatus();
+  setMessage("监控状态已刷新；此次操作不会触发库存检查。", "success");
+}));
 document.querySelector("#fetcher-mode").addEventListener("change", updateFetcherStatus);
 document.querySelector("#interval").addEventListener("input", () => { config.interval_seconds = Number(document.querySelector("#interval").value); renderOverview(); });
-document.querySelector("#telegram-test").addEventListener("click", async () => {
-  const button = document.querySelector("#telegram-test");
-  button.disabled = true;
-  try {
-    const response = await fetch("/api/telegram/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim() }) });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "Telegram 测试失败");
-    setMessage("Telegram 测试消息已发送。", "success");
-  } catch (error) { setMessage(error.message, "error"); }
-  finally { button.disabled = false; }
-});
-document.querySelector("#telegram-load-chats").addEventListener("click", async () => {
-  const button = document.querySelector("#telegram-load-chats");
+document.querySelector("#telegram-test").addEventListener("click", (event) => runAction(event.currentTarget, "发送中…", "正在发送 Telegram 测试消息…", async () => {
+  await requestJSON("/api/telegram/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim() }) });
+  setMessage("Telegram 测试消息已发送。", "success");
+}));
+document.querySelector("#telegram-load-chats").addEventListener("click", (event) => runAction(event.currentTarget, "读取中…", "正在读取 Telegram 最近聊天…", async () => {
   const chatsNode = document.querySelector("#telegram-chats");
-  button.disabled = true;
   chatsNode.replaceChildren();
-  try {
-    const response = await fetch("/api/telegram/chats", { cache: "no-store" });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "读取聊天失败");
-    if (!result.chats.length) { chatsNode.append(text("p", "暂时没有聊天记录；先打开 bot 并发送 /start。", "hint")); return; }
-    for (const chat of result.chats) {
-      const option = text("button", "", "chat-option");
-      option.type = "button";
-      option.append(text("span", `${chat.name}（${chat.type}）`), text("span", chat.id));
-      option.addEventListener("click", () => { document.querySelector("#telegram-chat-id").value = chat.id; setMessage(`已选择 ${chat.name}，保存后生效。`, "pending"); });
-      chatsNode.append(option);
-    }
-    setMessage(`已读取 ${result.chats.length} 个聊天。`, "success");
-  } catch (error) { setMessage(error.message, "error"); }
-  finally { button.disabled = false; }
-});
+  const result = await requestJSON("/api/telegram/chats");
+  if (!result.chats.length) {
+    const message = "读取完成，暂无聊天记录；请先打开 bot 并发送 /start 后重试。";
+    chatsNode.append(text("p", message, "hint"));
+    setMessage(message, "success");
+    return;
+  }
+  for (const chat of result.chats) {
+    const option = text("button", "", "chat-option");
+    option.type = "button";
+    option.append(text("span", `${chat.name}（${chat.type}）`), text("span", chat.id));
+    option.addEventListener("click", () => { document.querySelector("#telegram-chat-id").value = chat.id; setMessage(`已选择 ${chat.name}，保存后生效。`, "pending"); });
+    chatsNode.append(option);
+  }
+  setMessage(`已读取 ${result.chats.length} 个聊天。`, "success");
+}));
 
 async function saveConfig() {
-  setMessage("正在保存配置…", "pending");
-  const saveButton = document.querySelector("#save");
-  saveButton.disabled = true;
   const products = config.products.map((item) => ({ ...item }));
   const next = {
     enabled: document.querySelector("#enabled").checked,
@@ -334,17 +390,10 @@ async function saveConfig() {
     telegram: { bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim(), disabled: document.querySelector("#telegram-disabled").checked, clear: document.querySelector("#telegram-clear").checked },
     products,
   };
-  try {
-    const response = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "保存失败");
-    document.querySelector("#telegram-token").value = "";
-    await loadConfig();
-    document.querySelector("#enabled").checked = next.enabled;
-    setMessage("配置已保存。需要在服务器重启 vmiss-monitor.service 后生效。", "success");
-  } catch (error) {
-    setMessage(error.message, "error");
-  } finally { saveButton.disabled = false; }
+  const result = await requestJSON("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
+  document.querySelector("#telegram-token").value = "";
+  applyConfig(result.config);
+  setMessage("配置已保存到服务器。请通过 hw 菜单启动或重启监控服务，使配置生效。", "success");
 }
-document.querySelector("#save").addEventListener("click", saveConfig);
-loadConfig().then(loadStatus).then(() => setMessage("配置和监控状态已载入。", "success")).catch((error) => setMessage(error.message, "error"));
+document.querySelector("#save").addEventListener("click", (event) => runAction(event.currentTarget, "保存中…", "正在保存配置…", saveConfig));
+runAction(null, "", "正在载入配置和监控状态…", () => reloadConfig(false), false);
