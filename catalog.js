@@ -150,9 +150,12 @@
   function render() {
     document.querySelectorAll("[data-catalog-provider]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.catalogProvider === provider)));
     const scopes = data?.scopes || knownScopes.get(provider) || [];
-    get("catalog-scope").replaceChildren(...(scopes.length ? scopes.map((row) => new Option(row.name, row.id)) : [new Option("等待目录", "")]));
+    get("catalog-scope").replaceChildren(...(scopes.length ? scopes.map((row) => new Option(row.id === "all" ? "全部公开套餐（手动）" : row.name, row.id)) : [new Option("等待目录", "")]));
     get("catalog-scope").value = scope;
     get("catalog-scope").disabled = actionRunning || loading || !scopes.length;
+    const fullCatalog = scope === "all";
+    get("catalog-auto").disabled = actionRunning || fullCatalog;
+    get("catalog-auto").title = fullCatalog ? "全部公开套餐只支持手动刷新，避免重复读取多个分类" : "分类目录可按设定间隔自动刷新";
     const busy = Boolean(task?.pending);
     get("catalog-refresh").disabled = actionRunning || busy || loading;
     get("catalog-stop").hidden = !busy;
@@ -168,7 +171,7 @@
     else if (task?.provider === provider && task.cancelled) status.textContent = "刷新已停止，保留上次快照。";
     else if (loading) status.textContent = "正在读取目录缓存…";
     else if (metadataOutdated) { status.classList.add("stale"); status.textContent = "此分类为旧版快照，带宽信息尚未更新，请刷新分类库存。"; }
-    else { status.textContent = data ? `已读取${scope === "all" ? "全部公开套餐" : "此分类"}。${data.unknown ? `${data.unknown} 个套餐库存未知，未当作缺货或现货。` : ""}${stale ? "当前为历史快照，请刷新后核对。" : "库存以此快照的检查时间为准。"}` : "选择商家后刷新公开套餐目录，无需先开启自动监控。"; if (stale) status.classList.add("stale"); }
+    else { status.textContent = data ? `已读取${scope === "all" ? "全部公开套餐（仅手动刷新）" : "此分类"}。${data.unknown ? `${data.unknown} 个套餐库存未知，未当作缺货或现货。` : ""}${stale ? "当前为历史快照，请刷新后核对。" : "库存以此快照的检查时间为准。"}` : "选择商家后刷新公开套餐目录，无需先开启自动监控。"; if (stale) status.classList.add("stale"); }
     const filterArrived = filterGeneration === generation && !loading && (data?.fetched_at || !task?.pending);
     renderTable(Boolean(filterArrived));
     if (filterArrived) filterGeneration = null;
@@ -197,7 +200,7 @@
     clearTimeout(pollTimer); clearTimeout(autoTimer);
     if (currentPage !== "catalog" || document.hidden) return;
     if (task?.pending) pollTimer = setTimeout(() => loadSnapshot(false), 1200);
-    else if (!task?.error && !task?.cancelled && Number(get("catalog-auto").value)) autoTimer = setTimeout(refresh, Number(get("catalog-auto").value) * 1000);
+    else if (scope !== "all" && !task?.error && !task?.cancelled && Number(get("catalog-auto").value)) autoTimer = setTimeout(refresh, Number(get("catalog-auto").value) * 1000);
   }
 
   async function loadSnapshot(refreshMissing = true) {
