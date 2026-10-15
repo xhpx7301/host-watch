@@ -169,6 +169,8 @@
     .savebar-note .subtle { display:block; }
     .savebar .actions { flex-shrink:0; flex-wrap:wrap; }
     .savebar .actions button { white-space:nowrap; }
+    #discard-changes { color:#fff; border-color:var(--red); background:var(--red); }
+    #discard-changes:hover:not(:disabled) { border-color:#a6353d; background:#a6353d; }
     .catalog-intro { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:14px; }
     .catalog-intro .eyebrow { font-size:10px; letter-spacing:2px; }
     .catalog-intro h2 { margin:4px 0; font-size:18px; letter-spacing:-.5px; }
@@ -529,7 +531,7 @@
   </section>
   </div>
 
-  <footer class="savebar"><div class="savebar-note"><strong id="save-state" role="status" aria-live="polite">配置读取中</strong><span class="subtle">所有栏目统一保存</span></div><div class="actions" role="group" aria-label="监控与配置操作"><button id="monitor-start" type="button" class="primary">开始监控</button><button id="monitor-stop" type="button">暂停监控</button><button id="save" class="primary" type="button">保存配置</button><button id="discard-changes" type="button" disabled>取消修改</button></div></footer>
+  <footer class="savebar"><div class="savebar-note"><strong id="save-state" role="status" aria-live="polite">配置读取中</strong><span class="subtle">所有栏目统一保存</span></div><div class="actions" role="group" aria-label="监控与配置操作"><button id="monitor-start" type="button" class="primary">开始监控</button><button id="monitor-stop" type="button">暂停监控</button><button id="discard-changes" type="button" disabled>取消修改</button><button id="save" class="primary" type="button">保存配置</button></div></footer>
   </div>
 </main>
 <aside id="toast" class="toast" hidden aria-label="操作提示"><div><strong id="toast-label" class="toast-label"></strong><div id="toast-message" role="status" aria-live="polite" aria-atomic="true"></div></div><button id="toast-close" type="button" aria-label="关闭操作提示">×</button></aside>
