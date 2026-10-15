@@ -234,6 +234,49 @@ def service_status() -> None:
     subprocess.run(["systemctl", "--no-pager", "--full", "status", MONITOR, ADMIN], check=False)
 
 
+def _systemd_state(unit: str) -> str:
+    result = subprocess.run(["systemctl", "is-active", unit], text=True, capture_output=True, check=False, timeout=5)
+    return result.stdout.strip() or "unknown"
+
+
+def _flaresolverr_state() -> str:
+    if shutil.which("docker") is None:
+        return "not-installed"
+    result = subprocess.run(
+        ["docker", "container", "inspect", "--format", "{{.State.Status}}", "host-watch-flaresolverr"],
+        text=True, capture_output=True, check=False, timeout=5,
+    )
+    state = result.stdout.strip().lower()
+    return state if result.returncode == 0 and state else "not-deployed"
+
+
+def _state_label(state: str) -> str:
+    labels = {
+        "active": "运行中",
+        "running": "运行中",
+        "inactive": "已停止",
+        "exited": "已停止",
+        "dead": "已停止",
+        "failed": "运行失败",
+        "activating": "启动中",
+        "deactivating": "停止中",
+        "restarting": "重启中",
+        "not-installed": "未安装",
+        "not-deployed": "未部署",
+        "unknown": "状态未知",
+    }
+    return labels.get(state, state or "状态未知")
+
+
+def print_menu_status() -> None:
+    states = (
+        ("服务", _flaresolverr_state()),
+        ("监控", _systemd_state(MONITOR)),
+        ("管理页", _systemd_state(ADMIN)),
+    )
+    print("\n当前运行状态：" + "  ".join(f"{name} {_state_label(state)}" for name, state in states))
+
+
 def start_monitor() -> None:
     config = json.loads((DATA_DIR / "config.json").read_text(encoding="utf-8"))
     if config.get("enabled") is not True:
@@ -528,6 +571,7 @@ def menu() -> None:
     }
     while True:
         print("\n──────── HostWatch Debian 管理菜单 ────────")
+        print_menu_status()
         print(" 1. 查看服务状态       2. 监控服务   >")
         print(" 3. 管理页服务         4. 更新与备份 >")
         print(" 5. 管理员账号         6. 完全删除 HostWatch")

@@ -69,6 +69,24 @@ class ManagementTests(unittest.TestCase):
                 self.manage.start_monitor()
             run.assert_not_called()
 
+    def test_menu_status_shows_flaresolverr_monitor_and_admin_states(self):
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(args)
+            if args[:3] == ["systemctl", "is-active", self.manage.MONITOR]:
+                return SimpleNamespace(returncode=0, stdout="active\n")
+            if args[:3] == ["systemctl", "is-active", self.manage.ADMIN]:
+                return SimpleNamespace(returncode=3, stdout="inactive\n")
+            return SimpleNamespace(returncode=0, stdout="running\n")
+
+        with patch.object(self.manage.shutil, "which", return_value="/usr/bin/docker"), patch.object(self.manage.subprocess, "run", side_effect=fake_run), patch("builtins.print") as output:
+            self.manage.print_menu_status()
+        line = output.call_args.args[0]
+        self.assertIn("服务 运行中", line)
+        self.assertIn("监控 运行中", line)
+        self.assertIn("管理页 已停止", line)
+
     def test_web_apply_restarts_running_monitor_to_read_new_config(self):
         (self.directory / "config.json").write_text(json.dumps({"enabled": True}))
         with patch.object(self.manage, "DATA_DIR", self.directory), patch.object(self.manage, "run") as run:
