@@ -126,8 +126,14 @@
     input,select { width:100%; min-width:0; height:34px; padding:6px 9px; border:1px solid #bdc8cb; border-radius:4px; outline:none; color:var(--ink); background:#fff; }
     input:focus,select:focus { border-color:#4b8790; box-shadow:0 0 0 2px #d9ebeb; }
     input:disabled,select:disabled { color:#899397; background:#f1f3f3; }
-    .check { display:flex; align-items:center; gap:8px; min-height:38px; font-weight:500; }
-    .check input { width:16px; height:16px; margin:0; accent-color:var(--green); }
+    .option-button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-width:0; min-height:34px; max-width:100%; transition:background-color .18s,border-color .18s,color .18s; }
+    .option-button[aria-pressed="true"] { color:var(--green); border-color:#b7d7c9; background:var(--green-soft); }
+    .option-button[aria-pressed="mixed"] { color:var(--amber); border-color:#e2d0a6; background:var(--amber-soft); }
+    .option-button[data-tone="danger"][aria-pressed="true"] { color:var(--red); border-color:#e7c1bc; background:var(--red-soft); }
+    .option-button [data-option-state] { flex-shrink:0; font-size:11px; font-weight:700; }
+    .form-grid > .option-button { justify-content:space-between; text-align:left; padding:8px 11px; }
+    .catalog-choice { min-width:52px; padding:4px 7px; font-size:12px; white-space:nowrap; }
+    @media(prefers-reduced-motion:reduce) { .option-button { transition:none; } }
     .span-2 { grid-column:1/-1; }
     .hint { margin:10px 0 0; color:var(--muted); font-size:12px; }
     .product-editor { scroll-margin-top:20px; }
@@ -189,7 +195,6 @@
     #catalog-status.pending { color:var(--blue); }
     #catalog-status.stale { color:var(--amber); }
     .catalog-bulk { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:12px 0; border-top:1px solid var(--line); }
-    .catalog-bulk .check { min-height:32px; margin-right:4px; }
     .catalog-bulk button { min-height:32px; padding:5px 9px; font-size:12px; }
     .catalog-bulk .subtle { margin-right:auto; }
     .catalog-table-wrap { max-width:100%; overflow-x:auto; border:1px solid var(--line); border-radius:7px; }
@@ -197,13 +202,12 @@
     .catalog-table th { padding:12px 10px; color:var(--muted); background:#f4f7f5; text-align:left; white-space:nowrap; font-size:11px; }
     .catalog-table td { padding:10px; border-top:1px solid #edf0ef; vertical-align:middle; overflow-wrap:anywhere; }
     .catalog-table tbody tr:hover { background:#fafcfb; }
-    .catalog-table td:first-child { width:42px; }
+    .catalog-table td:first-child { width:72px; }
     .catalog-table td:nth-child(2) { min-width:145px; max-width:200px; }
     .catalog-table td:nth-child(3) { max-width:140px; }
     .catalog-table td:nth-child(4) { min-width:160px; max-width:240px; color:var(--muted); }
     .catalog-table td:nth-child(5) { min-width:110px; max-width:170px; font-weight:650; }
     .catalog-table td:nth-child(6) { white-space:nowrap; }
-    .catalog-table .check { min-height:24px; }
     .catalog-table strong,.catalog-table small { display:block; }
     .catalog-table small { margin-top:4px; color:var(--muted); font-size:11px; }
     .catalog-table .state { font-size:12px; }
@@ -216,7 +220,7 @@
     .catalog-reminders { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; padding:12px 16px; border:1px solid #ccddd5; border-radius:10px; background:#edf5f1; }
     #catalog-watch-count { margin-left:6px; color:var(--green); }
     @media(max-width:1250px) { .catalog-filters { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-    @media(max-width:520px) { .catalog-intro,.catalog-sync,.catalog-reminders { align-items:flex-start; flex-direction:column; } .catalog-browser { padding:14px; } .catalog-merchants { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); } .catalog-merchants button { min-width:0; } .catalog-filters { grid-template-columns:minmax(0,1fr); } .catalog-bulk .subtle { margin-right:0; } .catalog-table { min-width:0; } .catalog-table thead { display:none; } .catalog-table,.catalog-table tbody,.catalog-table tr,.catalog-table td { display:block; } .catalog-table tr { display:grid; grid-template-columns:28px minmax(0,1fr); padding:14px 10px; gap:8px; } .catalog-table tr + tr { border-top:1px solid var(--line); } .catalog-table td { grid-column:2; min-width:0 !important; max-width:none !important; width:auto !important; padding:0; border:0; } .catalog-table td:first-child { grid-column:1; grid-row:1; } .catalog-table td:nth-child(2) { grid-column:2; grid-row:1; } .catalog-table td:nth-child(4)::before { content:"配置："; } .catalog-table td:nth-child(5)::before { content:"价格："; color:var(--muted); font-weight:400; } .catalog-row-actions { display:flex; flex-wrap:wrap; align-items:center; } .catalog-pagination { flex-wrap:wrap; } }
+    @media(max-width:520px) { .catalog-intro,.catalog-sync,.catalog-reminders { align-items:flex-start; flex-direction:column; } .catalog-browser { padding:14px; } .catalog-merchants { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); } .catalog-merchants button { min-width:0; } .catalog-filters { grid-template-columns:minmax(0,1fr); } .catalog-bulk .subtle { margin-right:0; } .catalog-table { min-width:0; } .catalog-table thead { display:none; } .catalog-table,.catalog-table tbody,.catalog-table tr,.catalog-table td { display:block; } .catalog-table tr { display:grid; grid-template-columns:52px minmax(0,1fr); padding:14px 10px; gap:8px; } .catalog-table tr + tr { border-top:1px solid var(--line); } .catalog-table td { grid-column:2; min-width:0 !important; max-width:none !important; width:auto !important; padding:0; border:0; } .catalog-table td:first-child { grid-column:1; grid-row:1; } .catalog-table td:nth-child(2) { grid-column:2; grid-row:1; } .catalog-table td:nth-child(4)::before { content:"配置："; } .catalog-table td:nth-child(5)::before { content:"价格："; color:var(--muted); font-weight:400; } .catalog-row-actions { display:flex; flex-wrap:wrap; align-items:center; } .catalog-pagination { flex-wrap:wrap; } }
     @media(max-width:1100px) { .shell { grid-template-columns:200px minmax(0,1fr); } .workspace { padding:26px 24px 20px; } .sidebar { padding-left:12px; padding-right:12px; } .overview { grid-template-columns:repeat(2,minmax(0,1fr)); } .product { grid-template-columns:1fr 1fr; gap:11px; } .product-name { grid-column:1/-1; } .product-actions { grid-column:1/-1; justify-content:flex-start; } .savebar { align-items:stretch; flex-direction:column; } .savebar .actions { justify-content:flex-end; } }
     @media(max-width:780px) { .shell { display:block; } .sidebar { position:sticky; z-index:5; height:auto; padding:14px 14px 0; border-right:0; border-bottom:1px solid var(--line); } .sidebar .brand { padding:0 4px 12px; } .brand strong { font-size:19px; } .brand p { font-size:11px; } .brand-mark { width:32px; height:32px; } .nav-label,.sidebar-note { display:none; } .page-nav { display:flex; gap:5px; overflow-x:auto; padding:2px 0 10px; scrollbar-width:thin; } .page-nav a { flex-shrink:0; min-height:40px; padding:9px 12px; gap:7px; font-size:12px; } .page-nav svg { width:16px; height:16px; } .workspace { min-height:calc(100vh - 119px); padding:22px 16px 16px; } .overview-item { min-height:130px; padding:16px; } .page-heading h1 { font-size:25px; } .header-status { justify-items:start; } .topbar { align-items:flex-start; flex-direction:column; gap:16px; } .header-status .status-line { justify-content:flex-start; } .page-stage { padding-top:20px; } .panel-card > .section-body,#page-overview > .section { padding:18px; } }
     @media(max-width:780px) { .manage-grid { grid-template-columns:1fr; } .manage-form { grid-template-columns:1fr; } .product-editor { scroll-margin-top:140px; } }
@@ -298,7 +302,6 @@
     .catalog-table td:nth-child(5) { color:var(--blue); }
     .watch-table th,.watch-table td,.catalog-table th,.catalog-table td { text-align:center; vertical-align:middle; }
     .watch-operations,.catalog-row-actions { justify-content:center; margin-inline:auto; }
-    .catalog-table .check { justify-content:center; }
     .watch-table .manual-field { text-align:center; }
     .catalog-network { margin-top:5px; }
     .network-detail,.price-main,.watch-table td:nth-child(3) { white-space:nowrap; }
@@ -400,7 +403,7 @@
       <div class="catalog-filters"><label>地区 / 线路分类<select id="catalog-scope" disabled><option value="">等待目录</option></select></label><label>搜索套餐<input id="catalog-search" type="search" placeholder="名称、地区、线路或配置"></label><label>库存状态<select id="catalog-stock"><option value="all">全部库存</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">状态未知</option><option value="watched">已加入监控</option><option value="notified">已加入通知</option></select></label><label>大盘自动刷新<select id="catalog-auto"><option value="0">仅手动</option><option value="60">1 分钟</option><option value="300" selected>5 分钟</option><option value="600">10 分钟</option></select></label></div>
       <div class="catalog-sync"><div><strong id="catalog-summary">尚未载入目录</strong><span id="catalog-updated" class="subtle"></span></div><div class="actions"><button id="catalog-refresh" type="button">刷新分类库存</button><button id="catalog-stop" type="button" class="danger" hidden>停止刷新</button></div></div>
       <p id="catalog-status" class="hint" role="status" aria-live="polite">选择商家后获取该分类的套餐与库存。</p>
-      <div class="catalog-bulk"><label class="check"><input id="catalog-select-all" type="checkbox">选择本页</label><span id="catalog-selected" class="subtle">已选 0 项</span><button id="catalog-watch-selected" type="button" disabled>所选加入库存监控</button><button id="catalog-unwatch-selected" type="button" disabled>所选加入库存通知</button></div>
+      <div class="catalog-bulk"><button id="catalog-select-all" class="option-button" type="button" aria-pressed="false" aria-label="选择本页">选择本页 <span data-option-state>未全选</span></button><span id="catalog-selected" class="subtle">已选 0 项</span><button id="catalog-watch-selected" type="button" disabled>所选加入库存监控</button><button id="catalog-unwatch-selected" type="button" disabled>所选加入库存通知</button></div>
       <div id="catalog-results">
       <div class="catalog-table-wrap" role="region" aria-label="VPS 商品目录" tabindex="0"><table class="catalog-table"><thead><tr><th scope="col">选择</th><th scope="col">套餐</th><th scope="col">地区 / 线路</th><th scope="col">配置 / 带宽</th><th scope="col">价格 / 周期</th><th scope="col">库存</th><th scope="col">监控 / 通知 / 操作</th></tr></thead><tbody id="catalog-rows"></tbody></table></div>
       <div id="catalog-empty" class="empty">尚无目录数据，点击“刷新分类库存”读取。</div>
@@ -437,9 +440,9 @@
       <label>检查间隔（秒）<input id="interval" type="number" min="0" max="86400" step="1"></label>
       <label>常用检查间隔<select id="interval-preset"><option value="">自定义间隔</option><option value="0">0 秒（连续检查）</option><option value="1">1 秒</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option><option value="60">1 分钟</option><option value="300">5 分钟</option><option value="600">10 分钟</option><option value="1800">30 分钟</option><option value="3600">1 小时</option></select></label>
       <p id="interval-description" class="hint span-2"></p>
-      <label class="check span-2"><input id="notify-current" type="checkbox">首次启用该商品通知时，有货也发送提醒</label>
+      <button id="notify-current" class="option-button span-2" type="button" data-config-option data-on="已开启" data-off="未开启" aria-pressed="false" aria-label="首次启用该商品通知时，有货也发送提醒"><span>首次启用该商品通知时，有货也发送提醒</span><span data-option-state>未开启</span></button>
     </div>
-    <p class="hint">监控和通知共用检查间隔。通知商品在缺货变有货或库存增加时推送，不重复推送相同库存。勾选后，新加入通知且有货的商品也会提醒；重启服务不会重复提醒。仅库存监控无需配置 Telegram。</p>
+    <p class="hint">监控和通知共用检查间隔。通知商品在缺货变有货或库存增加时推送，不重复推送相同库存。开启首次有货提醒后，新加入通知且有货的商品也会提醒；重启服务不会重复提醒。仅库存监控无需配置 Telegram。</p>
     </details>
     <div id="blocked-help" class="blocked-help" hidden><strong>上次库存检查被网站拦截（历史记录）</strong><span id="blocked-message">检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。</span><p class="hint">该记录保留至下一次检查；当前服务状态请看上方。请先确认访问方式，避免反复重启。</p></div>
     <p id="request-error" class="blocked-help" hidden></p>
@@ -460,9 +463,10 @@
     <div class="form-grid">
       <label>Bot token（保存后不会回显）<input id="telegram-token" type="password" autocomplete="new-password" placeholder="留空表示保持已保存的 token"></label>
       <label>Chat ID 或频道用户名<input id="telegram-chat-id" autocomplete="off" placeholder="例如 -1001234567890 或 @my_channel"></label>
-      <label class="check"><input id="telegram-disabled" type="checkbox">暂时停用通知</label>
-      <label class="check"><input id="telegram-clear" type="checkbox">清除已保存的凭据</label>
+      <button id="telegram-disabled" class="option-button" type="button" data-config-option data-on="已选择停用" data-off="未停用" aria-pressed="false" aria-label="暂时停用通知"><span>暂时停用通知</span><span data-option-state>未停用</span></button>
+      <button id="telegram-clear" class="option-button" type="button" data-config-option data-tone="danger" data-on="保存时清除" data-off="不清除" aria-pressed="false" aria-label="清除已保存的凭据" aria-describedby="telegram-options-note"><span>清除已保存的凭据</span><span data-option-state>不清除</span></button>
     </div>
+    <p id="telegram-options-note" class="hint">点击按钮切换选择，再次点击取消；保存配置后生效。“清除已保存的凭据”仅在保存时执行，可先取消选择或点击“取消修改”。</p>
     <p id="telegram-status" class="hint">Telegram 状态读取中</p>
     <div class="actions" style="margin-top:10px"><button id="telegram-test" type="button">测试发送</button><button id="telegram-load-chats" type="button">读取最近聊天</button></div>
     <div id="telegram-chats" class="chat-list" aria-live="polite"></div>

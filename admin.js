@@ -158,6 +158,19 @@ function text(tag, value, className) {
   return node;
 }
 
+function optionPressed(id) {
+  return document.getElementById(id).getAttribute("aria-pressed") === "true";
+}
+function setOptionPressed(id, pressed) {
+  const button = document.getElementById(id);
+  button.setAttribute("aria-pressed", String(Boolean(pressed)));
+  button.querySelector("[data-option-state]").textContent = pressed ? button.dataset.on : button.dataset.off;
+}
+document.querySelectorAll("[data-config-option]").forEach(button => button.addEventListener("click", () => {
+  setOptionPressed(button.id, !optionPressed(button.id));
+  updateDraftState();
+}));
+
 const filterMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const filterAnimations = new Map();
 function animateFilterResult(node) {
@@ -1349,9 +1362,9 @@ function collectConfig(enabled = config.enabled) {
     merchant_order: merchantOrder(),
     watch_order: config.watch_order || [],
     notify_order: config.notify_order || [],
-    notify_current_stock_on_start: document.querySelector("#notify-current").checked,
+    notify_current_stock_on_start: optionPressed("notify-current"),
     fetcher: { provider_modes: collectProviderModes(), mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value), wait_seconds: Number(document.querySelector("#fetcher-wait").value) },
-    telegram: { bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim(), disabled: document.querySelector("#telegram-disabled").checked, clear: document.querySelector("#telegram-clear").checked },
+    telegram: { bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim(), disabled: optionPressed("telegram-disabled"), clear: optionPressed("telegram-clear") },
     products: config.products.map((item) => ({ ...item })),
   };
 }
@@ -1428,7 +1441,7 @@ function applyConfig(value) {
   document.querySelector("#interval").value = config.interval_seconds ?? 600;
   for (const input of document.querySelectorAll("[data-affiliate]")) input.value = config.affiliates?.[input.dataset.affiliate] ?? (input.dataset.affiliate === "vmiss" ? config.affiliate_id || "" : "");
   renderAffiliatePreviews(); renderMerchantOrder();
-  document.querySelector("#notify-current").checked = Boolean(config.notify_current_stock_on_start);
+  setOptionPressed("notify-current", config.notify_current_stock_on_start);
   const fetcher = config.fetcher || {};
   document.querySelector("#fetcher-mode").value = fetcher.mode || "requests";
   document.querySelector("#flaresolverr-url").value = fetcher.flaresolverr_url || "http://127.0.0.1:8191/v1";
@@ -1439,8 +1452,8 @@ function applyConfig(value) {
   const telegram = config.telegram || {};
   document.querySelector("#telegram-token").value = "";
   document.querySelector("#telegram-chat-id").value = telegram.chat_id || "";
-  document.querySelector("#telegram-disabled").checked = Boolean(telegram.disabled);
-  document.querySelector("#telegram-clear").checked = false;
+  setOptionPressed("telegram-disabled", telegram.disabled);
+  setOptionPressed("telegram-clear", false);
   document.querySelector("#telegram-status").textContent = telegram.configured ? "Telegram 已配置（token 不会回显）。" : (telegram.disabled ? "Telegram 已停用。" : "Telegram 尚未完整配置。");
   document.querySelector("#telegram-chats").replaceChildren();
   renderProducts();
@@ -1482,7 +1495,7 @@ function addProducts(items) {
   renderProducts();
   navigatePage("notifications"); openAdvancedProducts();
   editorNode.querySelector(`[data-id="${CSS.escape(items[0].id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
-  setMessage(items.length === 1 ? "商品已添加，请填写商品信息后保存。" : `已添加 ${items.length} 个商品，可先测试，勾选需要监控的套餐后保存。`, "pending");
+  setMessage(items.length === 1 ? "商品已添加，请填写商品信息后保存。" : `已添加 ${items.length} 个商品，可先测试，将需要的套餐加入库存监控或通知后保存。`, "pending");
   updateDraftState();
 }
 // Merchant defaults live in one registry so future presets share the same entry.

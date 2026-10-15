@@ -74,12 +74,13 @@
     body.replaceChildren(...visible.map((row) => {
       const tr = document.createElement("tr"); tr.dataset.id = row.key;
       const cell = () => { const td = document.createElement("td"); tr.append(td); return td; };
-      const choice = document.createElement("input");
-      choice.type = "checkbox"; choice.checked = selected.has(row.key);
+      const choice = text("button", selected.has(row.key) ? "已选" : "选择", "option-button catalog-choice");
+      choice.type = "button"; choice.dataset.catalogSelect = row.key;
+      choice.setAttribute("aria-pressed", String(selected.has(row.key)));
       choice.setAttribute("aria-label", `选择 ${row.name} ${row.line}`);
       choice.disabled = actionRunning;
-      choice.addEventListener("change", () => { choice.checked ? selected.add(row.key) : selected.delete(row.key); renderSelection(visible); });
-      const label = text("label", "", "check"); label.append(choice); cell().append(label);
+      choice.addEventListener("click", () => { selected.has(row.key) ? selected.delete(row.key) : selected.add(row.key); renderSelection(visible); });
+      cell().append(choice);
       const identity = cell(); identity.append(text("strong", row.name), text("small", row.provider));
       const region = cell(); region.append(text("span", row.region || "—"));
       if (row.line && row.line !== row.region) region.append(text("small", row.line));
@@ -124,8 +125,16 @@
   function renderSelection(visible = filtered().slice(page * pageSize, (page + 1) * pageSize)) {
     const eligible = visible;
     const all = get("catalog-select-all");
-    all.checked = eligible.length > 0 && eligible.every((row) => selected.has(row.key));
-    all.indeterminate = !all.checked && eligible.some((row) => selected.has(row.key));
+    const complete = eligible.length > 0 && eligible.every((row) => selected.has(row.key));
+    const partial = !complete && eligible.some((row) => selected.has(row.key));
+    all.setAttribute("aria-pressed", complete ? "true" : partial ? "mixed" : "false");
+    all.querySelector("[data-option-state]").textContent = complete ? "已全选" : partial ? "部分选中" : "未全选";
+    for (const choice of get("catalog-rows").querySelectorAll("[data-catalog-select]")) {
+      const active = selected.has(choice.dataset.catalogSelect);
+      choice.setAttribute("aria-pressed", String(active));
+      choice.textContent = active ? "已选" : "选择";
+      choice.disabled = actionRunning;
+    }
     all.disabled = actionRunning || !eligible.length;
     get("catalog-selected").textContent = `已选 ${selected.size} 项`;
     get("catalog-watch-selected").disabled = actionRunning || !selected.size;
@@ -244,9 +253,10 @@
     catch (error) { setMessage(`停止刷新尚未确认：${error.message}，请重试。`, "error"); }
     render(); schedule();
   });
-  get("catalog-select-all").addEventListener("change", (event) => {
-    filtered().slice(page * pageSize, (page + 1) * pageSize).forEach((row) => event.target.checked ? selected.add(row.key) : selected.delete(row.key));
-    renderTable();
+  get("catalog-select-all").addEventListener("click", () => {
+    const select = get("catalog-select-all").getAttribute("aria-pressed") !== "true";
+    filtered().slice(page * pageSize, (page + 1) * pageSize).forEach((row) => select ? selected.add(row.key) : selected.delete(row.key));
+    renderSelection();
   });
   get("catalog-watch-selected").addEventListener("click", () => setReminders((data?.rows || []).filter((row) => selected.has(row.key)), true));
   get("catalog-unwatch-selected").addEventListener("click", () => setReminders((data?.rows || []).filter((row) => selected.has(row.key)), true, "notify"));
