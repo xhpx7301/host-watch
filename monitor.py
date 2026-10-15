@@ -286,6 +286,54 @@ def parse_vps_soy(html: str, page_url: str, selector: str) -> Product:
     return Product(selector, title.get_text(" ", strip=True), max(0, count), purchase_url, vendor="VPS.SOY")
 
 
+AKILE_STORE_URL = "https://api.akile.ai/api/v1/store/GetVpsStoreV3"
+
+
+def fetch_akile_catalog(session: requests.Session, fetcher: dict) -> object:
+    """Use the same unauthenticated, read-only catalog as Akile's shop."""
+    body, _ = fetch_page(session, AKILE_STORE_URL, fetcher, "api.akile.ai")
+    try:
+        return json.loads(body)
+    except ValueError:
+        # Chromium renders a JSON response inside a pre element.
+        if fetcher.get("mode") == "flaresolverr":
+            nodes = BeautifulSoup(body, "html.parser").select("pre")
+            if len(nodes) == 1:
+                try:
+                    return json.loads(nodes[0].get_text())
+                except ValueError:
+                    pass
+        raise MonitorError("Akile 商品接口未返回有效 JSON，未更新库存") from None
+
+
+def parse_akile(payload: object, item: dict) -> Product:
+    """Select exactly one area, node and plan; unknown stock is an error."""
+    if not isinstance(payload, dict) or type(payload.get("status_code")) not in {int, str} or str(payload["status_code"]) not in {"0", "200"}:
+        raise MonitorError("Akile 商品接口返回失败状态，未更新库存")
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise MonitorError("Akile 商品接口缺少目录数据，未更新库存")
+
+    def unique(entries: object, field: str, target: str, label: str) -> dict:
+        if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
+            raise MonitorError(f"Akile {label}列表结构异常，未更新库存")
+        matches = [entry for entry in entries if str(entry.get(field, "")).strip().casefold() == target.strip().casefold()]
+        if len(matches) != 1:
+            raise MonitorError(f"Akile {label} {target} 无法唯一匹配（找到 {len(matches)} 项），请核对配置")
+        return matches[0]
+
+    area = unique(data.get("areas"), "id", item["area_id"], "地区")
+    node = unique(area.get("nodes"), "group_name", item["node_name"], "线路")
+    plan = unique(node.get("plans"), "plan_name", item["selector"], "套餐")
+    stock = plan.get("stock")
+    if type(stock) is not int or stock < 0:
+        raise MonitorError("Akile 套餐库存不是非负整数，未更新库存")
+    if any(type(entry.get("id")) is not int or entry["id"] <= 0 for entry in (area, node, plan)) or not isinstance(plan.get("tag"), str) or plan["tag"] not in {"traffic", "bandwidth", "performance"}:
+        raise MonitorError("Akile 套餐缺少有效购买标识，未更新库存")
+    purchase_url = "https://akile.ai/shop/server?" + urlencode({"type": plan["tag"], "areaId": area["id"], "nodeId": node["id"], "planId": plan["id"]})
+    return Product(str(plan["id"]), plan["plan_name"], stock, purchase_url, vendor="Akile")
+
+
 def inspect_product(session: requests.Session, item: dict, fetcher: dict) -> Product:
     """Read one product without saving history, changing services or notifying."""
     if item["adapter"] == "html":
@@ -293,6 +341,8 @@ def inspect_product(session: requests.Session, item: dict, fetcher: dict) -> Pro
     if item["adapter"] == "vps_soy":
         body, final_url = fetch_page(session, item["url"], product_fetcher(fetcher, item), "www.vps.soy")
         return parse_vps_soy(body, final_url, item["selector"])
+    if item["adapter"] == "akile":
+        return parse_akile(fetch_akile_catalog(session, product_fetcher(fetcher, item)), item)
     products = fetch_products(session, item["category_url"], [item["selector"]], product_fetcher(fetcher, item))
     if len(products) != 1:
         raise MonitorError("商品无法唯一匹配页面套餐；请检查商品选择标识")
@@ -351,6 +401,9 @@ def selected_products(config: dict) -> list[dict]:
         elif item.get("adapter") == "vps_soy":
             if urlsplit(str(item.get("url", ""))).hostname != "www.vps.soy" or not item.get("selector"):
                 raise MonitorError(f"商品 {name} 的 VPS.SOY 配置不完整")
+        elif item.get("adapter") == "akile":
+            if not re.fullmatch(r"[1-9][0-9]{0,9}", str(item.get("area_id", ""))) or not item.get("node_name") or not item.get("selector"):
+                raise MonitorError(f"商品 {name} 的 Akile 配置不完整")
         elif item.get("adapter") == "html":
             url = str(item.get("url", ""))
             if urlsplit(url).scheme != "https" or not str(item.get("stock_selector", "")).strip():
@@ -471,6 +524,7 @@ def check_once(
                 stock_mode="quantity",
             )
     soy_pages = {}
+    akile_catalogs = {}
     for item in selected:
         if item["adapter"] == "html":
             found[item["id"]] = fetch_html_stock(session, item, config.get("fetcher"))
@@ -481,6 +535,12 @@ def check_once(
                 soy_pages[key] = fetch_page(session, item["url"], fetcher, "www.vps.soy")
             body, final_url = soy_pages[key]
             found[item["id"]] = parse_vps_soy(body, final_url, item["selector"])
+        elif item["adapter"] == "akile":
+            fetcher = product_fetcher(config.get("fetcher"), item)
+            mode = fetcher.get("mode", "requests")
+            if mode not in akile_catalogs:
+                akile_catalogs[mode] = fetch_akile_catalog(session, fetcher)
+            found[item["id"]] = parse_akile(akile_catalogs[mode], item)
 
     previous = read_state(state_path)
     current = dict(previous)

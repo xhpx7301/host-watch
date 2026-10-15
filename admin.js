@@ -323,7 +323,7 @@ function productEditor(item, index) {
 
   const grid = text("div", "", "form-grid");
   grid.append(
-    selectField("监控适配器", item.adapter || (item.category_url ? "vmiss" : "html"), "adapter", [["html", "通用 HTTPS 网页"], ["vmiss", "VMISS WHMCS"], ["vps_soy", "VPS.SOY 商品页"]]),
+    selectField("监控适配器", item.adapter || (item.category_url ? "vmiss" : "html"), "adapter", [["html", "通用 HTTPS 网页"], ["vmiss", "VMISS WHMCS"], ["vps_soy", "VPS.SOY 商品页"], ["akile", "Akile 商品库存"]]),
     inputField("厂商名称", item.provider || (item.adapter === "vmiss" || item.category_url ? "VMISS" : "自定义网站"), "provider", "text", "例如 ExampleHost"),
     inputField("商品名称", item.name, "name", "text", "例如 US VPS 2 GB"),
     selectField("此商品的请求方式", item.request_mode || "inherit", "request_mode", [["inherit", "跟随全局设置"], ["requests", "普通 HTTPS 请求"], ["flaresolverr", "FlareSolverr 浏览器请求"]]),
@@ -359,7 +359,15 @@ function productEditor(item, index) {
     inputField("套餐完整名称（精确匹配）", item.adapter === "vps_soy" ? item.selector : "深港IX-MINI", "soy_selector", "text", "深港IX-MINI"),
     text("p", "自动识别套餐卡片、库存和购买入口。负库存按缺货处理；名称或库存无法识别时会报错，避免误报。无需填写 CSS 选择器或 VMISS 推广 ID。", "hint span-2"),
   );
-  modeWrap.append(vmissFields, htmlFields, soyFields);
+  const akileFields = text("div", "", "form-grid span-2");
+  akileFields.dataset.adapterFields = "akile";
+  akileFields.append(
+    inputField("Akile 地区 ID（网址中的 areaId）", item.area_id || "6", "akile_area_id", "text", "6"),
+    inputField("线路完整名称（精确匹配）", item.node_name || "HKL-TW", "akile_node_name", "text", "HKL-TW"),
+    inputField("套餐完整名称（精确匹配）", item.adapter === "akile" ? item.selector : "HKL-TW-Mini", "akile_selector", "text", "HKL-TW-Mini"),
+    text("p", "HKL-TW 归属台湾分类（areaId=6），机器位于香港。Mini、Starter、Standard、Pro 分别监控库存。推荐普通 HTTPS 请求，无需登录或 CSS 选择器；购买入口自动定位到具体套餐。", "hint span-2"),
+  );
+  modeWrap.append(vmissFields, htmlFields, soyFields, akileFields);
   const result = text("div", "", "product-test-result");
   result.setAttribute("role", "status");
   result.setAttribute("aria-live", "polite");
@@ -395,6 +403,10 @@ function syncEditor(article) {
   } else if (item.adapter === "vps_soy") {
     item.url = get("soy_url").value.trim();
     item.selector = get("soy_selector").value.trim();
+  } else if (item.adapter === "akile") {
+    item.area_id = get("akile_area_id").value.trim();
+    item.node_name = get("akile_node_name").value.trim();
+    item.selector = get("akile_selector").value.trim();
   } else {
     item.url = get("url").value.trim();
     item.stock_selector = get("stock_selector").value.trim();
@@ -648,16 +660,25 @@ async function reloadConfig(notify = true) {
 }
 
 function addProduct(item) {
-  config.products.push(item);
-  openProducts.add(item.id);
+  addProducts([item]);
+}
+function addProducts(items) {
+  config.products.push(...items);
+  openProducts.add(items[0].id);
   renderProducts();
   document.querySelector("#product-editors").closest("details").open = true;
-  editorNode.lastElementChild?.scrollIntoView({ behavior: "smooth", block: "center" });
-  setMessage("商品已添加，请填写商品信息后保存。", "pending");
+  editorNode.querySelector(`[data-id="${CSS.escape(items[0].id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  setMessage(items.length === 1 ? "商品已添加，请填写商品信息后保存。" : `已添加 ${items.length} 个商品，可先测试，勾选需要监控的套餐后保存。`, "pending");
   updateDraftState();
 }
 document.querySelector("#add").addEventListener("click", () => addProduct({ id: crypto.randomUUID(), adapter: "html", provider: "自定义网站", name: "", url: "", stock_selector: "", stock_mode: "quantity", stock_pattern: "([\\d,]+)", available_pattern: "(?i)in stock|available|有货|现货", unavailable_pattern: "(?i)out of stock|sold out|缺货|售罄", purchase_url: "", enabled: false }));
 document.querySelector("#add-vps-soy").addEventListener("click", () => addProduct({ id: crypto.randomUUID(), adapter: "vps_soy", provider: "VPS.SOY", name: "深港IX-MINI", url: "https://www.vps.soy/cart", selector: "深港IX-MINI", request_mode: "requests", enabled: false }));
+document.querySelector("#add-akile").addEventListener("click", () => {
+  const products = ["Mini", "Starter", "Standard", "Pro"].map((tier) => ({ id: crypto.randomUUID(), adapter: "akile", provider: "Akile", name: `HKL-TW-${tier}`, area_id: "6", node_name: "HKL-TW", selector: `HKL-TW-${tier}`, request_mode: "requests", enabled: false }))
+    .filter((item) => !config.products.some((existing) => existing.adapter === "akile" && String(existing.area_id) === item.area_id && existing.node_name?.trim().toLowerCase() === item.node_name.toLowerCase() && existing.selector?.trim().toLowerCase() === item.selector.toLowerCase()));
+  if (!products.length) { setMessage("HKL-TW 四个套餐已在商品列表中，可展开配置并测试。", "success"); return; }
+  addProducts(products);
+});
 document.querySelector("#refresh-status").addEventListener("click", (event) => runAction(event.currentTarget, "刷新中…", "正在刷新监控状态…", async () => {
   await Promise.all([loadStatus(), refreshManagement()]);
   setMessage("监控状态已刷新；此次操作不会触发库存检查。", "success");

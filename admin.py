@@ -190,15 +190,15 @@ def validate_config(value: object) -> dict:
         product_id = str(item.get("id", "")).strip()
         name = str(item.get("name", "")).strip()
         adapter = str(item.get("adapter", "vmiss" if any(key in item for key in ("category_url", "selector", "gid", "pid")) else "html")).strip().casefold()
-        provider = str(item.get("provider", {"vmiss": "VMISS", "vps_soy": "VPS.SOY"}.get(adapter, "自定义网站"))).strip()
+        provider = str(item.get("provider", {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile"}.get(adapter, "自定义网站"))).strip()
         gid = str(item.get("gid", "")).strip()
         pid = str(item.get("pid", "")).strip()
         if "enabled" in item and not isinstance(item["enabled"], bool):
             raise ValueError(f"产品 {name or product_id} 的启用状态必须是布尔值")
         if not product_id or product_id in seen_ids:
             raise ValueError("每个产品都需要唯一 ID")
-        if adapter not in {"vmiss", "html", "vps_soy"}:
-            raise ValueError(f"产品 {name or product_id} 的适配器必须是 vmiss、vps_soy 或 html")
+        if adapter not in {"vmiss", "html", "vps_soy", "akile"}:
+            raise ValueError(f"产品 {name or product_id} 的适配器必须是 vmiss、vps_soy、akile 或 html")
         if not name:
             raise ValueError(f"产品 {product_id} 需要填写商品名称")
         if not provider or len(provider) > 80:
@@ -240,6 +240,15 @@ def validate_config(value: object) -> dict:
             if not selector or len(selector) > 200:
                 raise ValueError(f"产品 {name} 需要填写 VPS.SOY 套餐完整名称（最多 200 个字符）")
             normalized_item = {"id": product_id, "name": name, "provider": provider, "adapter": adapter, "url": catalog_url, "selector": selector, "enabled": item.get("enabled", False)}
+        elif adapter == "akile":
+            area_id = str(item.get("area_id", "6")).strip()
+            node_name = str(item.get("node_name", "HKL-TW")).strip()
+            selector = str(item.get("selector", name)).strip()
+            if not re.fullmatch(r"[1-9][0-9]{0,9}", area_id):
+                raise ValueError(f"产品 {name} 的 Akile 地区 ID 必须是正整数（最多 10 位）")
+            if not node_name or not selector or max(len(node_name), len(selector), len(name)) > 200:
+                raise ValueError(f"产品 {name} 需要填写 Akile 线路及套餐完整名称（最多 200 个字符）")
+            normalized_item = {"id": product_id, "name": name, "provider": provider, "adapter": adapter, "area_id": area_id, "node_name": node_name, "selector": selector, "enabled": item.get("enabled", False)}
         else:
             check_url = str(item.get("url", item.get("category_url", ""))).strip()
             parsed = urlsplit(check_url)
