@@ -75,7 +75,7 @@
     body.replaceChildren(...visible.map((row) => {
       const tr = document.createElement("tr"); tr.dataset.id = row.key;
       const cell = () => { const td = document.createElement("td"); tr.append(td); return td; };
-      const choice = text("button", selected.has(row.key) ? "已选" : "选择", "option-button catalog-choice");
+      const choice = text("button", selected.has(row.key) ? "✓ 已选" : "选择", "option-button catalog-choice");
       choice.type = "button"; choice.dataset.catalogSelect = row.key;
       choice.setAttribute("aria-pressed", String(selected.has(row.key)));
       choice.setAttribute("aria-label", `选择 ${row.name} ${row.line}`);
@@ -98,7 +98,7 @@
       const item = existing(row);
       for (const [type, label] of [["watch", "库存监控"], ["notify", "库存通知"]]) {
         const active = item && membership(item, type);
-        const button = text("button", `${active ? "移出" : "加入"}${label}`); button.type = "button";
+        const button = text("button", active ? `✓ 已加入${label}` : `＋ 加入${label}`, `reminder-action reminder-${type}`); button.type = "button";
         button.disabled = actionRunning;
         button.setAttribute("aria-pressed", String(Boolean(active)));
         button.addEventListener("click", () => setReminders([row], !active, type));
@@ -108,7 +108,7 @@
       if (row.purchase_url) {
         const url = new URL(row.purchase_url);
         if (url.protocol === "https:" && ["app.vmiss.com", "www.vps.soy", "akile.ai", "isvoro.com", "www.dmit.io"].includes(url.hostname) && !url.username && !url.password) {
-          const link = text("a", "查看 / 手动购买"); link.href = affiliatePurchaseURL(url.href, row.watch.adapter, row.watch); link.target = "_blank"; link.rel = "noopener noreferrer"; actions.append(link);
+          const link = text("a", "直接购买", "buy-link"); link.href = affiliatePurchaseURL(url.href, row.watch.adapter, row.watch); link.target = "_blank"; link.rel = "noopener noreferrer"; actions.append(link);
         }
       }
       cell().append(actions);
