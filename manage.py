@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import fcntl
 import getpass
 import grp
@@ -12,6 +13,7 @@ import pwd
 from pathlib import Path
 import re
 import secrets
+import shutil
 import socket
 import ssl
 import subprocess
@@ -32,6 +34,8 @@ ADMIN_ENV = Path("/etc/vmiss-monitor-admin.env")
 BACKUP_DIR = Path("/var/backups/stockwatch")
 MONITOR = "vmiss-monitor.service"
 ADMIN = "vmiss-monitor-admin.service"
+SERVICE_USER = "vmiss-monitor"
+SERVICE_GROUP = "vmiss-monitor"
 INSTALLER_URL = "https://raw.githubusercontent.com/xhpx7301/host-watch/main/install.sh"
 INSTALLER_FALLBACK_URL = "https://github.com/xhpx7301/host-watch/raw/refs/heads/main/install.sh"
 
@@ -263,6 +267,110 @@ def apply_monitor() -> None:
         print("监控配置已应用：服务已停止并取消开机自启。")
 
 
+def _remove_path(path: Path) -> None:
+    """Remove an owned path without ever following a symlink."""
+    if path.is_symlink():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+    elif path.exists():
+        path.unlink()
+
+
+def _remove_launcher(path: Path) -> None:
+    if not path.exists() and not path.is_symlink():
+        return
+    if path.name == "jk" and not path.is_symlink():
+        try:
+            contents = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            return
+        if str(INSTALL_DIR) not in contents or "manage.py" not in contents:
+            print(f"保留未确认归属的快捷命令：{path}")
+            return
+    _remove_path(path)
+
+
+def _remove_managed_flaresolverr() -> None:
+    container = "host-watch-flaresolverr"
+    if shutil.which("docker") is None:
+        return
+    inspected = subprocess.run(["docker", "container", "inspect", container], text=True, capture_output=True, check=False)
+    if inspected.returncode:
+        return
+    label = subprocess.run(
+        ["docker", "inspect", "--format", '{{index .Config.Labels "io.hostwatch.managed"}}', container],
+        text=True, capture_output=True, check=False,
+    ).stdout.strip()
+    if label == "true":
+        run("docker", "rm", "--force", container)
+        print("已删除 HostWatch 创建的 FlareSolverr 容器。")
+    else:
+        print("发现同名但不属于 HostWatch 的 FlareSolverr 容器，已保留。")
+
+
+def _validate_service_account() -> None:
+    try:
+        account = pwd.getpwnam(SERVICE_USER)
+    except KeyError:
+        return
+    if account.pw_dir != str(INSTALL_DIR):
+        raise ValueError(f"系统账号 {SERVICE_USER} 的 home 目录不是 {INSTALL_DIR}，已停止卸载以避免误删")
+
+
+def _remove_service_account() -> None:
+    _validate_service_account()
+    try:
+        pwd.getpwnam(SERVICE_USER)
+    except KeyError:
+        return
+    run("userdel", SERVICE_USER)
+    try:
+        grp.getgrnam(SERVICE_GROUP)
+    except KeyError:
+        return
+    run("groupdel", SERVICE_GROUP)
+
+
+def uninstall() -> bool:
+    print("\n警告：完全卸载会删除 HostWatch 的程序、配置、库存历史、管理员账号、备份和服务。此操作不可撤销。")
+    print("Docker、Python 和其他系统依赖不会删除；外部或非 HostWatch 的 FlareSolverr 容器会保留。")
+    if input("请输入 DELETE HOSTWATCH 确认：").strip() != "DELETE HOSTWATCH":
+        print("已取消，服务器未修改。")
+        return False
+
+    _validate_service_account()
+    for unit in (MONITOR, ADMIN):
+        subprocess.run(["systemctl", "disable", "--now", unit], check=False)
+    still_running = [
+        unit for unit in (MONITOR, ADMIN)
+        if subprocess.run(["systemctl", "is-active", "--quiet", unit], check=False).returncode == 0
+    ]
+    if still_running:
+        raise ValueError(f"无法停止服务：{', '.join(still_running)}；未删除程序文件")
+    _remove_managed_flaresolverr()
+    for path in (
+        Path("/etc/systemd/system") / MONITOR,
+        Path("/etc/systemd/system") / ADMIN,
+        Path("/etc/sudoers.d/host-watch-admin"),
+        Path("/etc/tmpfiles.d/host-watch.conf"),
+        Path("/etc/vmiss-monitor.env"),
+        Path("/etc/vmiss-monitor-admin.env"),
+        Path("/etc/stockwatch-users.json"),
+        Path("/run/stockwatch-manager.lock"),
+    ):
+        _remove_path(path)
+    for path in (Path("/usr/local/bin/host-watch"), Path("/usr/local/bin/stockwatch"), Path("/usr/local/bin/hw"), Path("/usr/local/bin/jk")):
+        _remove_launcher(path)
+    _remove_path(INSTALL_DIR)
+    _remove_path(DATA_DIR)
+    _remove_path(BACKUP_DIR)
+    subprocess.run(["systemctl", "daemon-reload"], check=False)
+    _remove_service_account()
+    print("HostWatch 已从服务器完全删除。Docker 服务及共享系统依赖仍保留。")
+    return True
+
+
 def set_monitor_enabled(enabled: bool) -> None:
     config_path = DATA_DIR / "config.json"
     if config_path.is_symlink():
@@ -354,46 +462,95 @@ def web_action(payload: dict) -> dict:
     raise ValueError("不支持此管理操作")
 
 
+MENU_ERRORS = (OSError, ValueError, KeyError, subprocess.CalledProcessError, subprocess.TimeoutExpired)
+
+
+def _submenu(title: str, actions: dict[str, tuple[str, Callable[[], object]]]) -> None:
+    while True:
+        print(f"\n──────── HostWatch · {title} ────────")
+        for key, (label, _) in actions.items():
+            print(f" {key}. {label}")
+        print(" 0. 返回上一级")
+        choice = input("请选择：").strip()
+        if choice == "0":
+            return
+        entry = actions.get(choice)
+        if entry is None:
+            print("请输入菜单中的编号。")
+            continue
+        try:
+            entry[1]()
+        except MENU_ERRORS as exc:
+            print(f"操作失败：{exc}")
+
+
+def monitor_menu() -> None:
+    _submenu("监控服务", {
+        "1": ("启动监控并设置开机自启", start_monitor),
+        "2": ("暂停监控并取消开机自启", stop_monitor),
+        "3": ("重启监控 / 载入配置", restart_monitor),
+        "4": ("按网页配置应用监控状态", apply_monitor),
+    })
+
+
+def admin_service_menu() -> None:
+    _submenu("管理页服务", {
+        "1": ("重启管理页", lambda: run("systemctl", "restart", ADMIN)),
+        "2": ("查看管理页和监控日志", lambda: run("journalctl", "--no-pager", "-u", MONITOR, "-u", ADMIN, "-n", "100")),
+    })
+
+
+def maintenance_menu() -> None:
+    _submenu("更新与备份", {
+        "1": ("更新脚本（先备份）", update),
+        "2": ("备份程序和配置", backup),
+        "3": ("查看最近日志", lambda: run("journalctl", "--no-pager", "-u", MONITOR, "-u", ADMIN, "-n", "100")),
+    })
+
+
+def account_menu() -> None:
+    _submenu("管理员账号", {
+        "1": ("查看管理页用户", list_accounts),
+        "2": ("添加管理页用户", add_account),
+        "3": ("修改用户密码", change_password),
+        "4": ("删除管理页用户", delete_account),
+    })
+
+
 def menu() -> None:
     actions = {
-        "1": service_status,
-        "2": update,
-        "3": start_monitor,
-        "4": stop_monitor,
-        "5": lambda: run("systemctl", "restart", ADMIN),
-        "6": lambda: run("journalctl", "--no-pager", "-u", MONITOR, "-u", ADMIN, "-n", "100"),
-        "7": list_accounts,
-        "8": add_account,
-        "9": change_password,
-        "10": delete_account,
-        "11": backup,
-        "12": restart_monitor,
+        "1": ("查看服务状态", service_status),
+        "2": ("监控服务", monitor_menu),
+        "3": ("管理页服务", admin_service_menu),
+        "4": ("更新与备份", maintenance_menu),
+        "5": ("管理员账号", account_menu),
+        "6": ("从服务器完全删除 HostWatch", uninstall),
     }
     while True:
         print("\n──────── HostWatch Debian 管理菜单 ────────")
-        print(" 1. 查看服务状态       2. 更新脚本（先备份）")
-        print(" 3. 启动库存监控       4. 停止库存监控")
-        print(" 5. 重启管理页         6. 查看最近日志")
-        print(" 7. 查看管理页用户     8. 添加管理页用户")
-        print(" 9. 修改用户密码      10. 删除管理页用户")
-        print("11. 备份程序和配置    12. 重启监控 / 载入配置")
+        print(" 1. 查看服务状态       2. 监控服务   >")
+        print(" 3. 管理页服务         4. 更新与备份 >")
+        print(" 5. 管理员账号         6. 完全删除 HostWatch")
+        print("    常用配置、更新、日志和账号操作也可在网页‘管理员管理’中完成")
         print(" 0. 退出")
         choice = input("请选择：").strip()
         if choice == "0":
             return
-        action = actions.get(choice)
-        if action is None:
+        entry = actions.get(choice)
+        if entry is None:
             print("请输入菜单中的编号。")
             continue
         try:
-            action()
-        except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as exc:
+            removed = entry[1]()
+            if choice == "6" and removed:
+                return
+        except MENU_ERRORS as exc:
             print(f"操作失败：{exc}")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="HostWatch Debian 管理菜单；用户指管理页账号。")
-    parser.add_argument("command", nargs="?", default="menu", choices=["menu", "status", "update", "backup", "users", "add-user", "passwd", "delete-user", "web-action", "web-update-worker"])
+    parser.add_argument("command", nargs="?", default="menu", choices=["menu", "status", "update", "backup", "users", "add-user", "passwd", "delete-user", "uninstall", "web-action", "web-update-worker"])
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error("请使用 sudo hw 或切换至 root")
@@ -428,7 +585,7 @@ def main() -> int:
             else:
                 actions = {"menu": menu, "status": service_status, "update": update, "backup": backup,
                            "users": list_accounts, "add-user": add_account, "passwd": change_password,
-                           "delete-user": delete_account}
+                           "delete-user": delete_account, "uninstall": uninstall}
                 actions[args.command]()
         except (OSError, ValueError, KeyError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             if args.command == "web-action":
