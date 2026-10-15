@@ -72,7 +72,7 @@ class DMITCurrentPricingTests(unittest.TestCase):
         config = admin.validate_config({"enabled": True, "products": [{**row["watch"], "id": "notify", "watch_enabled": False, "notify_enabled": True}]})
         self.assertEqual(config["products"][0]["pid"], "")
         self.assertEqual(config["products"][0]["plan_key"], "LAX:AS3:PREMIUM:TINY")
-        with tempfile.TemporaryDirectory() as temp, patch("monitor.fetch_page") as fetch, patch("monitor.telegram_request") as send:
+        with tempfile.TemporaryDirectory() as temp, patch("monitor.fetch_page") as fetch, patch("monitor.telegram_request", return_value={"ok": True, "result": {"message_id": 101}}) as send:
             state, status = Path(temp) / "state.json", Path(temp) / "status.json"
             fetch.return_value = (pricing_card(sold=True), dmit.PRICING_URL)
             monitor.check_once(Mock(), config, state, status, "token", "123")
@@ -222,7 +222,7 @@ class DMITIntegrationTests(unittest.TestCase):
     def test_batch_reads_once_and_only_notifies_subscribed_restock(self):
         products = [item(watch_enabled=True, notify_enabled=False), item("228", watch_enabled=False, notify_enabled=True)]
         config = admin.validate_config({"products": products, "enabled": True})
-        with tempfile.TemporaryDirectory() as temp, patch("monitor.telegram_request") as send, patch("monitor.fetch_page") as fetch:
+        with tempfile.TemporaryDirectory() as temp, patch("monitor.telegram_request", return_value={"ok": True, "result": {"message_id": 101}}) as send, patch("monitor.fetch_page") as fetch:
             state, status = Path(temp) / "state.json", Path(temp) / "status.json"
             fetch.return_value = (card() + card("228"), dmit.PRICING_URL)
             monitor.check_once(Mock(), config, state, status, "token", "123")
@@ -243,7 +243,7 @@ class DMITIntegrationTests(unittest.TestCase):
 
     def test_unlisted_and_blocked_preserve_history_and_do_not_notify(self):
         config = admin.validate_config({"products": [item()], "enabled": True})
-        with tempfile.TemporaryDirectory() as temp, patch("monitor.telegram_request") as send, patch("monitor.fetch_page") as fetch:
+        with tempfile.TemporaryDirectory() as temp, patch("monitor.telegram_request", return_value={"ok": True, "result": {"message_id": 101}}) as send, patch("monitor.fetch_page") as fetch:
             state, status = Path(temp) / "state.json", Path(temp) / "status.json"
             fetch.return_value = (card(), dmit.PRICING_URL)
             monitor.check_once(Mock(), config, state, status, "token", "123")

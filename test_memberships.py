@@ -41,7 +41,7 @@ class MembershipTests(unittest.TestCase):
             monitor.write_state(state, previous)
             config = {"products": [akile_item(id="missing", selector="Removed"), akile_item(id="other", selector="HKL-TW-Starter")]}
             payload = akile_fixture()
-            with patch.object(monitor, "fetch_akile_catalog", return_value=payload), patch.object(monitor, "telegram_request") as send:
+            with patch.object(monitor, "fetch_akile_catalog", return_value=payload), patch.object(monitor, "telegram_request", return_value={"ok": True, "result": {"message_id": 101}}) as send:
                 monitor.check_once(Mock(), config, state, status, "token", "chat")
                 self.assertEqual(send.call_count, 1)  # Healthy product still notifies.
                 self.assertEqual(monitor.read_state(state)["missing"], previous["missing"])
@@ -91,7 +91,7 @@ class MembershipTests(unittest.TestCase):
             config = admin.validate_config({"products": [watch, notify], "notify_current_stock_on_start": True})
             result = monitor.Product("key", "Auto name", 2, "https://shop.example.com/order", region="香港",
                                      specs="1 核 · 1 GB", traffic="1 TB · 1 Gbps", price="USD 5 / 月")
-            with patch.object(monitor, "fetch_html_stock", return_value=result), patch.object(monitor, "telegram_request") as send:
+            with patch.object(monitor, "fetch_html_stock", return_value=result), patch.object(monitor, "telegram_request", return_value={"ok": True, "result": {"message_id": 101}}) as send:
                 monitor.check_once(Mock(), config, state, status, "token", "123")
                 self.assertEqual(send.call_count, 1)
                 self.assertIn("1TB@1Gbps", send.call_args.kwargs["text"])
@@ -108,7 +108,7 @@ class MembershipTests(unittest.TestCase):
                 state, status = Path(tmp) / "state.json", Path(tmp) / "status.json"
                 product = html_product(watch_enabled=True, notify_enabled=False)
                 config = {"products": [product], "notify_current_stock_on_start": first}
-                with patch.object(monitor, "fetch_html_stock", return_value=monitor.Product("p", "VPS", 3, "https://shop.example.com/item")), patch.object(monitor, "telegram_request") as send:
+                with patch.object(monitor, "fetch_html_stock", return_value=monitor.Product("p", "VPS", 3, "https://shop.example.com/item")), patch.object(monitor, "telegram_request", return_value={"ok": True, "result": {"message_id": 101}}) as send:
                     monitor.check_once(Mock(), config, state, status, "token", "123")
                     product["notify_enabled"] = True
                     monitor.check_once(Mock(), config, state, status, "token", "123")
@@ -121,7 +121,7 @@ class MembershipTests(unittest.TestCase):
             with self.subTest(credentials=bool(credentials[0])), patch("sys.argv", ["monitor.py", "--once"]), patch.object(monitor, "read_config", return_value=config), patch.object(monitor, "effective_telegram", return_value=credentials), patch.object(monitor, "check_once") as check:
                 self.assertEqual(monitor.main(), 0)
                 self.assertEqual(check.call_args.args[-2:], ("", ""))
-            with patch("sys.argv", ["monitor.py", "--once"]), patch.object(monitor, "read_config", return_value=config), patch.object(monitor, "effective_telegram", return_value=credentials), patch.object(monitor, "write_status"), patch.object(monitor, "check_once", side_effect=monitor.SiteBlocked("blocked")), patch.object(monitor, "telegram_request") as send:
+            with patch("sys.argv", ["monitor.py", "--once"]), patch.object(monitor, "read_config", return_value=config), patch.object(monitor, "effective_telegram", return_value=credentials), patch.object(monitor, "write_status"), patch.object(monitor, "check_once", side_effect=monitor.SiteBlocked("blocked")), patch.object(monitor, "telegram_request", return_value={"ok": True, "result": {"message_id": 101}}) as send:
                 self.assertEqual(monitor.main(), 0)
                 send.assert_not_called()
 

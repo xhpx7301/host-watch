@@ -193,7 +193,7 @@ class AkileTests(unittest.TestCase):
         plan(payload)["stock"] = 2
         products = [item(tier) for tier in ["Mini", "Starter", "Standard", "Pro"]]
         previous = {product["id"]: {"available": 0 if i == 0 else [0, 1, 14, 16][i]} for i, product in enumerate(products)}
-        with patch("monitor.fetch_akile_catalog", return_value=payload) as fetch, patch("monitor.read_state", return_value=previous), patch("monitor.write_state"), patch("monitor.write_status") as status, patch("monitor.telegram_request") as notify:
+        with patch("monitor.fetch_akile_catalog", return_value=payload) as fetch, patch("monitor.read_state", return_value=previous), patch("monitor.write_state"), patch("monitor.write_status") as status, patch("monitor.telegram_request", return_value={"ok": True, "result": {"message_id": 101}}) as notify:
             check_once(Mock(), {"products": [dict(product, area_id="") for product in products]}, None, None, "bot", "chat")
         fetch.assert_called_once()
         notify.assert_called_once()
@@ -209,7 +209,7 @@ class AkileTests(unittest.TestCase):
         self.assertEqual(fetch.call_count, 2)
 
     def test_missing_monitored_plan_preserves_baseline_and_other_products(self):
-        with patch("monitor.fetch_akile_catalog", return_value=catalog()), patch("monitor.read_state", return_value={}), patch("monitor.write_state") as write, patch("monitor.write_status") as status, patch("monitor.telegram_request") as notify:
+        with patch("monitor.fetch_akile_catalog", return_value=catalog()), patch("monitor.read_state", return_value={}), patch("monitor.write_state") as write, patch("monitor.write_status") as status, patch("monitor.telegram_request", return_value={"ok": True, "result": {"message_id": 101}}) as notify:
             check_once(Mock(), {"products": [item(), item(id="removed", selector="HKL-TW-Removed")]}, None, None, "bot", "chat")
         self.assertEqual(status.call_args.args[1]["state"], "partial")
         self.assertIsNone(status.call_args.args[1]["products"][1]["available"])

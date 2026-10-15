@@ -435,7 +435,7 @@
   </section>
   <section class="page-panel panel-card" id="page-notifications" data-page="notifications" aria-labelledby="page-title" hidden>
     <div class="section-body">
-    <div class="section-head"><div><h2>我的 VPS 库存通知 <span id="notification-count" class="subtle"></span></h2><p>有货或库存增加时发送 Telegram，支持单次测试。</p></div><button id="notification-browse" type="button">从大盘添加</button></div>
+    <div class="section-head"><div><h2>我的 VPS 库存通知 <span id="notification-count" class="subtle"></span></h2><p>每轮补货通知一次，库存变化更新原 Telegram 消息，支持单次测试。</p></div><button id="notification-browse" type="button">从大盘添加</button></div>
     <details class="help-note"><summary>库存通知说明</summary><p id="notification-note" class="hint"></p></details>
     <div id="notification-list"></div>
     <p class="table-footnote">拖动商家旁的 ⠿ 调整顺序，保存后保留；与库存监控分别排序</p>
@@ -461,7 +461,7 @@
       <p id="interval-description" class="hint span-2"></p>
       <button id="notify-current" class="option-button span-2" type="button" data-config-option data-on="已开启" data-off="未开启" aria-pressed="false" aria-label="首次启用该商品通知时，有货也发送提醒"><span>首次启用该商品通知时，有货也发送提醒</span><span data-option-state>未开启</span></button>
     </div>
-    <p class="hint">监控和通知共用检查间隔。通知商品在缺货变有货或库存增加时推送，不重复推送相同库存。开启首次有货提醒后，新加入通知且有货的商品也会提醒；重启服务不会重复提醒。仅库存监控无需配置 Telegram。</p>
+    <p class="hint">监控和通知共用检查间隔。每轮缺货变有货时发送一条 Telegram 通知；库存增减更新原消息，售罄改为“❌ 售罄”，再次补货才发新通知。开启首次有货提醒后，新加入通知且有货的商品也会提醒。消息显示最后成功检查时间；读取失败标记“⚠️ 库存暂未确认”。状态变化在检查成功后更新；库存不变时，消息时间最多每分钟刷新一次。重启保留消息记录；仅库存监控无需配置 Telegram。</p>
     </details>
     <div id="blocked-help" class="blocked-help" hidden><strong>上次库存检查被网站拦截（历史记录）</strong><span id="blocked-message">检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。</span><p class="hint">该记录保留至下一次检查；当前服务状态请看上方。请先确认访问方式，避免反复重启。</p></div>
     <p id="request-error" class="blocked-help" hidden></p>

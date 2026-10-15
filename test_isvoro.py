@@ -164,7 +164,7 @@ class IsvoroTests(unittest.TestCase):
 
     def test_each_round_shares_reads_and_respects_request_override(self):
         data = directory()
-        with patch.object(monitor, "fetch_isvoro_json", side_effect=lambda session, path, fetcher: data[path]) as fetch, patch.object(monitor, "read_state", return_value={"hk-mini": {"available": 0}}), patch.object(monitor, "write_state"), patch.object(monitor, "write_status") as status, patch.object(monitor, "telegram_request") as send:
+        with patch.object(monitor, "fetch_isvoro_json", side_effect=lambda session, path, fetcher: data[path]) as fetch, patch.object(monitor, "read_state", return_value={"hk-mini": {"available": 0}}), patch.object(monitor, "write_state"), patch.object(monitor, "write_status") as status, patch.object(monitor, "telegram_request", return_value={"ok": True, "result": {"message_id": 101}}) as send:
             monitor.check_once(Mock(), {"products": [item(), item(id="second")]}, None, None, "mock", "123")
         self.assertEqual(fetch.call_count, 3)
         send.assert_called_once()
@@ -194,7 +194,7 @@ class IsvoroTests(unittest.TestCase):
             monitor.check_once(Mock(), {"products": [item()]}, None, None, "", "")
         self.assertEqual(status.call_args.args[1]["products"][0]["stock_mode"], "availability")
         del data["products/hkpordmini"]["stock"]
-        with patch.object(monitor, "fetch_isvoro_json", side_effect=lambda session, path, fetcher: data[path]), patch.object(monitor, "write_state") as history, patch.object(monitor, "telegram_request") as send, self.assertRaises(monitor.MonitorError):
+        with patch.object(monitor, "fetch_isvoro_json", side_effect=lambda session, path, fetcher: data[path]), patch.object(monitor, "read_state", return_value={}), patch.object(monitor, "write_state") as history, patch.object(monitor, "telegram_request", return_value={"ok": True, "result": {"message_id": 101}}) as send, self.assertRaises(monitor.MonitorError):
             monitor.check_once(Mock(), {"products": [item()]}, None, None, "mock-token", "123")
         history.assert_not_called()
         send.assert_not_called()

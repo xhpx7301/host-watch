@@ -137,18 +137,19 @@ class CatalogParsingTests(unittest.TestCase):
         self.assertEqual(monitor.purchase_link(product, item, config), product.url)
         self.assertIn("aff=123", monitor.purchase_link(product, item, {**config, "affiliates": {"vmiss": "123"}}))
 
-    def test_selected_catalog_product_sends_restock_only_after_stock_increase(self):
+    def test_selected_catalog_product_sends_restock_then_edits_quantity_and_aff(self):
         payload = akile_fixture()
         with patch("monitor.fetch_akile_catalog", return_value=payload):
             row = catalog.akile_catalog(Mock(), "")[2][0]
         config = admin.validate_config({"enabled": True, "products": [{**row["watch"], "id": "watch-mini"}]})
-        with tempfile.TemporaryDirectory() as temp, patch("monitor.fetch_akile_catalog", return_value=payload), patch("monitor.telegram_request") as send:
+        with tempfile.TemporaryDirectory() as temp, patch("monitor.fetch_akile_catalog", return_value=payload), patch("monitor.telegram_request", return_value={"ok": True, "result": {"message_id": 101}}) as send:
             state, status = Path(temp) / "state.json", Path(temp) / "status.json"
             monitor.check_once(Mock(), config, state, status, "token", "123")
             send.assert_not_called()
             payload["data"]["areas"][0]["nodes"][0]["plans"][0]["stock"] = 2
             monitor.check_once(Mock(), config, state, status, "token", "123")
             send.assert_called_once()
+            self.assertEqual(send.call_args.args[2], "sendMessage")
             self.assertIn("HKL-TW-Mini", send.call_args.kwargs["text"])
             link = send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["url"]
             self.assertIn("planId=1047", link)
@@ -162,6 +163,8 @@ class CatalogParsingTests(unittest.TestCase):
             payload["data"]["areas"][0]["nodes"][0]["plans"][0]["stock"] = 3
             monitor.check_once(Mock(), config, state, status, "token", "123")
             self.assertEqual(send.call_count, 2)
+            self.assertEqual(send.call_args.args[2], "editMessageText")
+            self.assertEqual(send.call_args.kwargs["message_id"], 101)
             self.assertIn("aff_code=updated-code", send.call_args.kwargs["text"])
 
 

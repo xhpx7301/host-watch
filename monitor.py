@@ -44,6 +44,10 @@ class RequestServiceError(MonitorError):
     """Browser service unavailable; stop until its configuration is fixed."""
 
 
+class TelegramMessageUnavailable(MonitorError):
+    """A previous bot message was deleted or can no longer be edited."""
+
+
 @dataclass(frozen=True)
 class Product:
     key: str
@@ -779,13 +783,19 @@ def write_state(path: Path, state: dict[str, dict]) -> None:
 def telegram_request(session: requests.Session, token: str, method: str, **kwargs) -> dict:
     endpoint = f"https://api.telegram.org/bot{token}/{method}"
     try:
-        response = session.post(endpoint, json=kwargs, timeout=(10, 25)) if method == "sendMessage" else session.get(endpoint, params=kwargs, timeout=(10, 25))
-        response.raise_for_status()
+        response = session.post(endpoint, json=kwargs, timeout=(10, 25)) if method in {"sendMessage", "editMessageText"} else session.get(endpoint, params=kwargs, timeout=(10, 25))
         result = response.json()
+        if method == "editMessageText" and isinstance(result, dict) and result.get("error_code") == 400:
+            description = str(result.get("description", "")).casefold()
+            if "message is not modified" in description:
+                return {"ok": True, "result": True}
+            if any(reason in description for reason in ("message to edit not found", "message can't be edited", "message_id_invalid")):
+                raise TelegramMessageUnavailable("Telegram 原通知已删除或无法编辑；本轮不另发消息，将在下次补货时发送新通知")
+        response.raise_for_status()
     except (requests.RequestException, ValueError) as exc:
         # Never print an exception containing the Bot API URL (it includes the token).
         raise MonitorError(f"Telegram {method} 请求失败：{type(exc).__name__}") from None
-    if not result.get("ok"):
+    if not isinstance(result, dict) or not result.get("ok"):
         raise MonitorError(f"Telegram {method} 返回失败；请检查 bot 和目标 chat 配置")
     return result
 
@@ -814,37 +824,13 @@ def notification_text(product: Product, old_count: int | None, purchase_url: str
         checked_at=datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"))
 
 
-def check_once(
-    session: requests.Session,
-    config: dict,
-    state_path: Path,
-    status_path: Path,
-    bot_token: str,
-    chat_id: str,
-) -> None:
-    selected = selected_products(config)
-    if not selected and not config.get("isvoro_seckill", False):
-        raise MonitorError("没有启用的监控产品")
-
-    seckill_status = None
-    if config.get("isvoro_seckill", False):
-        from seckill import check_once as check_seckill
-        try:
-            seckill_status = {"ok": True, **check_seckill(session, config, state_path, bot_token, chat_id)}
-        except (SiteBlocked, RequestServiceError):
-            raise
-        except (MonitorError, requests.RequestException) as exc:
-            seckill_status = {"ok": False, "error": str(exc)}
-        seckill_status["checked_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
-
+def collect_inventory(session, config, selected, found, unavailable):
     by_category: dict[tuple[str, str], list[dict]] = {}
     for item in selected:
         if item["adapter"] != "vmiss":
             continue
         mode = product_fetcher(config.get("fetcher"), item).get("mode", "requests")
         by_category.setdefault((item["category_url"].strip(), mode), []).append(item)
-    found: dict[str, Product] = {}
-    unavailable: dict[str, str] = {}
     for (category_url, mode), items in by_category.items():
         page_products = fetch_products(session, category_url, [], {**config.get("fetcher", {}), "mode": mode})
         for item in items:
@@ -891,11 +877,55 @@ def check_once(
         except ProductUnlisted as exc:
             unavailable[item["id"]] = str(exc) + "；可能已下架或配置不匹配，保留配置等待重新上架"
 
+
+def check_once(
+    session: requests.Session,
+    config: dict,
+    state_path: Path,
+    status_path: Path,
+    bot_token: str,
+    chat_id: str,
+) -> None:
+    selected = selected_products(config)
+    if not selected and not config.get("isvoro_seckill", False):
+        raise MonitorError("没有启用的监控产品")
+
+    seckill_status = None
+    if config.get("isvoro_seckill", False):
+        from seckill import check_once as check_seckill
+        try:
+            seckill_status = {"ok": True, **check_seckill(session, config, state_path, bot_token, chat_id)}
+        except (SiteBlocked, RequestServiceError):
+            raise
+        except (MonitorError, requests.RequestException) as exc:
+            seckill_status = {"ok": False, "error": str(exc)}
+        seckill_status["checked_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+
+    from stock_alerts import StockAlerts
     previous = read_state(state_path)
-    current = dict(previous)
-    notifications: list[tuple[dict, Product, int | None]] = []
+    current = {key: dict(value) for key, value in previous.items()}
+    alerts = StockAlerts(sys.modules[__name__], session, config, state_path, current, bot_token, chat_id)
+    found, unavailable = {}, {}
+    try:
+        collect_inventory(session, config, selected, found, unavailable)
+    except (MonitorError, requests.RequestException):
+        # Only failed or not-yet-checked products are uncertain. Do not turn
+        # request failures into a zero-stock baseline or overwrite the cause.
+        for item in selected:
+            if item["id"] not in found:
+                try:
+                    alerts.uncertain(item)
+                except MonitorError as error:
+                    logging.error("更新库存未确认状态失败：%s", error)
+        raise
+
+    notification_errors = []
     for item in selected:
         if item["id"] in unavailable:
+            try:
+                alerts.uncertain(item)
+            except MonitorError as error:
+                notification_errors.append(str(error))
             continue
         product = found[item["id"]]
         old = previous.get(item["id"])
@@ -904,38 +934,28 @@ def check_once(
         if old and old.get("notify_enabled") is False and subscribed:
             old_count = None
             old = None
-        if subscribed and product.available > 0 and (
-            (old is None and config.get("notify_current_stock_on_start", False))
-            or (old is not None and isinstance(old_count, int) and product.available > old_count)
-        ):
-            notifications.append((item, product, old_count))
+            current[item["id"]].pop("telegram", None)
         current[item["id"]] = {
+            **current.get(item["id"], {}),
             "name": product.name,
             "vendor": item["provider"],
             "available": product.available,
             "url": product.url,
             "notify_enabled": subscribed,
         }
+        try:
+            alerts.sync(item, product, old_count, old is None and config.get("notify_current_stock_on_start", False))
+        except MonitorError as error:
+            # Delivery state is saved per product. Retrying one failed message
+            # must not duplicate messages already sent for other products.
+            notification_errors.append(str(error))
+            logging.error("更新商品 Telegram 通知失败：%s / %s", item["name"], error)
 
-    if notifications and bot_token and chat_id:
-        for item, product, old_count in notifications:
-            purchase_url = purchase_link(product, item, config)
-            reply_markup = purchase_button(purchase_url)
-            telegram_request(
-                session,
-                bot_token,
-                "sendMessage",
-                chat_id=chat_id,
-                text=notification_text(product, old_count, purchase_url, item),
-                parse_mode="HTML",
-                disable_web_page_preview=True,
-                reply_markup=reply_markup,
-            )
-            logging.info("已发送补货通知：%s，目前 %s 台", product.name, product.available)
-    elif notifications and not config.get("telegram", {}).get("disabled", False):
-        for _, product, _ in notifications:
-            logging.warning("发现库存增加但未设置 Telegram：%s，目前 %s 台，%s", product.name, product.available, product.url)
-
+    # Stop updating messages for products that have left the notification list.
+    subscribed_ids = {item["id"] for item in config.get("products", []) if product_membership(item, "notify")}
+    for key, entry in current.items():
+        if key not in subscribed_ids:
+            entry.pop("telegram", None)
     write_state(state_path, current)
     checked_at = datetime.now().astimezone().isoformat(timespec="seconds")
     rows = []
@@ -954,8 +974,8 @@ def check_once(
                      "purchase_url": purchase_link(product, item, config), "checked_at": checked_at,
                      **{field: getattr(product, field) for field in ("region", "specs", "traffic", "price")}})
     write_status(status_path, {
-        "last_checked": checked_at, "state": "partial" if unavailable or seckill_status and not seckill_status["ok"] else "ok",
-        "message": (f"{len(unavailable)} 个商品未匹配，保留配置并继续检查其他商品：" + "；".join(f"{item['name']}：{unavailable[item['id']]}" for item in selected if item['id'] in unavailable) if unavailable else "检查完成") + (f"；秒杀检查失败：{seckill_status['error']}" if seckill_status and not seckill_status["ok"] else ""),
+        "last_checked": checked_at, "state": "partial" if unavailable or notification_errors or alerts.warnings or seckill_status and not seckill_status["ok"] else "ok",
+        "message": (f"{len(unavailable)} 个商品未匹配，保留配置并继续检查其他商品：" + "；".join(f"{item['name']}：{unavailable[item['id']]}" for item in selected if item['id'] in unavailable) if unavailable else "检查完成") + (f"；秒杀检查失败：{seckill_status['error']}" if seckill_status and not seckill_status["ok"] else "") + ("；Telegram 通知待重试：" + "；".join(notification_errors) if notification_errors else "") + ("；" + "；".join(alerts.warnings) if alerts.warnings else ""),
         "products": rows,
         **({"seckill": seckill_status} if seckill_status is not None else {}),
     })
@@ -964,7 +984,7 @@ def check_once(
 
 def main() -> int:
     load_dotenv(ROOT / ".env")
-    parser = argparse.ArgumentParser(description="低频监控多个厂商的商品库存，并在库存增加时通过 Telegram 通知。")
+    parser = argparse.ArgumentParser(description="低频监控多个厂商的商品库存，每轮补货发送一次 Telegram 通知并更新原消息。")
     parser.add_argument("--once", action="store_true", help="只检查一次后退出")
     parser.add_argument("--show-chat-ids", action="store_true", help="读取 bot 收到的对话并显示 chat_id")
     parser.add_argument("--config", default=os.getenv("VMISS_CONFIG", str(CONFIG_PATH)))

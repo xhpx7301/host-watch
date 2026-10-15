@@ -132,7 +132,7 @@ class VPSSoyTests(unittest.TestCase):
     def test_same_page_is_fetched_once_and_restock_notification_has_correct_vendor(self):
         products = [item(), item("深港IX-PRO")]
         page = card(stock="2", href="/cart?pid=42", sold_out=False) + card("深港IX-PRO")
-        with patch("monitor.fetch_page", return_value=(page, URL)) as fetch, patch("monitor.read_state", return_value={"深港IX-MINI": {"available": 0}}), patch("monitor.write_state"), patch("monitor.write_status") as status, patch("monitor.telegram_request") as notify:
+        with patch("monitor.fetch_page", return_value=(page, URL)) as fetch, patch("monitor.read_state", return_value={"深港IX-MINI": {"available": 0}}), patch("monitor.write_state"), patch("monitor.write_status") as status, patch("monitor.telegram_request", return_value={"ok": True, "result": {"message_id": 101}}) as notify:
             check_once(Mock(), {"products": products}, None, None, "bot", "chat")
         fetch.assert_called_once()
         notify.assert_called_once()

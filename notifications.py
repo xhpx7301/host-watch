@@ -63,7 +63,8 @@ def purchase_button(url: str) -> dict:
 def stock_message(*, vendor: str, name: str, available: int, stock_mode: str, region: str = "", specs: str = "",
                   traffic: str = "", price: str = "", line: str = "", item: dict | None = None,
                   old_count: int | None = None, checked_at: str = "", test: bool = False,
-                  duration: object = None, warning: str = "", purchase_url: str = "") -> str:
+                  duration: object = None, warning: str = "", purchase_url: str = "",
+                  live: bool = False, uncertain: bool = False) -> str:
     # Leave room for labels, links and manual-test diagnostics within Telegram's limit.
     remaining_units = 2400
     def safe(value, limit=200):
@@ -79,9 +80,14 @@ def stock_message(*, vendor: str, name: str, available: int, stock_mode: str, re
     item = item or {}
     status = "有货" if stock_mode == "availability" and available > 0 else f"{available} 台" if available > 0 else "缺货"
     change = ""
-    if not test:
+    if not test and not live:
         change = "首次发现有货" if old_count is None else "由缺货变为有货" if old_count == 0 else f"增加 {available - old_count} 台"
     title = "🧪 HostWatch · 商品单次测试" if test else "✅ HostWatch · 补货提醒"
+    if live:
+        status = ("有货" + (f" · 剩余 {available} 台" if stock_mode != "availability" else "")) if available > 0 else "售罄"
+        if uncertain:
+            status = "暂未确认（上次成功检查：" + status + "）"
+        title = "⚠️ HostWatch · 库存暂未确认" if uncertain else "✅ HostWatch · 补货提醒" if available > 0 else "❌ HostWatch · 已售罄"
     lines = [f"<b>{title}</b>", f"<b>{safe(vendor, 80)} · {safe(name, 200)}</b>", "",
              f"🌏 <b>地区：</b>{safe(region or '—', 120)}"]
     if line:
@@ -94,8 +100,8 @@ def stock_message(*, vendor: str, name: str, available: int, stock_mode: str, re
     lines.extend([f"🖥 <b>硬件配置：</b><code>{safe(hardware_text(specs), 300)}</code>",
                   f"🌐 <b>流量/带宽：</b>{safe(network_text(traffic), 200)}",
                   f"💰 <b>价格：</b>{safe(price_text(price), 350)}", "",
-                  f"{'✅' if available > 0 else '❌'} <b>库存：</b>{status}" + (f"（{change}）" if change else ""),
-                  f"🕒 <b>检查时间：</b>{safe(checked_at, 80)}"])
+                  f"{'⚠️' if uncertain else '✅' if available > 0 else '❌'} <b>库存：</b>{status}" + (f"（{change}）" if change else ""),
+                  f"🕒 <b>{'最后成功检查' if live else '检查时间'}：</b>{safe(checked_at, 80)}"])
     if duration is not None:
         lines.append(f"⏱ <b>耗时：</b>{safe(duration, 40)} 秒")
     if warning:
