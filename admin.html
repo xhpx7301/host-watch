@@ -228,6 +228,16 @@
     .watchlist-filters { display:flex; flex-wrap:wrap; gap:12px; margin:14px 0; }
     .watchlist-filters label { flex:1; min-width:150px; }
     .monitor-settings-title { margin:28px 0 14px; padding-top:16px; border-top:1px solid var(--line); }
+    .request-tool { margin-top:18px; padding:16px; border:1px solid var(--line); border-radius:10px; background:#fafcff; }
+    .request-tool.cloudscraper { border-left:3px solid #15916b; background:#f7fcfa; }
+    .request-tool.flaresolverr { border-left:3px solid #7662cf; }
+    .request-tool h2 { margin:0 0 6px; font-size:14px; }
+    .request-tool .form-grid { margin-top:12px; }
+    .request-tool .request-parameters { grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr)); }
+    .request-probe-controls { display:flex; gap:8px; align-items:end; flex-wrap:wrap; margin-top:12px; }
+    .request-probe-controls label { flex:1 1 200px; max-width:340px; }
+    .request-probe-controls button { margin-bottom:1px; }
+    .request-tool .product-test-result { margin-top:12px; white-space:pre-line; overflow-wrap:anywhere; }
     .affiliate-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-top:18px; }
     .affiliate-card { min-width:0; padding:20px; border:1px solid var(--line); border-radius:10px; background:var(--canvas); }
     .affiliate-card a { overflow-wrap:anywhere; }
@@ -507,15 +517,36 @@
     <div class="section-body">
     <div class="form-grid">
       <label>全局请求方式<select id="fetcher-mode"><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label>
-      <label>FlareSolverr API 地址<input id="flaresolverr-url" type="url" placeholder="http://127.0.0.1:8191/v1"></label>
-      <label>FlareSolverr 超时（秒）<input id="flaresolverr-timeout" type="number" min="10" max="180"></label>
-      <label>浏览器页面渲染等待（秒）<input id="fetcher-wait" type="number" min="0" max="30" step="1"></label>
     </div>
     <h2 class="monitor-settings-title">各商家监控请求方式</h2><p class="hint">用于后台自动监控和“测试通知”，保存后统一应用到该商家所有商品。选择“跟随全局”使用上方全局方式。库存大盘刷新同样使用已保存的商家请求方式。</p><div class="form-grid" id="provider-request-modes"><label>VMISS<select data-provider-mode="vmiss"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>VPS.SOY<select data-provider-mode="vps_soy"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>Akile<select data-provider-mode="akile"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>Isvoro<select data-provider-mode="isvoro"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>DMIT<select data-provider-mode="dmit"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>其他商家 / 自定义网页<select data-provider-mode="html"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label></div><p id="provider-request-note" class="hint" aria-live="polite"></p>
-    <p id="fetcher-status" class="hint">普通 HTTPS 请求已启用。</p><p class="hint">cloudscraper 随安装/更新自动安装，无需额外服务。适合尝试读取部分 Cloudflare 验证页面，不会完整渲染 JavaScript，也不保证通过所有校验；动态商品数据可选择 FlareSolverr。浏览器渲染等待仅用于 FlareSolverr。</p>
-    <p class="hint">安装和更新时自动部署本机 FlareSolverr；已有服务会复用。默认 API 地址为 http://127.0.0.1:8191/v1。动态库存可增加渲染等待；普通 HTTPS 和 cloudscraper 不使用该等待。仅监控你拥有或获准访问的页面。</p>
-    <div class="actions" style="margin-top:10px"><button id="fetcher-test" type="button">测试 FlareSolverr 连接</button></div>
-    <p id="fetcher-health" class="hint" aria-live="polite">这里只测试 FlareSolverr 服务连接。实际库存请进入“VPS 库存通知”，点击“测试通知”；无需开启监控，结果直接显示在商品下方。</p>
+    <p id="fetcher-status" class="hint">普通 HTTPS 请求已启用。</p>
+    <p class="hint">1 核 1GB 等小内存服务器建议优先使用普通 HTTPS 或 cloudscraper；需要浏览器渲染时再为对应商家选择 FlareSolverr。</p>
+    <div class="request-tool cloudscraper">
+      <h2>cloudscraper · 轻量请求</h2>
+      <p class="hint">无需浏览器或额外服务，随安装/更新自动安装。以下参数仅用于 cloudscraper，保存后应用到选择此方式的商家。</p>
+      <div class="form-grid request-parameters">
+        <label>连接超时（秒）<input id="cloudscraper-connect-timeout" type="number" min="1" max="30" step="1"><span class="hint">建立连接的等待时间，默认 10 秒。</span></label>
+        <label>读取超时（秒）<input id="cloudscraper-read-timeout" type="number" min="1" max="120" step="1"><span class="hint">等待响应数据的时间，默认 25 秒。</span></label>
+        <label>验证等待（秒）<input id="cloudscraper-challenge-delay" type="number" min="0" max="15" step="1"><span class="hint">默认 5 秒；0 为自动识别。仅验证时使用，普通页面不会额外等待。</span></label>
+      </div>
+      <div class="request-probe-controls">
+        <label>测试网站<select id="cloudscraper-test-target"><option value="dmit">DMIT · 价格页</option><option value="vmiss">VMISS · 商品目录</option><option value="vps_soy">VPS.SOY · 商品目录</option><option value="akile">Akile · 商店页面</option><option value="isvoro">Isvoro · 购买页面</option><option value="baseline">公共 HTTPS 基准 · example.com</option></select></label>
+        <button id="cloudscraper-test" type="button">测试 cloudscraper 访问</button><button id="cloudscraper-test-stop" type="button" class="danger product-test-stop" hidden>停止测试</button>
+      </div>
+      <p class="hint">测试使用当前填写的 cloudscraper 参数，无需保存或开启监控，可随时停止。不发送 Telegram、不修改库存。页面可读不代表能识别具体商品库存；动态库存请使用“测试通知”。cloudscraper 不会完整渲染 JavaScript，也不保证通过所有 Cloudflare 验证。</p>
+      <div id="cloudscraper-test-result" class="product-test-result" role="status" aria-live="polite" hidden></div>
+    </div>
+    <div class="request-tool flaresolverr">
+      <h2>FlareSolverr · 浏览器请求</h2>
+      <p class="hint">可执行网页 JavaScript，启动浏览器时 CPU 和内存占用更高。安装和更新自动部署或复用本机服务；以下参数仅用于 FlareSolverr。</p>
+      <div class="form-grid">
+        <label>FlareSolverr API 地址<input id="flaresolverr-url" type="url" placeholder="http://127.0.0.1:8191/v1"></label>
+        <label>FlareSolverr 超时（秒）<input id="flaresolverr-timeout" type="number" min="10" max="180"></label>
+        <label>浏览器页面渲染等待（秒）<input id="fetcher-wait" type="number" min="0" max="30" step="1"></label>
+      </div>
+      <div class="actions" style="margin-top:10px"><button id="fetcher-test" type="button">测试 FlareSolverr 连接</button></div>
+      <p id="fetcher-health" class="hint" aria-live="polite">这里只检测服务是否就绪，不启动浏览器、不访问商品网站。实际库存请在“VPS 库存通知”中点击“测试通知”。</p>
+    </div>
     </div>
   </section>
 

@@ -9,6 +9,11 @@
     "flaresolverr_url": "http://127.0.0.1:8191/v1",
     "timeout_seconds": 60,
     "wait_seconds": 0,
+    "cloudscraper": {
+      "connect_timeout_seconds": 10,
+      "read_timeout_seconds": 25,
+      "challenge_delay_seconds": 5
+    },
     "provider_modes": {
       "vmiss": "inherit",
       "vps_soy": "inherit",

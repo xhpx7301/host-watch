@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-from admin import default_config, effective_telegram, normalize_vps_soy_url, validate_config
+from admin import default_config, effective_telegram, normalize_cloudscraper, normalize_vps_soy_url, validate_config
 from affiliates import affiliate_purchase_url
 from notifications import purchase_button, stock_message
 
@@ -199,9 +199,10 @@ def fetch_with_requests(session: requests.Session, url: str, expected_host: str 
     return _validate_page_response(response.status_code, response.text, response.url, expected_host, getattr(response, "headers", {}))
 
 
-def fetch_with_cloudscraper(url: str, expected_host: str) -> tuple[str, str]:
+def fetch_with_cloudscraper(url: str, expected_host: str, fetcher: dict | None = None, diagnostics: dict | None = None) -> tuple[str, str]:
     """Keep challenge cookies and browser headers out of the shared TG session."""
     try:
+        options = normalize_cloudscraper((fetcher or {}).get("cloudscraper"))
         import cloudscraper
         from cloudscraper.exceptions import CloudflareException
     except ImportError:
@@ -209,9 +210,12 @@ def fetch_with_cloudscraper(url: str, expected_host: str) -> tuple[str, str]:
     try:
         # The published release's native interpreter needs no browser or Node.
         # Bound challenge submissions; never opt into external CAPTCHA services.
-        with cloudscraper.create_scraper(interpreter="native", delay=5, solveDepth=1, doubleDown=False, debug=False) as scraper:
-            response = scraper.get(url, timeout=(10, 25), allow_redirects=True)
-            return _validate_page_response(response.status_code, response.text, response.url, expected_host, getattr(response, "headers", {}))
+        with cloudscraper.create_scraper(interpreter="native", delay=options["challenge_delay_seconds"], solveDepth=1, doubleDown=False, debug=False) as scraper:
+            response = scraper.get(url, timeout=(options["connect_timeout_seconds"], options["read_timeout_seconds"]), allow_redirects=True)
+            result = _validate_page_response(response.status_code, response.text, response.url, expected_host, getattr(response, "headers", {}))
+            if diagnostics is not None:
+                diagnostics.update(status_code=response.status_code, response_bytes=len(response.content))
+            return result
     except CloudflareException:
         raise SiteBlocked(f"{expected_host} 的 Cloudflare 验证未通过或不受 cloudscraper 支持；请检查站点访问规则或调整请求方式") from None
     except requests.Timeout:
@@ -323,7 +327,7 @@ def product_fetcher(fetcher: dict | None, item: dict) -> dict:
 
 def fetch_page(session: requests.Session, url: str, fetcher: dict | None, expected_host: str) -> tuple[str, str]:
     if (fetcher or {}).get("mode") == "cloudscraper":
-        return fetch_with_cloudscraper(url, expected_host)
+        return fetch_with_cloudscraper(url, expected_host, fetcher)
     if (fetcher or {}).get("mode") == "flaresolverr":
         return fetch_with_flaresolverr(session, url, fetcher, expected_host)
     return fetch_with_requests(session, url, expected_host)

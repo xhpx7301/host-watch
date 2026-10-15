@@ -30,6 +30,7 @@ const productTests = new Map();
 let activeTest = null;
 let productDrag = null;
 const seckillTestId = "isvoro-seckill";
+const cloudscraperTestId = "cloudscraper-probe";
 
 const pages = {
   overview: { title: "运行概览", description: "查看监控服务、商品库存与最近检查结果。" },
@@ -38,7 +39,7 @@ const pages = {
   notifications: { title: "VPS 库存通知", description: "选择需要 Telegram 库存提醒的商品，管理通知和测试。" },
   affiliates: { title: "AFF 管理", description: "统一管理各商家推广码，保存后应用到新的购买入口。" },
   telegram: { title: "Telegram 通知", description: "配置通知机器人，接收库存提醒与商品测试结果。" },
-  requests: { title: "网页请求", description: "统一设置各商家的监控请求方式，配置并检测浏览器服务。" },
+  requests: { title: "网页请求", description: "设置各商家请求方式，配置轻量请求与浏览器请求，测试访问效果。" },
   management: { title: "管理员管理", description: "管理服务与账号，查看日志、备份及更新程序。" },
 };
 let currentPage = null;
@@ -718,8 +719,9 @@ function renderProductTest(article, id) {
 
 function syncTestControls() {
   renderSeckill();
+  renderCloudscraperTest();
   document.querySelector("#stock-test-bar").hidden = !activeTest;
-  document.querySelector("#stock-test-status").textContent = activeTest?.notifying ? "库存检查已结束，正在发送 Telegram 结果，页面仍可操作。" : activeTest?.stopping ? "正在停止测试并释放资源…" : "商品测试正在运行，页面仍可操作。";
+  document.querySelector("#stock-test-status").textContent = activeTest?.notifying ? "库存检查已结束，正在发送 Telegram 结果，页面仍可操作。" : activeTest?.stopping ? "正在停止测试并释放资源…" : activeTest?.id === cloudscraperTestId ? "cloudscraper 访问测试正在运行，可停止测试，页面仍可操作。" : "商品测试正在运行，页面仍可操作。";
   updateDiscardControl();
   const globalStop = document.querySelector("#stock-test-stop");
   globalStop.disabled = Boolean(activeTest?.stopping || activeTest?.notifying);
@@ -783,16 +785,18 @@ async function testProduct(id) {
   if (activeTest || actionRunning) return;
   const task = { id, taskId: crypto.randomUUID(), stopping: false };
   const seckill = id === seckillTestId;
-  const item = seckill ? null : structuredClone(config.products.find((product) => product.id === id));
+  const probe = id === cloudscraperTestId;
+  const item = seckill || probe ? null : structuredClone(config.products.find((product) => product.id === id));
   const fetcher = collectConfig().fetcher;
-  task.draft = seckill ? null : JSON.stringify({ product: item, fetcher });
+  task.draft = seckill || probe ? null : JSON.stringify({ product: item, fetcher });
+  if (probe) task.probeDraft = JSON.stringify(fetcher.cloudscraper);
   activeTest = task;
   sessionStorage.setItem("hostwatch-stock-test", JSON.stringify({ id, taskId: task.taskId }));
   productTests.set(id, { pending: true });
-  setMessage("正在单次测试商品，可随时点击“停止测试”；页面其他功能仍可使用。", "pending");
+  setMessage(probe ? "正在测试 cloudscraper 访问效果，可随时停止；页面其他功能仍可使用。" : "正在单次测试商品，可随时点击“停止测试”；页面其他功能仍可使用。", "pending");
   syncTestControls();
   task.startController = new AbortController();
-  task.start = requestJSON("/api/products/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: task.taskId, ...(seckill ? { kind: "isvoro_seckill" } : { product: item }), fetcher }), timeoutMs: 15000, signal: task.startController.signal });
+  task.start = requestJSON("/api/products/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: task.taskId, ...(probe ? { kind: "cloudscraper_probe", target: document.querySelector("#cloudscraper-test-target").value } : seckill ? { kind: "isvoro_seckill" } : { product: item }), fetcher }), timeoutMs: 15000, signal: task.startController.signal });
   await followProductTest(task, task.start);
 }
 
@@ -836,9 +840,10 @@ async function followProductTest(task, initial) {
       result.warning = [result.warning, "此结果使用测试开始时的配置；页面已修改，请按需重新测试。"].filter(Boolean).join(" ");
     }
     if (task.id === seckillTestId) result.checked_at ||= new Date().toISOString();
+    if (task.probeDraft && task.probeDraft !== JSON.stringify(collectConfig().fetcher.cloudscraper)) result.warning = "此结果使用测试开始时的 cloudscraper 参数；当前参数已修改，请按需重新测试。";
     productTests.set(task.id, result);
     const notificationIssue = result.notification && !["sent", "skipped"].includes(result.notification.status);
-    const summary = result.cancelled ? "测试已停止。" : result.ok ? (task.id === seckillTestId ? "秒杀单次测试完成，结果已显示在秒杀区域。" : "单次库存测试完成，结果已显示在商品下方。") : `单次库存测试失败：${result.error}`;
+    const summary = result.cancelled ? "测试已停止。" : result.ok ? (task.id === cloudscraperTestId ? "cloudscraper 访问测试完成，结果已显示在网页请求中。" : task.id === seckillTestId ? "秒杀单次测试完成，结果已显示在秒杀区域。" : "单次库存测试完成，结果已显示在商品下方。") : `${task.id === cloudscraperTestId ? "cloudscraper 访问" : "单次库存"}测试失败：${result.error}`;
     setMessage([summary, result.notification?.message, result.warning].filter(Boolean).join(" "), result.warning || notificationIssue || (!result.ok && !result.cancelled) ? "error" : "success");
   } catch (error) {
     productTests.set(task.id, { ok: false, error: error.message, ...(task.id === seckillTestId ? { checked_at: new Date().toISOString() } : {}) });
@@ -856,6 +861,29 @@ async function followProductTest(task, initial) {
 document.querySelector("#stock-test-stop").addEventListener("click", stopProductTest);
 document.querySelector("#seckill-test").addEventListener("click", () => testProduct(seckillTestId));
 document.querySelector("#seckill-stop").addEventListener("click", stopProductTest);
+document.querySelector("#cloudscraper-test").addEventListener("click", () => testProduct(cloudscraperTestId));
+document.querySelector("#cloudscraper-test-stop").addEventListener("click", stopProductTest);
+
+function renderCloudscraperTest() {
+  const running = activeTest?.id === cloudscraperTestId;
+  const button = document.querySelector("#cloudscraper-test"), stop = document.querySelector("#cloudscraper-test-stop");
+  button.disabled = Boolean(activeTest) || actionRunning;
+  button.textContent = running ? "访问测试中…" : "测试 cloudscraper 访问";
+  stop.hidden = !running;
+  stop.disabled = Boolean(activeTest?.stopping);
+  stop.textContent = activeTest?.stopUnconfirmed ? "重试停止" : activeTest?.stopping ? "停止中…" : "停止测试";
+  const result = productTests.get(cloudscraperTestId), node = document.querySelector("#cloudscraper-test-result");
+  node.hidden = !result;
+  if (!result) return;
+  node.className = `product-test-result ${result.pending || result.cancelled ? "pending" : result.ok ? "success" : "error"}`;
+  node.textContent = result.pending ? (result.stopUnconfirmed ? "停止尚未确认，可再次点击停止。" : result.stopping ? "正在终止本次访问测试…" : "正在读取目标页面，可随时停止；不启动浏览器。") : result.cancelled ? "访问测试已停止，未修改配置或库存。" : !result.ok ? `访问失败：${result.error}` : [
+    `${result.target_name} · HTTP ${result.status_code} · cloudscraper ${result.library_version}`,
+    `耗时 ${result.duration_seconds} 秒 · 响应 ${(result.response_bytes / 1024).toFixed(1)} KB${Number.isFinite(result.peak_memory_mb) ? ` · 测试进程峰值内存 ${result.peak_memory_mb} MB` : ""}`,
+    `页面标题：${result.title}`, `访问地址：${result.url}`,
+    "页面读取成功；具体库存识别请继续使用商品“测试通知”。峰值内存仅指本次测试进程。",
+  ].join("\n");
+  if (result.warning) node.textContent += `\n${result.warning}`;
+}
 
 function renderSeckill() {
   const running = activeTest?.id === seckillTestId;
@@ -1439,7 +1467,7 @@ function collectConfig(enabled = config.enabled) {
     notify_order: config.notify_order || [],
     notify_current_stock_on_start: optionPressed("notify-current"),
     isvoro_seckill: optionPressed("isvoro-seckill"),
-    fetcher: { provider_modes: collectProviderModes(), mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value), wait_seconds: Number(document.querySelector("#fetcher-wait").value) },
+    fetcher: { provider_modes: collectProviderModes(), mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value), wait_seconds: Number(document.querySelector("#fetcher-wait").value), cloudscraper: { connect_timeout_seconds: Number(document.querySelector("#cloudscraper-connect-timeout").value), read_timeout_seconds: Number(document.querySelector("#cloudscraper-read-timeout").value), challenge_delay_seconds: Number(document.querySelector("#cloudscraper-challenge-delay").value) } },
     telegram: { bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim(), disabled: optionPressed("telegram-disabled"), clear: optionPressed("telegram-clear") },
     products: config.products.map((item) => ({ ...item })),
   };
@@ -1525,6 +1553,10 @@ function applyConfig(value) {
   document.querySelector("#flaresolverr-url").value = fetcher.flaresolverr_url || "http://127.0.0.1:8191/v1";
   document.querySelector("#flaresolverr-timeout").value = fetcher.timeout_seconds || 60;
   document.querySelector("#fetcher-wait").value = fetcher.wait_seconds || 0;
+  const cloud = fetcher.cloudscraper || {};
+  document.querySelector("#cloudscraper-connect-timeout").value = cloud.connect_timeout_seconds ?? 10;
+  document.querySelector("#cloudscraper-read-timeout").value = cloud.read_timeout_seconds ?? 25;
+  document.querySelector("#cloudscraper-challenge-delay").value = cloud.challenge_delay_seconds ?? 5;
   applyProviderModes(fetcher);
   updateFetcherStatus();
   const telegram = config.telegram || {};

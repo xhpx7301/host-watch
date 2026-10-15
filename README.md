@@ -267,7 +267,13 @@ sudo env HOSTWATCH_INSTALL_FLARESOLVERR=0 bash /tmp/host-watch-install.sh
 
 cloudscraper 使用 [VeNoMouS/cloudscraper](https://github.com/VeNoMouS/cloudscraper) 的官方 PyPI 发布版 `1.2.71`，通过 `requirements.txt` 在安装和更新时自动安装。使用内置 `native` Python 解释器，无需 Chromium、Docker、Node.js 或额外 API 服务。配置值为 `"cloudscraper"`，例如 `"fetcher": {"mode": "requests", "provider_modes": {"dmit": "cloudscraper"}}`；全局、每商家和旧版每商品配置均支持。网页库存测试使用当前未保存的选择，后台监控、限时秒杀和库存大盘使用已保存设置。
 
-cloudscraper 基于 Requests，能尝试处理其发布版支持的 Cloudflare 校验，不能完整执行网页应用 JavaScript。GitHub 主分支说明可能与 PyPI 发布版功能不同，本项目不依赖主分支未发布的功能；现代托管校验、Turnstile、验证码及站点封禁可能仍无法通过。每次读取使用独立短会话，不复制共享会话中的账号、Cookie 或 Token，也不将验证 Cookie 写回 Telegram 或其他商家的会话。限制验证提交次数，连接/读取超时为 10/25 秒，不接入付费打码服务；选择此方式不会启动 FlareSolverr，也不使用浏览器渲染等待。单次测试仍可随时停止；失败会给出依赖、网络或校验提示，并保留库存历史，不自动切换其他请求方式。
+cloudscraper 基于 Requests，能尝试处理其发布版支持的 Cloudflare 校验，不能完整执行网页应用 JavaScript。GitHub 主分支说明可能与 PyPI 发布版功能不同，本项目不依赖主分支未发布的功能；现代托管校验、Turnstile、验证码及站点封禁可能仍无法通过。每次读取使用独立短会话，不复制共享会话中的账号、Cookie 或 Token，也不将验证 Cookie 写回 Telegram 或其他商家的会话。使用内置解释器并限制验证提交次数，不接入付费打码服务；选择此方式不会启动 FlareSolverr，也不使用浏览器渲染等待。单次测试仍可随时停止；失败会给出依赖、网络或校验提示，并保留库存历史，不自动切换其他请求方式。
+
+“网页请求”将 cloudscraper 与 FlareSolverr 的参数和检测分开展示。cloudscraper 的连接超时默认为 10 秒（1–30），读取超时默认为 25 秒（1–120），验证等待默认为 5 秒（0–15，0 表示由库自动识别页面等待时间，仅验证时使用）。配置位于 `fetcher.cloudscraper` 的 `connect_timeout_seconds`、`read_timeout_seconds`、`challenge_delay_seconds`；保存后用于自动监控、大盘、秒杀和单次商品测试。连接/读取超时是各阶段等待限制，不是整个多请求任务的总时长；单次测试进程另有超时保护。
+
+在 **网页请求 → cloudscraper → 测试网站** 选择商家公开目录，或使用 `example.com` 公共 HTTPS 基准页区分基础访问与目标站点问题，点击“测试 cloudscraper 访问”。测试使用当前未保存的 cloudscraper 参数，固定使用 cloudscraper，不受全局或商家方式覆盖；无需启动监控。后台独立进程读取页面，支持立即停止、刷新网页后恢复任务状态，并与商品/秒杀测试共用单任务限制。显示库版本、实际 HTTP 状态、耗时、响应大小、页面标题及地址；Debian 额外显示本次测试进程的峰值内存（不代表整台服务器占用）。不发送 TG、不修改配置或库存/补货记录。页面可读仅证明这个入口访问成功，具体动态接口、分类和商品的库存识别应继续使用“测试通知”。
+
+cloudscraper 无需运行 Chromium，通常比 FlareSolverr 更省 CPU 和内存，1 核 1GB 等小型服务器可优先使用普通 HTTPS，遇到其能处理的验证再尝试 cloudscraper，需要完整页面渲染时再为对应商家选 FlareSolverr。三种方式的实际成功率取决于站点结构和访问规则；FlareSolverr“连接测试”只检测服务就绪，不启动浏览器，因此不能用该测试与一次完整商品读取直接比较资源占用。
 
 FlareSolverr API 默认 `http://127.0.0.1:8191/v1`，超时 10–180 秒。渲染等待支持 0–30 秒，传递官方 `waitInSeconds` 参数，用于页面验证结束后等待动态内容。默认 0，按需要设置 2–5 秒；普通 HTTPS 和 cloudscraper 不使用此等待。每次浏览器请求使用独立临时会话，由 FlareSolverr 负责关闭，避免跨厂商会话混用和常驻浏览器泄漏；不把浏览器 Cookie 或 User-Agent 写入共享 HTTP 会话。
 

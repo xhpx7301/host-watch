@@ -37,6 +37,15 @@ STOPPED_TEST_IDS = {}
 BROWSER_CLEANUP_SECONDS = 8
 BROWSER_CLEANUP_WARNING = "本地测试进程已结束，但未能确认 FlareSolverr 浏览器释放；请检查服务日志，必要时重启 FlareSolverr，避免继续启动浏览器测试"
 CATALOG = CatalogService(lambda: CONFIG_PATH.parent / "catalog.json", lambda: current_config()["fetcher"])
+CLOUDSCRAPER_TEST_ID = "cloudscraper-probe"
+CLOUDSCRAPER_TEST_TARGETS = {
+    "vmiss": ("VMISS", "https://app.vmiss.com/store"),
+    "vps_soy": ("VPS.SOY", "https://www.vps.soy/cart"),
+    "akile": ("Akile", "https://akile.ai/shop/server?areaId=3"),
+    "isvoro": ("Isvoro", "https://isvoro.com/buy"),
+    "dmit": ("DMIT", "https://www.dmit.io/pages/pricing"),
+    "baseline": ("公共 HTTPS 基准", "https://example.com/"),
+}
 
 
 def destroy_test_browser(endpoint: str, session_id: str, creation_uncertain: bool = False) -> str:
@@ -85,6 +94,9 @@ def stock_test_worker() -> None:
     from monitor import MonitorError, inspect_product
     value = json.loads(sys.stdin.read(MAX_BODY + 1))
     try:
+        if value["product"].get("_request_probe"):
+            print(json.dumps(cloudscraper_probe(value["product"]["target"], value["fetcher"])))
+            return
         with requests.Session() as session:
             session.headers["User-Agent"] = "HostWatch/1.0 (manual stock test)"
             if value["product"].get("_seckill"):
@@ -194,7 +206,11 @@ class StockTestTask:
                     if self.browser:
                         fetcher.update({"_test_browser_session": self.session_id, "_browser_slot_held": True})
                     try:
-                        result = self.run_process("--stock-test-worker", {"product": self.product, "fetcher": fetcher}, self.fetcher["timeout_seconds"] + self.fetcher["wait_seconds"] + 40)
+                        timeout = self.fetcher["timeout_seconds"] + self.fetcher["wait_seconds"] + 40
+                        if fetcher["mode"] == "cloudscraper":
+                            options = normalize_cloudscraper(fetcher.get("cloudscraper"))
+                            timeout = 2 * (options["connect_timeout_seconds"] + options["read_timeout_seconds"]) + options["challenge_delay_seconds"] + 20
+                        result = self.run_process("--stock-test-worker", {"product": self.product, "fetcher": fetcher}, timeout)
                     except subprocess.TimeoutExpired:
                         result = {"ok": False, "error": "测试超时，已终止本地任务"}
                 finally:
@@ -222,10 +238,12 @@ class StockTestTask:
                     result = {"ok": False, "cancelled": True, "error": "测试已停止"}
                 if cleanup_warning:
                     result["warning"] = cleanup_warning
-                self.output = {**result, "pending": True, "notifying": not self.cancelled.is_set(), "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"), "duration_seconds": round(time.monotonic() - self.started, 1)}
+                self.output = {**result, "pending": True, "notifying": not self.cancelled.is_set() and not self.product.get("_request_probe"), "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"), "duration_seconds": round(time.monotonic() - self.started, 1)}
             # Stock checking and browser cleanup have finished. Do not hold the
             # task lock across Telegram I/O; status polling must remain responsive.
-            if not self.cancelled.is_set():
+            if self.product.get("_request_probe"):
+                notification = {"status": "skipped", "message": "网页访问测试不发送 Telegram，不修改库存记录"}
+            elif not self.cancelled.is_set():
                 notification = send_stock_test_result(self.product, self.snapshot())
             else:
                 notification = {"status": "skipped", "message": "测试已停止，未发送 Telegram"}
@@ -238,7 +256,14 @@ def start_stock_test(submitted: dict) -> dict:
     task_id = str(submitted.get("task_id", ""))
     if not re.fullmatch(r"[a-zA-Z0-9-]{16,64}", task_id):
         raise ValueError("测试任务编号无效")
-    if submitted.get("kind") == "isvoro_seckill":
+    if submitted.get("kind") == "cloudscraper_probe":
+        target = submitted.get("target", "dmit")
+        if not isinstance(target, str) or target not in CLOUDSCRAPER_TEST_TARGETS:
+            raise ValueError("请选择支持的 cloudscraper 测试网站")
+        fetcher = normalize_fetcher(submitted.get("fetcher", {}))
+        fetcher.update(mode="cloudscraper", provider_modes={})
+        value = {"products": [{"id": CLOUDSCRAPER_TEST_ID, "adapter": "html", "name": "cloudscraper 访问测试", "target": target, "_request_probe": True}], "fetcher": fetcher}
+    elif submitted.get("kind") == "isvoro_seckill":
         from seckill import TEST_PRODUCT_ID
         value = {"products": [{"id": TEST_PRODUCT_ID, "adapter": "isvoro", "provider": "Isvoro", "name": "限时秒杀", "_seckill": True}], "fetcher": normalize_fetcher(submitted.get("fetcher", {}))}
     else:
@@ -292,6 +317,7 @@ def default_config() -> dict:
             "flaresolverr_url": "http://127.0.0.1:8191/v1",
             "timeout_seconds": 60,
             "wait_seconds": 0,
+            "cloudscraper": normalize_cloudscraper(None),
         },
         "telegram": {"bot_token": "", "chat_id": "", "disabled": False},
         "products": [],
@@ -321,6 +347,41 @@ def normalize_telegram(value: object) -> dict:
     if chat_id and (len(chat_id) > 128 or not re.fullmatch(r"(?:-?\d{1,32}|@[A-Za-z0-9_]{5,64})", chat_id)):
         raise ValueError("Telegram chat_id 格式无效")
     return {"bot_token": token, "chat_id": chat_id, "disabled": disabled}
+
+
+def normalize_cloudscraper(value: object) -> dict:
+    if value is None:
+        value = {}
+    if not isinstance(value, dict):
+        raise ValueError("cloudscraper 配置必须是对象")
+    result = {}
+    for key, label, default, low, high in (
+        ("connect_timeout_seconds", "连接超时", 10, 1, 30),
+        ("read_timeout_seconds", "读取超时", 25, 1, 120),
+        ("challenge_delay_seconds", "验证等待", 5, 0, 15),
+    ):
+        number = value.get(key, default)
+        if type(number) is not int or not low <= number <= high:
+            raise ValueError(f"cloudscraper {label}必须是 {low} 到 {high} 秒的整数")
+        result[key] = number
+    return result
+
+
+def cloudscraper_probe(target: str, fetcher: dict) -> dict:
+    from importlib.metadata import version
+    from bs4 import BeautifulSoup
+    from monitor import fetch_with_cloudscraper
+    name, url = CLOUDSCRAPER_TEST_TARGETS[target]
+    diagnostics = {}
+    body, final_url = fetch_with_cloudscraper(url, urlsplit(url).hostname, fetcher, diagnostics)
+    title = BeautifulSoup(body, "html.parser").title
+    result = {"ok": True, "target": target, "target_name": name, "url": final_url,
+        "title": " ".join(title.get_text(" ", strip=True).split())[:160] if title else "无页面标题",
+        "library_version": version("cloudscraper"), **diagnostics}
+    if sys.platform == "linux":
+        import resource
+        result["peak_memory_mb"] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)
+    return result
 
 
 def normalize_fetcher(value: object) -> dict:
@@ -366,6 +427,7 @@ def normalize_fetcher(value: object) -> dict:
         "timeout_seconds": timeout_seconds,
         "wait_seconds": wait,
         "provider_modes": dict(provider_modes),
+        "cloudscraper": normalize_cloudscraper(value.get("cloudscraper")),
     }
 
 
@@ -1044,8 +1106,9 @@ class Handler(BaseHTTPRequestHandler):
                 }
             if "fetcher" not in submitted:
                 submitted["fetcher"] = current["fetcher"]
-            elif isinstance(submitted["fetcher"], dict) and "provider_modes" not in submitted["fetcher"]:
-                submitted["fetcher"]["provider_modes"] = current["fetcher"].get("provider_modes", {})
+            elif isinstance(submitted["fetcher"], dict):
+                submitted["fetcher"].setdefault("provider_modes", current["fetcher"].get("provider_modes", {}))
+                submitted["fetcher"].setdefault("cloudscraper", current["fetcher"]["cloudscraper"])
             if "affiliates" not in submitted:
                 submitted["affiliates"] = dict(current["affiliates"])
                 if "affiliate_id" in submitted:
