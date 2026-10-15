@@ -21,6 +21,7 @@ let updateUnit = sessionStorage.getItem("hostwatch-update-unit") || "";
 let managementUsers = [];
 let monitorService = null;
 let savedConfig = null;
+let serviceRefreshTimer, serviceRefreshPending = false;
 const openProducts = new Set();
 const productTests = new Map();
 let activeTest = null;
@@ -141,6 +142,7 @@ async function runAction(button, label, message, action, notify = true) {
     renderMerchantOrder();
     renderProductList();
     syncTestControls();
+    updateDiscardControl();
     window.dispatchEvent(new Event("hostwatch-action-change"));
   }
 }
@@ -162,18 +164,20 @@ async function refreshManagement() {
   catch (error) {
     monitorService = null;
     renderMonitorState();
+    scheduleServiceRefresh();
     throw error;
   }
   monitorService = state.monitor;
+  scheduleServiceRefresh();
   renderMonitorState();
   const serviceLabel = (value) => ({ active: "运行中", inactive: "已停止", failed: "运行失败", activating: "启动中", deactivating: "停止中", unknown: "未知" })[value] || value;
   const monitorState = document.querySelector("#manage-monitor-state");
   monitorState.textContent = serviceLabel(state.monitor.active);
-  monitorState.className = state.monitor.active === "active" ? "state ok" : "state error";
+  monitorState.className = `state ${serviceTone(state.monitor.active)}`;
   document.querySelector("#manage-monitor-enabled").textContent = ` · 开机启动：${state.monitor.enabled === "enabled" ? "已开启" : state.monitor.enabled === "disabled" ? "已关闭" : state.monitor.enabled}`;
   const adminState = document.querySelector("#manage-admin-state");
   adminState.textContent = serviceLabel(state.admin.active);
-  adminState.className = state.admin.active === "active" ? "state ok" : "state error";
+  adminState.className = `state ${serviceTone(state.admin.active)}`;
   managementUsers = state.users;
   renderManagementUsers();
   const backups = document.querySelector("#manage-backups");
@@ -181,6 +185,22 @@ async function refreshManagement() {
   if (updateUnit) await refreshUpdateStatus();
   return state;
 }
+
+function serviceTone(active) {
+  return active === "active" ? "ok" : ["inactive", "failed"].includes(active) ? "error" : ["activating", "deactivating"].includes(active) ? "pending" : "";
+}
+function scheduleServiceRefresh() {
+  clearTimeout(serviceRefreshTimer);
+  const delay = ["activating", "deactivating"].includes(monitorService?.active) ? 2000 : 10000;
+  serviceRefreshTimer = setTimeout(refreshLiveState, delay);
+}
+async function refreshLiveState() {
+  if (document.hidden || actionRunning || serviceRefreshPending) { scheduleServiceRefresh(); return; }
+  serviceRefreshPending = true;
+  try { await Promise.allSettled([refreshManagement(), loadStatus()]); }
+  finally { serviceRefreshPending = false; scheduleServiceRefresh(); }
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) void refreshLiveState(); });
 
 function renderManagementUsers() {
   const users = document.querySelector("#manage-users");
@@ -614,6 +634,8 @@ function renderProductTest(article, id) {
   const node = article.querySelector(".product-test-result");
   const result = productTests.get(id);
   node.hidden = !result;
+  const resultRow = node.closest(".notification-result-row");
+  if (resultRow) resultRow.hidden = !result;
   if (!result) { node.textContent = ""; return; }
   node.className = `product-test-result ${result.pending || result.cancelled ? "pending" : result.ok ? "success" : "error"}`;
   node.textContent = result.pending ? (result.notifying ? `${result.ok ? `库存检查完成：${stockLabel(result)}` : `测试失败：${result.error}`}。正在发送 Telegram 测试结果…` : result.stopUnconfirmed ? "停止状态尚未确认，可再次点击“停止测试”；不会因页面超时就认为后台已经停止。" : result.phase === "cleaning" ? "本地库存检查已结束，正在清理浏览器会话；清理等待最多约 10 秒，失败会明确提示。" : result.stopping ? "停止请求已提交，正在终止本次测试进程…" : "正在读取此商品库存，可点击“停止测试”，页面其他功能仍可使用。") : result.cancelled ? "测试已停止，未改动自动监控和库存历史。" : result.ok
@@ -633,6 +655,7 @@ function renderProductTest(article, id) {
 function syncTestControls() {
   document.querySelector("#stock-test-bar").hidden = !activeTest;
   document.querySelector("#stock-test-status").textContent = activeTest?.notifying ? "库存检查已结束，正在发送 Telegram 结果，页面仍可操作。" : activeTest?.stopping ? "正在停止测试并释放资源…" : "商品测试正在运行，页面仍可操作。";
+  updateDiscardControl();
   const globalStop = document.querySelector("#stock-test-stop");
   globalStop.disabled = Boolean(activeTest?.stopping || activeTest?.notifying);
   globalStop.textContent = activeTest?.stopUnconfirmed ? "重试停止" : "停止测试";
@@ -758,6 +781,7 @@ async function followProductTest(task, initial) {
     task.startController?.abort();
     if (activeTest === task) activeTest = null;
     sessionStorage.removeItem("hostwatch-stock-test");
+    renderProductList();
     syncTestControls();
   }
 }
@@ -937,7 +961,7 @@ function renderProductList() {
     const runtime = latest.get(item.id), p = productSnapshot(item, runtime), row = document.createElement("tr"); row.dataset.id = item.id;
     const cell = (value = "", cls = "") => { const td = text("td", value, cls); row.append(td); return td; };
     cell(item.provider); const identity = cell(); identity.append(text("strong", p.name || item.name));
-    const time = runtime ? lastStatus?.last_checked : p.checked_at;
+    const time = runtime ? runtime.checked_at || lastStatus?.last_checked : p.checked_at;
     identity.append(text("small", time ? `读取于 ${new Date(time).toLocaleString()}` : "等待首次读取")); cell(p.region || "—");
     for (const [key, label] of [["remarks", "备注"], ["line_label", "线路"]]) {
       const input = document.createElement("input"); input.className = "manual-field"; input.value = item[key] || ""; input.maxLength = 500; input.placeholder = "管理员填写";
@@ -960,55 +984,51 @@ function renderProductList() {
 }
 
 function renderNotificationList() {
-  const statusProducts = new Map((lastStatus?.products || []).map((product) => [product.id, product]));
-  const savedProducts = new Map((savedConfig ? JSON.parse(savedConfig).products : []).map((product) => [product.id, product]));
-  const watched = config.products.filter((item) => membership(item, "notify"));
-  const visible = watched;
-  document.querySelector("#notification-count").textContent = `共 ${watched.length} 个`;
-  document.querySelector("#notification-note").textContent = "保存后启动自动监控，只有此列表的商品会推送补货信息。测试通知可在暂停时执行，并发送当前库存或错误结果。";
-  const listNode = document.querySelector("#notification-list");
-  if (!visible.length) {
-    listNode.replaceChildren(text("div", watched.length ? "没有符合筛选条件的商品。" : "尚未选择通知商品，可从库存大盘或库存监控加入。", "empty"));
-    return;
-  }
-  const rows = visible.map((item) => {
-    const status = statusProducts.get(item.id);
-    const article = text("article", "", "product watchlist-item");
-    article.dataset.id = item.id;
-    const identity = text("div", "", "product-name");
-    identity.append(text("strong", item.name || "未命名商品"), text("span", `${item.provider || "自定义网站"} · ${productMonitorLabel(item, savedProducts.get(item.id))}`));
-    const stock = text("div", "", "metric");
-    stock.append(text("span", "最近库存", "metric-label"), text("strong", status ? stockLabel(status) : "暂无数据", `metric-value ${status?.available > 0 ? "in" : "out"}`));
-    const checked = text("div", "", "metric");
-    checked.append(text("span", "上次检查结果", "metric-label"), text("strong", status ? (status.available > 0 ? "有货" : "缺货") : "暂无记录", "metric-value"));
-    const updated = text("div", "", "metric");
-    updated.append(text("span", "最近检查", "metric-label"), text("strong", status && lastStatus?.last_checked ? new Date(lastStatus.last_checked).toLocaleString() : "尚无记录", "metric-value"));
-    const actions = text("div", "", "product-actions");
-    const purchaseUrl = affiliatePurchaseURL(item.purchase_url || status?.url || item.url || item.category_url || status?.purchase_url, item.adapter, item);
-    if (purchaseUrl && item.enabled && status?.available > 0) {
-      const link = document.createElement("a");
-      link.href = purchaseUrl;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.textContent = "手动购买";
-      actions.append(link);
-    }
-    const test = text("button", "测试此商品", "product-test"); test.type = "button";
-    test.addEventListener("click", () => testProduct(item.id));
-    const stop = text("button", "停止测试", "product-test-stop danger"); stop.type = "button";
-    stop.addEventListener("click", stopProductTest);
+  const statusProducts = new Map((lastStatus?.products || []).map(p => [p.id, p]));
+  const savedProducts = new Map((savedConfig ? JSON.parse(savedConfig).products : []).map(p => [p.id, p]));
+  const selected = config.products.filter(item => membership(item, "notify"));
+  const order = merchantOrder();
+  selected.sort((a,b) => (order.indexOf(a.adapter) + 1 || 99) - (order.indexOf(b.adapter) + 1 || 99));
+  document.querySelector("#notification-count").textContent = `共 ${selected.length} 个`;
+  document.querySelector("#notification-note").textContent = "商品信息来自商家快照、后台检查或最近一次成功测试。测试通知可在暂停时执行；下架或未匹配商品保留配置并显示未知，可在高级中手动添加及修改。";
+  const target = document.querySelector("#notification-list");
+  if (!selected.length) { target.replaceChildren(text("div", "尚未选择通知商品，可从大盘、库存监控或下方高级管理添加。", "empty")); return; }
+  const wrap = text("div", "", "catalog-table-wrap"); wrap.tabIndex = 0; wrap.setAttribute("role", "region"); wrap.setAttribute("aria-label", "通知商品库存表");
+  const table = text("table", "", "watch-table notification-table"), head = document.createElement("thead"), headings = document.createElement("tr");
+  for (const label of ["商家", "产品名称", "地区", "硬件配置", "流量 / 带宽", "价格", "状态", "操作"]) { const th = text("th", label); th.scope = "col"; headings.append(th); }
+  head.append(headings); table.append(head);
+  for (const item of selected) {
+    const runtime = statusProducts.get(item.id), testResult = productTests.get(item.id);
+    const successfulTest = testResult?.ok && !testResult.pending && !testResult.cancelled && !testResult.warning;
+    const testIsLatest = successfulTest && (!runtime || Date.parse(testResult.checked_at) > Date.parse(runtime.checked_at || lastStatus?.last_checked || 0));
+    const source = testIsLatest ? { ...runtime, ...testResult, error: "", url: testResult.url || testResult.purchase_url, region: testResult.region || testResult.matched_product?.area_name || runtime?.region } : runtime;
+    const p = productSnapshot(item, source);
+    const body = text("tbody", "", "watchlist-item"); body.dataset.id = item.id;
+    const row = document.createElement("tr");
+    const cell = (value = "", cls = "") => { const td = text("td", value, cls); row.append(td); return td; };
+    cell(item.provider);
+    const identity = cell(); identity.append(text("strong", p.name || item.name));
+    identity.append(text("small", productMonitorLabel(item, savedProducts.get(item.id))));
+    const time = testIsLatest ? testResult.checked_at : runtime ? runtime.checked_at || lastStatus?.last_checked : p.checked_at;
+    identity.append(text("small", time ? `${testIsLatest ? "测试于" : "读取于"} ${new Date(time).toLocaleString()}` : "等待首次读取"));
+    cell(p.region || "—"); cell(p.specs || "—", "watch-specs"); cell(p.traffic || "—", "watch-specs"); cell(p.price || "—", "watch-price");
+    const stock = cell();
+    stock.append(text("span", Number.isInteger(p.available) ? stockLabel(p) : "未知", `state ${!Number.isInteger(p.available) ? "pending" : p.available > 0 ? "ok" : "error"}`));
+    if (p.error) stock.append(text("small", p.error, "error"));
+    const actions = text("div", "", "watch-operations");
+    const raw = p.url || item.purchase_url;
+    if (raw && /^https:\/\//i.test(raw)) { const link = text("a", "直接购买", "buy-link"); link.href = affiliatePurchaseURL(raw, item.adapter, item); link.target = "_blank"; link.rel = "noopener noreferrer"; actions.append(link); }
+    const test = text("button", "测试通知", "product-test"); test.type = "button"; test.addEventListener("click", () => testProduct(item.id));
+    const stop = text("button", "停止测试", "product-test-stop danger"); stop.type = "button"; stop.addEventListener("click", stopProductTest);
+    const edit = text("button", "编辑商品"); edit.type = "button"; edit.disabled = actionRunning;
+    edit.addEventListener("click", () => { openProducts.add(item.id); renderProducts(); openAdvancedProducts(); editorNode.querySelector(`[data-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }); });
     const remove = text("button", "移出通知", "danger product-remove"); remove.type = "button";
-    remove.addEventListener("click", () => {
-      if (actionRunning) return;
-      setMembership(item, "notify", false); renderProducts(); updateDraftState();
-      setMessage("已移出库存通知；库存监控保持原有选择，历史保留；点击底部“保存配置”生效。", "pending");
-    });
-    actions.append(test, stop, remove);
-    article.append(identity, stock, checked, updated, actions, text("div", "", "product-test-result"));
-    return article;
-  });
-  listNode.replaceChildren(...rows);
-  syncTestControls();
+    remove.addEventListener("click", () => { if (actionRunning) return; setMembership(item, "notify", false); renderProducts(); updateDraftState(); setMessage("已移出库存通知，库存监控选择保留，请保存配置。", "pending"); });
+    actions.append(test, stop, edit, remove); cell().append(actions); body.append(row);
+    const resultRow = text("tr", "", "notification-result-row"), resultCell = document.createElement("td"); resultCell.colSpan = 8;
+    resultCell.append(text("div", "", "product-test-result")); resultRow.append(resultCell); body.append(resultRow); table.append(body);
+  }
+  wrap.append(table); target.replaceChildren(wrap); syncTestControls();
 }
 
 function renderOverview() {
@@ -1031,10 +1051,12 @@ function renderMonitorState() {
   if (!savedConfig) note = "正在读取配置。";
   if (!monitorService) note += "请刷新状态核对服务器实际运行情况。";
   else if (active === "active") note += config.enabled ? "服务已启动，库存检查是否成功请查看最近检查结果。" : "暂停尚未生效，服务仍在运行，请重新暂停监控。";
-  else if (config.enabled) note += "服务尚未运行，可点击“开始监控”恢复。";
+  else if (active === "activating") note += "服务尚未确认启动成功，正在自动刷新；持续启动中请查看日志，可能在失败后等待重试。";
+  else if (active === "deactivating") note += "服务正在停止，正在自动刷新最终状态。";
+  else if (config.enabled) note += "服务尚未运行，请查看最近检查错误及服务日志，修正配置后再开始监控。";
   else note += "点击“开始监控”后开始检查。";
   const runtime = document.querySelector("#monitor-runtime");
-  const tone = active === "active" ? "ok" : ["inactive", "failed"].includes(active) ? "error" : ["activating", "deactivating"].includes(active) ? "pending" : "";
+  const tone = serviceTone(active);
   runtime.textContent = label;
   runtime.className = `state ${tone}`;
   document.querySelector("#monitor-runtime-note").textContent = note;
@@ -1076,6 +1098,7 @@ function intervalLabel(seconds) {
 function updateDraftState() {
   if (savedConfig === null) return;
   const dirty = hasUnsavedChanges();
+  updateDiscardControl();
   const node = document.querySelector("#monitor-draft");
   node.textContent = dirty ? "有未保存的修改，请点击底部“保存配置”；单次测试可直接使用当前填写的商品配置。" : "页面配置已保存。";
   node.className = dirty ? "hint draft-note" : "hint";
@@ -1087,6 +1110,17 @@ function updateDraftState() {
   document.querySelector("#interval-description").textContent = valid ? (seconds === 0 ? "本轮检查完成后立即检查下一轮，不额外等待；各轮顺序执行。" : `每轮检查完成后等待 ${intervalLabel(seconds)}，再检查下一轮；开始监控后立即进行第一次检查。`) : "检查间隔必须是 0–86400 秒的整数。";
   document.querySelector("#interval-preset").value = [0, 1, 5, 10, 30, 60, 300, 600, 1800, 3600].includes(seconds) ? String(seconds) : "";
   window.dispatchEvent(new Event("hostwatch-draft-change"));
+}
+
+function updateDiscardControl() {
+  document.querySelector("#discard-changes").disabled = actionRunning || Boolean(activeTest) || !savedConfig || !hasUnsavedChanges();
+}
+async function discardChanges() {
+  // Fetch first: a read failure must leave the draft intact.
+  const saved = await requestJSON("/api/config");
+  productTests.clear();
+  applyConfig(saved);
+  setMessage("已取消未保存的修改，恢复服务器已保存的配置；未执行保存或更改服务状态。", "success");
 }
 
 function collectProviderModes() {
@@ -1147,14 +1181,14 @@ function applyConfig(value) {
 async function loadStatus() {
   lastStatus = await requestJSON("/api/status");
   const state = document.querySelector("#state");
-  state.textContent = ({ ok: "上次检查成功", blocked: "上次检查被拦截", error: "上次检查失败", unknown: "尚无检查记录" })[lastStatus.state] || lastStatus.state || "尚无检查记录";
+  state.textContent = ({ partial: "部分商品待核对", ok: "上次检查成功", blocked: "上次检查被拦截", error: "上次检查失败", unknown: "尚无检查记录" })[lastStatus.state] || lastStatus.state || "尚无检查记录";
   state.className = `state ${lastStatus.state || ""}`;
   document.querySelector("#last-checked").textContent = lastStatus.last_checked ? `上次检查：${new Date(lastStatus.last_checked).toLocaleString()}` : "";
   blockedHelpNode.hidden = lastStatus.state !== "blocked";
   document.querySelector("#blocked-message").textContent = lastStatus.message || "检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。";
   const errorNode = document.querySelector("#request-error");
-  errorNode.hidden = lastStatus.state !== "error";
-  errorNode.textContent = lastStatus.state === "error" ? `上次检查失败：${lastStatus.message || "请查看服务日志"}` : "";
+  errorNode.hidden = !["error", "partial"].includes(lastStatus.state);
+  errorNode.textContent = ["error", "partial"].includes(lastStatus.state) ? `最近检查提示：${lastStatus.message || "请查看服务日志"}` : "";
   renderProductList();
   renderOverview();
 }
@@ -1290,6 +1324,7 @@ async function saveConfig() {
   try { await Promise.all([refreshManagement(), loadStatus()]); }
   catch (error) { document.querySelector("#manage-task-status").textContent = `配置已保存，管理状态刷新失败：${error.message}`; }
 }
+document.querySelector("#discard-changes").addEventListener("click", (event) => { if (!activeTest) runAction(event.currentTarget, "恢复中…", "正在恢复已保存配置…", discardChanges); });
 document.querySelector("#save").addEventListener("click", (event) => runAction(event.currentTarget, "保存中…", "正在保存配置…", () => saveConfig()));
 runAction(null, "", "正在载入配置和监控状态…", () => reloadConfig(false), false);
 bindManagementActions();

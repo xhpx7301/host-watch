@@ -86,7 +86,7 @@ def stock_test_worker() -> None:
         with requests.Session() as session:
             session.headers["User-Agent"] = "HostWatch/1.0 (manual stock test)"
             result = inspect_product(session, value["product"], value["fetcher"])
-        output = {"ok": True, "available": result.available, "stock_mode": result.stock_mode, "purchase_url": result.url}
+        output = {"ok": True, "available": result.available, "stock_mode": result.stock_mode, "purchase_url": result.url, "name": result.name, **{field: getattr(result, field) for field in ("region", "specs", "traffic", "price")}}
         if result.vendor == "Akile":
             output["matched_product"] = {"area_id": result.area_id, "area_name": result.area_name, "node_name": result.node_name, "plan_name": result.name}
         if result.vendor == "VPS.SOY":

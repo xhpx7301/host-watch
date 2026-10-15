@@ -199,10 +199,12 @@ class AkileTests(unittest.TestCase):
             check_once(Mock(), {"products": products}, None, None, "", "")
         self.assertEqual(fetch.call_count, 2)
 
-    def test_missing_monitored_plan_does_not_write_history_or_notify(self):
-        with patch("monitor.fetch_akile_catalog", return_value=catalog()), patch("monitor.write_state") as write, patch("monitor.telegram_request") as notify, self.assertRaises(MonitorError):
-            check_once(Mock(), {"products": [item(), item(selector="HKL-TW-Removed")]}, None, None, "bot", "chat")
-        write.assert_not_called()
+    def test_missing_monitored_plan_preserves_baseline_and_other_products(self):
+        with patch("monitor.fetch_akile_catalog", return_value=catalog()), patch("monitor.read_state", return_value={}), patch("monitor.write_state") as write, patch("monitor.write_status") as status, patch("monitor.telegram_request") as notify:
+            check_once(Mock(), {"products": [item(), item(id="removed", selector="HKL-TW-Removed")]}, None, None, "bot", "chat")
+        self.assertEqual(status.call_args.args[1]["state"], "partial")
+        self.assertIsNone(status.call_args.args[1]["products"][1]["available"])
+        write.assert_called_once()
         notify.assert_not_called()
 
 

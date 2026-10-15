@@ -30,6 +30,10 @@ class MonitorError(RuntimeError):
     """A page or notification response could not be trusted."""
 
 
+class ProductUnlisted(MonitorError):
+    """A valid directory no longer includes the selected product; keep waiting."""
+
+
 class SiteBlocked(MonitorError):
     """The site denied automated access; stop instead of retrying."""
 
@@ -338,7 +342,7 @@ def parse_vps_soy(html: str, page_url: str, selector: str) -> Product:
         hint = f"当前分类 FID={query.get('fid', ['默认'])[0]}、GID={query.get('gid', ['默认'])[0]}；请核对分组及套餐完整名称"
         if not matches and names:
             hint += f"，本页套餐：{'、'.join(names)}"
-        raise MonitorError(f"VPS.SOY 套餐 {selector} 无法唯一匹配（找到 {len(matches)} 项）；{hint}")
+        raise (ProductUnlisted if not matches else MonitorError)(f"VPS.SOY 套餐 {selector} 无法唯一匹配（找到 {len(matches)} 项）；{hint}")
     card, title = matches[0]
     stocks = [node.get_text(" ", strip=True) for node in card.select("p.card-text") if re.match(r"^库存\s*[:：]", node.get_text(" ", strip=True))]
     if len(stocks) != 1:
@@ -425,7 +429,7 @@ def parse_akile(payload: object, item: dict) -> Product:
     def unique(value: object, field: str, target: str, label: str) -> dict:
         matches = matching(value, field, target, label)
         if len(matches) != 1:
-            raise MonitorError(f"Akile {label} {target} 无法唯一匹配（找到 {len(matches)} 项），请核对配置")
+            raise (ProductUnlisted if not matches else MonitorError)(f"Akile {label} {target} 无法唯一匹配（找到 {len(matches)} 项），请核对配置")
         return matches[0]
 
     all_areas = entries(data.get("areas"), "地区")
@@ -438,7 +442,7 @@ def parse_akile(payload: object, item: dict) -> Product:
             elsewhere = [area for area in all_areas if matching(area.get("nodes"), "group_name", item["node_name"], "线路")]
             locations = "、".join(f"{str(area.get('area_name') or '地区')[:40]}（ID={area.get('id')}）" for area in elsewhere[:6])
             hint = f"当前限定地区 ID={item['area_id']}；" + (f"该线路实际位于 {locations}，请选择自动识别地区或修改地区 ID" if locations else hint)
-        raise MonitorError(f"Akile 线路 {item['node_name']} 无法唯一匹配（找到 0 项）；{hint}")
+        raise ProductUnlisted(f"Akile 线路 {item['node_name']} 无法唯一匹配（找到 0 项）；{hint}")
     candidates = [(area, node, plan) for area, node in nodes for plan in matching(node.get("plans"), "plan_name", item["selector"], "套餐")]
     if len(candidates) != 1:
         if not candidates:
@@ -447,7 +451,7 @@ def parse_akile(payload: object, item: dict) -> Product:
         else:
             locations = "、".join(f"{str(area.get('area_name') or '地区')[:40]}（ID={area.get('id')}）" for area, _, _ in candidates[:6])
             hint = f"匹配地区：{locations}；请使用指定地区 ID 缩小范围，不能自动选择重名商品"
-        raise MonitorError(f"Akile 套餐 {item['selector']} 无法唯一匹配（找到 {len(candidates)} 项）；{hint}")
+        raise (ProductUnlisted if not candidates else MonitorError)(f"Akile 套餐 {item['selector']} 无法唯一匹配（找到 {len(candidates)} 项）；{hint}")
     area, node, plan = candidates[0]
     if plan.get("is_pre_sale") is True:
         raise MonitorError("Akile 当前套餐为预售，不能将预售名额当作现货库存")
@@ -527,7 +531,7 @@ def inspect_isvoro(session: requests.Session, item: dict, fetcher: dict, cache: 
     def unique(rows, identifier, label):
         matches = [row for row in rows if str(row["id"]) == str(identifier)]
         if len(matches) != 1:
-            raise MonitorError(f"Isvoro {label} ID={identifier} 无法唯一匹配（找到 {len(matches)} 项）；请刷新目录重新选择")
+            raise (ProductUnlisted if not matches else MonitorError)(f"Isvoro {label} ID={identifier} 无法唯一匹配（找到 {len(matches)} 项）；请刷新目录重新选择")
         return matches[0]
     kind = unique(isvoro_categories(get("categories")), item["type_id"], "类型")
     # Types without subcategories (e.g. dedicated servers) are their own line.
@@ -743,6 +747,7 @@ def check_once(
         mode = product_fetcher(config.get("fetcher"), item).get("mode", "requests")
         by_category.setdefault((item["category_url"].strip(), mode), []).append(item)
     found: dict[str, Product] = {}
+    unavailable: dict[str, str] = {}
     for (category_url, mode), items in by_category.items():
         page_products = fetch_products(session, category_url, [], {**config.get("fetcher", {}), "mode": mode})
         for item in items:
@@ -753,6 +758,9 @@ def check_once(
                 p.name.casefold(),
                 p.card_id.casefold(),
             }]
+            if not candidates:
+                unavailable[item["id"]] = "目录中未找到商品，可能已下架；请核对商品标识，保留配置等待重新上架"
+                continue
             if len(candidates) != 1:
                 raise MonitorError(f"商品 {item.get('name', selector)} 无法唯一匹配页面套餐；请检查 selector")
             matched = candidates[0]
@@ -761,28 +769,33 @@ def check_once(
     akile_catalogs = {}
     isvoro_catalogs = {}
     for item in selected:
-        if item["adapter"] == "html":
-            found[item["id"]] = fetch_html_stock(session, item, config.get("fetcher"))
-        elif item["adapter"] == "vps_soy":
-            fetcher = product_fetcher(config.get("fetcher"), item)
-            key = (normalize_vps_soy_url(item["url"]), fetcher.get("mode", "requests"))
-            if key not in soy_pages:
-                soy_pages[key] = fetch_vps_soy_page(session, key[0], fetcher)
-            body, final_url = soy_pages[key]
-            found[item["id"]] = parse_vps_soy(body, final_url, item["selector"])
-        elif item["adapter"] == "akile":
-            fetcher = product_fetcher(config.get("fetcher"), item)
-            mode = fetcher.get("mode", "requests")
-            if mode not in akile_catalogs:
-                akile_catalogs[mode] = fetch_akile_catalog(session, fetcher)
-            found[item["id"]] = parse_akile(akile_catalogs[mode], item)
-        elif item["adapter"] == "isvoro":
-            found[item["id"]] = inspect_isvoro(session, item, product_fetcher(config.get("fetcher"), item), isvoro_catalogs)
+        try:
+            if item["adapter"] == "html":
+                found[item["id"]] = fetch_html_stock(session, item, config.get("fetcher"))
+            elif item["adapter"] == "vps_soy":
+                fetcher = product_fetcher(config.get("fetcher"), item)
+                key = (normalize_vps_soy_url(item["url"]), fetcher.get("mode", "requests"))
+                if key not in soy_pages:
+                    soy_pages[key] = fetch_vps_soy_page(session, key[0], fetcher)
+                body, final_url = soy_pages[key]
+                found[item["id"]] = parse_vps_soy(body, final_url, item["selector"])
+            elif item["adapter"] == "akile":
+                fetcher = product_fetcher(config.get("fetcher"), item)
+                mode = fetcher.get("mode", "requests")
+                if mode not in akile_catalogs:
+                    akile_catalogs[mode] = fetch_akile_catalog(session, fetcher)
+                found[item["id"]] = parse_akile(akile_catalogs[mode], item)
+            elif item["adapter"] == "isvoro":
+                found[item["id"]] = inspect_isvoro(session, item, product_fetcher(config.get("fetcher"), item), isvoro_catalogs)
+        except ProductUnlisted as exc:
+            unavailable[item["id"]] = str(exc) + "；可能已下架或配置不匹配，保留配置等待重新上架"
 
     previous = read_state(state_path)
     current = dict(previous)
     notifications: list[tuple[dict, Product, int | None]] = []
     for item in selected:
+        if item["id"] in unavailable:
+            continue
         product = found[item["id"]]
         old = previous.get(item["id"])
         old_count = old.get("available") if old else None
@@ -823,26 +836,28 @@ def check_once(
             logging.warning("发现库存增加但未设置 Telegram：%s，目前 %s 台，%s", product.name, product.available, product.url)
 
     write_state(state_path, current)
-    summary = "；".join(f"{item['provider']} / {found[item['id']].name}: {found[item['id']].available}" for item in selected)
+    checked_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    rows = []
+    for item in selected:
+        if item["id"] in unavailable:
+            # Never convert an absent listing to sold out or advance its baseline.
+            snapshot = item.get("snapshot", {})
+            rows.append({**snapshot, "id": item["id"], "name": item["name"], "vendor": item["provider"],
+                         "available": None, "error": unavailable[item["id"]], "checked_at": checked_at,
+                         "url": snapshot.get("url") or previous.get(item["id"], {}).get("url", "")})
+            logging.warning("商品待核对：%s / %s", item["name"], unavailable[item["id"]])
+            continue
+        product = found[item["id"]]
+        rows.append({"id": item["id"], "name": product.name, "vendor": item["provider"],
+                     "available": product.available, "stock_mode": product.stock_mode, "url": product.url,
+                     "purchase_url": purchase_link(product, item, config), "checked_at": checked_at,
+                     **{field: getattr(product, field) for field in ("region", "specs", "traffic", "price")}})
     write_status(status_path, {
-        "last_checked": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "state": "ok",
-        "message": "检查完成",
-        "products": [
-            {
-                "id": item["id"],
-                "name": found[item["id"]].name,
-                "vendor": item["provider"],
-                "available": found[item["id"]].available,
-                "stock_mode": found[item["id"]].stock_mode,
-                "url": found[item["id"]].url,
-                "purchase_url": purchase_link(found[item["id"]], item, config),
-                **{field: getattr(found[item["id"]], field) for field in ("region", "specs", "traffic", "price")},
-            }
-            for item in selected
-        ],
+        "last_checked": checked_at, "state": "partial" if unavailable else "ok",
+        "message": f"{len(unavailable)} 个商品未匹配，保留配置并继续检查其他商品：" + "；".join(f"{item['name']}：{unavailable[item['id']]}" for item in selected if item['id'] in unavailable) if unavailable else "检查完成",
+        "products": rows,
     })
-    logging.info("检查成功（%s 个套餐）：%s", len(selected), summary)
+    logging.info("本轮检查完成：%s 个成功，%s 个未匹配", len(found), len(unavailable))
 
 
 def main() -> int:

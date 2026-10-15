@@ -11,10 +11,32 @@ import monitor
 import test_admin
 from test_monitor import html_product
 from test_akile import catalog as akile_fixture
+from test_akile import item as akile_item
 from test_isvoro import directory, item as isvoro_item
 
 
 class MembershipTests(unittest.TestCase):
+    def test_unlisted_product_keeps_history_and_resumes_without_false_stock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state, status = Path(tmp) / "state.json", Path(tmp) / "status.json"
+            previous = {"missing": {"available": 0, "notify_enabled": True}, "other": {"available": 0, "notify_enabled": True}}
+            monitor.write_state(state, previous)
+            config = {"products": [akile_item(id="missing", selector="Removed"), akile_item(id="other", selector="HKL-TW-Starter")]}
+            payload = akile_fixture()
+            with patch.object(monitor, "fetch_akile_catalog", return_value=payload), patch.object(monitor, "telegram_request") as send:
+                monitor.check_once(Mock(), config, state, status, "token", "chat")
+                self.assertEqual(send.call_count, 1)  # Healthy product still notifies.
+                self.assertEqual(monitor.read_state(state)["missing"], previous["missing"])
+                output = json.loads(status.read_text(encoding="utf-8"))
+                self.assertEqual(output["state"], "partial")
+                self.assertIsNone(output["products"][0]["available"])
+                self.assertIn("未匹配", output["message"])
+                config["products"][0]["selector"] = "HKL-TW-Mini"
+                payload["data"]["areas"][0]["nodes"][0]["plans"][0]["stock"] = 2
+                monitor.check_once(Mock(), config, state, status, "token", "chat")
+                self.assertEqual(send.call_count, 2)
+                self.assertEqual(json.loads(status.read_text(encoding="utf-8"))["state"], "ok")
+
     def test_migration_and_membership_matrix_round_trip(self):
         for old in (False, True):
             result = admin.validate_config({"products": [html_product(enabled=old)]})
