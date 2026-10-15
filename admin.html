@@ -226,6 +226,18 @@
     .product-actions { flex-wrap:wrap; }
     .watchlist-item > .product-test-result { grid-column:1/-1; margin:0; }
     @media (max-width:640px) { #page-catalog > .section-head { flex-wrap:wrap; } .watchlist-filters label { min-width:100%; } .affiliate-grid { grid-template-columns:minmax(0,1fr); } }
+    .watch-table { min-width:1120px; width:100%; border-collapse:collapse; font-size:13px; }
+    .watch-table th { background:#f1f5fb; color:#51617a; text-align:left; padding:14px 10px; white-space:nowrap; }
+    .watch-table td { padding:14px 8px; border-bottom:1px solid #e5eaf3; vertical-align:middle; }
+    .watch-table tbody tr:hover { background:#f8faff; }
+    .watch-table td small { display:block; color:#78869b; margin-top:6px; }
+    .watch-table .manual-field { min-width:85px; width:95px; padding:8px; font-size:13px; }
+    .watch-table .watch-price { color:#2563eb; font-weight:650; min-width:90px; }
+    .watch-table .buy-link { display:inline-block; background:#7055dc; color:white; border-radius:8px; padding:9px 13px; text-decoration:none; white-space:nowrap; }
+    .watch-table .watch-operations { min-width:135px; display:grid; gap:6px; }
+    .watch-table .watch-operations button { padding:7px; font-size:12px; }
+    .watch-table .watch-specs { min-width:110px; max-width:180px; overflow-wrap:anywhere; }
+    .watch-table .state { white-space:nowrap; }
   </style>
 </head>
 <body>
@@ -235,8 +247,9 @@
     <p class="nav-label">控制台</p>
     <nav class="page-nav" aria-label="主要栏目">
       <a href="#overview" data-page-link="overview" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>运行概览</a>
-      <a href="#catalog" data-page-link="catalog"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12M15 9v12"/></svg>VPS 库存大盘</a>
       <a href="#monitor" data-page-link="monitor"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4M6 11h3l2-4 3 7 2-3h2"/></svg>VPS 库存监控</a>
+      <a href="#notifications" data-page-link="notifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>VPS 库存通知</a>
+      <a href="#catalog" data-page-link="catalog"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12M15 9v12"/></svg>VPS 库存大盘</a>
       <a href="#affiliates" data-page-link="affiliates"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 13 4-4m-6 7-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 1 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0"/></svg>AFF 管理</a>
       <a href="#requests" data-page-link="requests"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></svg>网页请求</a>
       <a href="#telegram" data-page-link="telegram"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-6 18-4-8-8-4 18-6Zm-10 10L21 3"/></svg>Telegram 通知</a>
@@ -267,29 +280,37 @@
   </div>
 
   <section class="page-panel" id="page-catalog" data-page="catalog" aria-labelledby="page-title" hidden>
-    <div class="catalog-intro"><div><span class="eyebrow">VPS DIRECTORY</span><h2>发现套餐，关注补货</h2><p>商家公开目录直接同步，按需选择提醒。无需先配置每一款商品。</p></div><span class="catalog-private">个人库存看板</span></div>
+    <div class="catalog-intro"><div><span class="eyebrow">VPS DIRECTORY</span><h2>发现套餐，关注补货</h2><p>商家公开目录直接同步，分别选择库存监控或 Telegram 通知。无需先配置每一款商品。</p></div><span class="catalog-private">个人库存看板</span></div>
     <div class="section-head"><div class="catalog-merchants" role="group" aria-label="选择商家"><button type="button" data-catalog-provider="vmiss" aria-pressed="false">VMISS</button><button type="button" data-catalog-provider="vps_soy" aria-pressed="false">VPS.SOY</button><button type="button" data-catalog-provider="akile" aria-pressed="true">Akile</button><button type="button" data-catalog-provider="isvoro" aria-pressed="false">Isvoro</button></div><button id="merchant-order-toggle" type="button" aria-expanded="false" aria-controls="merchant-order-panel">调整商家顺序</button></div>
     <div id="merchant-order-panel" class="panel-card section-body" hidden><h2>商家显示顺序</h2><p class="hint">使用上移 / 下移调整大盘、监控筛选和添加商品中的顺序，点击底部“保存配置”后保存在服务器。</p><div id="merchant-order-list"></div></div>
     <div class="panel-card catalog-browser">
-      <div class="catalog-filters"><label>地区 / 线路分类<select id="catalog-scope" disabled><option value="">等待目录</option></select></label><label>搜索套餐<input id="catalog-search" type="search" placeholder="名称、地区、线路或配置"></label><label>库存状态<select id="catalog-stock"><option value="all">全部库存</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">状态未知</option><option value="watched">已选提醒</option></select></label><label>大盘自动刷新<select id="catalog-auto"><option value="0">仅手动</option><option value="60">1 分钟</option><option value="300" selected>5 分钟</option><option value="600">10 分钟</option></select></label></div>
+      <div class="catalog-filters"><label>地区 / 线路分类<select id="catalog-scope" disabled><option value="">等待目录</option></select></label><label>搜索套餐<input id="catalog-search" type="search" placeholder="名称、地区、线路或配置"></label><label>库存状态<select id="catalog-stock"><option value="all">全部库存</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">状态未知</option><option value="watched">已加入监控</option><option value="notified">已加入通知</option></select></label><label>大盘自动刷新<select id="catalog-auto"><option value="0">仅手动</option><option value="60">1 分钟</option><option value="300" selected>5 分钟</option><option value="600">10 分钟</option></select></label></div>
       <div class="catalog-sync"><div><strong id="catalog-summary">尚未载入目录</strong><span id="catalog-updated" class="subtle"></span></div><div class="actions"><button id="catalog-refresh" type="button">刷新分类库存</button><button id="catalog-stop" type="button" class="danger" hidden>停止刷新</button></div></div>
       <p id="catalog-status" class="hint" role="status" aria-live="polite">选择商家后获取该分类的套餐与库存。</p>
-      <div class="catalog-bulk"><label class="check"><input id="catalog-select-all" type="checkbox">选择本页</label><span id="catalog-selected" class="subtle">已选 0 项</span><button id="catalog-watch-selected" type="button" disabled>加入所选提醒</button><button id="catalog-unwatch-selected" type="button" disabled>取消所选提醒</button></div>
-      <div class="catalog-table-wrap" role="region" aria-label="VPS 商品目录" tabindex="0"><table class="catalog-table"><thead><tr><th scope="col">选择</th><th scope="col">套餐</th><th scope="col">地区 / 线路</th><th scope="col">配置 / 带宽</th><th scope="col">价格 / 周期</th><th scope="col">库存</th><th scope="col">补货提醒 / 操作</th></tr></thead><tbody id="catalog-rows"></tbody></table></div>
+      <div class="catalog-bulk"><label class="check"><input id="catalog-select-all" type="checkbox">选择本页</label><span id="catalog-selected" class="subtle">已选 0 项</span><button id="catalog-watch-selected" type="button" disabled>所选加入库存监控</button><button id="catalog-unwatch-selected" type="button" disabled>所选加入库存通知</button></div>
+      <div class="catalog-table-wrap" role="region" aria-label="VPS 商品目录" tabindex="0"><table class="catalog-table"><thead><tr><th scope="col">选择</th><th scope="col">套餐</th><th scope="col">地区 / 线路</th><th scope="col">配置 / 带宽</th><th scope="col">价格 / 周期</th><th scope="col">库存</th><th scope="col">监控 / 通知 / 操作</th></tr></thead><tbody id="catalog-rows"></tbody></table></div>
       <div id="catalog-empty" class="empty">尚无目录数据，点击“刷新分类库存”读取。</div>
       <div class="catalog-pagination"><span id="catalog-page-label" class="subtle"></span><div class="actions"><button id="catalog-prev" type="button" disabled>上一页</button><button id="catalog-next" type="button" disabled>下一页</button></div></div>
     </div>
-    <div class="catalog-reminders"><div><h2>我的补货提醒 <span id="catalog-watch-count">0</span></h2><p id="catalog-reminder-note" class="hint">加入后点击底部“保存配置”，再开始监控。</p></div><button id="catalog-open-products" type="button">查看 VPS 库存监控</button></div>
-    <p class="hint">大盘自动刷新仅在此栏目打开且页面可见时运行，使用普通 HTTPS；可随时停止。关闭网页后，已保存并启动的商品监控仍会在服务器检查并通过 Telegram 提醒。大盘刷新不发送通知，也不改动提醒历史。价格与购买资格以商家下单页为准。</p>
+    <div class="catalog-reminders"><div><h2>已关注 / 通知 <span id="catalog-watch-count">0</span></h2><p id="catalog-reminder-note" class="hint">加入后点击底部“保存配置”，再开始监控。</p></div><button id="catalog-open-products" type="button">查看 VPS 库存监控</button></div>
+    <p class="hint">大盘自动刷新仅在此栏目打开且页面可见时运行，使用普通 HTTPS；可随时停止。关闭网页后，已保存的监控和通知商品仍会在服务器检查，只有通知列表会通过 Telegram 提醒。大盘刷新不发送通知，也不改动提醒历史。价格与购买资格以商家下单页为准。</p>
   </section>
 
   <section class="page-panel panel-card" id="page-monitor" data-page="monitor" aria-labelledby="page-title" hidden>
     <div class="section-body">
-    <div class="section-head"><div><h2>我的 VPS 库存监控 <span id="watchlist-count" class="subtle">0</span></h2><p>只展示参与监控的商品；从大盘加入即可，无需重复填写商品信息。移出监控保留商品配置和历史，保存后生效。</p></div><button id="watchlist-browse" type="button">从大盘添加</button></div>
+    <div class="section-head"><div><h2>我的 VPS 库存监控 <span id="watchlist-count" class="subtle">0</span></h2><p>只查看关心的商品，不发送 Telegram。商品信息自动读取，备注和线路可手动编辑，保存后生效。</p></div><button id="watchlist-browse" type="button">从大盘添加</button></div>
     <div class="watchlist-filters"><label>搜索商品<input id="watchlist-search" type="search" placeholder="商品、商家或线路"></label><label>商家<select id="watchlist-provider"><option value="all">全部商家</option></select></label><label>最近库存<select id="watchlist-stock"><option value="all">全部状态</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">暂无记录</option></select></label></div>
     <p id="watchlist-note" class="hint" role="status"></p>
-    <div id="product-list" class="product-list"></div>
-    <h2 class="monitor-settings-title">监控设置</h2>
+    <div id="product-list"></div>
+    <p class="hint">购买按钮使用配置的 AFF。库存和价格显示读取时间；未知字段显示“—”，下单以商家页面为准。</p>
+    </div>
+  </section>
+  <section class="page-panel panel-card" id="page-notifications" data-page="notifications" aria-labelledby="page-title" hidden>
+    <div class="section-body">
+    <div class="section-head"><div><h2>我的 VPS 库存通知 <span id="notification-count" class="subtle"></span></h2><p>独立选择需要 Telegram 提醒的商品。仅关注库存监控不会发送消息。</p></div><button id="notification-browse" type="button">从大盘添加</button></div>
+    <p id="notification-note" class="hint"></p>
+    <div id="notification-list" class="product-list"></div>
+    <h2 class="monitor-settings-title">自动检查与通知设置</h2>
     <div class="monitor-control">
       <strong id="monitor-runtime" class="state">正在读取服务状态</strong>
       <p id="monitor-runtime-note" class="subtle">以服务器实际运行状态为准。</p>
@@ -300,16 +321,16 @@
       <label>检查间隔（秒）<input id="interval" type="number" min="0" max="86400" step="1"></label>
       <label>常用检查间隔<select id="interval-preset"><option value="">自定义间隔</option><option value="0">0 秒（连续检查）</option><option value="1">1 秒</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option><option value="60">1 分钟</option><option value="300">5 分钟</option><option value="600">10 分钟</option><option value="1800">30 分钟</option><option value="3600">1 小时</option></select></label>
       <p id="interval-description" class="hint span-2"></p>
-      <label class="check span-2"><input id="notify-current" type="checkbox">首次记录该商品时，有货也发送提醒</label>
+      <label class="check span-2"><input id="notify-current" type="checkbox">首次启用该商品通知时，有货也发送提醒</label>
     </div>
-    <p class="hint">“首次记录”指该商品还没有库存历史；重启服务不会清除历史。提醒还需要启用并配置 Telegram。</p>
+    <p class="hint">监控和通知共用检查间隔。通知商品在缺货变有货或库存增加时推送，不重复推送相同库存。勾选后，新加入通知且有货的商品也会提醒；重启服务不会重复提醒。仅库存监控无需配置 Telegram。</p>
     <div id="blocked-help" class="blocked-help" hidden><strong>上次库存检查被网站拦截（历史记录）</strong><span id="blocked-message">检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。</span><p class="hint">该记录保留至下一次检查；当前服务状态请看上方。请先确认访问方式，避免反复重启。</p></div>
     <p id="request-error" class="blocked-help" hidden></p>
-    <p class="hint">修改配置后统一点击底部“保存配置”；开始、暂停只管理自动监控，不保存页面修改。暂停时也可在上方列表单次测试库存，结果同时发送至已保存的 Telegram。</p>
+    <p class="hint">修改配置后统一点击底部“保存配置”；开始、暂停只管理自动监控，不保存页面修改。暂停时也可在通知列表点击“测试通知”，检查库存并发送结果至已保存的 Telegram。</p>
   <details class="section" id="advanced-products" data-tone="slate"><summary><span>高级：自定义商品 / 已移出商品</span><span class="section-toggle" aria-hidden="true"></span></summary>
     <div class="section-body">
     <div class="section-head"><div><h2>手动商品管理</h2><p>大盘未收录的商品可在这里手动添加，也可恢复已移出监控的商品。商家请求方式统一在“网页请求”设置。</p></div><div class="merchant-add"><div class="actions"><label for="add-merchant">商家适配<select id="add-merchant" aria-describedby="add-merchant-hint"></select></label><button id="add" type="button" class="primary">＋ 添加商品</button></div><p id="add-merchant-hint" class="hint"></p></div></div>
-    <p class="hint">点击商品标题展开配置。“测试此商品”会显示库存或错误，并通过已保存的 Telegram 机器人发送结果，无需开启监控；测试期间页面仍可操作，可停止库存检查，停止后不发送结果。VMISS、VPS.SOY、Akile、Isvoro 和通用网页仅显示对应适配器的字段。</p>
+    <p class="hint">点击商品标题展开配置。“测试通知”会显示库存或错误，并通过已保存的 Telegram 机器人发送结果，无需开启监控；测试期间页面仍可操作，可停止库存检查，停止后不发送结果。VMISS、VPS.SOY、Akile、Isvoro 和通用网页仅显示对应适配器的字段。</p>
     <div id="product-editors"></div>
     </div>
   </details>
@@ -349,11 +370,11 @@
       <label>FlareSolverr 超时（秒）<input id="flaresolverr-timeout" type="number" min="10" max="180"></label>
       <label>浏览器页面渲染等待（秒）<input id="fetcher-wait" type="number" min="0" max="30" step="1"></label>
     </div>
-    <h2 class="monitor-settings-title">各商家监控请求方式</h2><p class="hint">用于后台自动监控和“测试此商品”，保存后统一应用到该商家所有商品。选择“跟随全局”使用上方全局方式。库存大盘的目录刷新使用普通 HTTPS，与后台监控分开。</p><div class="form-grid" id="provider-request-modes"><label>VMISS<select data-provider-mode="vmiss"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option></select></label><label>VPS.SOY<select data-provider-mode="vps_soy"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option></select></label><label>Akile<select data-provider-mode="akile"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option></select></label><label>Isvoro<select data-provider-mode="isvoro"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option></select></label><label>其他商家 / 自定义网页<select data-provider-mode="html"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option></select></label></div><p id="provider-request-note" class="hint" aria-live="polite"></p>
+    <h2 class="monitor-settings-title">各商家监控请求方式</h2><p class="hint">用于后台自动监控和“测试通知”，保存后统一应用到该商家所有商品。选择“跟随全局”使用上方全局方式。库存大盘的目录刷新使用普通 HTTPS，与后台监控分开。</p><div class="form-grid" id="provider-request-modes"><label>VMISS<select data-provider-mode="vmiss"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option></select></label><label>VPS.SOY<select data-provider-mode="vps_soy"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option></select></label><label>Akile<select data-provider-mode="akile"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option></select></label><label>Isvoro<select data-provider-mode="isvoro"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option></select></label><label>其他商家 / 自定义网页<select data-provider-mode="html"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option></select></label></div><p id="provider-request-note" class="hint" aria-live="polite"></p>
     <p id="fetcher-status" class="hint">普通 HTTPS 请求已启用。</p>
     <p class="hint">安装和更新时自动部署本机 FlareSolverr；已有服务会复用。默认 API 地址为 http://127.0.0.1:8191/v1。动态库存可增加渲染等待；普通 HTTPS 不使用该等待。仅监控你拥有或获准访问的页面。</p>
     <div class="actions" style="margin-top:10px"><button id="fetcher-test" type="button">测试 FlareSolverr 连接</button></div>
-    <p id="fetcher-health" class="hint" aria-live="polite">这里只测试 FlareSolverr 服务连接。实际库存请进入“VPS 库存监控”，点击“测试此商品”；无需开启监控，结果直接显示在商品下方。</p>
+    <p id="fetcher-health" class="hint" aria-live="polite">这里只测试 FlareSolverr 服务连接。实际库存请进入“VPS 库存通知”，点击“测试通知”；无需开启监控，结果直接显示在商品下方。</p>
     </div>
   </section>
 

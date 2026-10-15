@@ -578,6 +578,27 @@ def validate_config(value: object) -> dict:
         request_mode = str(item.get("request_mode", "inherit")).strip().casefold()
         if request_mode not in {"inherit", "requests", "flaresolverr"}:
             raise ValueError(f"产品 {name} 的请求方式无效")
+        # Legacy selections remain visible and subscribed after migration.
+        for flag in ("watch_enabled", "notify_enabled"):
+            if flag in item and not isinstance(item[flag], bool):
+                raise ValueError(f"产品 {name} 的 {flag} 必须是布尔值")
+            legacy = item.get("enabled", False) if not any(k in item for k in ("watch_enabled", "notify_enabled")) else False
+            normalized_item[flag] = item.get(flag, legacy)
+        normalized_item["enabled"] = normalized_item["watch_enabled"] or normalized_item["notify_enabled"]
+        for field in ("remarks", "line_label"):
+            text = item.get(field, "")
+            if not isinstance(text, str) or len(text) > 500:
+                raise ValueError(f"产品 {name} 的备注和线路必须是 500 字以内的文本")
+            normalized_item[field] = text.strip()
+        snapshot = item.get("snapshot", {})
+        if not isinstance(snapshot, dict):
+            raise ValueError("商品快照必须是对象")
+        normalized_item["snapshot"] = {key: str(snapshot.get(key, ""))[:2048 if key == "url" else 500] for key in ("name", "region", "specs", "traffic", "price", "url", "checked_at")}
+        if normalized_item["snapshot"]["url"] and urlsplit(normalized_item["snapshot"]["url"]).scheme != "https":
+            raise ValueError("商品购买快照必须是 HTTPS 地址")
+        if type(snapshot.get("available")) is int and snapshot["available"] >= 0:
+            normalized_item["snapshot"]["available"] = snapshot["available"]
+        normalized_item["snapshot"]["stock_mode"] = "availability" if snapshot.get("stock_mode") == "availability" else "quantity"
         normalized_item["request_mode"] = request_mode
         seen_ids.add(product_id)
         normalized.append(normalized_item)

@@ -44,7 +44,7 @@ def settings(value: object) -> dict:
 
 def make_row(key: str, watch: dict, region: str, line: str, specs: str, price: str, product=None, error: str = "") -> dict:
     return {"key": key, "name": watch["name"], "provider": watch["provider"], "region": clean(region), "line": clean(line),
-            "specs": clean(specs, 500), "price": clean(price), "available": product.available if product else None,
+            "specs": clean(product.specs if product and product.specs else specs, 500), "traffic": clean(product.traffic if product else "", 500), "price": clean(price), "available": product.available if product else None,
             "stock_mode": product.stock_mode if product else "quantity", "purchase_url": product.url if product else "",
             "error": clean(error), "watch": {**watch, "enabled": True, "request_mode": "inherit"}}
 

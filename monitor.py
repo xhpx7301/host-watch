@@ -8,7 +8,7 @@ import re
 import sys
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
@@ -52,6 +52,32 @@ class Product:
     node_name: str = ""
     catalog_url: str = ""
     match_details: dict | None = None
+    region: str = ""
+    specs: str = ""
+    traffic: str = ""
+    price: str = ""
+
+
+def html_metadata(card, region="") -> dict:
+    """Keep hardware and network fields separate without guessing missing values."""
+    nodes = card.select(".package-content li, .card-body .card-text")
+    if not nodes:
+        nodes = card.select(".package-content")
+    hardware, network = [], []
+    for node in nodes:
+        value = " ".join(node.get_text(" ", strip=True).split())
+        if re.match(r"^库存\s*[:：]", value):
+            continue
+        fields = re.split(r"\s*(?=(?:CPU|内存|硬盘|带宽|流量|端口|架构|网络|Memory|RAM|Storage|Disk|Traffic|Bandwidth)\s*[:：])", value, flags=re.I)
+        for field in filter(None, fields):
+            (network if re.search(r"流量|带宽|traffic|bandwidth|[GM]bps", field, re.I) else hardware).append(field)
+    prices = card.select(".price-amount, .price-cycle")
+    soy_price = card.select_one(".cart-num")
+    price = " / ".join(n.get_text(" ", strip=True) for n in prices)
+    if not price and soy_price:
+        price = soy_price.parent.get_text(" ", strip=True)
+    return {"region": region[:500], "specs": " · ".join(hardware)[:500], "traffic": " · ".join(network)[:500], "price": price[:500]}
+
 
 
 def parse_products(html: str, page_url: str, selectors: list[str]) -> list[Product]:
@@ -90,7 +116,7 @@ def parse_products(html: str, page_url: str, selectors: list[str]) -> list[Produ
         matched_selectors.update(matches)
         if selectors and not matches:
             continue
-        products.append(Product(key, name, int(match.group(1).replace(",", "")), product_url, product_id))
+        products.append(Product(key, name, int(match.group(1).replace(",", "")), product_url, product_id, **html_metadata(card, soup.select_one("h1").get_text(" ", strip=True) if soup.select_one("h1") else "")))
 
     if not products:
         raise MonitorError("页面已读取，但没有商品符合 WATCH_PRODUCTS")
@@ -338,7 +364,14 @@ def parse_vps_soy(html: str, page_url: str, selector: str) -> Product:
             raise MonitorError("VPS.SOY 购买入口离开本站，已停止处理")
     elif count > 0:
         raise MonitorError("VPS.SOY 显示有库存但购买按钮不可用，未更新库存")
-    return Product(selector, title.get_text(" ", strip=True), max(0, count), purchase_url, vendor="VPS.SOY", catalog_url=page_url)
+    gid = parse_qs(urlsplit(page_url).query).get("gid", ["8"])[0]
+    region = ""
+    for group in soup.select(".secondgroup_item[onclick]"):
+        match = re.search(r"[?&]gid=([0-9]+)", group["onclick"])
+        if match and match[1] == gid:
+            region = group.get_text(" ", strip=True)
+            break
+    return Product(selector, title.get_text(" ", strip=True), max(0, count), purchase_url, vendor="VPS.SOY", catalog_url=page_url, **html_metadata(card, region))
 
 
 def fetch_vps_soy_page(session: requests.Session, catalog_url: str, fetcher: dict) -> tuple[str, str]:
@@ -424,7 +457,10 @@ def parse_akile(payload: object, item: dict) -> Product:
     if any(type(entry.get("id")) is not int or entry["id"] <= 0 for entry in (area, node, plan)) or not isinstance(plan.get("tag"), str) or plan["tag"] not in {"traffic", "bandwidth", "performance"}:
         raise MonitorError("Akile 套餐缺少有效购买标识，未更新库存")
     purchase_url = "https://akile.ai/shop/server?" + urlencode({"type": plan["tag"], "areaId": area["id"], "nodeId": node["id"], "planId": plan["id"]})
-    return Product(str(plan["id"]), plan["plan_name"], stock, purchase_url, vendor="Akile", area_id=str(area["id"]), area_name=str(area.get("area_name") or f"地区 {area['id']}")[:80], node_name=str(node["group_name"]))
+    return Product(str(plan["id"]), plan["plan_name"], stock, purchase_url, vendor="Akile", area_id=str(area["id"]), area_name=str(area.get("area_name") or f"地区 {area['id']}")[:80], node_name=str(node["group_name"]), region=str(area.get("area_name") or ""),
+        specs=f"{plan.get('cpu', '—')} 核 · {plan.get('memory', '—')} MB · {plan.get('disk', '—')} GB",
+        traffic=f"{plan.get('flow', '—')} GB流量 · {plan.get('bandwidth', '—')} Mbps",
+        price="；".join(f"¥{p['price'] / 100:g} / {p['cycle']}个月" for p in (plan.get('price_datas') or []) if type(p.get('price')) in {int, float} and type(p.get('cycle')) is int and p['cycle'] > 0)[:500])
 
 
 def fetch_isvoro_json(session: requests.Session, path: str, fetcher: dict) -> object:
@@ -524,7 +560,10 @@ def inspect_isvoro(session: requests.Session, item: dict, fetcher: dict, cache: 
     if raw_product.get("ip_available") is False:
         available = 0
     purchase_url = "https://isvoro.com/buy/" + line["slug"] + "?" + urlencode({"product": selected["id"]})
-    return Product(str(selected["id"]), detail["name"], available, purchase_url, vendor="Isvoro", stock_mode=mode, match_details={"type_id": str(kind["id"]), "type_name": kind["name"], "category_id": str(line["id"]), "category_name": line["name"], "product_id": str(selected["id"]), "plan_name": detail["name"]})
+    return Product(str(selected["id"]), detail["name"], available, purchase_url, vendor="Isvoro", stock_mode=mode,
+        region=kind["name"], specs=f"{settings.get('cores', '—')} 核 · {settings.get('memory', '—')} MB · {settings.get('disk', '—')} GB",
+        traffic=f"{settings.get('bandwidth_limit', '—')} GB流量",
+        price="；".join(f"{p.get('currency_code', '')} {p['price']:g} / {plan.get('name', '')}" for plan in isvoro_list(raw_product.get('plans')) if plan.get('hidden') is not True for p in (plan.get('prices') or []) if isinstance(p, dict) if type(p.get('price')) in {int, float})[:500], match_details={"type_id": str(kind["id"]), "type_name": kind["name"], "category_id": str(line["id"]), "category_name": line["name"], "product_id": str(selected["id"]), "plan_name": detail["name"]})
 
 
 def inspect_product(session: requests.Session, item: dict, fetcher: dict) -> Product:
@@ -572,7 +611,7 @@ def write_status(path: Path, status: dict) -> None:
 
 
 def selected_products(config: dict) -> list[dict]:
-    products = [item for item in config.get("products", []) if item.get("enabled")]
+    products = [item for item in config.get("products", []) if product_membership(item, "watch") or product_membership(item, "notify")]
     for item in products:
         name = item.get("name", "(未命名)")
         if item.get("adapter") == "vmiss":
@@ -602,6 +641,12 @@ def selected_products(config: dict) -> list[dict]:
         else:
             raise MonitorError(f"商品 {name} 的监控适配器无效")
     return products
+
+
+def product_membership(item: dict, role: str) -> bool:
+    if "watch_enabled" in item or "notify_enabled" in item:
+        return bool(item.get(role + "_enabled", False))
+    return bool(item.get("enabled", False))
 
 
 def read_state(path: Path) -> dict[str, dict]:
@@ -670,6 +715,10 @@ def notification_text(product: Product, old_count: int | None, purchase_url: str
         f"{context}"
         f"套餐：{product.name}\n"
         f"库存：{stock} {increase}\n"
+        f"地区：{product.region or product.area_name or '—'}\n"
+        f"配置：{product.specs or '—'}\n"
+        f"流量/带宽：{product.traffic or '—'}\n"
+        f"价格：{product.price or '以商家页面为准'}\n"
         f"手动购买：{purchase_url}\n"
         f"检查时间：{now}"
     )
@@ -707,15 +756,7 @@ def check_once(
             if len(candidates) != 1:
                 raise MonitorError(f"商品 {item.get('name', selector)} 无法唯一匹配页面套餐；请检查 selector")
             matched = candidates[0]
-            found[item["id"]] = Product(
-                key=matched.key,
-                name=matched.name,
-                available=matched.available,
-                url=matched.url,
-                card_id=matched.card_id,
-                vendor=item["provider"],
-                stock_mode="quantity",
-            )
+            found[item["id"]] = replace(matched, vendor=item["provider"])
     soy_pages = {}
     akile_catalogs = {}
     isvoro_catalogs = {}
@@ -745,7 +786,11 @@ def check_once(
         product = found[item["id"]]
         old = previous.get(item["id"])
         old_count = old.get("available") if old else None
-        if product.available > 0 and (
+        subscribed = product_membership(item, "notify")
+        if old and old.get("notify_enabled") is False and subscribed:
+            old_count = None
+            old = None
+        if subscribed and product.available > 0 and (
             (old is None and config.get("notify_current_stock_on_start", False))
             or (old is not None and isinstance(old_count, int) and product.available > old_count)
         ):
@@ -755,6 +800,7 @@ def check_once(
             "vendor": item["provider"],
             "available": product.available,
             "url": product.url,
+            "notify_enabled": subscribed,
         }
 
     if notifications and bot_token and chat_id:
@@ -791,6 +837,7 @@ def check_once(
                 "stock_mode": found[item["id"]].stock_mode,
                 "url": found[item["id"]].url,
                 "purchase_url": purchase_link(found[item["id"]], item, config),
+                **{field: getattr(found[item["id"]], field) for field in ("region", "specs", "traffic", "price")},
             }
             for item in selected
         ],
@@ -843,6 +890,9 @@ def main() -> int:
                 return 0
             bot_token, chat_id = effective_telegram(config)
             telegram_config = config.get("telegram", {})
+            if not any(product_membership(p, "notify") for p in config.get("products", [])):
+                bot_token, chat_id = "", ""
+                telegram_config = {"disabled": True}
             if not telegram_config.get("disabled", False) and (not bot_token or not chat_id):
                 raise MonitorError("Telegram bot token 和 chat_id 必须同时填写，或在管理页停用 Telegram")
             interval = int(config.get("interval_seconds", 600))

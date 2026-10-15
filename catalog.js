@@ -35,27 +35,28 @@
   function existing(row) { return config.products.find((item) => matches(row, item)); }
   function filtered() {
     const search = get("catalog-search").value.trim().toLowerCase(), stock = get("catalog-stock").value;
-    return (data?.rows || []).filter((row) => (!search || [row.name, row.region, row.line, row.specs, row.price].join(" ").toLowerCase().includes(search)) &&
-      (stock === "all" || stock === "in" && row.available > 0 || stock === "out" && row.available === 0 || stock === "unknown" && row.available === null || stock === "watched" && existing(row)?.enabled));
+    return (data?.rows || []).filter((row) => (!search || [row.name, row.region, row.line, row.specs, row.traffic, row.price].join(" ").toLowerCase().includes(search)) &&
+      (stock === "all" || stock === "in" && row.available > 0 || stock === "out" && row.available === 0 || stock === "unknown" && row.available === null || stock === "watched" && existing(row) && membership(existing(row), "watch") || stock === "notified" && existing(row) && membership(existing(row), "notify")));
   }
 
   function reminderLabel(row) {
     const item = existing(row);
-    if (!item?.enabled) return "未选提醒";
+    if (!item || !membership(item, "watch") && !membership(item, "notify")) return "尚未关注";
     const saved = savedConfig ? JSON.parse(savedConfig).products.find((p) => p.id === item.id) : null;
     if (!saved?.enabled || JSON.stringify(saved) !== JSON.stringify(item)) return "待保存";
-    return config.enabled && monitorService?.active === "active" ? "提醒监控中" : "已保存 · 监控未运行";
+    return config.enabled && monitorService?.active === "active" ? "自动检查中" : "已保存 · 检查未运行";
   }
 
   function renderReminders() {
-    const count = config.products.filter((p) => p.enabled).length;
-    get("catalog-watch-count").textContent = count;
+    const count = config.products.filter(p => membership(p, "watch")).length;
+    const notifications = config.products.filter(p => membership(p, "notify")).length;
+    get("catalog-watch-count").textContent = `${count} / ${notifications}`;
     const dirty = savedConfig !== null && hasUnsavedChanges();
     let note = dirty ? "选择已修改，点击底部“保存配置”应用全部栏目修改。" : "选择已保存。";
     if (!config.enabled || monitorService?.active !== "active") note += "自动监控尚未运行，保存后点击“开始监控”。";
     else note += "服务器自动检查已开启，关闭网页后继续运行。";
-    if (!config.telegram?.configured || config.telegram?.disabled) note += "请在 Telegram 通知中配置并启用机器人后保存。";
-    if (config.enabled && !count) note += "已取消全部商品，请先暂停监控再保存。";
+    if (notifications && (!config.telegram?.configured || config.telegram?.disabled)) note += "请在 Telegram 通知中配置并启用机器人后保存。";
+    if (config.enabled && !config.products.some(p => p.enabled)) note += "已取消全部商品，请先暂停监控再保存。";
     get("catalog-reminder-note").textContent = note;
   }
 
@@ -73,24 +74,28 @@
       const choice = document.createElement("input");
       choice.type = "checkbox"; choice.checked = selected.has(row.key);
       choice.setAttribute("aria-label", `选择 ${row.name} ${row.line}`);
-      choice.disabled = actionRunning || row.available === null && !existing(row)?.enabled;
+      choice.disabled = actionRunning;
       choice.addEventListener("change", () => { choice.checked ? selected.add(row.key) : selected.delete(row.key); renderSelection(visible); });
       const label = text("label", "", "check"); label.append(choice); cell().append(label);
       const identity = cell(); identity.append(text("strong", row.name), text("small", row.provider));
       const region = cell(); region.append(text("span", row.region || "—"));
       if (row.line && row.line !== row.region) region.append(text("small", row.line));
-      cell().textContent = row.specs || "商家未提供配置";
+      cell().textContent = [row.specs, row.traffic].filter(Boolean).join(" · ") || "商家未提供配置";
       cell().textContent = row.price || "以商家页面为准";
       const stock = cell();
       stock.append(text("span", row.available === null ? "未知" : row.available > 0 ? (row.stock_mode === "availability" ? "有货" : `有货 ${row.available}`) : "缺货", `state ${row.available === null ? "pending" : row.available > 0 ? "ok" : "error"}`));
       if (row.error) { const error = text("small", row.error); stock.append(error); stock.style.whiteSpace = "normal"; }
       const actions = text("div", "", "catalog-row-actions");
-      const watched = Boolean(existing(row)?.enabled);
-      const button = text("button", watched ? "取消提醒" : "加入补货提醒"); button.type = "button";
-      button.disabled = actionRunning || row.available === null && !watched;
-      button.setAttribute("aria-pressed", String(watched));
-      button.addEventListener("click", () => setReminders([row], !watched));
-      actions.append(button, text("small", reminderLabel(row)));
+      const item = existing(row);
+      for (const [type, label] of [["watch", "库存监控"], ["notify", "库存通知"]]) {
+        const active = item && membership(item, type);
+        const button = text("button", `${active ? "移出" : "加入"}${label}`); button.type = "button";
+        button.disabled = actionRunning;
+        button.setAttribute("aria-pressed", String(Boolean(active)));
+        button.addEventListener("click", () => setReminders([row], !active, type));
+        actions.append(button);
+      }
+      actions.append(text("small", reminderLabel(row)));
       if (row.purchase_url) {
         const url = new URL(row.purchase_url);
         if (url.protocol === "https:" && ["app.vmiss.com", "www.vps.soy", "akile.ai", "isvoro.com"].includes(url.hostname) && !url.username && !url.password) {
@@ -110,7 +115,7 @@
   }
 
   function renderSelection(visible = filtered().slice(page * pageSize, (page + 1) * pageSize)) {
-    const eligible = visible.filter((row) => row.available !== null || existing(row)?.enabled);
+    const eligible = visible;
     const all = get("catalog-select-all");
     all.checked = eligible.length > 0 && eligible.every((row) => selected.has(row.key));
     all.indeterminate = !all.checked && eligible.some((row) => selected.has(row.key));
@@ -144,19 +149,23 @@
     renderTable();
   }
 
-  function setReminders(rows, enabled) {
+  function setReminders(rows, enabled, type = "watch") {
     if (actionRunning) return;
-    const eligible = rows.filter((row) => !enabled || row.available !== null);
-    const needed = eligible.filter((row) => !existing(row));
-    if (enabled && config.products.length + needed.length > 100) { setMessage("最多保存 100 个监控商品，请先移除不需要的商品。此次选择未改动。", "error"); return; }
+    const needed = rows.filter(row => !existing(row));
+    if (enabled && config.products.length + needed.length > 100) { setMessage("最多保存 100 个商品，请先移除不需要的配置。", "error"); return; }
     let changed = 0;
-    for (const row of eligible) {
-      const item = existing(row);
-      if (item) { if (item.enabled !== enabled) { item.enabled = enabled; changed++; } }
-      else if (enabled) { config.products.push({ ...structuredClone(row.watch), id: crypto.randomUUID(), enabled: true }); changed++; }
+    for (const row of rows) {
+      let item = existing(row);
+      if (!item && enabled) {
+        item = { ...structuredClone(row.watch), id: crypto.randomUUID(), enabled: false, watch_enabled: false, notify_enabled: false };
+        config.products.push(item);
+      }
+      if (!item) continue;
+      item.snapshot = { name: row.name, region: row.region, specs: row.specs, traffic: row.traffic || "", price: row.price, available: row.available, stock_mode: row.stock_mode, url: row.purchase_url, checked_at: data?.fetched_at || "" };
+      if (membership(item, type) !== enabled) { setMembership(item, type, enabled); changed++; }
     }
     renderProducts(); updateDraftState(); renderTable();
-    setMessage(changed ? `${enabled ? "已选择" : "已取消"} ${changed} 个商品的补货提醒，请点击底部“保存配置”${config.enabled ? "应用。" : "，然后开始监控。"}` : "所选商品的提醒状态无需更改。", changed ? "pending" : "success");
+    setMessage(changed ? `已${enabled ? "加入" : "移出"} ${changed} 个商品的${type === "watch" ? "库存监控（不通知）" : "库存通知"}，点击底部“保存配置”生效。` : "选择无需更改。", changed ? "pending" : "success");
   }
 
   function schedule() {
@@ -223,11 +232,11 @@
     render(); schedule();
   });
   get("catalog-select-all").addEventListener("change", (event) => {
-    filtered().slice(page * pageSize, (page + 1) * pageSize).filter((row) => row.available !== null || existing(row)?.enabled).forEach((row) => event.target.checked ? selected.add(row.key) : selected.delete(row.key));
+    filtered().slice(page * pageSize, (page + 1) * pageSize).forEach((row) => event.target.checked ? selected.add(row.key) : selected.delete(row.key));
     renderTable();
   });
   get("catalog-watch-selected").addEventListener("click", () => setReminders((data?.rows || []).filter((row) => selected.has(row.key)), true));
-  get("catalog-unwatch-selected").addEventListener("click", () => setReminders((data?.rows || []).filter((row) => selected.has(row.key)), false));
+  get("catalog-unwatch-selected").addEventListener("click", () => setReminders((data?.rows || []).filter((row) => selected.has(row.key)), true, "notify"));
   get("catalog-prev").addEventListener("click", () => { page--; renderTable(); });
   get("catalog-next").addEventListener("click", () => { page++; renderTable(); });
   get("catalog-open-products").addEventListener("click", () => navigatePage("monitor"));
