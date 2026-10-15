@@ -87,6 +87,18 @@ class ManagementTests(unittest.TestCase):
         self.assertIn("监控 运行中", line)
         self.assertIn("管理页 已停止", line)
 
+    def test_cloudscraper_status_reports_library_availability(self):
+        interpreter = self.directory / ".venv" / "bin" / "python"
+        interpreter.parent.mkdir(parents=True)
+        interpreter.write_text("")
+
+        def fake_run(args, **kwargs):
+            self.assertEqual(args[1:], ["-c", "import cloudscraper; print(getattr(cloudscraper, '__version__', 'installed'))"])
+            return SimpleNamespace(returncode=0, stdout="1.2.71\n")
+
+        with patch.object(self.manage, "INSTALL_DIR", self.directory), patch.object(self.manage.subprocess, "run", side_effect=fake_run):
+            self.assertEqual(self.manage._cloudscraper_state(), "installed")
+
     def test_web_apply_restarts_running_monitor_to_read_new_config(self):
         (self.directory / "config.json").write_text(json.dumps({"enabled": True}))
         with patch.object(self.manage, "DATA_DIR", self.directory), patch.object(self.manage, "run") as run:

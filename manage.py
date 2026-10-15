@@ -250,6 +250,18 @@ def _flaresolverr_state() -> str:
     return state if result.returncode == 0 and state else "not-deployed"
 
 
+def _cloudscraper_state() -> str:
+    """cloudscraper is a library, so report dependency availability instead of a service state."""
+    interpreter = INSTALL_DIR / ".venv" / "bin" / "python"
+    if not interpreter.is_file():
+        return "not-installed"
+    result = subprocess.run(
+        [str(interpreter), "-c", "import cloudscraper; print(getattr(cloudscraper, '__version__', 'installed'))"],
+        text=True, capture_output=True, check=False, timeout=5,
+    )
+    return "installed" if result.returncode == 0 and result.stdout.strip() else "unavailable"
+
+
 def _state_label(state: str) -> str:
     labels = {
         "active": "运行中",
@@ -263,6 +275,8 @@ def _state_label(state: str) -> str:
         "restarting": "重启中",
         "not-installed": "未安装",
         "not-deployed": "未部署",
+        "installed": "可用",
+        "unavailable": "不可用",
         "unknown": "状态未知",
     }
     return labels.get(state, state or "状态未知")
@@ -270,7 +284,8 @@ def _state_label(state: str) -> str:
 
 def print_menu_status() -> None:
     states = (
-        ("服务", _flaresolverr_state()),
+        ("FlareSolverr", _flaresolverr_state()),
+        ("cloudscraper", _cloudscraper_state()),
         ("监控", _systemd_state(MONITOR)),
         ("管理页", _systemd_state(ADMIN)),
     )
