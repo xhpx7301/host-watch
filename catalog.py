@@ -130,7 +130,7 @@ def vmiss_catalog(session, scope: str) -> tuple[list, str, list]:
 
 
 def soy_catalog(session, scope: str) -> tuple[list, str, list]:
-    from monitor import MonitorError, fetch_vps_soy_page, parse_vps_soy
+    from monitor import MonitorError, fetch_vps_soy_page, parse_vps_soy, soy_metadata
     body, _ = fetch_vps_soy_page(session, "https://www.vps.soy/cart", {"mode": "requests"})
     scopes = []
     for node in BeautifulSoup(body, "html.parser").select(".secondgroup_item[onclick]"):
@@ -153,8 +153,8 @@ def soy_catalog(session, scope: str) -> tuple[list, str, list]:
         except MonitorError as exc:
             error = str(exc)
         price_node = card.select_one(".cart-num")
-        specs = card.select_one(".card-body .card-text")
-        rows.append(make_row(f"vps_soy:{selected['id']}:{name}", watch, selected["name"], selected["name"], specs.get_text(" ", strip=True) if specs else "", price_node.parent.get_text(" ", strip=True) if price_node else "", product, error))
+        metadata = soy_metadata(card)
+        rows.append(make_row(f"vps_soy:{selected['id']}:{name}", watch, selected["name"], selected["name"], metadata["specs"], price_node.parent.get_text(" ", strip=True) if price_node else "", product, error, traffic=metadata["traffic"]))
     if not rows and not soup.select(".secondgroup_item"):
         raise MonitorError("VPS.SOY 返回页面缺少商品目录")
     return [{"id": row["id"], "name": row["name"]} for row in scopes], selected["id"], rows

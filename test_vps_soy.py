@@ -3,6 +3,7 @@ from unittest.mock import Mock, patch
 
 from admin import validate_config
 from monitor import MonitorError, check_once, inspect_product, parse_vps_soy
+from notifications import hardware_text, network_text
 
 
 URL = "https://www.vps.soy/cart"
@@ -20,6 +21,30 @@ def card(name="深港IX-MINI", stock="-3", href="javascript:void(0)", sold_out=T
 
 
 class VPSSoyTests(unittest.TestCase):
+    def test_hardware_fields_exclude_ports_architecture_and_store_notices(self):
+        for cpu, memory, disk, flow, hardware, network in [
+            (1, "512 MB", "10 GB", "500 GB", "1C/0.5G/10GB", "500GB@1Gbps"),
+            (2, "1 GB", "20 GB", "1 TB", "2C/1G/20GB", "1TB@1Gbps"),
+            (1, "512 MB", "5 GB", "200 GB", "1C/0.5G/5GB", "200GB@1Gbps"),
+        ]:
+            description = f"CPU：{cpu} 核<br>内存：{memory}<br>硬盘：{disk}<br>带宽：1 Gbps<br>流量：{flow}<br>端口：500 个<br>架构：KVM<br>网络：CNIX<br><br>禁止一切违规滥用行为！！！"
+            page = card().replace("CPU: 1 RAM: 512 MB", description)
+            with self.subTest(memory=memory, disk=disk):
+                product = parse_vps_soy(page, URL, "深港IX-MINI")
+                self.assertEqual(hardware_text(product.specs), hardware)
+                self.assertEqual(network_text(product.traffic), network)
+                for excluded in ["端口", "500 个", "KVM", "CNIX", "禁止"]:
+                    self.assertNotIn(excluded, product.specs + product.traffic)
+                self.assertEqual(product.available, 0)
+
+    def test_partial_configuration_does_not_invent_hardware_or_bandwidth(self):
+        product = parse_vps_soy(card(), URL, "深港IX-MINI")
+        self.assertEqual(hardware_text(product.specs), "1C/0.5G")
+        self.assertEqual(product.traffic, "")
+        description = "架构：KVM 端口：500 个 网络：CNIX 年付赠送 1 CPU 2 GB 内存"
+        product = parse_vps_soy(card().replace("CPU: 1 RAM: 512 MB", description), URL, "深港IX-MINI")
+        self.assertEqual(product.specs, "")
+
     def test_negative_stock_is_sold_out_and_uses_catalog_entry(self):
         page = card("深港IX-PRO") + card() + card("深港IX-MINI-PLUS", "8", "/cart?action=configureproduct&pid=99", False)
         product = parse_vps_soy(page, URL, "深港IX-MINI")

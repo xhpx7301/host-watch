@@ -119,6 +119,17 @@ class CatalogParsingTests(unittest.TestCase):
         self.assertEqual(rows[0]["available"], 0)
         self.assertEqual(rows[0]["watch"]["selector"], "Mini")
 
+    def test_soy_unknown_stock_still_has_clean_configuration_and_network(self):
+        from test_vps_soy import card
+        navigation = '<div class="secondgroup_item" onclick="window.location.href=\'/cart?fid=1&amp;gid=8\'">深港 CNIX</div>'
+        body = navigation + card(stock="未知").replace("CPU: 1 RAM: 512 MB", "CPU：1 核<br>内存：512 MB<br>硬盘：5 GB<br>带宽：1 Gbps<br>流量：200 GB<br>端口：500 个<br>架构：KVM<br>网络：CNIX<br>禁止滥用")
+        url = "https://www.vps.soy/cart?fid=1&gid=8"
+        with patch("monitor.fetch_vps_soy_page", side_effect=[(navigation, url), (body, url)]):
+            row = catalog.soy_catalog(Mock(), "1:8")[2][0]
+        self.assertIsNone(row["available"])
+        self.assertEqual(row["specs"], "CPU：1 核 · 内存：512 MB · 硬盘：5 GB")
+        self.assertEqual(row["traffic"], "流量：200 GB · 带宽：1 Gbps")
+
     def test_vmiss_watch_without_affiliate_uses_direct_link(self):
         item = {"id": "one", "adapter": "vmiss", "provider": "VMISS", "name": "Mini", "selector": "product44", "category_url": "https://app.vmiss.com/store/test", "pid": "44", "enabled": True}
         config = admin.validate_config({"enabled": True, "products": [item], "affiliates": {"vmiss": ""}})

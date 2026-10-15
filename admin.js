@@ -999,7 +999,22 @@ function productSnapshot(item, status) {
   }
   // Correct older Akile snapshots without changing other vendors' zero allowances.
   if (item.adapter === "akile" && data.traffic) data.traffic = data.traffic.replace(/(^|[·@|]\s*)0(?:\.0+)?\s*GB\s*(?:流量)?(?=\s*(?:[·@|]|$))/gi, "$1无限制");
+  if (item.adapter === "vps_soy" && data.specs) data.specs = soyHardware(data.specs);
   return data;
+}
+function soyHardware(raw) {
+  const fields = [
+    ["CPU", /(?:^|[\s·/])(?:CPU|vCPU|处理器)\s*[:：]\s*(\d+(?:\.\d+)?)(?:\s*(?:核|cores?|vCPU))?/i],
+    ["内存", /(?:^|[\s·/])(?:内存|Memory|RAM)\s*[:：]\s*(\d+(?:\.\d+)?)\s*(Mi?B|Gi?B|M|G)\b/i],
+    ["硬盘", /(?:^|[\s·/])(?:硬盘|磁盘|Storage|Disk)\s*[:：]\s*(\d+(?:\.\d+)?)\s*([KMGT]i?B)\b/i],
+  ];
+  const values = fields.flatMap(([label, pattern]) => {
+    const match = String(raw).match(pattern);
+    return match ? [`${label}：${match[1]} ${label === "CPU" ? "核" : ({ M: "MB", G: "GB" }[match[2].toUpperCase()] || match[2])}`] : [];
+  });
+  if (values.length) return values.join(" · ");
+  // Some saved snapshots already use compact C/G/GB fields.
+  return String(raw).match(/^\s*\d+(?:\.\d+)?C\s*\/\s*\d+(?:\.\d+)?G\s*\/\s*\d+(?:\.\d+)?[KMGT]i?B\b/i)?.[0].trim() || "—";
 }
 function compactDate(value) {
   const date = new Date(value);

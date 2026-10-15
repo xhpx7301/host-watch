@@ -85,6 +85,30 @@ def html_metadata(card, region="") -> dict:
     return {"region": region[:500], "specs": " · ".join(hardware)[:500], "traffic": " · ".join(network)[:500], "price": price[:500]}
 
 
+def soy_metadata(card, region="") -> dict:
+    """Read labelled configuration values; omit port counts and store notices."""
+    metadata = html_metadata(card, region)
+    raw = " ".join(node.get_text(" ", strip=True) for node in card.select(".card-body .card-text"))
+    hardware, network = [], []
+    fields = [
+        (hardware, "CPU", r"CPU|vCPU|处理器", r"(\d+(?:\.\d+)?)\s*(?:核|cores?|vCPU)?", "核"),
+        (hardware, "内存", r"内存|Memory|RAM", r"(\d+(?:\.\d+)?)\s*(Mi?B|Gi?B|M|G)\b", ""),
+        (hardware, "硬盘", r"硬盘|磁盘|Storage|Disk", r"(\d+(?:\.\d+)?)\s*([KMGT]i?B)\b", ""),
+        (network, "流量", r"流量|Traffic", r"(\d+(?:\.\d+)?)\s*([KMGT]i?B)\b|无限制|不限量|不限流量|unlimited", ""),
+        (network, "带宽", r"带宽|Bandwidth", r"(\d+(?:\.\d+)?)\s*([KMGT]?bps|[KMGT]?B/s)\b", ""),
+    ]
+    for target, label, aliases, value, unit in fields:
+        match = re.search(r"(?:^|[\s·/])(?:" + aliases + r")\s*[:：]\s*(" + value + r")", raw, re.I)
+        if match:
+            result = " ".join(match[1].split())
+            if label == "CPU":
+                result = match[2] + " " + unit
+            elif label == "内存":
+                result = match[2] + " " + {"m": "MB", "g": "GB"}.get(match[3].lower(), match[3])
+            target.append(label + "：" + result)
+    return {**metadata, "specs": " · ".join(hardware), "traffic": " · ".join(network)}
+
+
 
 def parse_products(html: str, page_url: str, selectors: list[str]) -> list[Product]:
     """Read WHMCS Lagom product cards; reject incomplete/ambiguous pages."""
@@ -377,7 +401,7 @@ def parse_vps_soy(html: str, page_url: str, selector: str) -> Product:
         if match and match[1] == gid:
             region = group.get_text(" ", strip=True)
             break
-    return Product(selector, title.get_text(" ", strip=True), max(0, count), purchase_url, vendor="VPS.SOY", catalog_url=page_url, **html_metadata(card, region))
+    return Product(selector, title.get_text(" ", strip=True), max(0, count), purchase_url, vendor="VPS.SOY", catalog_url=page_url, **soy_metadata(card, region))
 
 
 def fetch_vps_soy_page(session: requests.Session, catalog_url: str, fetcher: dict) -> tuple[str, str]:
