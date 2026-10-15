@@ -75,6 +75,28 @@ class CatalogParsingTests(unittest.TestCase):
             catalog.isvoro_catalog(Mock(), "")
         self.assertEqual(sum(p.startswith("products/") for p in calls), 1)
 
+    def test_isvoro_hk_bgp_all_plans_expose_actual_bandwidth(self):
+        fixtures = directory()
+        fixtures["categories"][0]["children"].append({"id": 47, "slug": "hkbgp", "name": "HK BGP"})
+        products = []
+        expected = []
+        # Public HK BGP settings: traffic is GB; ratelimit is MB/s.
+        for identifier, name, flow, rate, mbps in [(159, "Core", "500", "37.5", 300),
+                (160, "Standard", "1024", "62.5", 500), (161, "Pro", "2048", "125", 1000)]:
+            slug = "hkbgp" + name.lower()
+            products.append({"id": identifier, "name": "HK BGP " + name, "slug": slug, "category_id": 47})
+            fixtures["products/" + slug] = {**products[-1], "stock": 22, "ip_available": True,
+                "plans": [{"name": "月", "prices": [{"currency_code": "CNY", "price": 29}]}],
+                "settings": [{"key": "bandwidth_limit", "value": flow}, {"key": "ratelimit", "value": rate},
+                    {"key": "overlimit_speed_mbps", "value": "0.125"}]}
+            expected.append(f"{flow} GB流量 · {mbps} Mbps")
+        fixtures["categories/hkbgp"] = {"id": 47, "slug": "hkbgp", "name": "HK BGP", "products": products}
+        with patch("monitor.fetch_isvoro_json", side_effect=lambda session, path, fetcher: fixtures[path]):
+            data = catalog.load_catalog("isvoro", "24:47")
+        self.assertEqual([row["traffic"] for row in data["rows"]], expected)
+        self.assertEqual(data["metadata_version"], catalog.METADATA_VERSION)
+        self.assertTrue(all(row["available"] == 22 for row in data["rows"]))
+
     def test_vmiss_generates_pid_from_card_and_rejects_wrong_scope_redirect(self):
         navigation = '<a href="/store/test">Hong Kong</a><a href="https://elsewhere.example/store/evil">Ignore</a>'
         card = '<div class="section products"><div class="package" id="product44"><h3 class="package-title">Mini</h3><div class="package-qty">3 Available</div><a class="btn-order-now" href="/store/test/mini">Buy</a><div class="price-amount">$5 CAD</div><div class="price-cycle">Monthly</div></div></div>'
@@ -180,6 +202,20 @@ class CatalogServiceTests(unittest.TestCase):
             self.wait()
         self.assertFalse(self.path.exists())
         process.kill.assert_called()
+
+    def test_old_isvoro_snapshot_requests_refresh_without_losing_old_data(self):
+        old = {**self.value, "provider": "isvoro", "scope": "24:47", "rows": [{"traffic": "500 GB流量"}]}
+        updated = {**old, "scope": "24:46", "metadata_version": catalog.METADATA_VERSION}
+        self.path.write_text(json.dumps({"old": old, "updated": updated, "akile": self.value}), encoding="utf-8")
+        result = self.service.snapshot("isvoro", "24:47")
+        self.assertEqual(result["data"], old)
+        self.assertTrue(result["needs_refresh"])
+        self.assertFalse(self.service.snapshot("isvoro", "24:46")["needs_refresh"])
+        self.assertFalse(self.service.snapshot("akile")["needs_refresh"])
+        self.assertFalse(self.service.snapshot("isvoro", "24:56")["needs_refresh"])
+        # A failed or stopped refresh must leave the old snapshot available.
+        self.service.task = {"provider": "isvoro", "pending": False, "cancelled": True}
+        self.assertEqual(self.service.snapshot("isvoro", "24:47")["data"], old)
 
     def test_validation_rejects_urls_and_unknown_providers(self):
         for provider, scope in [("other", ""), ("isvoro", "../../etc"), ("vmiss", "https://bad.example"), ("akile", [])]:

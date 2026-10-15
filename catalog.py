@@ -18,6 +18,7 @@ from bs4 import BeautifulSoup
 
 PROVIDERS = {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "isvoro": "Isvoro"}
 MAX_ROWS = 600
+METADATA_VERSION = 1
 
 
 def now() -> str:
@@ -207,7 +208,7 @@ def load_catalog(provider: str, scope: str = "") -> dict:
         scopes, actual, rows = {"vmiss": vmiss_catalog, "vps_soy": soy_catalog, "akile": akile_catalog, "isvoro": isvoro_catalog}[provider](session, scope)
     if len(rows) > MAX_ROWS or len({row["key"] for row in rows}) != len(rows):
         raise ValueError("商品目录超过容量或存在重复标识，未更新缓存")
-    return {"provider": provider, "scope": actual, "scopes": scopes, "rows": rows, "fetched_at": now(), "unknown": sum(row["available"] is None for row in rows)}
+    return {"provider": provider, "scope": actual, "scopes": scopes, "rows": rows, "fetched_at": now(), "metadata_version": METADATA_VERSION, "unknown": sum(row["available"] is None for row in rows)}
 
 
 class CatalogBusy(ValueError):
@@ -242,7 +243,10 @@ class CatalogService:
         data = max(candidates, key=lambda v: v["fetched_at"]) if candidates else None
         with self.lock:
             task = dict(self.task) if self.task else None
-        return {"data": data, "task": task}
+        # Old Isvoro snapshots contain traffic only, even when the API supplies
+        # ratelimit. Keep them visible while the browser refreshes this scope.
+        needs_refresh = bool(data and provider == "isvoro" and data.get("metadata_version") != METADATA_VERSION)
+        return {"data": data, "task": task, "needs_refresh": needs_refresh}
 
     def refresh(self, provider: str, scope: str = "") -> dict:
         provider, scope = validate_source(provider, scope)

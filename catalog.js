@@ -4,7 +4,7 @@
   const get = (id) => document.getElementById(id);
   let provider = sessionStorage.getItem("hostwatch-catalog-provider") || "akile";
   if (!Object.hasOwn(providers, provider)) provider = "akile";
-  let scope = "", data = null, task = null, page = 0, generation = 0, loading = false;
+  let scope = "", data = null, task = null, page = 0, generation = 0, loading = false, metadataOutdated = false;
   let pollTimer, autoTimer;
   let tableSignature = "";
   let filterGeneration = null;
@@ -161,6 +161,7 @@
     else if (task?.provider === provider && task.error) { status.classList.add("error"); status.textContent = task.error; }
     else if (task?.provider === provider && task.cancelled) status.textContent = "刷新已停止，保留上次快照。";
     else if (loading) status.textContent = "正在读取目录缓存…";
+    else if (metadataOutdated) { status.classList.add("stale"); status.textContent = "此分类为旧版快照，带宽信息尚未更新，请刷新分类库存。"; }
     else { status.textContent = data ? `已读取此分类。${data.unknown ? `${data.unknown} 个套餐库存未知，未当作缺货或现货。` : ""}${stale ? "当前为历史快照，请刷新后核对。" : "库存以此快照的检查时间为准。"}` : "选择商家后刷新分类库存，无需先开启自动监控。"; if (stale) status.classList.add("stale"); }
     const filterArrived = filterGeneration === generation && !loading && (data?.fetched_at || !task?.pending);
     renderTable(Boolean(filterArrived));
@@ -199,14 +200,14 @@
     try {
       const result = await requestJSON(`/api/catalog?${new URLSearchParams({ provider: requestedProvider, scope: requestedScope })}`, { timeoutMs: 10000 });
       if (version !== generation || currentPage !== "catalog") return;
-      data = result.data; task = result.task;
+      data = result.data; task = result.task; metadataOutdated = Boolean(result.needs_refresh);
       if (data) {
         scope = data.scope;
         knownScopes.set(provider, data.scopes);
         const keys = new Set(data.rows.map((row) => row.key));
         for (const key of selected) if (!keys.has(key)) selected.delete(key);
       }
-      if (!data && !task?.pending && refreshMissing && !(task?.provider === provider && (!task.scope || !scope || task.scope === scope) && (task.error || task.cancelled))) {
+      if ((!data || metadataOutdated) && !task?.pending && refreshMissing && !(task?.provider === provider && (!task.scope || !scope || task.scope === scope) && (task.error || task.cancelled))) {
         loading = false; await refresh(); return;
       }
     } catch (error) {
@@ -230,7 +231,7 @@
 
   document.querySelectorAll("[data-catalog-provider]").forEach((button) => button.addEventListener("click", () => {
     if (provider === button.dataset.catalogProvider) return;
-    generation++; provider = button.dataset.catalogProvider; scope = ""; data = null; page = 0; selected.clear();
+    generation++; provider = button.dataset.catalogProvider; scope = ""; data = null; metadataOutdated = false; page = 0; selected.clear();
     filterGeneration = generation;
     sessionStorage.setItem("hostwatch-catalog-provider", provider);
     get("catalog-search").value = ""; get("catalog-stock").value = "all";
@@ -240,7 +241,7 @@
   get("catalog-scope").addEventListener("change", () => {
     generation++; scope = get("catalog-scope").value; page = 0; selected.clear();
     filterGeneration = generation;
-    const scopes = data?.scopes || knownScopes.get(provider) || []; data = { provider, scope, scopes, rows: [] };
+    const scopes = data?.scopes || knownScopes.get(provider) || []; data = { provider, scope, scopes, rows: [] }; metadataOutdated = false;
     void loadSnapshot();
     animateFilterResult(get("catalog-results"));
   });

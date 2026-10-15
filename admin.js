@@ -1046,11 +1046,15 @@ function renderLineEditor(cell, item) {
   const lines = text("div", "", "carrier-lines");
   for (const [key, label, name] of [["telecom", "电", "电信"], ["unicom", "联", "联通"], ["mobile", "移", "移动"]]) {
     const field = `line_${key}`, wrap = text("label", "", `carrier-line ${key}`), input = document.createElement("input");
+    const value = text("span", "", "carrier-value"), measure = text("span", "", "carrier-measure");
+    measure.setAttribute("aria-hidden", "true");
     wrap.append(text("span", `${label}:`)); input.className = "carrier-input"; input.value = item[field] || "";
     input.placeholder = "填写线路"; input.maxLength = 500; input.disabled = actionRunning;
     input.setAttribute("aria-label", `${item.name} ${name}线路`);
-    input.addEventListener("input", () => { item[field] = input.value; updateDraftState(); });
-    wrap.append(input); lines.append(wrap);
+    const fit = () => { measure.textContent = input.value || input.placeholder; input.title = input.value; };
+    fit();
+    input.addEventListener("input", () => { fit(); item[field] = input.value; updateDraftState(); });
+    value.append(measure, input); wrap.append(value); lines.append(wrap);
   }
   if (item.line_label) {
     const legacy = text("div", "", "legacy-line"), input = document.createElement("input");
