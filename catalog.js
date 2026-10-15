@@ -7,6 +7,7 @@
   let scope = "", data = null, task = null, page = 0, generation = 0, loading = false;
   let pollTimer, autoTimer;
   let tableSignature = "";
+  let filterGeneration = null;
   const selected = new Set();
   const knownScopes = new Map();
   const pageSize = 30;
@@ -60,7 +61,8 @@
     get("catalog-reminder-note").textContent = note;
   }
 
-  function renderTable() {
+  function renderTable(animate = false) {
+    if (animate) animateFilterResult(get("catalog-results"));
     const rows = filtered();
     page = Math.max(0, Math.min(page, Math.ceil(rows.length / pageSize) - 1));
     const visible = rows.slice(page * pageSize, (page + 1) * pageSize);
@@ -151,7 +153,9 @@
     else if (task?.provider === provider && task.cancelled) status.textContent = "刷新已停止，保留上次快照。";
     else if (loading) status.textContent = "正在读取目录缓存…";
     else { status.textContent = data ? `已读取此分类。${data.unknown ? `${data.unknown} 个套餐库存未知，未当作缺货或现货。` : ""}${stale ? "当前为历史快照，请刷新后核对。" : "库存以此快照的检查时间为准。"}` : "选择商家后刷新分类库存，无需先开启自动监控。"; if (stale) status.classList.add("stale"); }
-    renderTable();
+    const filterArrived = filterGeneration === generation && !loading && (data?.fetched_at || !task?.pending);
+    renderTable(Boolean(filterArrived));
+    if (filterArrived) filterGeneration = null;
   }
 
   function setReminders(rows, enabled, type = "watch") {
@@ -218,16 +222,20 @@
   document.querySelectorAll("[data-catalog-provider]").forEach((button) => button.addEventListener("click", () => {
     if (provider === button.dataset.catalogProvider) return;
     generation++; provider = button.dataset.catalogProvider; scope = ""; data = null; page = 0; selected.clear();
+    filterGeneration = generation;
     sessionStorage.setItem("hostwatch-catalog-provider", provider);
     get("catalog-search").value = ""; get("catalog-stock").value = "all";
     void loadSnapshot();
+    animateFilterResult(get("catalog-results"));
   }));
   get("catalog-scope").addEventListener("change", () => {
     generation++; scope = get("catalog-scope").value; page = 0; selected.clear();
+    filterGeneration = generation;
     const scopes = data?.scopes || knownScopes.get(provider) || []; data = { provider, scope, scopes, rows: [] };
     void loadSnapshot();
+    animateFilterResult(get("catalog-results"));
   });
-  for (const id of ["catalog-search", "catalog-stock"]) get(id).addEventListener(id === "catalog-search" ? "input" : "change", () => { page = 0; renderTable(); });
+  for (const id of ["catalog-search", "catalog-stock"]) get(id).addEventListener(id === "catalog-search" ? "input" : "change", () => { page = 0; renderTable(true); });
   get("catalog-auto").addEventListener("change", () => { sessionStorage.setItem("hostwatch-catalog-auto", get("catalog-auto").value); schedule(); });
   get("catalog-refresh").addEventListener("click", () => { task = task?.pending ? task : null; void refresh(); });
   get("catalog-stop").addEventListener("click", async () => {
@@ -242,11 +250,11 @@
   });
   get("catalog-watch-selected").addEventListener("click", () => setReminders((data?.rows || []).filter((row) => selected.has(row.key)), true));
   get("catalog-unwatch-selected").addEventListener("click", () => setReminders((data?.rows || []).filter((row) => selected.has(row.key)), true, "notify"));
-  get("catalog-prev").addEventListener("click", () => { page--; renderTable(); });
-  get("catalog-next").addEventListener("click", () => { page++; renderTable(); });
+  get("catalog-prev").addEventListener("click", () => { page--; renderTable(true); });
+  get("catalog-next").addEventListener("click", () => { page++; renderTable(true); });
   get("catalog-open-products").addEventListener("click", () => navigatePage("monitor"));
   window.addEventListener("hostwatch-page-change", (event) => {
-    generation++; clearTimeout(autoTimer); clearTimeout(pollTimer); loading = false;
+    generation++; filterGeneration = null; clearTimeout(autoTimer); clearTimeout(pollTimer); loading = false;
     if (event.detail === "catalog") void loadSnapshot();
   });
   for (const event of ["hostwatch-draft-change", "hostwatch-service-change"]) window.addEventListener(event, () => { if (currentPage === "catalog") renderTable(); });

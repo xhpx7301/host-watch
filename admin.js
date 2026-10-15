@@ -158,6 +158,28 @@ function text(tag, value, className) {
   return node;
 }
 
+const filterMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+const filterAnimations = new Map();
+function animateFilterResult(node) {
+  if (!node) return;
+  filterAnimations.get(node)?.cancel();
+  filterAnimations.delete(node);
+  if (filterMotion.matches || !node.isConnected || node.hidden || !node.animate) return;
+  const animation = node.animate([
+    { opacity: .5, transform: "translateY(4px)" },
+    { opacity: 1, transform: "translateY(0)" },
+  ], { duration: 180, easing: "ease-out" });
+  animation.id = "filter-transition";
+  filterAnimations.set(node, animation);
+  const cleanup = () => { if (filterAnimations.get(node) === animation) filterAnimations.delete(node); };
+  animation.finished.then(cleanup, cleanup);
+}
+filterMotion.addEventListener("change", () => {
+  if (!filterMotion.matches) return;
+  for (const animation of filterAnimations.values()) animation.cancel();
+  filterAnimations.clear();
+});
+
 async function managementRequest(value) {
   return requestJSON("/api/manage", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) });
 }
@@ -365,7 +387,7 @@ function isvoroOptions(control, rows, value, savedName, placeholder) {
   control.value = value || "";
 }
 
-function renderIsvoroFields(article, reset = "") {
+function renderIsvoroFields(article, reset = "", animate = false) {
   const get = (key) => article.querySelector(`[data-key="isvoro_${key}"]`);
   const item = config.products.find((product) => product.id === article.dataset.id) || {};
   isvoroOptions(get("type"), isvoroTypes, get("type").value, item.type_name, "请选择类型");
@@ -374,6 +396,10 @@ function renderIsvoroFields(article, reset = "") {
   isvoroOptions(get("line"), lines, reset === "type" ? "" : get("line").value, item.category_name, "请选择地区 / 线路");
   const products = isvoroLines.get(get("line").value)?.products || [];
   isvoroOptions(get("product"), products, reset ? "" : get("product").value, item.product_name, "请选择套餐");
+  if (animate) {
+    if (reset !== "line") animateFilterResult(get("line").closest("label"));
+    animateFilterResult(get("product").closest("label"));
+  }
 }
 
 async function loadIsvoroDirectory(article, refresh = false) {
@@ -388,7 +414,7 @@ async function loadIsvoroDirectory(article, refresh = false) {
       const result = await requestJSON("/api/isvoro/categories", { signal: controller.signal });
       if (controller.signal.aborted || !article.isConnected) return;
       isvoroTypes = result.categories;
-      renderIsvoroFields(article);
+      renderIsvoroFields(article, "", true);
     }
     const kind = isvoroTypes.find((row) => String(row.id) === get("type").value);
     const line = (kind?.children.length ? kind.children : kind ? [kind] : []).find((row) => String(row.id) === get("line").value);
@@ -396,7 +422,7 @@ async function loadIsvoroDirectory(article, refresh = false) {
       const result = await requestJSON(`/api/isvoro/category/${encodeURIComponent(line.slug)}`, { signal: controller.signal });
       if (controller.signal.aborted || !article.isConnected || get("line").value !== String(line.id)) return;
       isvoroLines.set(String(line.id), result.category);
-      renderIsvoroFields(article);
+      renderIsvoroFields(article, "", true);
     }
     if (controller.signal.aborted || !article.isConnected) return;
     syncEditor(article);
@@ -578,11 +604,14 @@ function productEditor(item, index) {
     syncSoyCategory(article, event.target.dataset.key);
     if (["isvoro_type", "isvoro_line"].includes(event.target.dataset.key)) {
       article.isvoroController?.abort();
-      renderIsvoroFields(article, event.target.dataset.key === "isvoro_type" ? "type" : "line");
+      renderIsvoroFields(article, event.target.dataset.key === "isvoro_type" ? "type" : "line", true);
       void loadIsvoroDirectory(article);
     }
     syncEditor(article);
     updateAdapterFields(article);
+    if (["adapter", "soy_group", "akile_area_mode", "akile_area_id"].includes(event.target.dataset.key)) {
+      for (const fields of article.querySelectorAll("[data-adapter-fields]:not([hidden])")) animateFilterResult(fields);
+    }
   });
   renderIsvoroFields(article);
   updateAdapterFields(article);
@@ -1467,7 +1496,10 @@ document.querySelector("#overview-open-catalog").addEventListener("click", () =>
 document.querySelector("#overview-open-monitor").addEventListener("click", () => navigatePage("monitor"));
 document.querySelector("#notification-browse").addEventListener("click", () => navigatePage("catalog"));
 document.querySelector("#watchlist-browse").addEventListener("click", () => navigatePage("catalog"));
-for (const id of ["watchlist-search", "watchlist-provider", "watchlist-stock"]) document.getElementById(id).addEventListener(id === "watchlist-search" ? "input" : "change", renderProductList);
+for (const id of ["watchlist-search", "watchlist-provider", "watchlist-stock"]) document.getElementById(id).addEventListener(id === "watchlist-search" ? "input" : "change", () => {
+  renderProductList();
+  animateFilterResult(listNode);
+});
 for (const input of document.querySelectorAll("[data-affiliate]")) input.addEventListener("input", renderAffiliatePreviews);
 for (const input of document.querySelectorAll("[data-provider-mode]")) input.addEventListener("change", updateFetcherStatus);
 document.querySelector("#merchant-order-toggle").addEventListener("click", (event) => {

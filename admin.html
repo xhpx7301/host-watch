@@ -11,6 +11,7 @@
     [hidden] { display:none !important; }
     body { margin:0; color:var(--ink); background:var(--canvas); font:13px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
     button,input,select { font:inherit; }
+    input,select,.catalog-merchants button { transition:border-color .18s,background-color .18s,color .18s,box-shadow .18s; }
     button { min-height:32px; padding:5px 10px; border:1px solid #c4cdd0; border-radius:6px; color:var(--ink); background:#fff; cursor:pointer; }
     button:hover { border-color:#7e9297; background:#fbfcfc; }
     button:disabled { opacity:.45; cursor:not-allowed; }
@@ -119,7 +120,7 @@
       details.section::details-content { interpolate-size:allow-keywords; height:0; opacity:0; overflow:clip; transition:height .26s ease,opacity .2s ease,content-visibility .26s allow-discrete; }
       details.section[open]::details-content { height:auto; opacity:1; }
     }
-    @media(prefers-reduced-motion:reduce) { details.section,details.section > summary,.section-toggle::after,details.section::details-content,.page-nav a { transition:none; } .page-panel.page-enter { animation:none; } }
+    @media(prefers-reduced-motion:reduce) { details.section,details.section > summary,.section-toggle::after,details.section::details-content,.page-nav a,input,select,.catalog-merchants button { transition:none; } .page-panel.page-enter { animation:none; } }
     .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:13px 16px; }
     label { display:grid; gap:5px; color:#39464c; font-size:12px; font-weight:650; }
     input,select { width:100%; min-width:0; height:34px; padding:6px 9px; border:1px solid #bdc8cb; border-radius:4px; outline:none; color:var(--ink); background:#fff; }
@@ -400,8 +401,10 @@
       <div class="catalog-sync"><div><strong id="catalog-summary">尚未载入目录</strong><span id="catalog-updated" class="subtle"></span></div><div class="actions"><button id="catalog-refresh" type="button">刷新分类库存</button><button id="catalog-stop" type="button" class="danger" hidden>停止刷新</button></div></div>
       <p id="catalog-status" class="hint" role="status" aria-live="polite">选择商家后获取该分类的套餐与库存。</p>
       <div class="catalog-bulk"><label class="check"><input id="catalog-select-all" type="checkbox">选择本页</label><span id="catalog-selected" class="subtle">已选 0 项</span><button id="catalog-watch-selected" type="button" disabled>所选加入库存监控</button><button id="catalog-unwatch-selected" type="button" disabled>所选加入库存通知</button></div>
+      <div id="catalog-results">
       <div class="catalog-table-wrap" role="region" aria-label="VPS 商品目录" tabindex="0"><table class="catalog-table"><thead><tr><th scope="col">选择</th><th scope="col">套餐</th><th scope="col">地区 / 线路</th><th scope="col">配置 / 带宽</th><th scope="col">价格 / 周期</th><th scope="col">库存</th><th scope="col">监控 / 通知 / 操作</th></tr></thead><tbody id="catalog-rows"></tbody></table></div>
       <div id="catalog-empty" class="empty">尚无目录数据，点击“刷新分类库存”读取。</div>
+      </div>
       <div class="catalog-pagination"><span id="catalog-page-label" class="subtle"></span><div class="actions"><button id="catalog-prev" type="button" disabled>上一页</button><button id="catalog-next" type="button" disabled>下一页</button></div></div>
     </div>
     <div class="catalog-reminders"><div><h2>已关注 / 通知 <span id="catalog-watch-count">0</span></h2><p id="catalog-reminder-note" class="hint">加入后点击底部“保存配置”，再开始监控。</p></div><button id="catalog-open-products" type="button">查看 VPS 库存监控</button></div>
