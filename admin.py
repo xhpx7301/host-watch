@@ -274,6 +274,8 @@ def default_config() -> dict:
         "affiliate_id": DEFAULT_AFFILIATES["vmiss"],
         "affiliates": dict(DEFAULT_AFFILIATES),
         "merchant_order": list(PROVIDERS),
+        "watch_order": [],
+        "notify_order": [],
         "fetcher": {
             "mode": "requests",
             "flaresolverr_url": "http://127.0.0.1:8191/v1",
@@ -607,6 +609,12 @@ def validate_config(value: object) -> dict:
         raise ValueError("启用监控前至少启用一个产品")
     fetcher = normalize_fetcher(value.get("fetcher", {}))
     telegram = normalize_telegram(value.get("telegram", {}))
+    product_orders = {}
+    for key in ("watch_order", "notify_order"):
+        order = value.get(key, [])
+        if not isinstance(order, list) or len(order) > 100 or any(not isinstance(identifier, str) for identifier in order) or len(set(order)) != len(order):
+            raise ValueError("商品顺序必须是最多 100 项、无重复的商品 ID 列表")
+        product_orders[key] = [identifier for identifier in order if identifier in seen_ids]
     return {
         "enabled": enabled,
         "interval_seconds": interval,
@@ -614,6 +622,7 @@ def validate_config(value: object) -> dict:
         "affiliate_id": affiliates["vmiss"],
         "affiliates": affiliates,
         "merchant_order": merchant_order,
+        **product_orders,
         "fetcher": fetcher,
         "telegram": telegram,
         "products": normalized,
@@ -1009,6 +1018,9 @@ class Handler(BaseHTTPRequestHandler):
                     submitted["affiliates"]["vmiss"] = str(submitted["affiliate_id"]).strip()
             if "merchant_order" not in submitted:
                 submitted["merchant_order"] = current["merchant_order"]
+            for key in ("watch_order", "notify_order"):
+                if key not in submitted:
+                    submitted[key] = current[key]
             # Saving settings never toggles monitoring. Start/stop are explicit
             # management actions against the persisted configuration.
             submitted["enabled"] = current["enabled"]

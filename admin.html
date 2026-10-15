@@ -296,7 +296,7 @@
     .watch-table .manual-field { text-align:center; }
     .catalog-network { margin-top:5px; }
     .network-detail,.price-main,.watch-table td:nth-child(3) { white-space:nowrap; }
-    .carrier-lines { display:flex; flex-wrap:wrap; justify-content:center; gap:5px; min-width:270px; max-width:300px; margin-inline:auto; }
+    .carrier-lines { display:flex; flex-wrap:wrap; justify-content:center; gap:5px; min-width:255px; max-width:300px; margin-inline:auto; }
     .carrier-line { display:flex; align-items:center; gap:2px; padding:3px 5px; border:1px solid #d6eddf; border-radius:5px; color:var(--green); background:#f0faf4; font-size:11px; }
     .carrier-line.unicom { color:var(--blue); border-color:#dce6ff; background:#f2f6ff; }
     .carrier-line.mobile { color:var(--purple); border-color:#e8e0ff; background:#f7f3ff; }
@@ -305,6 +305,13 @@
     .carrier-input::placeholder { color:inherit; opacity:.7; }
     .legacy-line { flex-basis:100%; color:var(--muted); font-size:11px; }
     .notification-result-row > td { text-align:left; }
+    .merchant-sort { display:flex; align-items:center; justify-content:center; gap:3px; }
+    .sort-handle { padding:2px; min-width:22px; min-height:30px; border-color:transparent; color:var(--muted); background:transparent; cursor:grab; touch-action:none; font-size:20px; line-height:1; }
+    .sort-handle:hover { color:var(--blue); background:var(--blue-soft); border-color:var(--line); }
+    .sort-handle:active,.sorting-products .sort-handle { cursor:grabbing; }
+    .sorting-products { user-select:none; }
+    .sortable-product.is-dragging > td,.sortable-product.is-dragging > tr > td { background:var(--blue-soft); box-shadow:inset 0 2px var(--blue),inset 0 -2px var(--blue); }
+    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
     #monitor-start { color:var(--green); border-color:#c7e4d8; background:var(--green-soft); }
     #save { box-shadow:0 2px 5px #3267df20; }
     .watchlist-filters { gap:10px; margin:10px 0; }
@@ -362,6 +369,7 @@
     <div class="header-status"><span id="header-monitor-state" class="state" role="status" aria-live="polite">读取服务状态中</span><div class="status-line"><span id="state" class="state">状态读取中</span><button id="refresh-status" type="button" title="刷新状态">刷新状态</button></div><span id="last-checked" class="subtle"></span></div>
   </header>
   <div id="message"></div>
+  <div id="product-sort-status" class="sr-only" role="status" aria-live="polite"></div>
   <div id="stock-test-bar" class="section actions" hidden><span id="stock-test-status" role="status"></span><button id="stock-test-stop" class="product-test-stop danger" type="button">停止测试</button></div>
   <div class="page-stage">
   <div id="page-overview" class="page-panel" data-page="overview" aria-labelledby="page-title">
@@ -401,7 +409,7 @@
     <div class="watchlist-filters"><label>搜索商品<input id="watchlist-search" type="search" placeholder="商品、商家或线路"></label><label>商家<select id="watchlist-provider"><option value="all">全部商家</option></select></label><label>最近库存<select id="watchlist-stock"><option value="all">全部状态</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">暂无记录</option></select></label></div>
     <details class="help-note"><summary>库存监控说明</summary><p id="watchlist-note" class="hint" role="status"></p></details>
     <div id="product-list"></div>
-    <p class="table-footnote">购买链接已应用 AFF · 价格以商家页面为准 · 备注与线路可点击编辑</p>
+    <p class="table-footnote">拖动商家旁的 ⠿ 调整顺序，保存后保留 · 购买链接已应用 AFF · 备注与线路可点击编辑</p>
     </div>
   </section>
   <section class="page-panel panel-card" id="page-notifications" data-page="notifications" aria-labelledby="page-title" hidden>
@@ -409,6 +417,7 @@
     <div class="section-head"><div><h2>我的 VPS 库存通知 <span id="notification-count" class="subtle"></span></h2><p>有货或库存增加时发送 Telegram，支持单次测试。</p></div><button id="notification-browse" type="button">从大盘添加</button></div>
     <details class="help-note"><summary>库存通知说明</summary><p id="notification-note" class="hint"></p></details>
     <div id="notification-list"></div>
+    <p class="table-footnote">拖动商家旁的 ⠿ 调整顺序，保存后保留；与库存监控分别排序</p>
     <details class="monitor-settings"><summary>自动检查与通知设置 <span class="subtle">检查间隔 · 首次有货提醒</span></summary>
     <div class="monitor-control">
       <strong id="monitor-runtime" class="state">正在读取服务状态</strong>

@@ -5,6 +5,8 @@ let config = {
   affiliate_id: "",
   affiliates: {},
   merchant_order: ["vmiss", "vps_soy", "akile", "isvoro"],
+  watch_order: [],
+  notify_order: [],
   fetcher: { mode: "requests", flaresolverr_url: "http://127.0.0.1:8191/v1", timeout_seconds: 60 },
   telegram: {},
   products: [],
@@ -25,6 +27,7 @@ let serviceRefreshTimer, serviceRefreshPending = false;
 const openProducts = new Set();
 const productTests = new Map();
 let activeTest = null;
+let productDrag = null;
 
 const pages = {
   overview: { title: "运行概览", description: "查看监控服务、商品库存与最近检查结果。" },
@@ -118,6 +121,7 @@ async function requestJSON(url, options = {}) {
 
 async function runAction(button, label, message, action, notify = true) {
   if (actionRunning) return;
+  cancelProductDrag();
   actionRunning = true;
   document.querySelector(".shell").inert = !activeTest;
   const controls = [...document.querySelectorAll("button,input,select")].filter((control) => control.id !== "toast-close" && !control.classList.contains("product-test-stop"));
@@ -1023,13 +1027,102 @@ window.addEventListener("resize", closeActionMenus);
 window.addEventListener("scroll", closeActionMenus, { passive: true });
 window.addEventListener("hostwatch-page-change", closeActionMenus);
 
+function orderedProducts(type) {
+  const ranks = new Map((config[`${type}_order`] || []).map((id, index) => [id, index]));
+  const merchants = merchantOrder();
+  return config.products.filter(item => membership(item, type)).sort((a, b) =>
+    (ranks.get(a.id) ?? Infinity) - (ranks.get(b.id) ?? Infinity) ||
+    (merchants.indexOf(a.adapter) + 1 || 99) - (merchants.indexOf(b.adapter) + 1 || 99));
+}
+function restoreProductSortFocus(target, id) {
+  if (id) target.querySelector(`[data-sort-id="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
+}
+function commitProductOrder(type, visibleIds, focusId) {
+  closeActionMenus();
+  const selected = new Set(visibleIds);
+  let index = 0;
+  // Filtered-out products keep their positions; only visible slots are reordered.
+  config[`${type}_order`] = orderedProducts(type).map(item => selected.has(item.id) ? visibleIds[index++] : item.id);
+  renderProductList(); updateDraftState();
+  const target = type === "watch" ? listNode : document.querySelector("#notification-list");
+  restoreProductSortFocus(target, focusId);
+  document.querySelector("#product-sort-status").textContent = "商品顺序已调整，请保存配置；两个列表分别保存顺序。";
+}
+function finishProductDrag(cancelled = false) {
+  const drag = productDrag;
+  if (!drag) return;
+  productDrag = null;
+  cancelAnimationFrame(drag.frame);
+  drag.group.classList.remove("is-dragging"); document.body.classList.remove("sorting-products");
+  if (drag.container.hasPointerCapture(drag.pointerId)) drag.container.releasePointerCapture(drag.pointerId);
+  const ids = [...drag.container.querySelectorAll(".sortable-product")].map(node => node.dataset.id);
+  if (!cancelled && drag.started && ids.some((id, i) => id !== drag.original[i])) commitProductOrder(drag.type, ids, drag.id);
+  else if (drag.started) { renderProductList(); restoreProductSortFocus(drag.type === "watch" ? listNode : document.querySelector("#notification-list"), drag.id); }
+}
+function cancelProductDrag() { finishProductDrag(true); }
+function placeDraggedProduct() {
+  const drag = productDrag;
+  if (!drag?.started) return;
+  const next = [...drag.container.querySelectorAll(".sortable-product")].find(node => {
+    if (node === drag.group) return false;
+    const rect = node.getBoundingClientRect(); return drag.y < rect.top + rect.height / 2;
+  });
+  if (next) { if (drag.group.nextElementSibling !== next) drag.container.insertBefore(drag.group, next); }
+  else if (drag.container.lastElementChild !== drag.group) drag.container.append(drag.group);
+}
+function scrollProductDrag() {
+  const drag = productDrag;
+  if (!drag?.started) return;
+  const edge = 80, speed = drag.y < edge ? -Math.min(16, (edge - drag.y) / 4) : drag.y > innerHeight - edge ? Math.min(16, (drag.y - innerHeight + edge) / 4) : 0;
+  if (speed) { window.scrollBy(0, speed); placeDraggedProduct(); }
+  drag.frame = requestAnimationFrame(scrollProductDrag);
+}
+function productSortHandle(item, type, group, count) {
+  group.classList.add("sortable-product");
+  const handle = text("button", "⠿", "sort-handle"); handle.type = "button"; handle.dataset.sortId = item.id;
+  handle.disabled = actionRunning || count < 2;
+  handle.setAttribute("aria-label", `${item.name} 拖动排序`);
+  handle.title = "上下拖动调整顺序；也可聚焦后按 ↑ / ↓，拖动时按 Esc 取消";
+  handle.addEventListener("pointerdown", event => {
+    if (event.button !== 0 || !event.isPrimary || actionRunning || productDrag) return;
+    productDrag = { handle, group, type, id: item.id, pointerId: event.pointerId, y: event.clientY, startY: event.clientY, container: group.parentElement, original: [...group.parentElement.querySelectorAll(".sortable-product")].map(node => node.dataset.id), started: false };
+    // Capture on the stationary parent so moving a row never loses the pointer.
+    productDrag.container.setPointerCapture(event.pointerId); handle.focus({ preventScroll: true }); closeActionMenus();
+  });
+  handle.addEventListener("keydown", event => {
+    if (actionRunning || productDrag || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+    event.preventDefault();
+    const ids = [...group.parentElement.querySelectorAll(".sortable-product")].map(node => node.dataset.id), from = ids.indexOf(item.id), to = from + (event.key === "ArrowUp" ? -1 : 1);
+    if (to < 0 || to >= ids.length) return;
+    [ids[from], ids[to]] = [ids[to], ids[from]]; commitProductOrder(type, ids, item.id);
+  });
+  return handle;
+}
+window.addEventListener("pointermove", event => {
+  const drag = productDrag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  drag.y = event.clientY;
+  if (!drag.started && Math.abs(drag.y - drag.startY) < 5) return;
+  event.preventDefault();
+  if (!drag.started) { drag.started = true; drag.group.classList.add("is-dragging"); document.body.classList.add("sorting-products"); scrollProductDrag(); }
+  placeDraggedProduct();
+}, { passive: false });
+window.addEventListener("pointerup", event => { if (productDrag?.pointerId === event.pointerId) finishProductDrag(); });
+window.addEventListener("pointercancel", event => { if (productDrag?.pointerId === event.pointerId) cancelProductDrag(); });
+window.addEventListener("lostpointercapture", event => { if (productDrag?.container === event.target) cancelProductDrag(); });
+window.addEventListener("keydown", event => { if (event.key === "Escape" && productDrag) { event.preventDefault(); cancelProductDrag(); } });
+window.addEventListener("blur", cancelProductDrag);
+window.addEventListener("hostwatch-page-change", cancelProductDrag);
+
 function renderProductList() {
+  if (productDrag) return;
   renderNotificationList();
   // Keep a focused manual editor alive during status polling.
   if (listNode.querySelector(".action-popover:popover-open") || listNode.contains(document.activeElement) && document.activeElement.matches("input")) return;
+  const focusedSortId = listNode.querySelector(".sort-handle:focus")?.dataset.sortId;
   const expanded = expandedPrices(listNode);
   const latest = new Map((lastStatus?.products || []).map(p => [p.id, p]));
-  const watched = config.products.filter(item => membership(item, "watch"));
+  const watched = orderedProducts("watch");
   const search = document.querySelector("#watchlist-search").value.trim().toLowerCase();
   const provider = document.querySelector("#watchlist-provider").value, stock = document.querySelector("#watchlist-stock").value;
   const visible = watched.filter(item => {
@@ -1037,7 +1130,7 @@ function renderProductList() {
     return (!search || [item.name, item.provider, p.region, item.remarks, item.line_label, item.line_telecom, item.line_unicom, item.line_mobile].join(" ").toLowerCase().includes(search)) &&
       (provider === "all" || provider === item.adapter || provider === "other" && !merchantNames[item.adapter]) &&
       (stock === "all" || stock === "in" && p.available > 0 || stock === "out" && p.available === 0 || stock === "unknown" && !Number.isInteger(p.available));
-  }).sort((a,b) => (merchantOrder().indexOf(a.adapter) + 1 || 99) - (merchantOrder().indexOf(b.adapter) + 1 || 99));
+  });
   document.querySelector("#watchlist-count").textContent = `共 ${watched.length} 个 · 显示 ${visible.length} 个`;
   document.querySelector("#watchlist-note").textContent = "此列表仅检查和展示库存，不发送消息。加入库存通知后才会推送。后台检查更新商品数据，暂停后保留历史快照。";
   if (!visible.length) { listNode.replaceChildren(text("div", watched.length ? "没有符合条件的商品。" : "从库存大盘点击“加入库存监控”，添加关心的商品。", "empty")); return; }
@@ -1048,7 +1141,8 @@ function renderProductList() {
   for (const item of visible) {
     const runtime = latest.get(item.id), p = productSnapshot(item, runtime), row = document.createElement("tr"); row.dataset.id = item.id;
     const cell = (value = "", cls = "") => { const td = text("td", value, cls); row.append(td); return td; };
-    cell(item.provider); const identity = cell(); identity.append(text("strong", p.name || item.name));
+    const merchant = text("div", "", "merchant-sort"); merchant.append(productSortHandle(item, "watch", row, visible.length), text("span", item.provider)); cell().append(merchant);
+    const identity = cell(); identity.append(text("strong", p.name || item.name));
     const time = runtime ? runtime.checked_at || lastStatus?.last_checked : p.checked_at;
     const updated = text("small", time ? `读取 ${compactDate(time)}` : "等待首次读取"); updated.title = time ? new Date(time).toLocaleString() : "尚无商品快照"; identity.append(updated); cell(p.region || "—");
     for (const [key, label] of [["remarks", "备注"]]) {
@@ -1070,16 +1164,17 @@ function renderProductList() {
     actions.append(moreActions(`watch-${item.id}`, item.name, [notify, remove])); cell().append(actions); body.append(row);
   }
   table.append(head, body); wrap.append(table); listNode.replaceChildren(wrap);
+  restoreProductSortFocus(listNode, focusedSortId);
 }
 
 function renderNotificationList() {
+  if (productDrag) return;
   if (document.querySelector("#notification-list .action-popover:popover-open")) return;
+  const focusedSortId = document.querySelector("#notification-list .sort-handle:focus")?.dataset.sortId;
   const expanded = expandedPrices(document.querySelector("#notification-list"));
   const statusProducts = new Map((lastStatus?.products || []).map(p => [p.id, p]));
   const savedProducts = new Map((savedConfig ? JSON.parse(savedConfig).products : []).map(p => [p.id, p]));
-  const selected = config.products.filter(item => membership(item, "notify"));
-  const order = merchantOrder();
-  selected.sort((a,b) => (order.indexOf(a.adapter) + 1 || 99) - (order.indexOf(b.adapter) + 1 || 99));
+  const selected = orderedProducts("notify");
   document.querySelector("#notification-count").textContent = `共 ${selected.length} 个`;
   document.querySelector("#notification-note").textContent = "商品信息来自商家快照、后台检查或最近一次成功测试。测试通知可在暂停时执行；下架或未匹配商品保留配置并显示未知，可在高级中手动添加及修改。";
   const target = document.querySelector("#notification-list");
@@ -1097,7 +1192,7 @@ function renderNotificationList() {
     const body = text("tbody", "", "watchlist-item"); body.dataset.id = item.id;
     const row = document.createElement("tr");
     const cell = (value = "", cls = "") => { const td = text("td", value, cls); row.append(td); return td; };
-    cell(item.provider);
+    const merchant = text("div", "", "merchant-sort"); merchant.append(productSortHandle(item, "notify", body, selected.length), text("span", item.provider)); cell().append(merchant);
     const identity = cell(); identity.append(text("strong", p.name || item.name));
     const savedItem = savedProducts.get(item.id);
     if (!savedItem || JSON.stringify(item) !== JSON.stringify(savedItem)) identity.append(text("small", "修改待保存", "draft-note"));
@@ -1121,6 +1216,7 @@ function renderNotificationList() {
     resultCell.append(text("div", "", "product-test-result")); resultRow.append(resultCell); body.append(resultRow); table.append(body);
   }
   wrap.append(table); target.replaceChildren(wrap); syncTestControls();
+  restoreProductSortFocus(target, focusedSortId);
 }
 
 function renderOverview() {
@@ -1192,6 +1288,8 @@ function collectConfig(enabled = config.enabled) {
     affiliate_id: config.affiliate_id || "",
     affiliates: collectAffiliates(),
     merchant_order: merchantOrder(),
+    watch_order: config.watch_order || [],
+    notify_order: config.notify_order || [],
     notify_current_stock_on_start: document.querySelector("#notify-current").checked,
     fetcher: { provider_modes: collectProviderModes(), mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value), wait_seconds: Number(document.querySelector("#fetcher-wait").value) },
     telegram: { bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim(), disabled: document.querySelector("#telegram-disabled").checked, clear: document.querySelector("#telegram-clear").checked },

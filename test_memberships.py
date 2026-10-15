@@ -16,6 +16,24 @@ from test_isvoro import directory, item as isvoro_item
 
 
 class MembershipTests(unittest.TestCase):
+    def test_independent_product_orders_round_trip_and_drop_deleted_ids(self):
+        value = {"products": [html_product(id="a"), html_product(id="b"), html_product(id="c")],
+                 "watch_order": ["c", "a", "b"], "notify_order": ["b", "c", "a"]}
+        saved = admin.validate_config(json.loads(json.dumps(admin.validate_config(value))))
+        self.assertEqual(saved["watch_order"], ["c", "a", "b"])
+        self.assertEqual(saved["notify_order"], ["b", "c", "a"])
+        self.assertEqual([p["id"] for p in saved["products"]], ["a", "b", "c"])
+        saved["products"].pop()
+        self.assertEqual(admin.validate_config(saved)["watch_order"], ["a", "b"])
+        self.assertEqual(admin.validate_config(saved)["notify_order"], ["b", "a"])
+        self.assertEqual(admin.validate_config({})["watch_order"], [])
+
+    def test_product_orders_reject_invalid_values(self):
+        for field in ("watch_order", "notify_order"):
+            for invalid in (None, {}, "a", [1], [["a"]], ["a", "a"], [str(i) for i in range(101)]):
+                with self.subTest(field=field, value=invalid), self.assertRaises(ValueError):
+                    admin.validate_config({field: invalid})
+
     def test_unlisted_product_keeps_history_and_resumes_without_false_stock(self):
         with tempfile.TemporaryDirectory() as tmp:
             state, status = Path(tmp) / "state.json", Path(tmp) / "status.json"
@@ -136,6 +154,24 @@ class MembershipTests(unittest.TestCase):
 class MembershipAPITests(unittest.TestCase):
     setUp = test_admin.AdminAPITests.setUp
     request = test_admin.AdminAPITests.request
+
+    def test_product_orders_persist_and_old_clients_preserve_them(self):
+        value = admin.default_config()
+        value.update(products=[html_product(id="a"), html_product(id="b")], watch_order=["b", "a"], notify_order=["a", "b"])
+        with patch.object(admin, "manager_action", return_value={"ok": True}):
+            code, body = self.request("/api/config", value)
+            self.assertEqual(code, 200)
+            del value["watch_order"], value["notify_order"]
+            code, body = self.request("/api/config", value)
+        self.assertEqual(code, 200)
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port)
+        self.addCleanup(connection.close)
+        connection.request("GET", "/api/config")
+        response = connection.getresponse()
+        self.assertEqual(response.status, 200)
+        saved = json.loads(response.read())
+        self.assertEqual(saved["watch_order"], ["b", "a"])
+        self.assertEqual(saved["notify_order"], ["a", "b"])
 
     def test_save_reload_preserves_independent_selections_and_manual_fields(self):
         value = admin.default_config()
