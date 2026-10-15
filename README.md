@@ -11,11 +11,11 @@ VMISS 曾对自动化访问返回拦截页。请先确认目标厂商允许自�
 - **VMISS WHMCS**：解析商品卡片和库存数量，可生成 `aff.php` 推广入口。
 - **通用 HTTPS 网页**：配置 CSS 库存元素选择器，支持提取数量或匹配有货/缺货文本；购买入口可单独设置，留空时使用商品页。
 
-通用网页适配器适合服务器返回 HTML 的公开商品页面，不执行 JavaScript，也不登录账户。页面结构若由前端脚本动态生成，或库存来自私有 API，需要后续为该厂商添加专用适配器。所有购买动作由用户在收到通知后手动完成。
+通用网页适配器支持普通 HTTPS 和 FlareSolverr 浏览器请求。普通请求解析服务器返回的 HTML；浏览器请求可执行 JavaScript，并配置渲染等待读取动态库存。两者均不登录厂商账户；复杂交互和私有 API 仍需专用适配器。所有购买动作由用户在收到通知后手动完成。
 
 ## 一键安装
 
-适用于 Debian 12/13，要求 systemd 和 root/sudo 权限。脚本会安装依赖、创建 `vmiss-monitor` 系统用户、安装程序和 systemd 单元，并启动仅监听 `127.0.0.1:8765` 的管理页。库存监控默认关闭，安装脚本不会启用或启动它。
+适用于 Debian 12/13，要求 systemd 和 root/sudo 权限。脚本会安装依赖、创建 `vmiss-monitor` 系统用户、自动部署 Docker 和官方 FlareSolverr 容器、安装程序和 systemd 单元，并启动仅监听 `127.0.0.1:8765` 的管理页。FlareSolverr 仅监听本机 `127.0.0.1:8191`，设置自动重启，启动后检测就绪状态。库存监控默认关闭，安装脚本不会启用或启动它。首次部署需要下载浏览器镜像，请预留内存、磁盘和到 ghcr.io 的网络连接；浏览器请求按商品顺序执行。
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/xhpx7301/host-watch/main/install.sh | sudo bash
@@ -142,28 +142,31 @@ VMISS 的推广 ID 是全局配置；通用网页可各自设置购买链接。�
 
 确认厂商允许当前访问方式后，启用需要检查的商品并点击“保存并开始监控”；暂停时点击“保存并暂停监控”。
 
-## FlareSolverr（可选）
+## 网页请求与 FlareSolverr
 
-如果这是你自己搭建的测试站点，并且测试环境确实需要通过 FlareSolverr 取得页面，可以在 Debian 服务器上只绑定本机地址运行 FlareSolverr。下面示例使用 Docker，API 不暴露到公网：
+首次安装或更新时自动部署 FlareSolverr，无需另行手动安装。若 `127.0.0.1:8191` 已有就绪服务，安装器直接复用，不改动既有容器。HostWatch 创建的容器名称为 `host-watch-flaresolverr`；重复安装会启动已有容器，保留其镜像和设置，不会强制拉取新镜像或删除其他容器。镜像拉取、端口冲突或启动检查失败会报错，并停止安装流程，不会报告依赖部署成功。
 
-以下命令假设服务器已经安装 Docker；FlareSolverr 不会由本项目的一键安装脚本自动安装。
+使用已有远端 FlareSolverr 或内存较小、仅需普通 HTTPS 的机器，可显式跳过自动部署：
 
 ```sh
-docker run -d --name flaresolverr --restart unless-stopped \
-  -e LOG_LEVEL=info \
-  -p 127.0.0.1:8191:8191 \
-  ghcr.io/flaresolverr/flaresolverr:latest
+curl -fsSL https://raw.githubusercontent.com/xhpx7301/host-watch/main/install.sh -o /tmp/host-watch-install.sh
+sudo env HOSTWATCH_INSTALL_FLARESOLVERR=0 bash /tmp/host-watch-install.sh
 ```
 
-在管理页“网页请求方式”中选择“FlareSolverr”，填写 `http://127.0.0.1:8191/v1` 和超时（10 至 180 秒），保存后自动应用。可在管理员管理区查看最近日志，或执行：
+在管理页“网页请求设置”中选择全局请求方式，VMISS 和通用网页均生效；每个商品还可选择“跟随全局设置”“普通 HTTPS 请求”或“FlareSolverr 浏览器请求”。旧配置默认跟随全局设置；原来全局已选 FlareSolverr 的通用商品升级后也会使用浏览器。默认仍使用普通 HTTPS，不会遇到拦截就自动切换或反复重试。
+
+FlareSolverr API 默认 `http://127.0.0.1:8191/v1`，超时 10–180 秒。渲染等待支持 0–30 秒，传递官方 `waitInSeconds` 参数，用于页面验证结束后等待动态内容。默认 0，按需要设置 2–5 秒；普通 HTTPS 不使用此等待。每次浏览器请求使用独立临时会话，由 FlareSolverr 负责关闭，避免跨厂商会话混用和常驻浏览器泄漏；不把浏览器 Cookie 或 User-Agent 写入共享 HTTP 会话。
+
+点击“测试 FlareSolverr 连接”可测试当前未保存的 API 地址并显示版本；此操作不会访问商品网站，也不保证商品页能正常通过验证。保存并开始监控后查看实际检查结果。可在管理员管理区查看监控日志，或在服务器执行：
 
 ```sh
+sudo docker logs --tail 80 host-watch-flaresolverr
 sudo journalctl -u vmiss-monitor.service -n 50 --no-pager
 ```
 
-程序向 FlareSolverr 发送 `request.get`，复用返回的页面、Cookie 和 User-Agent，再使用现有商品解析逻辑。FlareSolverr API 请求失败、响应格式异常、最终 URL 离开 `app.vmiss.com`，或返回仍是 Cloudflare 拦截页时，监控会停止并告警；不会无限重试，也不会把 API 地址或响应内容发送到 Telegram。需要停用时，在管理页切回“普通 HTTP 请求”并保存，网页会自动应用。
+请求错误区分 HTTP 403、HTTP 429、Cloudflare 验证页和 FlareSolverr 服务连接/超时/格式错误；Cloudflare 提供 Ray ID 时会展示，便于查询安全事件。使用 `cf-mitigated: challenge` 和验证页特征识别拦截，不再因正常 HTML 包含 `cf-chl-` 脚本就直接误判。服务故障记录为检查失败，网站拒绝访问记录为被拦截，两者均停止等待处理；不会泄露原始浏览器错误中的 Cookie 或 URL 参数。页面最终域名仍需匹配配置的商品域名。
 
-不要将 FlareSolverr 的 `8191` 端口映射到公网，也不要把 FlareSolverr 用于没有授权的第三方站点。
+小黄云不等于一定需要浏览器。对于自己的测试站点，建议在 Cloudflare 为监控流量配置合适的规则，FlareSolverr 不能保证通过所有验证。保持 `8191` 仅本机可访问，并仅用于你拥有或获准访问的页面。
 
 管理页的开始和暂停按钮会保存并应用监控开关。保存、重新载入、刷新状态、Telegram 测试和读取聊天时，按钮会显示处理中并暂时禁用，避免重复请求；结果通过固定浮动提示显示，滚动到页面下方也能看到。成功提示约 6 秒后收起，失败提示保留到手动关闭，页面顶部也保留最近的操作结果。添加、移除商品及选择聊天会提示尚需保存。保存配置会自动应用，无需再登录服务器重启；刷新状态只读取最近记录。
 

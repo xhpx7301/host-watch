@@ -33,6 +33,10 @@ class SiteBlocked(MonitorError):
     """The site denied automated access; stop instead of retrying."""
 
 
+class RequestServiceError(MonitorError):
+    """Browser service unavailable; stop until its configuration is fixed."""
+
+
 @dataclass(frozen=True)
 class Product:
     key: str
@@ -96,16 +100,23 @@ def _blocked_body(body: str) -> bool:
     blocked_markers = (
         "attention required! | cloudflare",
         "sorry, you have been blocked",
-        "cf-chl-",
         "enable javascript and cookies to continue",
+        '<title>just a moment',
     )
     lowered = body.casefold()
     return any(marker in lowered for marker in blocked_markers)
 
 
-def _validate_page_response(status_code: int, body: str, final_url: str, expected_host: str = "app.vmiss.com") -> tuple[str, str]:
-    if status_code in (403, 429) or _blocked_body(body):
-        raise SiteBlocked(f"{expected_host} 返回 HTTP {status_code} 或安全验证页面；监控已停止，请确认目标网站允许自动检查")
+def _validate_page_response(status_code: int, body: str, final_url: str, expected_host: str = "app.vmiss.com", headers: dict | None = None) -> tuple[str, str]:
+    headers = {str(key).casefold(): str(value) for key, value in (headers or {}).items()}
+    ray = headers.get("cf-ray", "")
+    detail = f"；Cloudflare Ray ID: {ray}" if re.fullmatch(r"[a-zA-Z0-9-]{1,100}", ray) else ""
+    if status_code == 429:
+        raise SiteBlocked(f"{expected_host} 返回 HTTP 429（请求限流）；请降低访问频率并检查站点限流规则{detail}")
+    if headers.get("cf-mitigated", "").casefold() == "challenge" or _blocked_body(body):
+        raise SiteBlocked(f"{expected_host} 返回安全验证页（HTTP {status_code}）；请检查 Cloudflare 安全事件和监控访问规则{detail}")
+    if status_code == 403:
+        raise SiteBlocked(f"{expected_host} 返回 HTTP 403（拒绝访问）；请核对站点或源站访问规则{detail}")
     if status_code < 200 or status_code >= 300:
         raise MonitorError(f"{expected_host} 商品页返回 HTTP {status_code}，本轮监控已停止")
     parsed_url = urlsplit(final_url)
@@ -118,67 +129,83 @@ def fetch_with_requests(session: requests.Session, url: str, expected_host: str 
     try:
         response = session.get(url, timeout=(10, 25), allow_redirects=True)
     except requests.RequestException:
-        raise SiteBlocked(f"访问 {expected_host} 商品页失败，监控已停止；请检查网络并确认目标网站允许自动检查") from None
-    return _validate_page_response(response.status_code, response.text, response.url, expected_host)
+        raise MonitorError(f"访问 {expected_host} 商品页失败；请检查 DNS、TLS 和服务器网络") from None
+    return _validate_page_response(response.status_code, response.text, response.url, expected_host, getattr(response, "headers", {}))
 
 
-def fetch_with_flaresolverr(session: requests.Session, url: str, fetcher: dict) -> tuple[str, str]:
+def fetch_with_flaresolverr(session: requests.Session, url: str, fetcher: dict, expected_host: str = "app.vmiss.com") -> tuple[str, str]:
     endpoint = str(fetcher["flaresolverr_url"])
     timeout_seconds = int(fetcher["timeout_seconds"])
+    wait = int(fetcher.get("wait_seconds", 0))
+    request = {"cmd": "request.get", "url": url, "maxTimeout": timeout_seconds * 1000}
+    if wait:
+        request["waitInSeconds"] = wait
     try:
         response = session.post(
             endpoint,
-            json={"cmd": "request.get", "url": url, "maxTimeout": timeout_seconds * 1000},
-            timeout=(10, timeout_seconds + 15),
+            json=request,
+            timeout=(10, timeout_seconds + wait + 15),
         )
         payload = response.json()
-    except (requests.RequestException, ValueError):
-        raise SiteBlocked("FlareSolverr 请求失败，监控已停止；请检查 FlareSolverr 服务") from None
-    if not response.ok or not isinstance(payload, dict) or payload.get("status") != "ok":
-        raise SiteBlocked("FlareSolverr 返回异常，监控已停止；请检查 FlareSolverr 服务日志")
+    except requests.Timeout:
+        raise RequestServiceError("FlareSolverr 请求超时；请检查服务器资源、目标站点验证和超时设置") from None
+    except requests.RequestException:
+        raise RequestServiceError("无法连接 FlareSolverr；请在网页测试服务连接，或检查容器日志") from None
+    except ValueError:
+        raise RequestServiceError("FlareSolverr 返回非 JSON 响应；请核对 API 地址是否以 /v1 结尾") from None
+    if not isinstance(payload, dict):
+        raise RequestServiceError(f"FlareSolverr API 返回异常（HTTP {response.status_code}）；请检查服务日志")
+    if payload.get("status") != "ok":
+        # Do not expose raw browser errors, which can contain URLs or cookies.
+        message = str(payload.get("message", "")).casefold()
+        if "captcha" in message or "challenge" in message:
+            raise SiteBlocked(f"{expected_host} 的浏览器验证未完成；请检查站点安全规则，FlareSolverr 无法保证通过验证")
+        if "timeout" in message or "timed out" in message:
+            raise RequestServiceError("FlareSolverr 获取页面超时；请检查目标站点和浏览器服务日志")
+        raise RequestServiceError("FlareSolverr 无法获取页面；请检查浏览器服务日志")
+    if not response.ok:
+        raise RequestServiceError(f"FlareSolverr API 返回异常（HTTP {response.status_code}）；请检查服务日志")
     solution = payload.get("solution")
     if not isinstance(solution, dict):
-        raise SiteBlocked("FlareSolverr 响应缺少页面结果，监控已停止")
+        raise RequestServiceError("FlareSolverr 响应缺少页面结果，监控已停止")
     body = solution.get("response")
     final_url = solution.get("url")
     status_code = solution.get("status")
     if not isinstance(body, str) or not isinstance(final_url, str) or not isinstance(status_code, int):
-        raise SiteBlocked("FlareSolverr 响应格式异常，监控已停止")
-    user_agent = solution.get("userAgent")
-    if isinstance(user_agent, str) and user_agent.strip() and len(user_agent) <= 512:
-        session.headers["User-Agent"] = user_agent.strip()
-    cookies = solution.get("cookies", [])
-    if isinstance(cookies, list):
-        for cookie in cookies:
-            if not isinstance(cookie, dict):
-                continue
-            name, value = cookie.get("name"), cookie.get("value")
-            if not isinstance(name, str) or not isinstance(value, str) or not name:
-                continue
-            try:
-                session.cookies.set(name, value, domain=cookie.get("domain"), path=cookie.get("path", "/"))
-            except (TypeError, ValueError):
-                continue
-    return _validate_page_response(status_code, body, final_url)
+        raise RequestServiceError("FlareSolverr 响应格式异常，监控已停止")
+    # Parse the browser's HTML directly; cookies and User-Agent need not be copied
+    # into the shared HTTP session used for other vendors and Telegram.
+    page_headers = solution.get("headers")
+    return _validate_page_response(status_code, body, final_url, expected_host, page_headers if isinstance(page_headers, dict) else {})
+
+
+def product_fetcher(fetcher: dict | None, item: dict) -> dict:
+    result = dict(fetcher or {"mode": "requests"})
+    mode = item.get("request_mode", "inherit")
+    if mode != "inherit":
+        result["mode"] = mode
+    return result
+
+
+def fetch_page(session: requests.Session, url: str, fetcher: dict | None, expected_host: str) -> tuple[str, str]:
+    if (fetcher or {}).get("mode") == "flaresolverr":
+        return fetch_with_flaresolverr(session, url, fetcher, expected_host)
+    return fetch_with_requests(session, url, expected_host)
 
 
 def fetch_products(session: requests.Session, url: str, selectors: list[str], fetcher: dict | None = None) -> list[Product]:
-    fetcher = fetcher or {"mode": "requests"}
-    if fetcher.get("mode") == "flaresolverr":
-        body, final_url_text = fetch_with_flaresolverr(session, url, fetcher)
-    else:
-        body, final_url_text = fetch_with_requests(session, url)
+    body, final_url_text = fetch_page(session, url, fetcher, "app.vmiss.com")
     final_url = urlsplit(final_url_text)
     if final_url.scheme != "https" or final_url.hostname != "app.vmiss.com":
         raise MonitorError("商品页重定向离开 app.vmiss.com；已停止，未处理页面内容")
     return parse_products(body, final_url_text, selectors)
 
 
-def fetch_html_stock(session: requests.Session, item: dict) -> Product:
-    """Read one configured public HTML stock indicator without bypass services."""
+def fetch_html_stock(session: requests.Session, item: dict, fetcher: dict | None = None) -> Product:
+    """Read one configured stock indicator from HTTP or browser-rendered HTML."""
     url = str(item["url"])
     expected_host = (urlsplit(url).hostname or "").casefold()
-    body, final_url = fetch_with_requests(session, url, expected_host)
+    body, final_url = fetch_page(session, url, product_fetcher(fetcher, item), expected_host)
     soup = BeautifulSoup(body, "html.parser")
     selector = str(item["stock_selector"])
     try:
@@ -238,6 +265,7 @@ def read_config(path: Path) -> dict:
                 "mode": "requests",
                 "flaresolverr_url": "http://127.0.0.1:8191/v1",
                 "timeout_seconds": 60,
+                "wait_seconds": 0,
             },
             "telegram": {"bot_token": "", "chat_id": "", "disabled": False},
             "products": [],
@@ -359,14 +387,15 @@ def check_once(
     if not selected:
         raise MonitorError("没有启用的监控产品")
 
-    by_category: dict[str, list[dict]] = {}
+    by_category: dict[tuple[str, str], list[dict]] = {}
     for item in selected:
         if item["adapter"] != "vmiss":
             continue
-        by_category.setdefault(item["category_url"].strip(), []).append(item)
+        mode = product_fetcher(config.get("fetcher"), item).get("mode", "requests")
+        by_category.setdefault((item["category_url"].strip(), mode), []).append(item)
     found: dict[str, Product] = {}
-    for category_url, items in by_category.items():
-        page_products = fetch_products(session, category_url, [], config.get("fetcher"))
+    for (category_url, mode), items in by_category.items():
+        page_products = fetch_products(session, category_url, [], {**config.get("fetcher", {}), "mode": mode})
         for item in items:
             selector = str(item["selector"]).strip().casefold()
             candidates = [p for p in page_products if selector in {
@@ -389,7 +418,7 @@ def check_once(
             )
     for item in selected:
         if item["adapter"] == "html":
-            found[item["id"]] = fetch_html_stock(session, item)
+            found[item["id"]] = fetch_html_stock(session, item, config.get("fetcher"))
 
     previous = read_state(state_path)
     current = dict(previous)
@@ -510,9 +539,10 @@ def main() -> int:
             if interval < MIN_INTERVAL_SECONDS:
                 raise MonitorError(f"检查间隔不能低于 {MIN_INTERVAL_SECONDS} 秒")
             check_once(session, config, state_path, status_path, bot_token, chat_id)
-        except SiteBlocked as exc:
+        except (SiteBlocked, RequestServiceError) as exc:
             logging.error("%s", exc)
-            write_status(status_path, {"last_checked": datetime.now().astimezone().isoformat(timespec="seconds"), "state": "blocked", "message": str(exc), "products": []})
+            state = "blocked" if isinstance(exc, SiteBlocked) else "error"
+            write_status(status_path, {"last_checked": datetime.now().astimezone().isoformat(timespec="seconds"), "state": state, "message": str(exc), "products": []})
             if bot_token and chat_id:
                 try:
                     telegram_request(session, bot_token, "sendMessage", chat_id=chat_id, text=f"🔴 库存监控已停止\n原因：{exc}\n请确认目标网站允许当前的自动检查方式后再恢复。")

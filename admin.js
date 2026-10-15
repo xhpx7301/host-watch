@@ -309,6 +309,7 @@ function productEditor(item, index) {
     selectField("监控适配器", item.adapter || (item.category_url ? "vmiss" : "html"), "adapter", [["html", "通用 HTTPS 网页"], ["vmiss", "VMISS WHMCS"]]),
     inputField("厂商名称", item.provider || (item.adapter === "vmiss" || item.category_url ? "VMISS" : "自定义网站"), "provider", "text", "例如 ExampleHost"),
     inputField("商品名称", item.name, "name", "text", "例如 US VPS 2 GB"),
+    selectField("此商品的请求方式", item.request_mode || "inherit", "request_mode", [["inherit", "跟随全局设置"], ["requests", "普通 HTTPS 请求"], ["flaresolverr", "FlareSolverr 浏览器请求"]]),
   );
   const modeWrap = text("div", "", "span-2");
   const vmissFields = text("div", "", "form-grid span-2");
@@ -354,6 +355,7 @@ function syncEditor(article) {
   item.provider = get("provider").value.trim();
   item.name = get("name").value.trim();
   item.enabled = get("enabled").checked;
+  item.request_mode = get("request_mode").value;
   if (item.adapter === "vmiss") {
     item.category_url = get("category_url").value.trim();
     item.selector = get("selector").value.trim();
@@ -486,7 +488,7 @@ function collectConfig(enabled = config.enabled) {
     interval_seconds: Number(document.querySelector("#interval").value),
     affiliate_id: document.querySelector("#affiliate").value.trim(),
     notify_current_stock_on_start: document.querySelector("#notify-current").checked,
-    fetcher: { mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value) },
+    fetcher: { mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value), wait_seconds: Number(document.querySelector("#fetcher-wait").value) },
     telegram: { bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim(), disabled: document.querySelector("#telegram-disabled").checked, clear: document.querySelector("#telegram-clear").checked },
     products: config.products.map((item) => ({ ...item })),
   };
@@ -510,11 +512,9 @@ function updateDraftState() {
 
 function updateFetcherStatus() {
   const enabled = document.querySelector("#fetcher-mode").value === "flaresolverr";
-  document.querySelector("#flaresolverr-url").disabled = !enabled;
-  document.querySelector("#flaresolverr-timeout").disabled = !enabled;
   document.querySelector("#fetcher-status").textContent = enabled
-    ? "只用于你拥有或明确获准测试的站点。保存配置会自动应用到监控服务。"
-    : "VMISS 普通 HTTPS 请求已启用。保存配置会自动应用到监控服务。";
+    ? "全局使用 FlareSolverr 浏览器请求，支持 VMISS 和通用网页；商品可单独覆盖。浏览器验证仍可能失败，请查看具体错误。"
+    : "全局使用普通 HTTPS 请求；需要浏览器的商品可单独选择 FlareSolverr。保存后自动应用。";
 }
 
 async function loadConfig() {
@@ -530,6 +530,7 @@ function applyConfig(value) {
   document.querySelector("#fetcher-mode").value = fetcher.mode || "requests";
   document.querySelector("#flaresolverr-url").value = fetcher.flaresolverr_url || "http://127.0.0.1:8191/v1";
   document.querySelector("#flaresolverr-timeout").value = fetcher.timeout_seconds || 60;
+  document.querySelector("#fetcher-wait").value = fetcher.wait_seconds || 0;
   updateFetcherStatus();
   const telegram = config.telegram || {};
   document.querySelector("#telegram-token").value = "";
@@ -552,6 +553,9 @@ async function loadStatus() {
   document.querySelector("#last-checked").textContent = lastStatus.last_checked ? `上次检查：${new Date(lastStatus.last_checked).toLocaleString()}` : "";
   blockedHelpNode.hidden = lastStatus.state !== "blocked";
   document.querySelector("#blocked-message").textContent = lastStatus.message || "检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。";
+  const errorNode = document.querySelector("#request-error");
+  errorNode.hidden = lastStatus.state !== "error";
+  errorNode.textContent = lastStatus.state === "error" ? `上次检查失败：${lastStatus.message || "请查看服务日志"}` : "";
   renderProductList();
   renderOverview();
 }
@@ -579,6 +583,11 @@ document.querySelector("#refresh-status").addEventListener("click", (event) => r
   setMessage("监控状态已刷新；此次操作不会触发库存检查。", "success");
 }));
 document.querySelector("#fetcher-mode").addEventListener("change", updateFetcherStatus);
+document.querySelector("#fetcher-test").addEventListener("click", (event) => runAction(event.currentTarget, "检测中…", "正在测试 FlareSolverr 服务连接，不访问商品网站…", async () => {
+  const result = await requestJSON("/api/fetcher/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(collectConfig().fetcher) });
+  document.querySelector("#fetcher-health").textContent = `版本 ${result.version}：${result.message}`;
+  setMessage(`FlareSolverr ${result.version} 服务连接成功；目标网站能否正常读取需查看监控检查结果。`, "success");
+}));
 document.querySelector("#interval").addEventListener("input", () => { config.interval_seconds = Number(document.querySelector("#interval").value); renderOverview(); });
 document.querySelector("#interval-preset").addEventListener("change", (event) => {
   if (event.target.value) {

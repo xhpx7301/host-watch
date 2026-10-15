@@ -1,7 +1,9 @@
 import unittest
+from unittest.mock import Mock, patch
+import requests
 
 from admin import validate_config
-from monitor import MonitorError, Product, SiteBlocked, fetch_html_stock, notification_text
+from monitor import MonitorError, Product, RequestServiceError, SiteBlocked, fetch_html_stock, notification_text, check_once
 
 
 class FakeResponse:
@@ -89,6 +91,84 @@ class GenericAdapterTests(unittest.TestCase):
     def test_rejects_private_address_for_generic_monitoring(self):
         with self.assertRaisesRegex(ValueError, "内网或保留 IP"):
             validate_config({"products": [html_product(url="https://127.0.0.1/item")]})
+
+
+class BrowserRequestTests(unittest.TestCase):
+    def setUp(self):
+        self.fetcher = {"mode": "flaresolverr", "flaresolverr_url": "http://127.0.0.1:8191/v1", "timeout_seconds": 60, "wait_seconds": 3}
+        self.session = Mock()
+        self.payload = {"status": "ok", "solution": {"status": 200, "url": "https://shop.example.com/item", "response": '<p class="stock">3</p>', "headers": {}, "cookies": [{"name": "clearance", "value": "secret"}], "userAgent": "browser"}}
+        self.session.post.return_value = Mock(ok=True, status_code=200)
+        self.session.post.return_value.json.side_effect = lambda: self.payload
+
+    def test_generic_browser_parses_stock_and_sends_wait_without_leaking_cookies(self):
+        result = fetch_html_stock(self.session, html_product(), self.fetcher)
+        self.assertEqual(result.available, 3)
+        self.session.post.assert_called_once_with("http://127.0.0.1:8191/v1", json={"cmd": "request.get", "url": "https://shop.example.com/item", "maxTimeout": 60000, "waitInSeconds": 3}, timeout=(10, 78))
+        self.session.headers.update.assert_not_called()
+        self.session.cookies.set.assert_not_called()
+
+    def test_product_override_uses_http_even_with_global_browser(self):
+        self.session.get.return_value = FakeResponse('<p class="stock">4</p>')
+        result = fetch_html_stock(self.session, html_product(request_mode="requests"), self.fetcher)
+        self.assertEqual(result.available, 4)
+        self.session.post.assert_not_called()
+
+    def test_product_override_enables_browser_with_global_http(self):
+        result = fetch_html_stock(self.session, html_product(request_mode="flaresolverr"), {**self.fetcher, "mode": "requests"})
+        self.assertEqual(result.available, 3)
+
+    def test_browser_redirect_still_must_stay_on_expected_host(self):
+        self.payload["solution"]["url"] = "https://different.example/item"
+        with self.assertRaisesRegex(MonitorError, "重定向离开"):
+            fetch_html_stock(self.session, html_product(), self.fetcher)
+
+    def test_browser_service_failures_are_not_reported_as_site_blocks(self):
+        for failure, label in [(requests.ConnectionError(), "无法连接"), (requests.Timeout(), "超时"), (ValueError(), "非 JSON")]:
+            with self.subTest(label=label):
+                self.session.post.side_effect = failure if not isinstance(failure, ValueError) else None
+                self.session.post.return_value.json.side_effect = failure
+                with self.assertRaisesRegex(RequestServiceError, label):
+                    fetch_html_stock(self.session, html_product(), self.fetcher)
+
+    def test_captcha_error_does_not_expose_server_response_secrets(self):
+        self.payload = {"status": "error", "message": "Captcha detected at https://example.com/?token=secret"}
+        self.session.post.return_value.ok = False
+        self.session.post.return_value.status_code = 500
+        with self.assertRaises(SiteBlocked) as caught:
+            fetch_html_stock(self.session, html_product(), self.fetcher)
+        self.assertNotIn("secret", str(caught.exception))
+
+    def test_challenge_header_and_rate_limit_have_specific_messages(self):
+        self.payload["solution"]["headers"] = {"CF-Mitigated": "challenge", "CF-Ray": "123abc-HKG"}
+        with self.assertRaisesRegex(SiteBlocked, "安全验证页.*123abc-HKG"):
+            fetch_html_stock(self.session, html_product(), self.fetcher)
+        self.payload["solution"]["status"] = 429
+        with self.assertRaisesRegex(SiteBlocked, "429（请求限流）"):
+            fetch_html_stock(self.session, html_product(), self.fetcher)
+
+    def test_injected_challenge_script_does_not_block_valid_product_html(self):
+        self.payload["solution"]["response"] += '<script src="/cdn-cgi/challenge-platform/cf-chl-test.js"></script>'
+        self.assertEqual(fetch_html_stock(self.session, html_product(), self.fetcher).available, 3)
+
+    def test_malformed_solution_is_a_service_error(self):
+        self.payload["solution"]["status"] = "200"
+        with self.assertRaises(RequestServiceError):
+            fetch_html_stock(self.session, html_product(), self.fetcher)
+
+    def test_vmiss_groups_separate_requests_by_product_mode(self):
+        items = [{"id": str(i), "adapter": "vmiss", "category_url": "https://app.vmiss.com/store/test", "name": "test", "provider": "VMISS", "selector": "p", "gid": "1", "enabled": True, "request_mode": mode} for i, mode in enumerate(["requests", "flaresolverr"])]
+        product = Product("p", "p", 0, "https://app.vmiss.com/store/test/p")
+        with patch("monitor.fetch_products", return_value=[product]) as fetch, patch("monitor.read_state", return_value={}), patch("monitor.write_state"), patch("monitor.write_status"):
+            check_once(self.session, {"products": items, "fetcher": self.fetcher}, None, None, "", "")
+        self.assertEqual([call.args[3]["mode"] for call in fetch.call_args_list], ["requests", "flaresolverr"])
+
+    def test_service_failure_stops_without_systemd_retry_and_records_error(self):
+        from monitor import main
+        with patch("sys.argv", ["monitor.py", "--once"]), patch("monitor.load_dotenv"), patch("monitor.read_config", return_value={"enabled": True, "telegram": {"disabled": True}}), patch("monitor.effective_telegram", return_value=("", "")), patch("monitor.check_once", side_effect=RequestServiceError("browser offline")), patch("monitor.write_status") as status:
+            self.assertEqual(main(), 0)
+        self.assertEqual(status.call_args.args[1]["state"], "error")
+        self.assertEqual(status.call_args.args[1]["message"], "browser offline")
 
 
 if __name__ == "__main__":

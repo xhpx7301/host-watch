@@ -160,6 +160,7 @@
     </div>
     <p class="hint">“首次记录”指该商品还没有库存历史；重启服务不会清除历史。提醒还需要启用并配置 Telegram。</p>
     <div id="blocked-help" class="blocked-help" hidden><strong>上次库存检查被网站拦截（历史记录）</strong><span id="blocked-message">检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。</span><p class="hint">该记录保留至下一次检查；当前服务状态请看上方。请先确认访问方式，避免反复重启。</p></div>
+    <p id="request-error" class="blocked-help" hidden></p>
     <p class="hint">底部“保存配置”保持已保存的监控开关：已启用时重启应用，已暂停时保持停止。</p>
     </div>
   </details>
@@ -180,15 +181,19 @@
   </details>
 
   <details class="section" data-tone="amber">
-    <summary><span>VMISS 请求设置</span><span class="section-toggle" aria-hidden="true"></span></summary>
+    <summary><span>网页请求设置</span><span class="section-toggle" aria-hidden="true"></span></summary>
     <div class="section-body">
     <div class="form-grid">
       <label>VMISS 推广 ID（aff）<input id="affiliate" autocomplete="off" placeholder="仅 VMISS 商品使用"></label>
-      <label>请求方式<select id="fetcher-mode"><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr（仅获准站点）</option></select></label>
+      <label>全局请求方式<select id="fetcher-mode"><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option></select></label>
       <label>FlareSolverr API 地址<input id="flaresolverr-url" type="url" placeholder="http://127.0.0.1:8191/v1"></label>
       <label>FlareSolverr 超时（秒）<input id="flaresolverr-timeout" type="number" min="10" max="180"></label>
+      <label>浏览器页面渲染等待（秒）<input id="fetcher-wait" type="number" min="0" max="30" step="1"></label>
     </div>
     <p id="fetcher-status" class="hint">普通 HTTPS 请求已启用。</p>
+    <p class="hint">安装和更新时自动部署本机 FlareSolverr；已有服务会复用。默认 API 地址为 http://127.0.0.1:8191/v1。动态库存可增加渲染等待；普通 HTTPS 不使用该等待。仅监控你拥有或获准访问的页面。</p>
+    <div class="actions" style="margin-top:10px"><button id="fetcher-test" type="button">测试 FlareSolverr 连接</button></div>
+    <p id="fetcher-health" class="hint" aria-live="polite">连接测试使用页面当前填写的地址，无需保存；不会访问商品网站。</p>
     </div>
   </details>
 

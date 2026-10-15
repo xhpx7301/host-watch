@@ -42,9 +42,15 @@ tar -xzf "$TEMP_DIR/source.tar.gz" -C "$TEMP_DIR"
 SOURCE_DIR="$(find "$TEMP_DIR" -mindepth 1 -maxdepth 1 -type d -name 'host-watch-*' -print -quit)"
 [[ -n "$SOURCE_DIR" ]] || fail "源码压缩包格式不正确。"
 
-for file in monitor.py admin.py auth.py manage.py stockwatch.sh admin.html admin.js requirements.txt config.example.json .env.example admin.env.example vmiss-monitor.service vmiss-monitor-admin.service host-watch-admin.sudoers; do
+for file in monitor.py admin.py auth.py manage.py stockwatch.sh admin.html admin.js requirements.txt config.example.json .env.example admin.env.example vmiss-monitor.service vmiss-monitor-admin.service host-watch-admin.sudoers install-flaresolverr.sh; do
   [[ -f "$SOURCE_DIR/$file" ]] || fail "源码缺少必需文件：$file"
 done
+
+# Deploy before replacing the application, so dependency failures do not leave
+# a partially updated web application. Repeated installs reuse existing services.
+# shellcheck source=install-flaresolverr.sh
+. "$SOURCE_DIR/install-flaresolverr.sh"
+deploy_flaresolverr
 
 install -d -o root -g root -m 0755 "$INSTALL_DIR"
 [[ ! -L "$DATA_DIR" ]] || fail "$DATA_DIR 不能是符号链接。"
@@ -118,6 +124,7 @@ systemctl restart vmiss-monitor-admin.service
 log "安装完成。监控总开关和已有配置保持原值；新安装默认关闭，安装程序不会主动启动库存监控。"
 log "Debian 管理菜单：hw（更新、服务管理、管理页用户管理；普通用户自动调用 sudo）。"
 log "Telegram、厂商、商品和人工购买入口请在管理页配置。"
+log "网页请求设置支持普通 HTTPS 和 FlareSolverr；默认普通请求，商品可单独覆盖。服务连接可直接在网页测试。"
 log "管理页：在本地电脑运行 ssh -N -L 8765:127.0.0.1:8765 your-user@your-server，然后打开 http://127.0.0.1:8765"
 log "若使用反向代理域名，请设置 ADMIN_ALLOWED_HOSTS，并用 hw add-user 创建账号（也兼容原 ADMIN_PASSWORD）。"
 log "在管理页配置商品并点击保存并开始监控；监控设置提供启停操作，管理员管理区提供账号、日志、备份和更新操作。"

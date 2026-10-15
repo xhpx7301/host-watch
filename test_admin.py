@@ -77,6 +77,37 @@ class AdminAPITests(unittest.TestCase):
         self.assertEqual(status, 401)
         manager.assert_not_called()
 
+    def test_browser_health_uses_unsaved_endpoint_without_config_mutation(self):
+        response = unittest.mock.Mock(ok=True)
+        response.json.return_value = {"msg": "FlareSolverr is ready!", "version": "3.test"}
+        with patch.object(admin.requests, "get", return_value=response) as get, patch.object(admin, "manager_action") as manager:
+            status, body = self.request("/api/fetcher/test", {"flaresolverr_url": "http://127.0.0.1:8191/v1"})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["version"], "3.test")
+        get.assert_called_once_with("http://127.0.0.1:8191/", timeout=(3, 5), allow_redirects=False)
+        manager.assert_not_called()
+        self.assertFalse(self.config.exists())
+
+    def test_health_rejects_unrelated_service(self):
+        response = unittest.mock.Mock(ok=True)
+        response.json.return_value = {"status": "ok"}
+        with patch.object(admin.requests, "get", return_value=response):
+            status, body = self.request("/api/fetcher/test", {})
+        self.assertEqual(status, 400)
+        self.assertIn("未返回 FlareSolverr", json.loads(body)["error"])
+
+    def test_browser_settings_validate_and_legacy_defaults_are_preserved(self):
+        self.assertEqual(admin.normalize_fetcher({})["wait_seconds"], 0)
+        for wait in [-1, 31, True, 1.5]:
+            with self.subTest(wait=wait), self.assertRaises(ValueError):
+                admin.normalize_fetcher({"wait_seconds": wait})
+
+    def test_product_request_mode_defaults_and_rejects_unknown_mode(self):
+        item = {"id": "vps", "name": "test", "adapter": "html", "url": "https://shop.example.com/item", "stock_selector": ".stock"}
+        self.assertEqual(admin.validate_config({"products": [item]})["products"][0]["request_mode"], "inherit")
+        with self.assertRaisesRegex(ValueError, "请求方式无效"):
+            admin.validate_config({"products": [{**item, "request_mode": "unknown"}]})
+
 
 if __name__ == "__main__":
     unittest.main()

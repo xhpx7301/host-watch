@@ -36,6 +36,7 @@ def default_config() -> dict:
             "mode": "requests",
             "flaresolverr_url": "http://127.0.0.1:8191/v1",
             "timeout_seconds": 60,
+            "wait_seconds": 0,
         },
         "telegram": {"bot_token": "", "chat_id": "", "disabled": False},
         "products": [],
@@ -98,11 +99,27 @@ def normalize_fetcher(value: object) -> dict:
         raise ValueError("FlareSolverr 超时必须是整数")
     if timeout_seconds < 10 or timeout_seconds > 180:
         raise ValueError("FlareSolverr 超时范围是 10 到 180 秒")
+    wait = value.get("wait_seconds", 0)
+    if isinstance(wait, bool) or not isinstance(wait, int) or not 0 <= wait <= 30:
+        raise ValueError("网页渲染等待必须是 0 到 30 秒的整数")
     return {
         "mode": mode,
         "flaresolverr_url": endpoint.rstrip("/"),
         "timeout_seconds": timeout_seconds,
+        "wait_seconds": wait,
     }
+
+
+def flaresolverr_health(endpoint: str) -> dict:
+    """Read readiness without launching a browser or visiting a product website."""
+    try:
+        response = requests.get(endpoint.removesuffix("/v1") + "/", timeout=(3, 5), allow_redirects=False)
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        raise ValueError("无法连接 FlareSolverr 或响应无效，请检查服务日志和 API 地址") from None
+    if not response.ok or not isinstance(payload, dict) or "flaresolverr" not in str(payload.get("msg", "")).casefold():
+        raise ValueError("该地址未返回 FlareSolverr 就绪信息，请检查服务是否启动")
+    return {"ok": True, "version": str(payload.get("version", "未知"))[:80], "message": "FlareSolverr 服务已就绪；此测试不会访问商品网站，不代表目标网页一定能通过验证。"}
 
 
 def effective_telegram(value: object) -> tuple[str, str]:
@@ -269,6 +286,10 @@ def validate_config(value: object) -> dict:
                 "purchase_url": purchase_url,
                 "enabled": item.get("enabled", False),
             }
+        request_mode = str(item.get("request_mode", "inherit")).strip().casefold()
+        if request_mode not in {"inherit", "requests", "flaresolverr"}:
+            raise ValueError(f"产品 {name} 的请求方式无效")
+        normalized_item["request_mode"] = request_mode
         seen_ids.add(product_id)
         normalized.append(normalized_item)
     enabled = value.get("enabled", False)
@@ -524,11 +545,16 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if self.path not in {"/api/config", "/api/telegram/test", "/api/manage"}:
+        if self.path not in {"/api/config", "/api/telegram/test", "/api/manage", "/api/fetcher/test"}:
             self.send_error(404)
             return
         try:
             submitted = request_body(self)
+            if self.path == "/api/fetcher/test":
+                fetcher = normalize_fetcher(submitted)
+                data = json.dumps(flaresolverr_health(fetcher["flaresolverr_url"]), ensure_ascii=False).encode("utf-8")
+                self._send(200, "application/json; charset=utf-8", data)
+                return
             if self.path == "/api/manage":
                 if submitted.get("action") in {"admin-add", "admin-passwd", "admin-delete"} and users_path() not in {None, DEFAULT_USERS_PATH}:
                     raise ValueError("当前使用自定义账号文件，请使用终端管理该文件中的管理员")
