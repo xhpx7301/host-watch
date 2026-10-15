@@ -63,12 +63,28 @@
     .product-actions a:hover { background:var(--green-soft); }
     .product-actions button { padding:5px 9px; }
     .empty { padding:28px 12px; border:1px dashed #c5cecf; border-radius:5px; color:var(--muted); text-align:center; background:rgba(255,255,255,.5); }
-    details.section { padding-top:18px; }
-    details > summary { display:flex; justify-content:space-between; align-items:center; gap:12px; cursor:pointer; list-style:none; font-weight:700; }
+    details.section { --accent:#166b54; --tint:#e7f3ee; --edge:#b7d7c9; margin:12px 0; padding:0; border:1px solid var(--edge); border-radius:8px; background:var(--paper); transition:border-color .2s,box-shadow .2s; }
+    details.section[data-tone="blue"] { --accent:#245d78; --tint:#eaf2f6; --edge:#bed2df; }
+    details.section[data-tone="amber"] { --accent:#805716; --tint:#faf2df; --edge:#e2d0a6; }
+    details.section[data-tone="purple"] { --accent:#65508a; --tint:#f1edf8; --edge:#d1c5e3; }
+    details.section[data-tone="slate"] { --accent:#465c6c; --tint:#edf1f5; --edge:#c5d1db; }
+    details.section[open] { box-shadow:0 3px 12px rgba(25,43,42,.05); }
+    details.section > summary { display:flex; justify-content:space-between; align-items:center; gap:12px; min-height:62px; padding:16px 18px; border-left:4px solid var(--accent); border-radius:7px; color:var(--accent); background:var(--tint); cursor:pointer; list-style:none; font-weight:700; user-select:none; touch-action:manipulation; transition:background-color .2s,color .2s; }
     details > summary::-webkit-details-marker { display:none; }
-    details > summary::after { content:"＋"; color:var(--muted); font-size:17px; }
-    details[open] > summary::after { content:"−"; }
-    details[open] > summary { margin-bottom:16px; }
+    details.section > summary:hover { background:var(--edge); }
+    details.section > summary:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
+    details.section[open] > summary { border-radius:7px 7px 0 0; color:#fff; background:var(--accent); }
+    .section-toggle { display:inline-flex; align-items:center; flex-shrink:0; gap:9px; padding:4px 9px; border:1px solid currentColor; border-radius:5px; font-size:12px; font-weight:600; }
+    .section-toggle::before { content:"展开"; }
+    details[open] > summary .section-toggle::before { content:"收起"; }
+    .section-toggle::after { content:""; width:7px; height:7px; margin-top:-3px; border-right:2px solid currentColor; border-bottom:2px solid currentColor; transform:rotate(45deg); transition:transform .24s; }
+    details[open] > summary .section-toggle::after { transform:translateY(3px) rotate(225deg); }
+    .section-body { padding:18px; }
+    @supports (interpolate-size:allow-keywords) and (content-visibility:hidden) {
+      details.section::details-content { interpolate-size:allow-keywords; height:0; opacity:0; overflow:clip; transition:height .26s ease,opacity .2s ease,content-visibility .26s allow-discrete; }
+      details.section[open]::details-content { height:auto; opacity:1; }
+    }
+    @media(prefers-reduced-motion:reduce) { details.section,details.section > summary,.section-toggle::after,details.section::details-content { transition:none; } }
     .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:13px 16px; }
     label { display:grid; gap:5px; color:#39464c; font-size:12px; font-weight:650; }
     input,select { width:100%; min-width:0; height:38px; padding:7px 9px; border:1px solid #bdc8cb; border-radius:4px; outline:none; color:var(--ink); background:#fff; }
@@ -123,7 +139,8 @@
   </section>
 
   <details class="section" open>
-    <summary>监控设置</summary>
+    <summary><span>监控设置</span><span class="section-toggle" aria-hidden="true"></span></summary>
+    <div class="section-body">
     <div class="monitor-control">
       <strong id="monitor-runtime" class="state">正在读取服务状态</strong>
       <p id="monitor-runtime-note" class="subtle">以服务器实际运行状态为准。</p>
@@ -144,10 +161,12 @@
     <p class="hint">“首次记录”指该商品还没有库存历史；重启服务不会清除历史。提醒还需要启用并配置 Telegram。</p>
     <div id="blocked-help" class="blocked-help" hidden><strong>上次库存检查被网站拦截（历史记录）</strong><span id="blocked-message">检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。</span><p class="hint">该记录保留至下一次检查；当前服务状态请看上方。请先确认访问方式，避免反复重启。</p></div>
     <p class="hint">底部“保存配置”保持已保存的监控开关：已启用时重启应用，已暂停时保持停止。</p>
+    </div>
   </details>
 
-  <details class="section">
-    <summary>Telegram 通知</summary>
+  <details class="section" data-tone="blue">
+    <summary><span>Telegram 通知</span><span class="section-toggle" aria-hidden="true"></span></summary>
+    <div class="section-body">
     <div class="form-grid">
       <label>Bot token（保存后不会回显）<input id="telegram-token" type="password" autocomplete="new-password" placeholder="留空表示保持已保存的 token"></label>
       <label>Chat ID 或频道用户名<input id="telegram-chat-id" autocomplete="off" placeholder="例如 -1001234567890 或 @my_channel"></label>
@@ -157,10 +176,12 @@
     <p id="telegram-status" class="hint">Telegram 状态读取中</p>
     <div class="actions" style="margin-top:10px"><button id="telegram-test" type="button">测试发送</button><button id="telegram-load-chats" type="button">读取最近聊天</button></div>
     <div id="telegram-chats" class="chat-list" aria-live="polite"></div>
+    </div>
   </details>
 
-  <details class="section">
-    <summary>VMISS 请求设置</summary>
+  <details class="section" data-tone="amber">
+    <summary><span>VMISS 请求设置</span><span class="section-toggle" aria-hidden="true"></span></summary>
+    <div class="section-body">
     <div class="form-grid">
       <label>VMISS 推广 ID（aff）<input id="affiliate" autocomplete="off" placeholder="仅 VMISS 商品使用"></label>
       <label>请求方式<select id="fetcher-mode"><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr（仅获准站点）</option></select></label>
@@ -168,16 +189,20 @@
       <label>FlareSolverr 超时（秒）<input id="flaresolverr-timeout" type="number" min="10" max="180"></label>
     </div>
     <p id="fetcher-status" class="hint">普通 HTTPS 请求已启用。</p>
+    </div>
   </details>
 
-  <details class="section">
-    <summary>商品配置</summary>
+  <details class="section" data-tone="purple">
+    <summary><span>商品配置</span><span class="section-toggle" aria-hidden="true"></span></summary>
+    <div class="section-body">
     <p class="hint">VMISS 使用套餐标识和推广 ID。其他厂商使用公开 HTTPS 商品页、CSS 库存选择器及数量或有货状态规则。购买入口始终由你确认。</p>
     <div id="product-editors"></div>
+    </div>
   </details>
 
-  <details class="section" id="management-panel">
-    <summary>管理员管理</summary>
+  <details class="section" id="management-panel" data-tone="slate">
+    <summary><span>管理员管理</span><span class="section-toggle" aria-hidden="true"></span></summary>
+    <div class="section-body">
     <p class="hint">在网页查看服务状态、管理管理员账号、查看日志、备份配置或更新程序。</p>
     <div class="manage-grid">
       <div class="manage-service"><strong>库存监控</strong><span id="manage-monitor-state">读取中</span><span id="manage-monitor-enabled" class="subtle"></span></div>
@@ -210,6 +235,7 @@
     <h3>最近备份</h3>
     <div id="manage-backups" class="manage-users"><span>读取中</span></div>
     <p class="hint">更新会先备份并重启相关服务；备份包含配置凭据，请按敏感文件保管。</p>
+    </div>
   </details>
 
   <footer class="savebar"><span class="subtle">保存后自动应用配置；启用监控后会按设定间隔检查商品。</span><div class="actions"><button id="reload" type="button">重新载入</button><button id="save" class="primary" type="button">保存配置</button></div></footer>
