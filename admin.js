@@ -1675,9 +1675,9 @@ function renderOverviewRecent() {
   const body = document.createElement("tbody");
   products.forEach(item => {
     const p = productSnapshot(item, latest.get(item.id)), row = document.createElement("tr"); row.dataset.id = item.id;
-    const cell = () => { const td = document.createElement("td"); row.append(td); return td; };
+    const cell = (value = "", cls = "") => { const td = text("td", value, cls); row.append(td); return td; };
     const identity = cell(); identity.append(text("strong", p.name || item.name), text("small", item.provider));
-    cell().textContent = p.region || "—"; renderPrice(cell(), p.price, expanded.has(item.id));
+    cell().textContent = p.region || "—"; renderPrice(cell("", "overview-price"), p.price, expanded.has(item.id));
     cell().append(text("span", Number.isInteger(p.available) ? stockLabel(p) : "未知", `state ${!Number.isInteger(p.available) ? "pending" : p.available > 0 ? "ok" : "error"}`));
     const tags = cell(); if (membership(item, "watch")) tags.append(text("span", "库存监控", "membership-tag")); if (membership(item, "notify")) tags.append(text("span", "TG 通知", "membership-tag notify"));
     body.append(row);
