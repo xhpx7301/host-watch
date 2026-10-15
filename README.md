@@ -21,6 +21,34 @@ curl -fsSL https://raw.githubusercontent.com/xhpx7301/jiankong/main/install.sh |
 
 脚本可重复执行用于升级，已有的 `/var/lib/vmiss-monitor/config.json`、`/etc/vmiss-monitor.env` 和 `/etc/vmiss-monitor-admin.env` 会保留。
 
+## Debian 管理菜单
+
+安装或升级完成后，在 Debian 12/13 终端运行：
+
+```sh
+jk
+```
+
+直接输入 `jk` 即可调出菜单；普通用户会自动通过 sudo 请求权限，root 无需 sudo。原 `stockwatch` 命令继续可用。菜单支持查看状态、更新脚本、启动/停止/重启库存监控、重启管理页、查看最近 100 条日志、管理管理页用户和备份。也可以直接执行：
+
+```sh
+jk update       # 下载更新，先备份，再安装
+jk backup       # 备份程序、配置和账号
+jk status       # 查看服务状态
+jk users        # 列出管理页用户
+jk add-user     # 交互式添加用户
+jk passwd       # 交互式修改密码
+jk delete-user  # 交互式删除用户
+```
+
+这里的用户是**管理页管理员**，都有完整配置权限，不是 Debian/SSH 系统账号。密码在终端中隐藏输入，不支持通过命令行参数传递。账号保存于 `/etc/stockwatch-users.json`，使用独立随机盐和 PBKDF2-SHA256 哈希，权限为 `root:vmiss-monitor 0640`。不能删除最后一个管理员。
+
+首次创建账号后，菜单会将旧 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 配置替换为 `ADMIN_USERS_FILE`，保留域名等其他设置，并重启管理页。以后修改密码或删除账号后，旧凭据在下一次请求即失效。仅本机 SSH 隧道访问的旧安装可继续沿用原认证方式；域名反向代理必须配置账号或原有密码。
+
+更新使用 GitHub `main` 的安装程序，保留商品、Telegram 和账号配置；成功后仅恢复更新前正在运行的监控服务。更新失败不会自动恢复监控，终端会输出备份路径。备份位于 `/var/backups/stockwatch/`，仅 root 可访问；其中包含配置凭据，应按敏感文件保管。备份不包含虚拟环境，恢复程序后可重新安装依赖。菜单不提供自动恢复操作。
+
+首次启动监控前，仍需在管理页勾选“启用库存检查”并保存。停止服务会取消监控开机自启，商品配置保持原样。管理菜单同一时间只允许一个终端运行。
+
 ## 管理页访问
 
 ### SSH 隧道（推荐）
@@ -41,7 +69,7 @@ ssh -N -L 8765:127.0.0.1:8765 your-user@your-server
 sudoedit /etc/vmiss-monitor-admin.env
 ```
 
-至少填写：
+可以先执行 `jk add-user` 创建账号，再只设置允许的域名；如果继续使用旧单账号方式，至少填写：
 
 ```env
 ADMIN_ALLOWED_HOSTS=127.0.0.1,localhost,jiankong.example.com
@@ -198,5 +226,6 @@ sudo systemctl restart vmiss-monitor.service
 ## 离线语法检查
 
 ```sh
-python3 -m py_compile monitor.py admin.py
+python3 -m py_compile monitor.py admin.py auth.py manage.py
+python3 -m unittest -v
 ```

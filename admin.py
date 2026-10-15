@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import base64
-import hmac
 import ipaddress
 import json
 import os
@@ -13,6 +11,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import requests
+
+from auth import authentication_required, authorized
 
 
 ROOT = Path(__file__).resolve().parent
@@ -407,16 +407,10 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def _authorized(self) -> bool:
-        password = os.getenv("ADMIN_PASSWORD", "")
-        if not password:
-            return True
-        username = os.getenv("ADMIN_USERNAME", "admin")
-        expected = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
-        supplied = self.headers.get("Authorization", "")
-        if supplied.startswith("Basic ") and hmac.compare_digest(supplied[6:], expected):
+        if authorized(self.headers.get("Authorization", "")):
             return True
         self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="VMISS monitor admin", charset="UTF-8"')
+        self.send_header("WWW-Authenticate", 'Basic realm="Stockwatch admin", charset="UTF-8"')
         self.send_header("Content-Length", "0")
         self.end_headers()
         return False
@@ -529,8 +523,8 @@ def main() -> None:
     hosts = allowed_hosts()
     if "*" in hosts:
         raise SystemExit("ADMIN_ALLOWED_HOSTS 不允许使用通配符；请填写精确域名")
-    if any(item not in {"127.0.0.1", "localhost"} for item in hosts) and not os.getenv("ADMIN_PASSWORD", ""):
-        raise SystemExit("允许域名访问时必须设置 ADMIN_PASSWORD")
+    if any(item not in {"127.0.0.1", "localhost"} for item in hosts) and not authentication_required():
+        raise SystemExit("允许域名访问时必须设置 ADMIN_PASSWORD 或使用 jk add-user 创建管理页账号")
     port = int(os.getenv("ADMIN_PORT", "8765"))
     print(f"Stockwatch admin listening on http://{host}:{port}")
     ThreadingHTTPServer((host, port), Handler).serve_forever()

@@ -42,7 +42,7 @@ tar -xzf "$TEMP_DIR/source.tar.gz" -C "$TEMP_DIR"
 SOURCE_DIR="$(find "$TEMP_DIR" -mindepth 1 -maxdepth 1 -type d -name 'jiankong-*' -print -quit)"
 [[ -n "$SOURCE_DIR" ]] || fail "源码压缩包格式不正确。"
 
-for file in monitor.py admin.py admin.html admin.js requirements.txt config.example.json .env.example admin.env.example vmiss-monitor.service vmiss-monitor-admin.service; do
+for file in monitor.py admin.py auth.py manage.py stockwatch.sh admin.html admin.js requirements.txt config.example.json .env.example admin.env.example vmiss-monitor.service vmiss-monitor-admin.service; do
   [[ -f "$SOURCE_DIR/$file" ]] || fail "源码缺少必需文件：$file"
 done
 
@@ -52,10 +52,13 @@ install -d -o root -g root -m 0755 "$INSTALL_DIR"
 install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$DATA_DIR"
 [[ ! -L "$DATA_DIR/config.json" ]] || fail "$DATA_DIR/config.json 不能是符号链接。"
 install -o root -g root -m 0644 \
-  "$SOURCE_DIR/monitor.py" "$SOURCE_DIR/admin.py" "$SOURCE_DIR/admin.html" \
+  "$SOURCE_DIR/monitor.py" "$SOURCE_DIR/admin.py" "$SOURCE_DIR/auth.py" "$SOURCE_DIR/manage.py" "$SOURCE_DIR/admin.html" \
   "$SOURCE_DIR/admin.js" "$SOURCE_DIR/requirements.txt" "$SOURCE_DIR/config.example.json" \
   "$SOURCE_DIR/.env.example" "$SOURCE_DIR/vmiss-monitor.service" \
   "$SOURCE_DIR/vmiss-monitor-admin.service" "$SOURCE_DIR/admin.env.example" "$INSTALL_DIR/"
+install -d -o root -g root -m 0755 /usr/local/bin
+install -o root -g root -m 0755 "$SOURCE_DIR/stockwatch.sh" /usr/local/bin/stockwatch
+install -o root -g root -m 0755 "$SOURCE_DIR/stockwatch.sh" /usr/local/bin/jk
 
 if [[ ! -e "$DATA_DIR/config.json" ]]; then
   install -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0600 \
@@ -98,8 +101,9 @@ systemctl daemon-reload
 systemctl enable --now vmiss-monitor-admin.service
 systemctl restart vmiss-monitor-admin.service
 
-log "安装完成。库存监控仍为关闭状态，未启用或启动 vmiss-monitor.service。"
+log "安装完成。监控总开关和已有配置保持原值；新安装默认关闭，安装程序不会主动启动库存监控。"
+log "Debian 管理菜单：jk（更新、服务管理、管理页用户管理；普通用户自动调用 sudo）。"
 log "Telegram、厂商、商品和人工购买入口请在管理页配置。"
 log "管理页：在本地电脑运行 ssh -N -L 8765:127.0.0.1:8765 your-user@your-server，然后打开 http://127.0.0.1:8765"
-log "若使用反向代理域名，请在 $ADMIN_ENV_FILE 设置 ADMIN_ALLOWED_HOSTS 和 ADMIN_PASSWORD。"
+log "若使用反向代理域名，请设置 ADMIN_ALLOWED_HOSTS，并用 jk add-user 创建账号（也兼容原 ADMIN_PASSWORD）。"
 log "确认各厂商允许自动访问并在管理页配置商品后，手动运行：sudo systemctl enable --now vmiss-monitor.service"
