@@ -213,6 +213,32 @@ class CatalogServiceTests(unittest.TestCase):
         self.assertIn("429", self.service.task["error"])
         self.assertEqual(self.service.snapshot("akile")["data"], self.value)
 
+    def test_akile_region_snapshots_are_derived_from_one_full_catalog(self):
+        full = {**self.value, "scopes": [{"id": "all", "name": "全部地区"}, {"id": "6", "name": "香港"}, {"id": "3", "name": "台湾"}],
+            "rows": [
+                {"key": "hk", "available": 2, "watch": {"area_id": "6"}},
+                {"key": "tw", "available": None, "watch": {"area_id": "3"}},
+            ]}
+        self.path.write_text(json.dumps({"akile:all": full}), encoding="utf-8")
+        hong_kong = self.service.snapshot("akile", "6")["data"]
+        taiwan = self.service.snapshot("akile", "3")["data"]
+        self.assertEqual([row["key"] for row in hong_kong["rows"]], ["hk"])
+        self.assertEqual(hong_kong["scope"], "6")
+        self.assertEqual(hong_kong["unknown"], 0)
+        self.assertEqual([row["key"] for row in taiwan["rows"]], ["tw"])
+        self.assertEqual(taiwan["unknown"], 1)
+        self.assertEqual(self.service.snapshot("akile", "999")["data"], None)
+        self.assertEqual(self.service.snapshot("akile")["data"], full)
+
+    def test_akile_region_refresh_fetches_and_caches_all_areas(self):
+        full = {**self.value, "scopes": [{"id": "all", "name": "全部地区"}, {"id": "6", "name": "香港"}], "rows": [{"key": "hk", "watch": {"area_id": "6"}}]}
+        with patch.object(self.service, "fetch_result", return_value=json.dumps({"ok": True, "data": full})) as fetch:
+            task = self.service.refresh("akile", "6")
+            self.wait()
+        self.assertEqual(task["scope"], "6")
+        self.assertEqual(fetch.call_args.args[0]["fetch_scope"], "all")
+        self.assertEqual(self.service.snapshot("akile", "6")["data"]["rows"], full["rows"])
+
     def test_stop_is_responsive_and_does_not_publish_cancelled_results(self):
         entered, released = threading.Event(), threading.Event()
         process = Mock()

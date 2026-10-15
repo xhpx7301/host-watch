@@ -256,6 +256,18 @@ class CatalogService:
         cache = self.read_cache()
         candidates = [v for v in cache.values() if v.get("provider") == provider and (not scope or v.get("scope") == scope)]
         data = max(candidates, key=lambda v: v["fetched_at"]) if candidates else None
+        # Akile's store endpoint returns every area in one response. Keep one
+        # full snapshot and derive area views locally so changing the selector
+        # never starts another request to the vendor.
+        if provider == "akile":
+            full = [v for v in cache.values() if v.get("provider") == provider and v.get("scope") == "all"]
+            full = max(full, key=lambda v: v["fetched_at"]) if full else None
+            if full is not None and (not scope or scope != "all"):
+                known = {str(row.get("id")) for row in full.get("scopes", [])}
+                if not scope or scope in known:
+                    data = self._akile_area_snapshot(full, scope)
+            elif full is not None:
+                data = full
         with self.lock:
             task = dict(self.task) if self.task else None
         # Old Isvoro snapshots contain traffic only, even when the API supplies
@@ -263,14 +275,22 @@ class CatalogService:
         needs_refresh = bool(data and provider == "isvoro" and data.get("metadata_version") != METADATA_VERSION)
         return {"data": data, "task": task, "needs_refresh": needs_refresh}
 
+    @staticmethod
+    def _akile_area_snapshot(data: dict, scope: str) -> dict:
+        if not scope or scope == "all":
+            return data
+        rows = [row for row in data.get("rows", []) if str(row.get("watch", {}).get("area_id", "")) == scope]
+        return {**data, "scope": scope, "rows": rows, "unknown": sum(row.get("available") is None for row in rows)}
+
     def refresh(self, provider: str, scope: str = "") -> dict:
         provider, scope = validate_source(provider, scope)
+        fetch_scope = "all" if provider == "akile" else scope
         with self.lock:
             if self.task and self.task["pending"]:
-                if (self.task["provider"], self.task["scope"]) != (provider, scope):
+                if (self.task["provider"], self.task.get("fetch_scope", self.task["scope"])) != (provider, fetch_scope):
                     raise CatalogBusy("已有目录刷新正在执行，请先停止或等待完成")
                 return dict(self.task)
-            self.task = {"provider": provider, "scope": scope, "pending": True, "cancelled": False, "started_at": now(), "error": ""}
+            self.task = {"provider": provider, "scope": scope, "fetch_scope": fetch_scope, "pending": True, "cancelled": False, "started_at": now(), "error": ""}
             task = self.task
         threading.Thread(target=self.run, args=(task,), daemon=True).start()
         return dict(task)
@@ -369,7 +389,7 @@ class CatalogService:
                         fetcher.update(_test_browser_session=session_id, _browser_slot_held=True)
                     if task["cancelled"]:
                         return "{}"
-                    return self.worker(root / "catalog.py", "--worker", {"provider": task["provider"], "scope": task["scope"], "fetcher": fetcher}, 240, task)
+                    return self.worker(root / "catalog.py", "--worker", {"provider": task["provider"], "scope": task.get("fetch_scope", task["scope"]), "fetcher": fetcher}, 240, task)
                 finally:
                     if attempted:
                         with self.lock:
