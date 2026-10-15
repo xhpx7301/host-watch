@@ -292,6 +292,7 @@ function checkField(labelText, checked, key) {
 }
 
 const soyGroups = [["8", "深港 · CNIX"], ["5", "香港 · 三网直连"], ["6", "香港 · Global"], ["4", "新加坡 · Global"], ["2", "日本 · SoftBank"], ["3", "日本 · IIJ"], ["7", "英国 · Global"]];
+const akileAreas = [["14", "中国澳门"], ["5", "日本"], ["13", "意大利"], ["15", "荷兰"], ["8", "韩国"], ["6", "中国台湾"], ["7", "新加坡"], ["3", "中国香港"], ["2", "美国"], ["11", "英国"], ["1", "德国"], ["16", "越南"]];
 
 function soyCategory(url) {
   try {
@@ -403,7 +404,7 @@ function productEditor(item, index) {
   const soyUrl = item.adapter === "vps_soy" ? item.url : "https://www.vps.soy/cart?fid=1&gid=8";
   const soy = soyCategory(soyUrl);
   soyFields.append(
-    selectField("地区 / 线路分组", soy.preset, "soy_group", [["", "网站默认分类"], ...soyGroups, ["custom", "自定义 FID / GID（更多分组）"]]),
+    selectField("地区 / 线路（GID）", soy.preset, "soy_group", [["", "网站默认分类"], ...soyGroups.map(([id, name]) => [id, `${name}（${id}）`]), ["custom", "自定义地区 / 产品类型"]]),
     inputField("产品类型 FID（留空使用网站默认）", soy.fid, "soy_fid", "text", "例如：1"),
     inputField("地区 / 线路 GID（留空使用网站默认）", soy.gid, "soy_gid", "text", "例如：日本 SoftBank 2、深港 CNIX 8"),
     inputField("VPS.SOY 商品分类页（与 FID / GID 同步）", soyUrl, "soy_url", "url", "https://www.vps.soy/cart?fid=1&gid=2"),
@@ -412,9 +413,11 @@ function productEditor(item, index) {
   );
   const akileFields = text("div", "", "form-grid span-2");
   akileFields.dataset.adapterFields = "akile";
+  const akileArea = String(item.area_id || "");
   akileFields.append(
     selectField("地区识别方式", item.area_mode || "auto", "akile_area_mode", [["auto", "自动识别地区（推荐）"], ["manual", "指定地区 ID（用于区分重名商品）"]]),
-    inputField("指定地区 ID（仅指定地区模式生效）", item.area_id || "", "akile_area_id", "text", "例如：澳门 14、台湾 6"),
+    selectField("监控地区（areaId）", akileAreas.some(([id]) => id === akileArea) ? akileArea : akileArea ? "custom" : "", "akile_area_id", [["", "请选择地区"], ...akileAreas.map(([id, name]) => [id, `${name}（${id}）`]), ["custom", "自定义地区 ID"]]),
+    inputField("自定义地区 ID", akileArea, "akile_custom_area_id", "text", "填写官网新增地区的 areaId"),
     inputField("线路完整名称（精确匹配）", item.node_name || "HKL-TW", "akile_node_name", "text", "HKL-TW"),
     inputField("套餐完整名称（精确匹配）", item.adapter === "akile" ? item.selector : "HKL-TW-Mini", "akile_selector", "text", "HKL-TW-Mini"),
     text("p", "默认按线路＋套餐完整名称在实际商品目录中自动识别地区；官网切换地区后地址栏可能仍保留旧 areaId，请勿据此判断。HKL-TW 属于台湾（6），MOLite 属于澳门（14）。自动模式忽略旧地区 ID，重名时需指定地区；推荐普通 HTTPS 请求。", "hint span-2"),
@@ -458,7 +461,7 @@ function syncEditor(article) {
     item.selector = get("soy_selector").value.trim();
   } else if (item.adapter === "akile") {
     item.area_mode = get("akile_area_mode").value;
-    item.area_id = get("akile_area_id").value.trim();
+    item.area_id = get("akile_area_id").value === "custom" ? get("akile_custom_area_id").value.trim() : get("akile_area_id").value;
     item.node_name = get("akile_node_name").value.trim();
     item.selector = get("akile_selector").value.trim();
   } else {
@@ -661,6 +664,15 @@ function updateAdapterFields(article) {
   const manualArea = article.querySelector('[data-key="akile_area_mode"]').value === "manual";
   areaId.disabled = adapter !== "akile" || !manualArea;
   areaId.closest("label").hidden = !manualArea;
+  const customArea = article.querySelector('[data-key="akile_custom_area_id"]');
+  customArea.closest("label").hidden = !manualArea || areaId.value !== "custom";
+  customArea.disabled = adapter !== "akile" || customArea.closest("label").hidden;
+  const customSoy = article.querySelector('[data-key="soy_group"]').value === "custom";
+  for (const key of ["soy_fid", "soy_gid"]) {
+    const control = article.querySelector(`[data-key="${key}"]`);
+    control.closest("label").hidden = !customSoy;
+    control.disabled = adapter !== "vps_soy" || !customSoy;
+  }
 }
 
 function renderProducts() {
