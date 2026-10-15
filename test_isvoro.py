@@ -46,6 +46,29 @@ class IsvoroTests(unittest.TestCase):
         self.assertEqual(result.match_details["category_name"], "HK PROD")
         self.assertIn("地区/线路：HK PROD", monitor.notification_text(result, 0, result.url))
 
+    def test_network_settings_match_storefront_bandwidth_units(self):
+        for speed_fields, expected in [
+            ({"ratelimit": "12.5"}, "300 GB流量 · 100 Mbps"),
+            ({"ratelimit": "37.5"}, "300 GB流量 · 300 Mbps"),
+            ({"bandwidth_speed": "500", "ratelimit": "12.5"}, "300 GB流量 · 500 Mbps"),
+            ({"port_speed": "1000"}, "300 GB流量 · 1000 Mbps"),
+            ({"ratelimit": "invalid", "bandwidth": "100"}, "300 GB流量 · 100 Mbps"),
+            ({}, "300 GB流量"),
+        ]:
+            settings = {"bandwidth_limit": "300", **speed_fields}
+            for as_list in [False, True]:
+                with self.subTest(settings=settings, as_list=as_list):
+                    data = directory()
+                    data["products/hkpordmini"]["settings"] = [{"key": k, "value": v} for k, v in settings.items()] if as_list else settings
+                    result = self.inspect(data)
+                    self.assertEqual(result.traffic, expected)
+                    self.assertIn(expected, monitor.notification_text(result, 0, result.url))
+
+    def test_missing_network_settings_are_not_unlimited(self):
+        for value in [None, "", True, -1, "NaN", "inf"]:
+            with self.subTest(value=value):
+                self.assertEqual(monitor.isvoro_network({"bandwidth_limit": value, "ratelimit": value}), "—")
+
     def test_type_line_and_product_cannot_cross_match(self):
         for overrides in [{"type_id": "48"}, {"category_id": "999"}, {"product_id": "999"}]:
             with self.subTest(overrides=overrides), self.assertRaisesRegex(monitor.MonitorError, "无法唯一匹配"):

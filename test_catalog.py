@@ -48,6 +48,21 @@ class CatalogParsingTests(unittest.TestCase):
         self.assertEqual(rows[0]["watch"]["type_id"], "24")
         self.assertIn("2 核", rows[0]["specs"])
 
+    def test_network_metadata_survives_unknown_stock_in_both_catalogs(self):
+        payload = akile_fixture()
+        payload["data"]["areas"][0]["nodes"][0]["plans"][0].update(stock="unknown", flow=0, bandwidth=500)
+        with patch("monitor.fetch_akile_catalog", return_value=payload):
+            row = catalog.akile_catalog(Mock(), "")[2][0]
+        self.assertIsNone(row["available"])
+        self.assertEqual(row["traffic"], "无限制 · 500 Mbps")
+        fixtures = directory()
+        fixtures["categories/HK-prod"]["products"] = fixtures["categories/HK-prod"]["products"][:1]
+        fixtures["products/hkpordmini"].update(stock="unknown", settings={"bandwidth_limit": "300", "ratelimit": "12.5"})
+        with patch("monitor.fetch_isvoro_json", side_effect=lambda session, path, fetcher: fixtures[path]):
+            row = catalog.isvoro_catalog(Mock(), "")[2][0]
+        self.assertIsNone(row["available"])
+        self.assertEqual(row["traffic"], "300 GB流量 · 100 Mbps")
+
     def test_isvoro_block_stops_further_detail_requests(self):
         fixtures = directory()
         calls = []

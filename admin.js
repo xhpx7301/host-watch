@@ -984,6 +984,8 @@ function productSnapshot(item, status) {
       data.traffic = fields.filter(network).join(" · ");
     }
   }
+  // Correct older Akile snapshots without changing other vendors' zero allowances.
+  if (item.adapter === "akile" && data.traffic) data.traffic = data.traffic.replace(/(^|[·@|]\s*)0(?:\.0+)?\s*GB\s*(?:流量)?(?=\s*(?:[·@|]|$))/gi, "$1无限制");
   return data;
 }
 function compactDate(value) {
@@ -992,11 +994,21 @@ function compactDate(value) {
 }
 function renderSpecs(cell, raw, network = false) {
   const value = raw || "—";
-  const label = network ? formatNetwork(value) : compactUnits(value.split(/\s*·\s*/).join(" / "));
+  const label = network ? formatNetwork(value) : formatHardware(value);
   const chip = text("span", label, network ? "network-detail" : "spec-chip"); chip.title = value; cell.append(chip);
 }
 function compactUnits(value) {
   return value.replace(/(\d)\s+(核|[KMGT]i?B|[KMGT]?bps)\b/gi, "$1$2").replace(/(\d)\s+核/g, "$1核");
+}
+function formatHardware(raw) {
+  const value = String(raw || "—").split(/\s*·\s*/).join(" / ");
+  const memoryG = (amount, unit) => `${Number(amount) / (/^Mi?B$/i.test(unit) ? 1024 : 1)}G`;
+  return compactUnits(value
+    .replace(/(?:CPU\s*[:：]?\s*)?(\d+(?:\.\d+)?)\s*(?:核|v?CPU\b|cores?\b)/gi, "$1C")
+    .replace(/(?:内存|memory|RAM)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(Mi?B|Gi?B|M|G)\b/gi, (_, amount, unit) => memoryG(amount, unit.toUpperCase() === "M" ? "MB" : unit))
+    .replace(/(?:硬盘|磁盘|disk|storage)\s*[:：]?\s*(?=\d)/gi, "")
+    .replace(/(\d+(?:\.\d+)?)\s*(Mi?B)\b/gi, (_, amount, unit) => memoryG(amount, unit))
+    .replace(/(\d+(?:\.\d+)?C\s*\/\s*)(\d+(?:\.\d+)?)\s*(Gi?B)\b/gi, (_, cpu, amount, unit) => cpu + memoryG(amount, unit)));
 }
 function formatNetwork(raw) {
   const parts = String(raw || "—").split(/\s*(?:·|@|\||\n)\s*|\s+\/\s+/).map(value => compactUnits(value

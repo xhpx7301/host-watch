@@ -42,9 +42,9 @@ def settings(value: object) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def make_row(key: str, watch: dict, region: str, line: str, specs: str, price: str, product=None, error: str = "") -> dict:
+def make_row(key: str, watch: dict, region: str, line: str, specs: str, price: str, product=None, error: str = "", traffic: str = "") -> dict:
     return {"key": key, "name": watch["name"], "provider": watch["provider"], "region": clean(region), "line": clean(line),
-            "specs": clean(product.specs if product and product.specs else specs, 500), "traffic": clean(product.traffic if product else "", 500), "price": clean(price), "available": product.available if product else None,
+            "specs": clean(product.specs if product and product.specs else specs, 500), "traffic": clean(product.traffic if product else traffic, 500), "price": clean(price), "available": product.available if product else None,
             "stock_mode": product.stock_mode if product else "quantity", "purchase_url": product.url if product else "",
             "error": clean(error), "watch": {**watch, "enabled": True, "request_mode": "inherit"}}
 
@@ -60,7 +60,7 @@ def scoped(scopes: list[dict], requested: str, preferred: str = "") -> dict:
 
 
 def akile_catalog(session, scope: str) -> tuple[list, str, list]:
-    from monitor import MonitorError, fetch_akile_catalog, parse_akile
+    from monitor import MonitorError, akile_network, fetch_akile_catalog, parse_akile
     payload = fetch_akile_catalog(session, {"mode": "requests"})
     if not isinstance(payload, dict) or str(payload.get("status_code")) not in {"0", "200"} or not isinstance(payload.get("data"), dict) or not isinstance(payload["data"].get("areas"), list):
         raise MonitorError("Akile 目录结构异常")
@@ -85,8 +85,8 @@ def akile_catalog(session, scope: str) -> tuple[list, str, list]:
                 for price in plan.get("price_datas") or []:
                     if type(price.get("price")) in {int, float} and type(price.get("cycle")) is int and price["cycle"] > 0:
                         prices.append(f"¥{price['price'] / 100:g} / {price['cycle']}个月")
-                specs = f"{plan.get('cpu', '—')} 核 · {plan.get('memory', '—')} MB · {plan.get('disk', '—')} GB · {plan.get('flow', '—')} GB流量 · {plan.get('bandwidth', '—')} Mbps"
-                rows.append(make_row(f"akile:{area['id']}:{node['id']}:{plan['id']}", watch, area.get("area_name", ""), node.get("group_name", ""), specs, "；".join(prices[:3]), product, error))
+                specs = f"{plan.get('cpu', '—')} 核 · {plan.get('memory', '—')} MB · {plan.get('disk', '—')} GB"
+                rows.append(make_row(f"akile:{area['id']}:{node['id']}:{plan['id']}", watch, area.get("area_name", ""), node.get("group_name", ""), specs, "；".join(prices[:3]), product, error, traffic=akile_network(plan)))
     return scopes, selected["id"], rows
 
 
@@ -160,7 +160,7 @@ def soy_catalog(session, scope: str) -> tuple[list, str, list]:
 
 
 def isvoro_catalog(session, scope: str) -> tuple[list, str, list]:
-    from monitor import MonitorError, SiteBlocked, fetch_isvoro_json, inspect_isvoro, isvoro_categories, isvoro_category
+    from monitor import MonitorError, SiteBlocked, fetch_isvoro_json, inspect_isvoro, isvoro_categories, isvoro_category, isvoro_network
     fetcher = {"mode": "requests"}
     raw_types = fetch_isvoro_json(session, "categories", fetcher)
     scopes = []
@@ -188,7 +188,7 @@ def isvoro_catalog(session, scope: str) -> tuple[list, str, list]:
         except MonitorError as exc:
             error = str(exc)
         props = settings(detail.get("settings")) if isinstance(detail, dict) else {}
-        specs = f"{props.get('cores', '—')} 核 · {props.get('memory', '—')} MB · {props.get('disk', '—')} GB · {props.get('bandwidth_limit', '—')} GB流量"
+        specs = f"{props.get('cores', '—')} 核 · {props.get('memory', '—')} MB · {props.get('disk', '—')} GB"
         prices = []
         for plan in detail.get("plans", []) if isinstance(detail, dict) else []:
             if plan.get("hidden") is True:
@@ -196,7 +196,7 @@ def isvoro_catalog(session, scope: str) -> tuple[list, str, list]:
             for price in plan.get("prices", []):
                 if type(price.get("price")) in {int, float}:
                     prices.append(f"{price.get('currency_code', '')} {price['price']:g} / {clean(plan.get('name'))}")
-        rows.append(make_row(f"isvoro:{kind['id']}:{line['id']}:{entry['id']}", watch, kind["name"], line["name"], specs, "；".join(prices[:3]), product, error))
+        rows.append(make_row(f"isvoro:{kind['id']}:{line['id']}:{entry['id']}", watch, kind["name"], line["name"], specs, "；".join(prices[:3]), product, error, traffic=isvoro_network(props)))
     return [{"id": row["id"], "name": row["name"]} for row in scopes], selected["id"], rows
 
 

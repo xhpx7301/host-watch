@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 import re
 import sys
@@ -410,6 +411,43 @@ def fetch_akile_catalog(session: requests.Session, fetcher: dict) -> object:
         raise MonitorError("Akile 商品接口未返回有效 JSON，未更新库存") from None
 
 
+def network_number(value: object) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) and number >= 0 else None
+
+
+def traffic_amount(value: object) -> str:
+    if isinstance(value, str) and value.strip().casefold() in {"无限制", "不限量", "不限流量", "unlimited"}:
+        return "无限制"
+    number = network_number(value)
+    if number is None:
+        return "—"
+    return "无限制" if number == 0 else f"{number:g} GB流量"
+
+
+def akile_network(plan: dict) -> str:
+    flow = traffic_amount(plan.get("flow"))
+    speed = network_number(plan.get("bandwidth"))
+    return flow + (f" · {speed:g} Mbps" if speed is not None else "")
+
+
+def isvoro_network(settings: dict) -> str:
+    def first(keys):
+        return next((number for key in keys if (number := network_number(settings.get(key))) is not None), None)
+    flow = first(("bandwidth_limit", "traffic_limit", "traffic", "data_transfer", "transfer", "monthly_traffic"))
+    speed = first(("bandwidth_speed",))
+    if speed is None:
+        rate = first(("ratelimit",))
+        # Isvoro's storefront converts ratelimit (MB/s) to Mbps by multiplying by 8.
+        speed = rate * 8 if rate is not None else first(("bandwidth", "speed", "port_speed"))
+    return traffic_amount(flow) + (f" · {speed:g} Mbps" if speed is not None else "")
+
+
 def parse_akile(payload: object, item: dict) -> Product:
     """Resolve one exact node/plan pair; never infer stock from a shop URL."""
     if not isinstance(payload, dict) or type(payload.get("status_code")) not in {int, str} or str(payload["status_code"]) not in {"0", "200"}:
@@ -463,7 +501,7 @@ def parse_akile(payload: object, item: dict) -> Product:
     purchase_url = "https://akile.ai/shop/server?" + urlencode({"type": plan["tag"], "areaId": area["id"], "nodeId": node["id"], "planId": plan["id"]})
     return Product(str(plan["id"]), plan["plan_name"], stock, purchase_url, vendor="Akile", area_id=str(area["id"]), area_name=str(area.get("area_name") or f"地区 {area['id']}")[:80], node_name=str(node["group_name"]), region=str(area.get("area_name") or ""),
         specs=f"{plan.get('cpu', '—')} 核 · {plan.get('memory', '—')} MB · {plan.get('disk', '—')} GB",
-        traffic=f"{plan.get('flow', '—')} GB流量 · {plan.get('bandwidth', '—')} Mbps",
+        traffic=akile_network(plan),
         price="；".join(f"¥{p['price'] / 100:g} / {p['cycle']}个月" for p in (plan.get('price_datas') or []) if type(p.get('price')) in {int, float} and type(p.get('cycle')) is int and p['cycle'] > 0)[:500])
 
 
@@ -566,7 +604,7 @@ def inspect_isvoro(session: requests.Session, item: dict, fetcher: dict, cache: 
     purchase_url = "https://isvoro.com/buy/" + line["slug"] + "?" + urlencode({"product": selected["id"]})
     return Product(str(selected["id"]), detail["name"], available, purchase_url, vendor="Isvoro", stock_mode=mode,
         region=kind["name"], specs=f"{settings.get('cores', '—')} 核 · {settings.get('memory', '—')} MB · {settings.get('disk', '—')} GB",
-        traffic=f"{settings.get('bandwidth_limit', '—')} GB流量",
+        traffic=isvoro_network(settings),
         price="；".join(f"{p.get('currency_code', '')} {p['price']:g} / {plan.get('name', '')}" for plan in isvoro_list(raw_product.get('plans')) if plan.get('hidden') is not True for p in (plan.get('prices') or []) if isinstance(p, dict) if type(p.get('price')) in {int, float})[:500], match_details={"type_id": str(kind["id"]), "type_name": kind["name"], "category_id": str(line["id"]), "category_name": line["name"], "product_id": str(selected["id"]), "plan_name": detail["name"]})
 
 

@@ -34,6 +34,15 @@ def plan(payload):
 
 
 class AkileTests(unittest.TestCase):
+    def test_unlimited_traffic_keeps_bandwidth_and_unknown_is_not_unlimited(self):
+        for flow, expected in [(0, "无限制"), ("0", "无限制"), ("无限制", "无限制"),
+                               (300, "300 GB流量"), (None, "—"), ("", "—"), (False, "—"), (-1, "—")]:
+            with self.subTest(flow=flow):
+                payload = catalog()
+                plan(payload).update(flow=flow, bandwidth=500)
+                product = parse_akile(payload, item())
+                self.assertEqual(product.traffic, expected + " · 500 Mbps")
+
     def test_each_tier_has_exact_stock_and_matching_purchase_link(self):
         payload = catalog()
         for i, (tier, stock) in enumerate(zip(["Mini", "Starter", "Standard", "Pro"], [0, 1, 14, 16])):

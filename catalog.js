@@ -84,7 +84,7 @@
       const region = cell(); region.append(text("span", row.region || "—"));
       if (row.line && row.line !== row.region) region.append(text("small", row.line));
       const hardware = cell();
-      const metadata = productSnapshot({ snapshot: row });
+      const metadata = productSnapshot({ adapter: row.watch.adapter, snapshot: row });
       if (metadata.specs) renderSpecs(hardware, metadata.specs);
       if (metadata.traffic) { const network = text("div", "", "catalog-network"); renderSpecs(network, metadata.traffic, true); hardware.append(network); }
       if (!metadata.specs && !metadata.traffic) hardware.textContent = "商家未提供配置";
