@@ -388,6 +388,14 @@
     .price-options > summary::after { content:""; width:6px; height:6px; flex:0 0 6px; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; color:var(--muted); transform:translateY(-2px) rotate(45deg); transition:transform .18s ease; }
     .price-options[open] > summary::after { transform:translateY(2px) rotate(225deg); }
     .price-options > div { display:flex; width:max-content; max-width:100%; padding:2px 0; font-weight:500; }
+    .price-sort-button { display:inline-flex; align-items:center; justify-content:center; gap:5px; min-height:25px; margin:-3px -5px; padding:3px 5px; border:0; border-radius:5px; color:inherit; background:transparent; font:inherit; font-weight:650; cursor:pointer; white-space:nowrap; transition:color .18s ease,background-color .18s ease; }
+    .price-sort-button:hover,.price-sort-button:focus-visible { color:var(--blue); background:var(--blue-soft); outline:none; }
+    .price-sort-icon { position:relative; display:inline-block; width:9px; height:13px; flex:0 0 9px; }
+    .price-sort-arrow { position:absolute; left:1px; width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent; color:var(--muted); opacity:.42; transition:color .18s ease,opacity .18s ease; }
+    .price-sort-up { top:0; border-bottom:5px solid currentColor; }
+    .price-sort-down { bottom:0; border-top:5px solid currentColor; }
+    .price-sort-button[data-sort="asc"] .price-sort-up,.price-sort-button[data-sort="desc"] .price-sort-down { color:var(--blue); opacity:1; }
+    .price-sort-button[data-sort="asc"] .price-sort-down,.price-sort-button[data-sort="desc"] .price-sort-up { opacity:.2; }
     .watch-table .watch-specs { min-width:115px; }
     .watch-table td:nth-child(2) { min-width:135px; }
     .watch-table .watch-price { min-width:105px; }
@@ -518,12 +526,12 @@
       <div class="section-head"><div class="catalog-merchants" role="group" aria-label="选择商家"><button type="button" data-catalog-provider="vmiss" aria-pressed="false">VMISS</button><button type="button" data-catalog-provider="vps_soy" aria-pressed="false">VPS.SOY</button><button type="button" data-catalog-provider="akile" aria-pressed="true">Akile</button><button type="button" data-catalog-provider="isvoro" aria-pressed="false">Isvoro</button><button type="button" data-catalog-provider="dmit" aria-pressed="false">DMIT</button><button type="button" data-catalog-provider="bwh" aria-pressed="false">搬瓦工</button></div><button id="merchant-order-toggle" type="button" aria-expanded="false" aria-controls="merchant-order-panel">调整商家顺序</button></div>
     <div id="merchant-order-panel" class="panel-card section-body" hidden><h2>商家显示顺序</h2><p class="hint">使用上移 / 下移调整大盘、监控筛选和添加商品中的顺序，点击底部“保存配置”后保存在服务器。</p><div id="merchant-order-list"></div></div>
     <div class="panel-card catalog-browser">
-      <div class="catalog-filters"><label>全部套餐 / 地区 / 线路<select id="catalog-scope" disabled><option value="">等待目录</option></select></label><label>搜索套餐<input id="catalog-search" type="search" placeholder="名称、地区、线路或配置"></label><label>库存状态<select id="catalog-stock"><option value="all">全部库存</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">状态未知</option><option value="watched">已加入监控</option><option value="notified">已加入通知</option></select></label><label>价格排序<select id="catalog-price-sort"><option value="default">默认排序</option><option value="asc">月付人民币升序</option><option value="desc">月付人民币降序</option></select></label><label>大盘自动刷新<select id="catalog-auto"><option value="0">仅手动</option><option value="60">1 分钟</option><option value="300" selected>5 分钟</option><option value="600">10 分钟</option></select></label></div>
+      <div class="catalog-filters"><label>全部套餐 / 地区 / 线路<select id="catalog-scope" disabled><option value="">等待目录</option></select></label><label>搜索套餐<input id="catalog-search" type="search" placeholder="名称、地区、线路或配置"></label><label>库存状态<select id="catalog-stock"><option value="all">全部库存</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">状态未知</option><option value="watched">已加入监控</option><option value="notified">已加入通知</option></select></label><label>大盘自动刷新<select id="catalog-auto"><option value="0">仅手动</option><option value="60">1 分钟</option><option value="300" selected>5 分钟</option><option value="600">10 分钟</option></select></label></div>
       <div class="catalog-sync"><div><strong id="catalog-summary">尚未载入目录</strong><span id="catalog-updated" class="subtle"></span></div><div class="actions"><button id="catalog-refresh" type="button">刷新目录库存</button><button id="catalog-stop" type="button" class="danger" hidden>停止刷新</button></div></div>
       <p id="catalog-status" class="hint" role="status" aria-live="polite">选择商家后获取公开套餐目录；切换分类时优先使用已读取的全量快照。</p>
       <div class="catalog-bulk"><button id="catalog-select-all" class="option-button" type="button" aria-pressed="false" aria-label="选择本页">选择本页 <span data-option-state>未全选</span></button><span id="catalog-selected" class="subtle">已选 0 项</span><button id="catalog-watch-selected" type="button" disabled>所选加入库存监控</button><button id="catalog-unwatch-selected" type="button" disabled>所选加入库存通知</button></div>
       <div id="catalog-results">
-      <div class="catalog-table-wrap" role="region" aria-label="VPS 商品目录" tabindex="0"><table class="catalog-table"><thead><tr><th scope="col">选择</th><th scope="col">套餐</th><th scope="col">地区 / 线路</th><th scope="col">配置 / 带宽</th><th scope="col">价格 / 周期</th><th scope="col">库存</th><th scope="col">监控 / 通知 / 操作</th></tr></thead><tbody id="catalog-rows"></tbody></table></div>
+      <div class="catalog-table-wrap" role="region" aria-label="VPS 商品目录" tabindex="0"><table class="catalog-table"><thead><tr><th scope="col">选择</th><th scope="col">套餐</th><th scope="col">地区 / 线路</th><th scope="col">配置 / 带宽</th><th id="catalog-price-heading" scope="col">价格 / 周期</th><th scope="col">库存</th><th scope="col">监控 / 通知 / 操作</th></tr></thead><tbody id="catalog-rows"></tbody></table></div>
       <div id="catalog-empty" class="empty">尚无目录数据，点击“刷新目录库存”读取。</div>
       </div>
       <div class="catalog-pagination"><span id="catalog-page-label" class="subtle"></span><div class="actions"><button id="catalog-prev" type="button" disabled>上一页</button><button id="catalog-next" type="button" disabled>下一页</button></div></div>
@@ -535,7 +543,7 @@
   <section class="page-panel panel-card" id="page-monitor" data-page="monitor" aria-labelledby="page-title" hidden>
     <div class="section-body">
     <div class="section-head"><div><h2>我的 VPS 库存监控 <span id="watchlist-count" class="subtle">0</span></h2><p>关注商品与实时库存 · 仅查看，不发送通知。</p></div><button id="watchlist-browse" type="button">从大盘添加</button></div>
-    <div class="watchlist-filters"><label>搜索商品<input id="watchlist-search" type="search" placeholder="商品、商家或线路"></label><label>商家<select id="watchlist-provider"><option value="all">全部商家</option></select></label><label>最近库存<select id="watchlist-stock"><option value="all">全部状态</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">暂无记录</option></select></label><label>价格排序<select id="watchlist-price-sort"><option value="default">默认排序</option><option value="asc">月付人民币升序</option><option value="desc">月付人民币降序</option></select></label></div>
+    <div class="watchlist-filters"><label>搜索商品<input id="watchlist-search" type="search" placeholder="商品、商家或线路"></label><label>商家<select id="watchlist-provider"><option value="all">全部商家</option></select></label><label>最近库存<select id="watchlist-stock"><option value="all">全部状态</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">暂无记录</option></select></label></div>
     <details class="help-note"><summary>库存监控说明</summary><p id="watchlist-note" class="hint" role="status"></p></details>
     <div id="product-list"></div>
      <div id="watch-compare-bar" class="watch-compare-bar" hidden role="region" aria-live="polite"><div><strong id="watch-compare-count">已选 0 项</strong><span id="watch-compare-note" class="subtle">再选择至少 1 个商品开始参数对比</span></div><div class="actions"><button id="watch-compare-clear" type="button">清除选择</button><button id="watch-compare-start" type="button" class="primary" disabled>开始对比</button></div></div>
@@ -544,7 +552,7 @@
   </section>
   <section class="page-panel panel-card" id="page-notifications" data-page="notifications" aria-labelledby="page-title" hidden>
     <div class="section-body">
-    <div class="section-head"><div><h2>我的 VPS 库存通知 <span id="notification-count" class="subtle"></span></h2><p>每轮补货通知一次，库存变化更新原 Telegram 消息，支持单次测试。</p></div><div class="actions"><label class="inline-filter">价格排序<select id="notification-price-sort"><option value="default">默认排序</option><option value="asc">月付人民币升序</option><option value="desc">月付人民币降序</option></select></label><button id="notification-browse" type="button">从大盘添加</button></div></div>
+    <div class="section-head"><div><h2>我的 VPS 库存通知 <span id="notification-count" class="subtle"></span></h2><p>每轮补货通知一次，库存变化更新原 Telegram 消息，支持单次测试。</p></div><div class="actions"><button id="notification-browse" type="button">从大盘添加</button></div></div>
     <details class="help-note"><summary>库存通知说明</summary><p id="notification-note" class="hint"></p></details>
     <div id="notification-list"></div>
     <p class="table-footnote">拖动商家旁的 ⠿ 调整顺序，保存后保留；与库存监控分别排序</p>

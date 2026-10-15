@@ -1313,6 +1313,37 @@ function sortByMonthlyPrice(items, mode, getPrice) {
     return result ? result * direction : left.index - right.index;
   }).map(entry => entry.item);
 }
+const priceSortModes = ["default", "asc", "desc"];
+function readPriceSort(key) {
+  const value = sessionStorage.getItem(key);
+  return priceSortModes.includes(value) ? value : "default";
+}
+function cyclePriceSort(value) {
+  return priceSortModes[(priceSortModes.indexOf(value) + 1) % priceSortModes.length];
+}
+function createPriceSortButton(label, key, onChange) {
+  const button = text("button", "", "price-sort-button");
+  button.type = "button";
+  button.setAttribute("aria-label", `${label}排序：默认排序`);
+  button.append(text("span", label, "price-sort-label"));
+  const icon = text("span", "", "price-sort-icon");
+  icon.append(text("span", "", "price-sort-arrow price-sort-up"), text("span", "", "price-sort-arrow price-sort-down"));
+  button.append(icon);
+  const update = (mode) => {
+    button.dataset.sort = mode;
+    button.setAttribute("aria-pressed", String(mode !== "default"));
+    button.setAttribute("aria-label", `${label}排序：${mode === "asc" ? "月付人民币升序" : mode === "desc" ? "月付人民币降序" : "默认排序"}`);
+    button.title = button.getAttribute("aria-label");
+  };
+  update(readPriceSort(key));
+  button.addEventListener("click", () => {
+    const mode = cyclePriceSort(readPriceSort(key));
+    sessionStorage.setItem(key, mode);
+    update(mode);
+    onChange(mode);
+  });
+  return button;
+}
 function priceTextWithConversion(raw) {
   return String(raw || "—").split(/[；;]/).map(value => value.trim()).filter(Boolean).map(value => {
     const original = formatBillingCycle(formatPrice(value));
@@ -1596,14 +1627,19 @@ function renderProductList() {
     return (!search || [item.name, item.provider, p.region, item.remarks, item.line_label, item.line_telecom, item.line_unicom, item.line_mobile].join(" ").toLowerCase().includes(search)) &&
       (provider === "all" || provider === item.adapter || provider === "other" && !merchantNames[item.adapter]) &&
       (stock === "all" || stock === "in" && p.available > 0 || stock === "out" && p.available === 0 || stock === "unknown" && !Number.isInteger(p.available));
-  }), document.querySelector("#watchlist-price-sort").value, item => productSnapshot(item, latest.get(item.id)).price);
+  }), readPriceSort("hostwatch-watch-price-sort"), item => productSnapshot(item, latest.get(item.id)).price);
   document.querySelector("#watchlist-count").textContent = `共 ${watched.length} 个 · 显示 ${visible.length} 个`;
   document.querySelector("#watchlist-note").textContent = "此列表仅检查和展示库存，不发送消息。加入库存通知后才会推送。后台检查更新商品数据，暂停后保留历史快照。";
   renderCompareBar();
   if (!visible.length) { listNode.replaceChildren(text("div", watched.length ? "没有符合条件的商品。" : "从库存大盘点击“加入库存监控”，添加关心的商品。", "empty")); return; }
   const wrap = text("div", "", "catalog-table-wrap"); wrap.tabIndex = 0; wrap.setAttribute("role", "region"); wrap.setAttribute("aria-label", "关注商品库存表");
   const table = text("table", "", "watch-table"), head = document.createElement("thead"), tr = document.createElement("tr");
-  for (const label of ["对比", "商家", "产品名称", "地区", "备注", "线路", "硬件配置", "流量 / 带宽", "价格", "状态", "操作"]) { const th = text("th", label); th.scope = "col"; tr.append(th); }
+  for (const label of ["对比", "商家", "产品名称", "地区", "备注", "线路", "硬件配置", "流量 / 带宽", "价格 / 周期", "状态", "操作"]) {
+    const th = document.createElement("th"); th.scope = "col";
+    if (label.startsWith("价格")) th.append(createPriceSortButton("价格 / 周期", "hostwatch-watch-price-sort", () => { renderProductList(); animateFilterResult(listNode); }));
+    else th.append(text("span", label));
+    tr.append(th);
+  }
   head.append(tr); const body = document.createElement("tbody");
   for (const item of visible) {
     const runtime = latest.get(item.id), p = productSnapshot(item, runtime), row = document.createElement("tr"); row.dataset.id = item.id;
@@ -1648,7 +1684,7 @@ function renderNotificationList() {
   const expanded = expandedPrices(document.querySelector("#notification-list"));
   const statusProducts = new Map((lastStatus?.products || []).map(p => [p.id, p]));
   const savedProducts = new Map((savedConfig ? JSON.parse(savedConfig).products : []).map(p => [p.id, p]));
-  const selected = sortByMonthlyPrice(orderedProducts("notify"), document.querySelector("#notification-price-sort").value, item => {
+  const selected = sortByMonthlyPrice(orderedProducts("notify"), readPriceSort("hostwatch-notification-price-sort"), item => {
     const runtime = statusProducts.get(item.id), testResult = productTests.get(item.id);
     const source = testResult?.ok && !testResult.pending && !testResult.cancelled && !testResult.warning && (!runtime || Date.parse(testResult.checked_at) > Date.parse(runtime.checked_at || lastStatus?.last_checked || 0)) ? { ...runtime, ...testResult, error: "", url: testResult.url || testResult.purchase_url } : runtime;
     return productSnapshot(item, source).price;
@@ -1659,7 +1695,12 @@ function renderNotificationList() {
   if (!selected.length) { target.replaceChildren(text("div", "尚未选择通知商品，可从大盘、库存监控或下方高级管理添加。", "empty")); return; }
   const wrap = text("div", "", "catalog-table-wrap"); wrap.tabIndex = 0; wrap.setAttribute("role", "region"); wrap.setAttribute("aria-label", "通知商品库存表");
   const table = text("table", "", "watch-table notification-table"), head = document.createElement("thead"), headings = document.createElement("tr");
-  for (const label of ["商家", "产品名称", "地区", "硬件配置", "流量 / 带宽", "价格", "状态", "操作"]) { const th = text("th", label); th.scope = "col"; headings.append(th); }
+  for (const label of ["商家", "产品名称", "地区", "硬件配置", "流量 / 带宽", "价格 / 周期", "状态", "操作"]) {
+    const th = document.createElement("th"); th.scope = "col";
+    if (label.startsWith("价格")) th.append(createPriceSortButton("价格 / 周期", "hostwatch-notification-price-sort", () => { renderNotificationList(); animateFilterResult(document.querySelector("#notification-list")); }));
+    else th.append(text("span", label));
+    headings.append(th);
+  }
   head.append(headings); table.append(head);
   for (const item of selected) {
     const runtime = statusProducts.get(item.id), testResult = productTests.get(item.id);
@@ -1949,15 +1990,6 @@ for (const id of ["watchlist-search", "watchlist-provider", "watchlist-stock"]) 
   renderProductList();
   animateFilterResult(listNode);
 });
-for (const [id, key] of [["watchlist-price-sort", "hostwatch-watch-price-sort"], ["notification-price-sort", "hostwatch-notification-price-sort"]]) {
-  const select = document.getElementById(id), saved = sessionStorage.getItem(key);
-  if (saved && ["default", "asc", "desc"].includes(saved)) select.value = saved;
-  select.addEventListener("change", () => {
-    sessionStorage.setItem(key, select.value);
-    if (id === "watchlist-price-sort") { renderProductList(); animateFilterResult(listNode); }
-    else { renderNotificationList(); animateFilterResult(document.querySelector("#notification-list")); }
-  });
-}
 document.querySelector("#watch-compare-start").addEventListener("click", openCompareDialog);
 document.querySelector("#watch-compare-clear").addEventListener("click", () => {
   compareSelection.clear();

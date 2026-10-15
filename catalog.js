@@ -14,8 +14,6 @@
   const autoValue = sessionStorage.getItem("hostwatch-catalog-auto") || "300";
   get("catalog-auto").value = ["0", "60", "300", "600"].includes(autoValue) ? autoValue : "300";
   const priceSortKey = "hostwatch-catalog-price-sort";
-  const savedPriceSort = sessionStorage.getItem(priceSortKey);
-  get("catalog-price-sort").value = ["default", "asc", "desc"].includes(savedPriceSort) ? savedPriceSort : "default";
 
   function matches(row, item) {
     const watch = row.watch;
@@ -43,7 +41,13 @@
     const search = get("catalog-search").value.trim().toLowerCase(), stock = get("catalog-stock").value;
     const rows = (data?.rows || []).filter((row) => (!search || [row.name, row.region, row.line, row.specs, row.traffic, row.price].join(" ").toLowerCase().includes(search)) &&
       (stock === "all" || stock === "in" && row.available > 0 || stock === "out" && row.available === 0 || stock === "unknown" && row.available === null || stock === "watched" && existing(row) && membership(existing(row), "watch") || stock === "notified" && existing(row) && membership(existing(row), "notify")));
-    return sortByMonthlyPrice(rows, get("catalog-price-sort").value, row => row.price);
+    return sortByMonthlyPrice(rows, readPriceSort(priceSortKey), row => row.price);
+  }
+
+  function renderPriceHeading() {
+    const heading = document.querySelector("#catalog-price-heading");
+    if (!heading) return;
+    heading.replaceChildren(createPriceSortButton("价格 / 周期", priceSortKey, () => { page = 0; renderTable(true); }));
   }
 
   function reminderLabel(row) {
@@ -69,6 +73,7 @@
 
   function renderTable(animate = false) {
     if (animate) animateFilterResult(get("catalog-results"));
+    renderPriceHeading();
     const rows = filtered();
     page = Math.max(0, Math.min(page, Math.ceil(rows.length / pageSize) - 1));
     const visible = rows.slice(page * pageSize, (page + 1) * pageSize);
@@ -255,7 +260,6 @@
     animateFilterResult(get("catalog-results"));
   });
   for (const id of ["catalog-search", "catalog-stock"]) get(id).addEventListener(id === "catalog-search" ? "input" : "change", () => { page = 0; renderTable(true); });
-  get("catalog-price-sort").addEventListener("change", () => { sessionStorage.setItem(priceSortKey, get("catalog-price-sort").value); page = 0; renderTable(true); });
   get("catalog-auto").addEventListener("change", () => { sessionStorage.setItem("hostwatch-catalog-auto", get("catalog-auto").value); schedule(); });
   get("catalog-refresh").addEventListener("click", () => { task = task?.pending ? task : null; void refresh(); });
   get("catalog-stop").addEventListener("click", async () => {
