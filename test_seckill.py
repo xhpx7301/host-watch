@@ -54,7 +54,7 @@ class SeckillTests(unittest.TestCase):
         self.assertEqual(result[0]["items"][0]["traffic"], "1024GB@1000Mbps")
 
     def test_public_endpoint_works_with_http_and_browser_json_wrappers(self):
-        for mode in ["requests", "flaresolverr"]:
+        for mode in ["requests", "flaresolverr", "cloudscraper"]:
             body = json.dumps({"code": 0, "data": fixture()})
             if mode == "flaresolverr": body = "<pre>" + html.escape(body) + "</pre>"
             with patch.object(monitor, "fetch_page", return_value=(body, "")) as fetch:

@@ -62,9 +62,9 @@ def scoped(scopes: list[dict], requested: str, preferred: str = "") -> dict:
     return matches[0]
 
 
-def akile_catalog(session, scope: str) -> tuple[list, str, list]:
+def akile_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[list, str, list]:
     from monitor import MonitorError, akile_network, fetch_akile_catalog, parse_akile
-    payload = fetch_akile_catalog(session, {"mode": "requests"})
+    payload = fetch_akile_catalog(session, fetcher or {"mode": "requests"})
     if not isinstance(payload, dict) or str(payload.get("status_code")) not in {"0", "200"} or not isinstance(payload.get("data"), dict) or not isinstance(payload["data"].get("areas"), list):
         raise MonitorError("Akile 目录结构异常")
     areas = payload["data"]["areas"]
@@ -93,9 +93,10 @@ def akile_catalog(session, scope: str) -> tuple[list, str, list]:
     return scopes, selected["id"], rows
 
 
-def vmiss_catalog(session, scope: str) -> tuple[list, str, list]:
+def vmiss_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[list, str, list]:
     from monitor import MonitorError, fetch_page, parse_products
-    body, _ = fetch_page(session, "https://app.vmiss.com/store", {"mode": "requests"}, "app.vmiss.com")
+    fetcher = fetcher or {"mode": "requests"}
+    body, _ = fetch_page(session, "https://app.vmiss.com/store", fetcher, "app.vmiss.com")
     scopes_by_id = {}
     for link in BeautifulSoup(body, "html.parser").select('a[href]'):
         parsed = urlsplit(urljoin("https://app.vmiss.com", link["href"]))
@@ -105,7 +106,7 @@ def vmiss_catalog(session, scope: str) -> tuple[list, str, list]:
     scopes = list(scopes_by_id.values())
     selected = scoped(scopes, scope, "cn-hong-kong-bgp")
     url = "https://app.vmiss.com/store/" + selected["id"]
-    body, final_url = fetch_page(session, url, {"mode": "requests"}, "app.vmiss.com")
+    body, final_url = fetch_page(session, url, fetcher, "app.vmiss.com")
     if urlsplit(final_url).path.rstrip("/") != urlsplit(url).path:
         raise MonitorError("VMISS 返回分类与请求分类不一致")
     soup = BeautifulSoup(body, "html.parser")
@@ -131,16 +132,17 @@ def vmiss_catalog(session, scope: str) -> tuple[list, str, list]:
     return scopes, selected["id"], rows
 
 
-def soy_catalog(session, scope: str) -> tuple[list, str, list]:
+def soy_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[list, str, list]:
     from monitor import MonitorError, fetch_vps_soy_page, parse_vps_soy, soy_metadata
-    body, _ = fetch_vps_soy_page(session, "https://www.vps.soy/cart", {"mode": "requests"})
+    fetcher = fetcher or {"mode": "requests"}
+    body, _ = fetch_vps_soy_page(session, "https://www.vps.soy/cart", fetcher)
     scopes = []
     for node in BeautifulSoup(body, "html.parser").select(".secondgroup_item[onclick]"):
         match = re.fullmatch(r"window\.location\.href=['\"](/cart\?fid=([1-9][0-9]*)&gid=([1-9][0-9]*))['\"];?", node["onclick"].strip())
         if match:
             scopes.append({"id": f"{match[2]}:{match[3]}", "name": f"{clean(node.get_text(' ', strip=True))}（GID={match[3]}）", "url": "https://www.vps.soy" + match[1]})
     selected = scoped(scopes, scope, "1:8")
-    body, final_url = fetch_vps_soy_page(session, selected["url"], {"mode": "requests"})
+    body, final_url = fetch_vps_soy_page(session, selected["url"], fetcher)
     soup = BeautifulSoup(body, "html.parser")
     rows = []
     for card in soup.select(".cartitem"):
@@ -162,9 +164,10 @@ def soy_catalog(session, scope: str) -> tuple[list, str, list]:
     return [{"id": row["id"], "name": row["name"]} for row in scopes], selected["id"], rows
 
 
-def isvoro_catalog(session, scope: str) -> tuple[list, str, list]:
+def isvoro_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[list, str, list]:
     from monitor import MonitorError, SiteBlocked, fetch_isvoro_json, inspect_isvoro, isvoro_categories, isvoro_category, isvoro_network
-    fetcher = {"mode": "requests"}
+    fetcher = fetcher or {"mode": "requests"}
+    mode = fetcher.get("mode", "requests")
     raw_types = fetch_isvoro_json(session, "categories", fetcher)
     scopes = []
     for kind in isvoro_categories(raw_types):
@@ -177,14 +180,14 @@ def isvoro_catalog(session, scope: str) -> tuple[list, str, list]:
     category = isvoro_category(raw_category)
     if category["id"] != line["id"]:
         raise MonitorError("Isvoro 分类 ID 不一致")
-    cache = {("categories", "requests"): raw_types, (category_path, "requests"): raw_category}
+    cache = {("categories", mode): raw_types, (category_path, mode): raw_category}
     rows = []
     for entry in category["products"]:
         watch = {"adapter": "isvoro", "provider": "Isvoro", "name": clean(entry["name"], 120), "type_id": str(kind["id"]), "type_name": kind["name"], "category_id": str(line["id"]), "category_name": line["name"], "product_id": str(entry["id"]), "product_name": entry["name"]}
         product, error, detail = None, "", {}
         try:
             detail = fetch_isvoro_json(session, "products/" + entry["slug"], fetcher)
-            cache[("products/" + entry["slug"], "requests")] = detail
+            cache[("products/" + entry["slug"], mode)] = detail
             product = inspect_isvoro(session, watch, fetcher, cache)
         except SiteBlocked:
             raise
@@ -205,14 +208,15 @@ def isvoro_catalog(session, scope: str) -> tuple[list, str, list]:
 
 def load_catalog(provider: str, scope: str = "", fetcher: dict | None = None) -> dict:
     provider, scope = validate_source(provider, scope)
+    from monitor import product_fetcher
+    fetcher = product_fetcher(fetcher, {"adapter": provider})
     with requests.Session() as session:
         session.headers["User-Agent"] = "HostWatch/1.0 (read-only VPS catalogue)"
         if provider == "dmit":
             from dmit import directory
-            from monitor import product_fetcher
-            scopes, actual, rows = directory(session, scope, product_fetcher(fetcher, {"adapter": "dmit"}))
+            scopes, actual, rows = directory(session, scope, fetcher)
         else:
-            scopes, actual, rows = {"vmiss": vmiss_catalog, "vps_soy": soy_catalog, "akile": akile_catalog, "isvoro": isvoro_catalog}[provider](session, scope)
+            scopes, actual, rows = {"vmiss": vmiss_catalog, "vps_soy": soy_catalog, "akile": akile_catalog, "isvoro": isvoro_catalog}[provider](session, scope, fetcher)
     if len(rows) > MAX_ROWS or len({row["key"] for row in rows}) != len(rows):
         raise ValueError("商品目录超过容量或存在重复标识，未更新缓存")
     return {"provider": provider, "scope": actual, "scopes": scopes, "rows": rows, "fetched_at": now(), "metadata_version": METADATA_VERSION, "unknown": sum(row["available"] is None for row in rows)}
@@ -341,7 +345,7 @@ class CatalogService:
     def fetch_result(self, task: dict) -> str:
         from admin import BROWSER_CLEANUP_SECONDS, BROWSER_CLEANUP_WARNING
         from monitor import MonitorError, browser_request_slot, check_browser_memory, product_fetcher
-        fetcher = product_fetcher(self.fetcher_settings(), {"adapter": "dmit"}) if task["provider"] == "dmit" else {"mode": "requests"}
+        fetcher = product_fetcher(self.fetcher_settings(), {"adapter": task["provider"]})
         browser = fetcher["mode"] == "flaresolverr"
         session_id = "hostwatch-catalog-" + uuid.uuid4().hex
         attempted = created = False
@@ -357,7 +361,7 @@ class CatalogService:
                         if task["cancelled"]:
                             return "{}"
                         if not json.loads(raw).get("ok"):
-                            raise CatalogFailure("DMIT 目录浏览器启动失败，请检查 FlareSolverr 服务")
+                            raise CatalogFailure("目录浏览器启动失败，请检查 FlareSolverr 服务")
                         created = True
                         fetcher.update(_test_browser_session=session_id, _browser_slot_held=True)
                     if task["cancelled"]:

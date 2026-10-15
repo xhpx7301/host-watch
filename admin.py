@@ -329,8 +329,8 @@ def normalize_fetcher(value: object) -> dict:
     if not isinstance(value, dict):
         raise ValueError("请求方式配置必须是对象")
     mode = str(value.get("mode", "requests")).strip().casefold()
-    if mode not in {"requests", "flaresolverr"}:
-        raise ValueError("请求方式必须是 requests 或 flaresolverr")
+    if mode not in {"requests", "flaresolverr", "cloudscraper"}:
+        raise ValueError("请求方式必须是 requests、flaresolverr 或 cloudscraper")
     endpoint = str(value.get("flaresolverr_url", "http://127.0.0.1:8191/v1")).strip()
     parsed = urlsplit(endpoint)
     if (
@@ -358,8 +358,8 @@ def normalize_fetcher(value: object) -> dict:
     if isinstance(wait, bool) or not isinstance(wait, int) or not 0 <= wait <= 30:
         raise ValueError("网页渲染等待必须是 0 到 30 秒的整数")
     provider_modes = value.get("provider_modes", {})
-    if not isinstance(provider_modes, dict) or any(key not in (*PROVIDERS, "html") or not isinstance(mode, str) or mode not in {"inherit", "requests", "flaresolverr"} for key, mode in provider_modes.items()):
-        raise ValueError("商家请求方式必须是支持商家的 inherit、requests 或 flaresolverr")
+    if not isinstance(provider_modes, dict) or any(key not in (*PROVIDERS, "html") or not isinstance(mode, str) or mode not in {"inherit", "requests", "flaresolverr", "cloudscraper"} for key, mode in provider_modes.items()):
+        raise ValueError("商家请求方式必须是支持商家的 inherit、requests、flaresolverr 或 cloudscraper")
     return {
         "mode": mode,
         "flaresolverr_url": endpoint.rstrip("/"),
@@ -505,11 +505,16 @@ def validate_config(value: object) -> dict:
                 "enabled": item.get("enabled", False),
             }
         elif adapter == "dmit":
-            from dmit import PRICING_URL, normalize_catalog_url
+            from dmit import PLAN_KEY_PATTERN, PRICING_URL, normalize_catalog_url
             category_url = normalize_catalog_url(item.get("category_url", PRICING_URL))
-            if not re.fullmatch(r"[1-9][0-9]{0,9}", pid) or len(name) > 120 or len(category_url) > 2048:
+            plan_key = str(item.get("plan_key", "")).strip().upper()
+            if (not pid and not plan_key) or (pid and not re.fullmatch(r"[1-9][0-9]{0,9}", pid)) or len(name) > 120 or len(category_url) > 2048:
                 raise ValueError(f"产品 {name} 的 DMIT PID 必须是正整数（最多 10 位），名称最多 120 字符")
+            if plan_key and not re.fullmatch(PLAN_KEY_PATTERN, plan_key):
+                raise ValueError(f"产品 {name} 的 DMIT 套餐标识必须是 地区:平台:线路:套餐 的完整标识")
             normalized_item = {"id": product_id, "name": name, "provider": provider, "adapter": adapter, "category_url": category_url, "pid": pid, "enabled": item.get("enabled", False)}
+            if plan_key:
+                normalized_item["plan_key"] = plan_key
         elif adapter == "vps_soy":
             catalog_url = normalize_vps_soy_url(item.get("url", "https://www.vps.soy/cart"))
             selector = str(item.get("selector", name)).strip()
@@ -595,7 +600,7 @@ def validate_config(value: object) -> dict:
                 "enabled": item.get("enabled", False),
             }
         request_mode = str(item.get("request_mode", "inherit")).strip().casefold()
-        if request_mode not in {"inherit", "requests", "flaresolverr"}:
+        if request_mode not in {"inherit", "requests", "flaresolverr", "cloudscraper"}:
             raise ValueError(f"产品 {name} 的请求方式无效")
         # Legacy selections remain visible and subscribed after migration.
         for flag in ("watch_enabled", "notify_enabled"):

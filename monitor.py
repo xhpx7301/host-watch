@@ -195,6 +195,31 @@ def fetch_with_requests(session: requests.Session, url: str, expected_host: str 
     return _validate_page_response(response.status_code, response.text, response.url, expected_host, getattr(response, "headers", {}))
 
 
+def fetch_with_cloudscraper(url: str, expected_host: str) -> tuple[str, str]:
+    """Keep challenge cookies and browser headers out of the shared TG session."""
+    try:
+        import cloudscraper
+        from cloudscraper.exceptions import CloudflareException
+    except ImportError:
+        raise RequestServiceError("cloudscraper 依赖未安装或不完整，请通过“更新 HostWatch”安装依赖后重试") from None
+    try:
+        # The published release's native interpreter needs no browser or Node.
+        # Bound challenge submissions; never opt into external CAPTCHA services.
+        with cloudscraper.create_scraper(interpreter="native", delay=5, solveDepth=1, doubleDown=False, debug=False) as scraper:
+            response = scraper.get(url, timeout=(10, 25), allow_redirects=True)
+            return _validate_page_response(response.status_code, response.text, response.url, expected_host, getattr(response, "headers", {}))
+    except CloudflareException:
+        raise SiteBlocked(f"{expected_host} 的 Cloudflare 验证未通过或不受 cloudscraper 支持；请检查站点访问规则或调整请求方式") from None
+    except requests.Timeout:
+        raise MonitorError(f"cloudscraper 访问 {expected_host} 超时，请检查服务器网络或目标站点响应") from None
+    except requests.RequestException:
+        raise MonitorError(f"cloudscraper 访问 {expected_host} 失败，请检查 DNS、TLS 和服务器网络") from None
+    except MonitorError:
+        raise
+    except (ImportError, RuntimeError):
+        raise RequestServiceError("cloudscraper 初始化或解释器运行失败，请更新依赖并检查服务日志") from None
+
+
 @contextmanager
 def browser_request_slot(wait: bool = False):
     """Serialize Chromium across the admin and monitor services on Debian."""
@@ -293,6 +318,8 @@ def product_fetcher(fetcher: dict | None, item: dict) -> dict:
 
 
 def fetch_page(session: requests.Session, url: str, fetcher: dict | None, expected_host: str) -> tuple[str, str]:
+    if (fetcher or {}).get("mode") == "cloudscraper":
+        return fetch_with_cloudscraper(url, expected_host)
     if (fetcher or {}).get("mode") == "flaresolverr":
         return fetch_with_flaresolverr(session, url, fetcher, expected_host)
     return fetch_with_requests(session, url, expected_host)
@@ -694,11 +721,12 @@ def selected_products(config: dict) -> list[dict]:
             if not str(item.get("selector", "")).strip():
                 raise MonitorError(f"商品 {name} 缺少商品选择标识")
         elif item.get("adapter") == "dmit":
-            from dmit import PRICING_URL, normalize_catalog_url
+            from dmit import PLAN_KEY_PATTERN, PRICING_URL, normalize_catalog_url
             try:
                 normalize_catalog_url(item.get("category_url", PRICING_URL))
-                if not re.fullmatch(r"[1-9][0-9]{0,9}", str(item.get("pid", ""))):
-                    raise ValueError("缺少有效 PID")
+                pid, plan_key = str(item.get("pid", "")), str(item.get("plan_key", ""))
+                if (not pid and not plan_key) or pid and not re.fullmatch(r"[1-9][0-9]{0,9}", pid) or plan_key and not re.fullmatch(PLAN_KEY_PATTERN, plan_key):
+                    raise ValueError("缺少有效 PID 或套餐标识")
             except ValueError as exc:
                 raise MonitorError(f"商品 {name} 的 DMIT 配置无效：{exc}") from exc
         elif item.get("adapter") == "vps_soy":

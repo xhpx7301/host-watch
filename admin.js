@@ -610,7 +610,8 @@ function productEditor(item, index) {
   dmitFields.append(
     inputField("DMIT 价格 / 分类页", item.adapter === "dmit" ? item.category_url : "https://www.dmit.io/pages/pricing", "dmit_category_url", "url", "https://www.dmit.io/cart.php?gid=分类ID"),
     inputField("商品 PID（购买链接中的 pid）", item.adapter === "dmit" ? item.pid : "", "dmit_pid", "text", "填写实际商品 PID"),
-    text("p", "按 PID 区分同名套餐，分类页必须包含此商品。支持价格页、cart.php?gid=分类ID 和 /store/ 分类页；不要粘贴加购物车地址。缺少明确库存标记时显示未知，读取失败不会当作缺货。网页请求方式在“网页请求”中设置，DMIT 大盘刷新也使用已保存的商家设置。", "hint span-2"),
+    inputField("价格页套餐标识（大盘自动填写，缺货无 PID 时使用）", item.adapter === "dmit" ? item.plan_key : "", "dmit_plan_key", "text", "例如 LAX:AS3:PREMIUM:TINY"),
+    text("p", "按 PID 或完整套餐标识区分地区、硬件平台和线路。缺货套餐没有 PID 时保留套餐标识，补货后自动读取购买 PID。分类页必须包含此商品；不要粘贴加购物车地址。缺少明确库存标记时显示未知。网页请求方式在“网页请求”中设置，DMIT 大盘刷新也使用已保存的商家设置。", "hint span-2"),
   );
   modeWrap.append(vmissFields, htmlFields, soyFields, akileFields, isvoroFields, dmitFields);
   const result = text("div", "", "product-test-result");
@@ -657,6 +658,7 @@ function syncEditor(article) {
   } else if (item.adapter === "dmit") {
     item.category_url = get("dmit_category_url").value.trim();
     item.pid = get("dmit_pid").value.trim();
+    item.plan_key = get("dmit_plan_key").value.trim().toUpperCase();
   } else if (item.adapter === "vps_soy") {
     item.url = get("soy_url").value.trim();
     item.selector = get("soy_selector").value.trim();
@@ -1494,8 +1496,9 @@ function applyProviderModes(fetcher) {
   }
 }
 function updateFetcherStatus() {
-  const enabled = document.querySelector("#fetcher-mode").value === "flaresolverr";
-  document.querySelector("#fetcher-status").textContent = `全局默认使用${enabled ? " FlareSolverr 浏览器请求" : "普通 HTTPS 请求"}；商家选择优先于全局设置，保存后自动应用。`;
+  const mode = document.querySelector("#fetcher-mode").value;
+  const names = { requests: "普通 HTTPS 请求", flaresolverr: "FlareSolverr 浏览器请求", cloudscraper: "cloudscraper 请求" };
+  document.querySelector("#fetcher-status").textContent = `全局默认使用 ${names[mode] || "未知请求方式"}；商家选择优先于全局设置，保存后自动应用。${mode === "cloudscraper" ? "cloudscraper 无需浏览器服务，不能完整执行网页 JavaScript，也不保证通过所有 Cloudflare 校验。" : ""}`;
   const legacy = [...document.querySelectorAll("[data-provider-mode]")].filter((input) => input.value === "legacy");
   document.querySelector("#provider-request-note").textContent = legacy.length ? "部分商家原有商品使用不同请求方式，目前保留。为该商家选择统一方式并保存后，会覆盖这些旧选择。" : "新增商品自动使用对应商家设置，测试使用当前页面填写的请求方式；后台自动监控使用已保存的设置。";
 }

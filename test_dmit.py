@@ -30,6 +30,70 @@ def item(pid="183", **extra):
             "category_url": dmit.PRICING_URL, "enabled": True, **extra}
 
 
+def pricing_card(sold=False, pid="253", loc="lax", hw="as3", net="premium", name="TINY", onclick=None):
+    # Reduced from the public pricing HTML read via cloudscraper on 2026-10-16.
+    action = '<button class="btn-order btn-order-disabled" disabled type="button">Out of Stock</button>' if sold else f'''<button class="btn-order" onclick="{onclick or "if (!window.__cfRLUnblockHandlers) return false; window.location.href='/cart.php?a=add&pid=" + pid + "'"}">Order Now</button>'''
+    return f'''<div class="plan-group" data-loc="{loc}" data-hw="{hw}" data-net="{net}" style="display:none">
+      <div class="plan-cards"><div class="plan-card"><div class="plan-card-name">{name}</div>
+      <div class="plan-card-specs"><div class="plan-spec"><i class="fas fa-microchip"></i>1 vCore</div>
+      <div class="plan-spec"><i class="fas fa-memory"></i>2GB</div>
+      <div class="plan-spec"><i class="fas fa-hdd"></i>20GB SSD</div>
+      <div class="plan-spec"><i class="fas fa-exchange-alt"></i>1000GB</div>
+      <div class="plan-spec"><i class="fas fa-bolt"></i>1Gbps</div></div>
+      <div class="plan-card-price">$ 10.90<span>/Monthly</span></div>
+      <div class="plan-card-action">{action}</div></div></div></div>'''
+
+
+class DMITCurrentPricingTests(unittest.TestCase):
+    def test_current_theme_parses_regions_platforms_lines_and_icon_metadata(self):
+        body = pricing_card() + pricing_card(sold=True, hw="an4") + pricing_card(pid="259", net="eyeball") + pricing_card(pid="270", loc="tyo", net="tier1")
+        rows = dmit.parse_cards(body, dmit.PRICING_URL)
+        self.assertEqual([r["available"] for r in rows], [1, 0, 1, 1])
+        self.assertEqual(rows[0]["plan_key"], "LAX:AS3:PREMIUM:TINY")
+        self.assertEqual(rows[0]["name"], "LAX.AS3.Pro.TINY")
+        self.assertEqual(rows[0]["specs"], "CPU：1 核 · 内存：2GB · 硬盘：20GB SSD")
+        self.assertEqual(rows[0]["traffic"], "流量：1000GB · 带宽：1Gbps")
+        self.assertEqual(rows[1]["pid"], "")
+        self.assertEqual(rows[1]["plan_key"], "LAX:AN4:PREMIUM:TINY")
+        self.assertEqual(rows[3]["region"], "日本 · 东京")
+
+    def test_onclick_is_never_executed_and_unknown_actions_remain_unknown(self):
+        for action in ["fetch('https://evil.example/')", "window.location.href='https://evil.example/cart.php?a=add&pid=253'", "window.location.href='/cart.php?a=add&pid=253'; extraCode()"]:
+            with self.subTest(action=action):
+                row = dmit.parse_cards(pricing_card(onclick=action), dmit.PRICING_URL)[0]
+                self.assertIsNone(row["available"])
+                self.assertEqual(row["pid"], "")
+        with self.assertRaisesRegex(monitor.MonitorError, "重复"):
+            dmit.parse_cards(pricing_card() + pricing_card(), dmit.PRICING_URL)
+
+    def test_sold_out_without_pid_is_trackable_and_restocks_to_exact_pid_aff(self):
+        with patch("monitor.fetch_page", return_value=(pricing_card(sold=True), dmit.PRICING_URL)):
+            row = catalog.load_catalog("dmit")["rows"][0]
+        config = admin.validate_config({"enabled": True, "products": [{**row["watch"], "id": "notify", "watch_enabled": False, "notify_enabled": True}]})
+        self.assertEqual(config["products"][0]["pid"], "")
+        self.assertEqual(config["products"][0]["plan_key"], "LAX:AS3:PREMIUM:TINY")
+        with tempfile.TemporaryDirectory() as temp, patch("monitor.fetch_page") as fetch, patch("monitor.telegram_request") as send:
+            state, status = Path(temp) / "state.json", Path(temp) / "status.json"
+            fetch.return_value = (pricing_card(sold=True), dmit.PRICING_URL)
+            monitor.check_once(Mock(), config, state, status, "token", "123")
+            send.assert_not_called()
+            fetch.return_value = (pricing_card(), dmit.PRICING_URL)
+            monitor.check_once(Mock(), config, state, status, "token", "123")
+            send.assert_called_once()
+            link = send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["url"]
+            self.assertEqual(parse_qs(urlsplit(link).query), {"aff": ["22544"], "pid": ["253"]})
+            monitor.check_once(Mock(), config, state, status, "token", "123")
+            self.assertEqual(send.call_count, 1)
+
+    def test_known_pid_survives_sold_out_but_cannot_silently_switch_product(self):
+        watched = item("253", plan_key="LAX:AS3:PREMIUM:TINY")
+        for body, expected in [(pricing_card(sold=True), 0), (pricing_card(), 1)]:
+            with patch("monitor.fetch_page", return_value=(body, dmit.PRICING_URL)):
+                self.assertEqual(monitor.inspect_product(Mock(), watched, {"mode": "cloudscraper"}).available, expected)
+        with patch("monitor.fetch_page", return_value=(pricing_card(pid="999"), dmit.PRICING_URL)), self.assertRaisesRegex(monitor.MonitorError, "PID.*不一致"):
+            monitor.inspect_product(Mock(), watched, {})
+
+
 class DMITParsingTests(unittest.TestCase):
     def test_quantity_and_clean_metadata(self):
         row = dmit.parse_cards(card(stock="1,234 Available", order=buy()), dmit.PRICING_URL)[0]

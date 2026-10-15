@@ -18,7 +18,7 @@
     const watch = row.watch;
     if (item.adapter !== watch.adapter) return false;
     const equal = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
-    if (watch.adapter === "dmit") return equal(item.pid, watch.pid);
+    if (watch.adapter === "dmit") return Boolean(item.plan_key && watch.plan_key && equal(item.plan_key, watch.plan_key) || item.pid && watch.pid && equal(item.pid, watch.pid));
     if (watch.adapter === "akile") return (item.area_mode !== "manual" || equal(item.area_id, watch.area_id)) && equal(item.node_name, watch.node_name) && equal(item.selector, watch.selector);
     if (watch.adapter === "isvoro") return ["type_id", "category_id", "product_id"].every((key) => equal(item[key], watch[key]));
     if (watch.adapter === "vps_soy") {
