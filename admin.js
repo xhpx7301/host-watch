@@ -23,6 +23,50 @@ const openProducts = new Set();
 const productTests = new Map();
 let activeTest = null;
 
+const pages = {
+  overview: { title: "运行概览", description: "查看监控服务、商品库存与最近检查结果。" },
+  monitor: { title: "监控设置", description: "设置检查间隔和提醒规则，管理自动监控。" },
+  telegram: { title: "Telegram 通知", description: "配置通知机器人，接收库存提醒与商品测试结果。" },
+  requests: { title: "网页请求", description: "选择全局请求方式，配置并检测浏览器服务。" },
+  products: { title: "商品配置", description: "按商家添加商品，配置库存规则并单次测试。" },
+  management: { title: "管理员管理", description: "管理服务与账号，查看日志、备份及更新程序。" },
+};
+let currentPage = null;
+
+function navigatePage(name, { history = true, focus = true } = {}) {
+  if (!Object.hasOwn(pages, name)) name = "overview";
+  if (history && location.hash !== `#${name}`) window.history.pushState(null, "", `#${name}`);
+  if (currentPage === name) return;
+  currentPage = name;
+  document.querySelectorAll("[data-page]").forEach((panel) => {
+    panel.hidden = panel.dataset.page !== name;
+    panel.classList.toggle("page-enter", !panel.hidden);
+  });
+  document.querySelectorAll("[data-page-link]").forEach((link) => {
+    if (link.dataset.pageLink === name) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  });
+  const heading = document.querySelector("#page-title");
+  heading.textContent = pages[name].title;
+  document.querySelector("#page-description").textContent = pages[name].description;
+  document.title = `${pages[name].title} | HostWatch`;
+  if (focus) {
+    heading.focus({ preventScroll: true });
+    window.scrollTo({ top: 0, behavior: "instant" });
+    document.querySelector('[data-page-link][aria-current="page"]').scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+  }
+}
+
+document.querySelectorAll("[data-page-link]").forEach((link) => {
+  link.addEventListener("click", (event) => {
+    if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button !== 0) return;
+    event.preventDefault();
+    navigatePage(link.dataset.pageLink);
+  });
+});
+window.addEventListener("hashchange", () => navigatePage(location.hash.slice(1), { history: false }));
+navigatePage(location.hash.slice(1), { history: false, focus: false });
+
 function setMessage(message, kind = "", notify = true) {
   messageNode.textContent = message;
   messageNode.className = kind;
@@ -239,11 +283,6 @@ function bindManagementActions() {
     const username = document.querySelector("#manager-username").value.trim();
     if (!username || !window.confirm(`确认删除管理员 ${username}？该账号将立即失去访问权限。`)) return;
     runAction(event.currentTarget, "删除中…", "正在删除管理员…", () => performManagementAction("admin-delete", { username }));
-  });
-  document.querySelector("#open-management").addEventListener("click", () => {
-    const panel = document.querySelector("#management-panel");
-    panel.open = true;
-    panel.scrollIntoView({ behavior: "smooth", block: "start" });
   });
 }
 
@@ -806,7 +845,7 @@ function renderProductList() {
     const edit = text("button", "配置", "");
     edit.type = "button";
     edit.addEventListener("click", () => {
-      document.querySelector("#product-editors").closest("details").open = true;
+      navigatePage("products");
       const editor = editorNode.querySelector(`[data-id="${CSS.escape(item.id)}"]`);
       editor.open = true;
       openProducts.add(item.id);
@@ -849,6 +888,9 @@ function renderMonitorState() {
   const overview = document.querySelector("#overview-state");
   overview.textContent = label;
   overview.className = `overview-value state ${tone}`;
+  const header = document.querySelector("#header-monitor-state");
+  header.textContent = label;
+  header.className = `state ${tone}`;
   document.querySelector("#overview-state-note").textContent = note;
   renderProductList();
 }
@@ -881,6 +923,9 @@ function updateDraftState() {
   const node = document.querySelector("#monitor-draft");
   node.textContent = dirty ? "有未保存的修改，请点击底部“保存配置”；单次测试可直接使用当前填写的商品配置。" : "页面配置已保存。";
   node.className = dirty ? "hint draft-note" : "hint";
+  const saveState = document.querySelector("#save-state");
+  saveState.textContent = dirty ? "有未保存的修改" : "全部配置已保存";
+  saveState.className = dirty ? "draft-note" : "";
   const seconds = Number(document.querySelector("#interval").value || NaN);
   const valid = Number.isInteger(seconds) && seconds >= 0 && seconds <= 86400;
   document.querySelector("#interval-description").textContent = valid ? (seconds === 0 ? "本轮检查完成后立即检查下一轮，不额外等待；各轮顺序执行。" : `每轮检查完成后等待 ${intervalLabel(seconds)}，再检查下一轮；开始监控后立即进行第一次检查。`) : "检查间隔必须是 0–86400 秒的整数。";
@@ -953,7 +998,7 @@ function addProducts(items) {
   config.products.push(...items);
   openProducts.add(items[0].id);
   renderProducts();
-  document.querySelector("#product-editors").closest("details").open = true;
+  navigatePage("products");
   editorNode.querySelector(`[data-id="${CSS.escape(items[0].id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
   setMessage(items.length === 1 ? "商品已添加，请填写商品信息后保存。" : `已添加 ${items.length} 个商品，可先测试，勾选需要监控的套餐后保存。`, "pending");
   updateDraftState();
@@ -973,13 +1018,17 @@ for (const [key, preset] of Object.entries(merchantPresets)) {
 function updateMerchantHint() { document.querySelector("#add-merchant-hint").textContent = merchantPresets[merchantSelect.value].hint; }
 merchantSelect.addEventListener("change", updateMerchantHint);
 updateMerchantHint();
+document.querySelector("#open-products").addEventListener("click", () => {
+  navigatePage("products");
+  merchantSelect.focus({ preventScroll: true });
+});
 document.querySelector("#add").addEventListener("click", () => {
   const item = { ...structuredClone(merchantPresets[merchantSelect.value].product), id: crypto.randomUUID(), enabled: false };
   const existing = item.adapter === "akile" && config.products.find((product) => product.adapter === "akile" && (product.area_mode !== "manual" || String(product.area_id) === item.area_id) && product.node_name?.trim().toLowerCase() === item.node_name.toLowerCase() && product.selector?.trim().toLowerCase() === item.selector.toLowerCase());
   if (existing) {
     openProducts.add(existing.id);
     renderProducts();
-    editorNode.closest("details").open = true;
+    navigatePage("products");
     editorNode.querySelector(`[data-id="${CSS.escape(existing.id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
     setMessage("HKL-TW-Mini 已存在，已展开配置；监控其他套餐可修改此商品的套餐完整名称后再添加。", "success");
     return;
