@@ -413,6 +413,8 @@ def parse_akile(payload: object, item: dict) -> Product:
             hint = f"匹配地区：{locations}；请使用指定地区 ID 缩小范围，不能自动选择重名商品"
         raise MonitorError(f"Akile 套餐 {item['selector']} 无法唯一匹配（找到 {len(candidates)} 项）；{hint}")
     area, node, plan = candidates[0]
+    if plan.get("is_pre_sale") is True:
+        raise MonitorError("Akile 当前套餐为预售，不能将预售名额当作现货库存")
     stock = plan.get("stock")
     if type(stock) is not int or stock < 0:
         raise MonitorError("Akile 套餐库存不是非负整数，未更新库存")
@@ -543,6 +545,12 @@ def affiliate_url(product_url: str, affiliate_id: str, gid: str, pid: str) -> st
     parsed = urlsplit(product_url)
     query = {"aff": affiliate_id, "pid" if pid else "gid": pid or gid}
     return urljoin(f"{parsed.scheme}://{parsed.netloc}/", "aff.php") + "?" + urlencode(query)
+
+
+def purchase_link(product: Product, item: dict, config: dict) -> str:
+    if item["adapter"] == "vmiss" and config.get("affiliate_id"):
+        return affiliate_url(product.url, str(config["affiliate_id"]), str(item.get("gid", "")), str(item.get("pid", "")))
+    return item.get("purchase_url") or product.url
 
 
 def read_config(path: Path) -> dict:
@@ -763,11 +771,7 @@ def check_once(
 
     if notifications and bot_token and chat_id:
         for item, product, old_count in notifications:
-            purchase_url = (
-                affiliate_url(product.url, str(config.get("affiliate_id", "")), str(item.get("gid", "")), str(item.get("pid", "")))
-                if item["adapter"] == "vmiss"
-                else (item.get("purchase_url") or product.url)
-            )
+            purchase_url = purchase_link(product, item, config)
             button_text = "🛒 打开 VMISS 购买页" if item["adapter"] == "vmiss" else "🛒 打开购买页面"
             reply_markup = {"inline_keyboard": [[{"text": button_text, "url": purchase_url}]]}
             telegram_request(
@@ -798,11 +802,7 @@ def check_once(
                 "available": found[item["id"]].available,
                 "stock_mode": found[item["id"]].stock_mode,
                 "url": found[item["id"]].url,
-                "purchase_url": (
-                    affiliate_url(found[item["id"]].url, str(config.get("affiliate_id", "")), str(item.get("gid", "")), str(item.get("pid", "")))
-                    if item["adapter"] == "vmiss"
-                    else (item.get("purchase_url") or found[item["id"]].url)
-                ),
+                "purchase_url": purchase_link(found[item["id"]], item, config),
             }
             for item in selected
         ],

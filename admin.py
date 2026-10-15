@@ -18,6 +18,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 import requests
 
 from auth import DEFAULT_USERS_PATH, authentication_required, authorized, users_path
+from catalog import CatalogBusy, CatalogService
 
 
 ROOT = Path(__file__).resolve().parent
@@ -32,6 +33,7 @@ TEST_TASKS = {}
 STOPPED_TEST_IDS = {}
 BROWSER_CLEANUP_SECONDS = 8
 BROWSER_CLEANUP_WARNING = "本地测试进程已结束，但未能确认 FlareSolverr 浏览器释放；请检查服务日志，必要时重启 FlareSolverr，避免继续启动浏览器测试"
+CATALOG = CatalogService(lambda: CONFIG_PATH.parent / "catalog.json")
 
 
 def destroy_test_browser(endpoint: str, session_id: str, creation_uncertain: bool = False) -> str:
@@ -426,7 +428,6 @@ def validate_config(value: object) -> dict:
         raise ValueError("产品列表无效或超过 100 项")
     normalized = []
     seen_ids = set()
-    vmiss_products = False
     for item in products:
         if not isinstance(item, dict):
             raise ValueError("产品配置必须是对象")
@@ -448,7 +449,6 @@ def validate_config(value: object) -> dict:
             raise ValueError(f"产品 {name} 的厂商名称必填且不能超过 80 个字符")
 
         if adapter == "vmiss":
-            vmiss_products = True
             category_url = str(item.get("category_url", "")).strip()
             selector = str(item.get("selector", "")).strip()
             parsed = urlsplit(category_url)
@@ -567,8 +567,6 @@ def validate_config(value: object) -> dict:
     enabled = value.get("enabled", False)
     if enabled and not any(item["enabled"] for item in normalized):
         raise ValueError("启用监控前至少启用一个产品")
-    if enabled and vmiss_products and not affiliate_id:
-        raise ValueError("启用监控前请填写推广 ID（aff）")
     fetcher = normalize_fetcher(value.get("fetcher", {}))
     telegram = normalize_telegram(value.get("telegram", {}))
     return {
@@ -791,8 +789,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/":
             self._send(200, "text/html; charset=utf-8", PAGE_PATH.read_bytes())
-        elif self.path == "/admin.js":
-            self._send(200, "text/javascript; charset=utf-8", (ROOT / "admin.js").read_bytes())
+        elif self.path in {"/admin.js", "/catalog.js"}:
+            self._send(200, "text/javascript; charset=utf-8", (ROOT / self.path[1:]).read_bytes())
         elif self.path == "/api/config":
             try:
                 raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else default_config()
@@ -804,6 +802,13 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/status":
             data = json.dumps(read_json(STATUS_PATH, {"state": "unknown", "products": []}), ensure_ascii=False).encode("utf-8")
             self._send(200, "application/json; charset=utf-8", data)
+        elif urlsplit(self.path).path == "/api/catalog":
+            try:
+                query = dict(parse_qsl(urlsplit(self.path).query))
+                output = CATALOG.snapshot(query.get("provider", "akile"), query.get("scope", ""))
+                self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
+            except ValueError as exc:
+                self._send(400, "application/json; charset=utf-8", json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"))
         elif self.path == "/api/isvoro/categories" or self.path.startswith("/api/isvoro/category/"):
             from monitor import MonitorError, fetch_isvoro_json, isvoro_categories, isvoro_category
             try:
@@ -871,7 +876,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(403)
             return
         # Stopping and polling tests must never wait behind config/service locks.
-        if self.path in {"/api/products/test", "/api/products/test/stop"}:
+        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop"}:
             self._post_action()
             return
         if not MUTATION_LOCK.acquire(blocking=False):
@@ -883,11 +888,19 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if self.path not in {"/api/config", "/api/telegram/test", "/api/manage", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop"}:
+        if self.path not in {"/api/config", "/api/telegram/test", "/api/manage", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop"}:
             self.send_error(404)
             return
         try:
             submitted = request_body(self)
+            if self.path in {"/api/catalog/refresh", "/api/catalog/stop"}:
+                try:
+                    output = CATALOG.stop() if self.path.endswith("/stop") else CATALOG.refresh(submitted.get("provider"), submitted.get("scope", ""))
+                except CatalogBusy as exc:
+                    self._send(409, "application/json; charset=utf-8", json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"))
+                    return
+                self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
+                return
             if self.path == "/api/products/test/stop":
                 output = stop_stock_test(str(submitted.get("task_id", "")))
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))

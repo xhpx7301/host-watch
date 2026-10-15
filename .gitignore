@@ -6,4 +6,5 @@ state.json
 state.json.tmp
 config.json
 status.json
+catalog.json
 .browser-request.lock

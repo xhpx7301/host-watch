@@ -25,6 +25,7 @@ let activeTest = null;
 
 const pages = {
   overview: { title: "运行概览", description: "查看监控服务、商品库存与最近检查结果。" },
+  catalog: { title: "VPS 库存大盘", description: "浏览商家套餐与库存，选择你关心的 VPS 加入补货提醒。" },
   monitor: { title: "监控设置", description: "设置检查间隔和提醒规则，管理自动监控。" },
   telegram: { title: "Telegram 通知", description: "配置通知机器人，接收库存提醒与商品测试结果。" },
   requests: { title: "网页请求", description: "选择全局请求方式，配置并检测浏览器服务。" },
@@ -55,6 +56,7 @@ function navigatePage(name, { history = true, focus = true } = {}) {
     window.scrollTo({ top: 0, behavior: "instant" });
     document.querySelector('[data-page-link][aria-current="page"]').scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
   }
+  window.dispatchEvent(new CustomEvent("hostwatch-page-change", { detail: name }));
 }
 
 document.querySelectorAll("[data-page-link]").forEach((link) => {
@@ -133,6 +135,7 @@ async function runAction(button, label, message, action, notify = true) {
     actionRunning = false;
     document.querySelector(".shell").inert = false;
     syncTestControls();
+    window.dispatchEvent(new Event("hostwatch-action-change"));
   }
 }
 
@@ -893,6 +896,7 @@ function renderMonitorState() {
   header.className = `state ${tone}`;
   document.querySelector("#overview-state-note").textContent = note;
   renderProductList();
+  window.dispatchEvent(new Event("hostwatch-service-change"));
 }
 
 function collectConfig(enabled = config.enabled) {
@@ -930,6 +934,7 @@ function updateDraftState() {
   const valid = Number.isInteger(seconds) && seconds >= 0 && seconds <= 86400;
   document.querySelector("#interval-description").textContent = valid ? (seconds === 0 ? "本轮检查完成后立即检查下一轮，不额外等待；各轮顺序执行。" : `每轮检查完成后等待 ${intervalLabel(seconds)}，再检查下一轮；开始监控后立即进行第一次检查。`) : "检查间隔必须是 0–86400 秒的整数。";
   document.querySelector("#interval-preset").value = [0, 1, 5, 10, 30, 60, 300, 600, 1800, 3600].includes(seconds) ? String(seconds) : "";
+  window.dispatchEvent(new Event("hostwatch-draft-change"));
 }
 
 function updateFetcherStatus() {
@@ -1055,9 +1060,11 @@ document.querySelector("#interval-preset").addEventListener("change", (event) =>
   }
 });
 document.querySelector(".shell").addEventListener("input", (event) => {
-  if (event.target.id !== "interval-preset") updateDraftState();
+  if (!event.target.closest("#page-catalog") && event.target.id !== "interval-preset") updateDraftState();
 });
-document.querySelector(".shell").addEventListener("change", updateDraftState);
+document.querySelector(".shell").addEventListener("change", (event) => {
+  if (!event.target.closest("#page-catalog")) updateDraftState();
+});
 document.querySelector("#monitor-start").addEventListener("click", (event) => {
   if (hasUnsavedChanges()) { setMessage("请先点击底部“保存配置”，再开始监控；未保存商品也可以先单次测试。", "pending"); return; }
   runAction(event.currentTarget, "启动中…", "正在使用已保存配置开始监控…", () => performManagementAction("monitor-start"));

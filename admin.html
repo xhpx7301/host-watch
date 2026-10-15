@@ -166,6 +166,51 @@
     .savebar-note .subtle { display:block; }
     .savebar .actions { flex-shrink:0; flex-wrap:nowrap; }
     .savebar .actions button { white-space:nowrap; }
+    .catalog-intro { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:22px; }
+    .catalog-intro .eyebrow { font-size:10px; letter-spacing:2px; }
+    .catalog-intro h2 { margin:7px 0 5px; font-size:22px; letter-spacing:-.5px; }
+    .catalog-intro p { margin:0; color:var(--muted); font-size:13px; }
+    .catalog-private { flex-shrink:0; padding:6px 11px; border:1px solid #ccddd5; border-radius:20px; background:var(--green-soft); color:var(--green); font-size:12px; }
+    .catalog-merchants { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
+    .catalog-merchants button { min-width:100px; padding:10px 18px; border-radius:8px; color:var(--muted); font-weight:700; }
+    .catalog-merchants button[aria-pressed="true"] { color:#fff; background:var(--green); border-color:var(--green); }
+    .catalog-browser { padding:20px; }
+    .catalog-filters { display:grid; grid-template-columns:minmax(160px,1.3fr) minmax(160px,1.5fr) minmax(100px,1fr) minmax(110px,1fr); gap:12px; }
+    .catalog-sync { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:20px; }
+    .catalog-sync strong,.catalog-sync .subtle { display:block; }
+    #catalog-status { min-height:18px; margin-bottom:14px; }
+    #catalog-status.error { color:var(--red); }
+    #catalog-status.pending { color:var(--blue); }
+    #catalog-status.stale { color:var(--amber); }
+    .catalog-bulk { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:12px 0; border-top:1px solid var(--line); }
+    .catalog-bulk .check { min-height:32px; margin-right:4px; }
+    .catalog-bulk button { min-height:32px; padding:5px 9px; font-size:12px; }
+    .catalog-bulk .subtle { margin-right:auto; }
+    .catalog-table-wrap { max-width:100%; overflow-x:auto; border:1px solid var(--line); border-radius:7px; }
+    .catalog-table { width:100%; min-width:840px; border-collapse:collapse; font-size:12px; }
+    .catalog-table th { padding:12px 10px; color:var(--muted); background:#f4f7f5; text-align:left; white-space:nowrap; font-size:11px; }
+    .catalog-table td { padding:14px 10px; border-top:1px solid #edf0ef; vertical-align:middle; overflow-wrap:anywhere; }
+    .catalog-table tbody tr:hover { background:#fafcfb; }
+    .catalog-table td:first-child { width:42px; }
+    .catalog-table td:nth-child(2) { min-width:145px; max-width:200px; }
+    .catalog-table td:nth-child(3) { max-width:140px; }
+    .catalog-table td:nth-child(4) { min-width:160px; max-width:240px; color:var(--muted); }
+    .catalog-table td:nth-child(5) { min-width:110px; max-width:170px; font-weight:650; }
+    .catalog-table td:nth-child(6) { white-space:nowrap; }
+    .catalog-table .check { min-height:24px; }
+    .catalog-table strong,.catalog-table small { display:block; }
+    .catalog-table small { margin-top:4px; color:var(--muted); font-size:11px; }
+    .catalog-table .state { font-size:12px; }
+    .catalog-row-actions { display:grid; gap:7px; min-width:100px; }
+    .catalog-row-actions button,.catalog-row-actions a { min-height:30px; padding:5px 8px; text-align:center; border-radius:5px; font-size:11px; white-space:nowrap; }
+    .catalog-row-actions a { color:var(--blue); text-decoration:none; }
+    .catalog-row-actions button[aria-pressed="true"] { color:var(--green); border-color:#b7d7c9; background:var(--green-soft); }
+    .catalog-pagination { display:flex; align-items:center; justify-content:space-between; gap:12px; padding-top:16px; }
+    .catalog-pagination button { font-size:12px; }
+    .catalog-reminders { display:flex; justify-content:space-between; align-items:center; gap:14px; margin-top:20px; padding:20px; border:1px solid #ccddd5; border-radius:10px; background:#edf5f1; }
+    #catalog-watch-count { margin-left:6px; color:var(--green); }
+    @media(max-width:1250px) { .catalog-filters { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media(max-width:520px) { .catalog-intro,.catalog-sync,.catalog-reminders { align-items:flex-start; flex-direction:column; } .catalog-browser { padding:14px; } .catalog-merchants { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); } .catalog-merchants button { min-width:0; } .catalog-filters { grid-template-columns:minmax(0,1fr); } .catalog-bulk .subtle { margin-right:0; } .catalog-table { min-width:0; } .catalog-table thead { display:none; } .catalog-table,.catalog-table tbody,.catalog-table tr,.catalog-table td { display:block; } .catalog-table tr { display:grid; grid-template-columns:28px minmax(0,1fr); padding:14px 10px; gap:8px; } .catalog-table tr + tr { border-top:1px solid var(--line); } .catalog-table td { grid-column:2; min-width:0 !important; max-width:none !important; width:auto !important; padding:0; border:0; } .catalog-table td:first-child { grid-column:1; grid-row:1; } .catalog-table td:nth-child(2) { grid-column:2; grid-row:1; } .catalog-table td:nth-child(4)::before { content:"配置："; } .catalog-table td:nth-child(5)::before { content:"价格："; color:var(--muted); font-weight:400; } .catalog-row-actions { display:flex; flex-wrap:wrap; align-items:center; } .catalog-pagination { flex-wrap:wrap; } }
     @media(max-width:1100px) { .shell { grid-template-columns:200px minmax(0,1fr); } .workspace { padding:26px 24px 20px; } .sidebar { padding-left:12px; padding-right:12px; } .overview { grid-template-columns:repeat(2,minmax(0,1fr)); } .product { grid-template-columns:1fr 1fr; gap:11px; } .product-name { grid-column:1/-1; } .product-actions { grid-column:1/-1; justify-content:flex-start; } .savebar { align-items:stretch; flex-direction:column; } .savebar .actions { justify-content:flex-end; } }
     @media(max-width:780px) { .shell { display:block; } .sidebar { position:sticky; z-index:5; height:auto; padding:14px 14px 0; border-right:0; border-bottom:1px solid var(--line); } .sidebar .brand { padding:0 4px 12px; } .brand strong { font-size:19px; } .brand p { font-size:11px; } .brand-mark { width:32px; height:32px; } .nav-label,.sidebar-note { display:none; } .page-nav { display:flex; gap:5px; overflow-x:auto; padding:2px 0 10px; scrollbar-width:thin; } .page-nav a { flex-shrink:0; min-height:40px; padding:9px 12px; gap:7px; font-size:12px; } .page-nav svg { width:16px; height:16px; } .workspace { min-height:calc(100vh - 119px); padding:22px 16px 16px; } .overview-item { min-height:130px; padding:16px; } .page-heading h1 { font-size:25px; } .header-status { justify-items:start; } .topbar { align-items:flex-start; flex-direction:column; gap:16px; } .header-status .status-line { justify-content:flex-start; } .page-stage { padding-top:20px; } .panel-card > .section-body,#page-overview > .section { padding:18px; } }
     @media(max-width:780px) { .manage-grid { grid-template-columns:1fr; } .manage-form { grid-template-columns:1fr; } .product-editor { scroll-margin-top:140px; } }
@@ -179,6 +224,7 @@
     <p class="nav-label">控制台</p>
     <nav class="page-nav" aria-label="主要栏目">
       <a href="#overview" data-page-link="overview" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>运行概览</a>
+      <a href="#catalog" data-page-link="catalog"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12M15 9v12"/></svg>VPS 库存大盘</a>
       <a href="#monitor" data-page-link="monitor"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4M6 11h3l2-4 3 7 2-3h2"/></svg>监控设置</a>
       <a href="#telegram" data-page-link="telegram"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-6 18-4-8-8-4 18-6Zm-10 10L21 3"/></svg>Telegram 通知</a>
       <a href="#requests" data-page-link="requests"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></svg>网页请求</a>
@@ -208,6 +254,22 @@
     <div id="product-list" class="product-list"></div>
   </section>
   </div>
+
+  <section class="page-panel" id="page-catalog" data-page="catalog" aria-labelledby="page-title" hidden>
+    <div class="catalog-intro"><div><span class="eyebrow">VPS DIRECTORY</span><h2>发现套餐，关注补货</h2><p>商家公开目录直接同步，按需选择提醒。无需先配置每一款商品。</p></div><span class="catalog-private">个人库存看板</span></div>
+    <div class="catalog-merchants" role="group" aria-label="选择商家"><button type="button" data-catalog-provider="vmiss" aria-pressed="false">VMISS</button><button type="button" data-catalog-provider="vps_soy" aria-pressed="false">VPS.SOY</button><button type="button" data-catalog-provider="akile" aria-pressed="true">Akile</button><button type="button" data-catalog-provider="isvoro" aria-pressed="false">Isvoro</button></div>
+    <div class="panel-card catalog-browser">
+      <div class="catalog-filters"><label>地区 / 线路分类<select id="catalog-scope" disabled><option value="">等待目录</option></select></label><label>搜索套餐<input id="catalog-search" type="search" placeholder="名称、地区、线路或配置"></label><label>库存状态<select id="catalog-stock"><option value="all">全部库存</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">状态未知</option><option value="watched">已选提醒</option></select></label><label>大盘自动刷新<select id="catalog-auto"><option value="0">仅手动</option><option value="60">1 分钟</option><option value="300" selected>5 分钟</option><option value="600">10 分钟</option></select></label></div>
+      <div class="catalog-sync"><div><strong id="catalog-summary">尚未载入目录</strong><span id="catalog-updated" class="subtle"></span></div><div class="actions"><button id="catalog-refresh" type="button">刷新分类库存</button><button id="catalog-stop" type="button" class="danger" hidden>停止刷新</button></div></div>
+      <p id="catalog-status" class="hint" role="status" aria-live="polite">选择商家后获取该分类的套餐与库存。</p>
+      <div class="catalog-bulk"><label class="check"><input id="catalog-select-all" type="checkbox">选择本页</label><span id="catalog-selected" class="subtle">已选 0 项</span><button id="catalog-watch-selected" type="button" disabled>加入所选提醒</button><button id="catalog-unwatch-selected" type="button" disabled>取消所选提醒</button></div>
+      <div class="catalog-table-wrap" role="region" aria-label="VPS 商品目录" tabindex="0"><table class="catalog-table"><thead><tr><th scope="col">选择</th><th scope="col">套餐</th><th scope="col">地区 / 线路</th><th scope="col">配置 / 带宽</th><th scope="col">价格 / 周期</th><th scope="col">库存</th><th scope="col">补货提醒 / 操作</th></tr></thead><tbody id="catalog-rows"></tbody></table></div>
+      <div id="catalog-empty" class="empty">尚无目录数据，点击“刷新分类库存”读取。</div>
+      <div class="catalog-pagination"><span id="catalog-page-label" class="subtle"></span><div class="actions"><button id="catalog-prev" type="button" disabled>上一页</button><button id="catalog-next" type="button" disabled>下一页</button></div></div>
+    </div>
+    <div class="catalog-reminders"><div><h2>我的补货提醒 <span id="catalog-watch-count">0</span></h2><p id="catalog-reminder-note" class="hint">加入后点击底部“保存配置”，再开始监控。</p></div><button id="catalog-open-products" type="button">管理已选商品</button></div>
+    <p class="hint">大盘自动刷新仅在此栏目打开且页面可见时运行，使用普通 HTTPS；可随时停止。关闭网页后，已保存并启动的商品监控仍会在服务器检查并通过 Telegram 提醒。大盘刷新不发送通知，也不改动提醒历史。价格与购买资格以商家下单页为准。</p>
+  </section>
 
   <section class="page-panel panel-card" id="page-monitor" data-page="monitor" aria-labelledby="page-title" hidden>
     <div class="section-body">
@@ -247,7 +309,7 @@
   <section class="page-panel panel-card" id="page-requests" data-page="requests" aria-labelledby="page-title" hidden>
     <div class="section-body">
     <div class="form-grid">
-      <label>VMISS 推广 ID（aff）<input id="affiliate" autocomplete="off" placeholder="仅 VMISS 商品使用"></label>
+      <label>VMISS 推广 ID（aff，可选）<input id="affiliate" autocomplete="off" placeholder="留空直接打开商家商品页"></label>
       <label>全局请求方式<select id="fetcher-mode"><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option></select></label>
       <label>FlareSolverr API 地址<input id="flaresolverr-url" type="url" placeholder="http://127.0.0.1:8191/v1"></label>
       <label>FlareSolverr 超时（秒）<input id="flaresolverr-timeout" type="number" min="10" max="180"></label>
@@ -311,5 +373,6 @@
 </main>
 <aside id="toast" class="toast" hidden aria-label="操作提示"><div><strong id="toast-label" class="toast-label"></strong><div id="toast-message" role="status" aria-live="polite" aria-atomic="true"></div></div><button id="toast-close" type="button" aria-label="关闭操作提示">×</button></aside>
 <script src="/admin.js"></script>
+<script src="/catalog.js"></script>
 </body>
 </html>
