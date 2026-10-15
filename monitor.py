@@ -600,7 +600,9 @@ def parse_akile(payload: object, item: dict) -> Product:
 
 
 def fetch_isvoro_json(session: requests.Session, path: str, fetcher: dict) -> object:
-    if path != "seckill/activities" and not re.fullmatch(r"(?:categories|products)(?:/[A-Za-z0-9_-]{1,100})?", path):
+    parts = str(path).split("/")
+    valid_catalog_path = len(parts) in {1, 2} and parts[0] in {"categories", "products"} and (len(parts) == 1 or isvoro_slug(parts[1]))
+    if path != "seckill/activities" and not valid_catalog_path:
         raise MonitorError("Isvoro 目录路径无效")
     body, _ = fetch_page(session, "https://isvoro.com/api/v1/" + path, fetcher, "isvoro.com")
     if fetcher.get("mode") == "flaresolverr":
@@ -616,8 +618,13 @@ def fetch_isvoro_json(session: requests.Session, path: str, fetcher: dict) -> ob
     return payload["data"]
 
 
+def isvoro_slug(value: object) -> bool:
+    """Accept vendor slugs with Unicode punctuation while blocking path escapes."""
+    return isinstance(value, str) and value not in {".", ".."} and bool(re.fullmatch(r"[^\x00-\x20/\\?#]{1,100}", value))
+
+
 def isvoro_entry(value: object) -> dict:
-    if not isinstance(value, dict) or type(value.get("id")) is not int or value["id"] <= 0 or not isinstance(value.get("name"), str) or not value["name"].strip() or not isinstance(value.get("slug"), str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", value["slug"]):
+    if not isinstance(value, dict) or type(value.get("id")) is not int or value["id"] <= 0 or not isinstance(value.get("name"), str) or not value["name"].strip() or not isvoro_slug(value.get("slug")):
         raise MonitorError("Isvoro 目录条目标识无效，未更新库存")
     return {key: value[key] for key in ("id", "name", "slug")}
 

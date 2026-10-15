@@ -153,6 +153,14 @@ class IsvoroTests(unittest.TestCase):
                 monitor.isvoro_categories(bad)
         self.assertEqual(monitor.isvoro_categories([{"hidden": True}]), [])
 
+    def test_unicode_slug_from_public_catalog_is_accepted_without_path_escape(self):
+        entry = {"id": 60, "name": "HK-Apex", "slug": "HK‑Apex"}
+        self.assertEqual(monitor.isvoro_categories([entry])[0]["slug"], "HK‑Apex")
+        for path in ["categories/HK‑Apex", "products/HK‑Apex"]:
+            with patch.object(monitor, "fetch_page", return_value=(('{"code":0,"data":[]}', ""))) as fetch:
+                monitor.fetch_isvoro_json(Mock(), path, {})
+            self.assertIn(path, fetch.call_args.args[1])
+
     def test_config_validation_and_disabled_single_inspection(self):
         saved = admin.validate_config({"products": [item(enabled=False)]})["products"][0]
         self.assertEqual(saved["type_id"], "24")
