@@ -19,6 +19,11 @@ def product():
 
 
 class StockTaskTests(unittest.TestCase):
+    def setUp(self):
+        credentials = patch.object(admin, "telegram_credentials", return_value=("", ""))
+        credentials.start()
+        self.addCleanup(credentials.stop)
+
     def task(self, browser=False):
         return admin.StockTestTask("task-1234567890123456", admin.validate_config({"products": [product()]})["products"][0], admin.normalize_fetcher({"mode": "flaresolverr" if browser else "requests"}))
 
@@ -53,6 +58,78 @@ class StockTaskTests(unittest.TestCase):
         self.assertEqual(task.snapshot()["available"], 4)
         for action in (save, history, notify):
             action.assert_not_called()
+
+    def test_manual_results_send_once_including_sold_out_and_errors(self):
+        for result, expected in [
+            ({"ok": True, "available": 4, "stock_mode": "quantity"}, "库存：4 件"),
+            ({"ok": True, "available": 0, "stock_mode": "quantity"}, "库存：缺货"),
+            ({"ok": True, "available": 1, "stock_mode": "availability"}, "库存：有货"),
+            ({"ok": False, "error": "HTTP 403"}, "测试失败：HTTP 403"),
+        ]:
+            task = self.task()
+            process = Mock()
+            process.communicate.return_value = (json.dumps(result), None)
+            process.poll.return_value = 0
+            with self.subTest(result=result), patch.object(admin.subprocess, "Popen", return_value=process), patch.object(admin, "telegram_credentials", return_value=("test-token", "123")), patch.object(admin, "telegram_call") as send:
+                task.run()
+                self.assertEqual(task.snapshot()["notification"]["status"], "sent")
+                for _ in range(3):
+                    task.snapshot()
+                send.assert_called_once()
+                self.assertEqual(send.call_args.args, ("test-token", "sendMessage"))
+                self.assertEqual(send.call_args.kwargs["chat_id"], "123")
+                self.assertIn(expected, send.call_args.kwargs["text"])
+                self.assertIn("商品：test", send.call_args.kwargs["text"])
+                self.assertIn("检查时间：", send.call_args.kwargs["text"])
+
+    def test_cancelled_task_never_sends_result(self):
+        task = self.task()
+        task.cancel()
+        with patch.object(admin, "telegram_call") as send, patch.object(admin.subprocess, "Popen") as spawn:
+            task.run()
+        send.assert_not_called()
+        spawn.assert_not_called()
+        self.assertEqual(task.snapshot()["notification"]["status"], "skipped")
+
+    def test_missing_bot_and_delivery_failure_preserve_stock_result(self):
+        for credentials, error, status in [(("", ""), None, "unconfigured"), (("test-token", "123"), admin.TelegramAPIError("无法连接 Telegram"), "failed")]:
+            task = self.task()
+            process = Mock()
+            process.communicate.return_value = (json.dumps({"ok": True, "available": 4, "stock_mode": "quantity"}), None)
+            process.poll.return_value = 0
+            with self.subTest(status=status), patch.object(admin.subprocess, "Popen", return_value=process), patch.object(admin, "telegram_credentials", return_value=credentials), patch.object(admin, "telegram_call", side_effect=error) as send:
+                task.run()
+            self.assertTrue(task.done.is_set())
+            self.assertTrue(task.snapshot()["ok"])
+            self.assertEqual(task.snapshot()["available"], 4)
+            self.assertEqual(task.snapshot()["notification"]["status"], status)
+            if status == "unconfigured":
+                send.assert_not_called()
+
+    def test_delivery_phase_does_not_block_status_and_cannot_cancel_finished_check(self):
+        task = self.task()
+        sending, release = threading.Event(), threading.Event()
+        process = Mock()
+        process.communicate.return_value = (json.dumps({"ok": True, "available": 0, "stock_mode": "quantity"}), None)
+        process.poll.return_value = 0
+
+        def send(*args, **kwargs):
+            sending.set()
+            release.wait(3)
+
+        with patch.object(admin.subprocess, "Popen", return_value=process), patch.object(admin, "telegram_credentials", return_value=("test-token", "123")), patch.object(admin, "telegram_call", side_effect=send):
+            thread = threading.Thread(target=task.run)
+            thread.start()
+            try:
+                self.assertTrue(sending.wait(3))
+                self.assertTrue(task.snapshot()["notifying"])
+                task.cancel()
+                self.assertFalse(task.cancelled.is_set())
+            finally:
+                release.set()
+                thread.join(3)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(task.snapshot()["notification"]["status"], "sent")
 
     def test_browser_has_dedicated_session_and_is_destroyed_after_result(self):
         task = self.task(True)
@@ -193,6 +270,29 @@ class StockTaskTests(unittest.TestCase):
                 result = subprocess.run([sys.executable, "-c", "from monitor import browser_request_slot;\nwith browser_request_slot(): pass"], capture_output=True, text=True, timeout=5)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("另一个浏览器请求", result.stderr)
+
+
+class StockTestTelegramTests(unittest.TestCase):
+    def test_explicit_test_uses_saved_bot_even_when_automatic_notifications_disabled(self):
+        saved = admin.default_config()
+        saved["telegram"] = {"bot_token": "saved-token", "chat_id": "123", "disabled": True}
+        result = {"ok": True, "available": 1, "stock_mode": "quantity", "checked_at": "2026-10-15T17:00:00+08:00", "duration_seconds": 0.5, "purchase_url": "https://shop.example.com/item"}
+        with patch.object(admin, "current_config", return_value=saved), patch.object(admin, "telegram_call") as send:
+            notification = admin.send_stock_test_result(product(), result)
+        self.assertEqual(notification["status"], "sent")
+        self.assertEqual(send.call_args.args, ("saved-token", "sendMessage"))
+        self.assertEqual(send.call_args.kwargs["chat_id"], "123")
+        self.assertIn("商品入口：https://shop.example.com/item", send.call_args.kwargs["text"])
+        self.assertNotIn("parse_mode", send.call_args.kwargs)
+
+    def test_api_error_does_not_expose_saved_token_in_notification_status(self):
+        response = Mock(ok=False)
+        response.json.return_value = {"ok": False, "description": "invalid private-token"}
+        result = {"ok": False, "error": "HTTP 403", "checked_at": "2026-10-15", "duration_seconds": 0.5}
+        with patch.object(admin, "telegram_credentials", return_value=("private-token", "123")), patch.object(admin.requests, "post", return_value=response):
+            notification = admin.send_stock_test_result(product(), result)
+        self.assertEqual(notification["status"], "failed")
+        self.assertNotIn("private-token", json.dumps(notification))
 
 
 if __name__ == "__main__":

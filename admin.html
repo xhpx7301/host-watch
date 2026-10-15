@@ -51,6 +51,11 @@
     .section-head { display:flex; justify-content:space-between; align-items:flex-start; gap:18px; margin-bottom:15px; }
     h2 { margin:0; font-size:16px; }
     .section-head p,.subtle { margin:4px 0 0; color:var(--muted); font-size:12px; }
+    .merchant-add { max-width:100%; min-width:0; }
+    .merchant-add .actions { align-items:flex-end; }
+    .merchant-add label { flex:1; min-width:0; }
+    .merchant-add select { min-height:36px; width:100%; }
+    .merchant-add .hint { max-width:340px; }
     .product-list { display:grid; gap:9px; }
     .product { display:grid; grid-template-columns:minmax(180px,1.35fr) minmax(90px,.55fr) minmax(110px,.65fr) minmax(110px,.65fr) auto; align-items:center; gap:14px; padding:13px 14px; border:1px solid var(--line); border-radius:5px; background:var(--paper); }
     .product-name { min-width:0; }
@@ -105,6 +110,9 @@
     .product-test-result { margin:12px 0; padding:12px; border:1px solid #bed2df; border-radius:5px; background:var(--blue-soft); color:var(--blue); overflow-wrap:anywhere; }
     .product-test-result.success { border-color:#b7d7c9; background:var(--green-soft); color:var(--green); }
     .product-test-result.error { border-color:#e7c1bc; background:var(--red-soft); color:var(--red); }
+    .test-notification { display:block; margin-top:6px; font-weight:650; }
+    .test-notification.success { color:var(--green); }
+    .test-notification.error { color:var(--red); }
     .blocked-help { margin-top:13px; padding:12px 14px; border-left:3px solid var(--red); color:#6e3030; background:var(--red-soft); }
     .blocked-help strong { display:block; margin-bottom:3px; }
     .chat-list { display:grid; gap:7px; margin-top:10px; }
@@ -143,7 +151,7 @@
   </section>
 
   <section class="section">
-    <div class="section-head"><div><h2>商品监控</h2><p>商品运行状态与监控服务一致；暂停后保留上次库存记录。运行时发现有货可通过 Telegram 提醒。</p></div><div class="actions"><button id="add-akile" type="button">＋ Akile HKL-TW</button><button id="add-vps-soy" type="button">＋ VPS.SOY 商品</button><button id="add" type="button" class="primary">＋ 添加商品</button></div></div>
+    <div class="section-head"><div><h2>商品监控</h2><p>商品运行状态与监控服务一致；暂停后保留上次库存记录。运行时发现有货可通过 Telegram 提醒。</p></div><div class="merchant-add"><div class="actions"><label for="add-merchant">商家适配<select id="add-merchant" aria-describedby="add-merchant-hint"></select></label><button id="add" type="button" class="primary">＋ 添加商品</button></div><p id="add-merchant-hint" class="hint"></p></div></div>
     <div id="product-list" class="product-list"></div>
   </section>
 
@@ -208,7 +216,7 @@
   <details class="section" data-tone="purple">
     <summary><span>商品配置</span><span class="section-toggle" aria-hidden="true"></span></summary>
     <div class="section-body">
-    <p class="hint">点击商品标题展开配置。可直接“测试此商品”查看库存或错误，也可随时“停止测试”；测试期间页面仍可操作，无需开启监控，不发送 Telegram 提醒。VMISS、VPS.SOY、Akile 和通用网页仅显示对应适配器的字段。</p>
+    <p class="hint">点击商品标题展开配置。“测试此商品”会显示库存或错误，并通过已保存的 Telegram 机器人发送结果，无需开启监控；测试期间页面仍可操作，可停止库存检查，停止后不发送结果。VMISS、VPS.SOY、Akile 和通用网页仅显示对应适配器的字段。</p>
     <div id="product-editors"></div>
     </div>
   </details>

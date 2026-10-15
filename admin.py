@@ -53,7 +53,7 @@ def stock_test_worker() -> None:
         with requests.Session() as session:
             session.headers["User-Agent"] = "HostWatch/1.0 (manual stock test)"
             result = inspect_product(session, value["product"], value["fetcher"])
-        output = {"ok": True, "available": result.available, "stock_mode": result.stock_mode}
+        output = {"ok": True, "available": result.available, "stock_mode": result.stock_mode, "purchase_url": result.url}
     except MonitorError as exc:
         output = {"ok": False, "error": str(exc)}
     print(json.dumps(output))
@@ -79,7 +79,7 @@ class StockTestTask:
 
     def cancel(self) -> None:
         with self.lock:
-            if self.done.is_set():
+            if self.done.is_set() or self.output.get("notifying"):
                 return
             self.cancelled.set()
             if self.process is not None and self.process.poll() is None:
@@ -140,7 +140,15 @@ class StockTestTask:
                     result = {"ok": False, "cancelled": True, "error": "测试已停止"}
                 if cleanup_warning:
                     result["warning"] = cleanup_warning
-                self.output = {**result, "pending": False, "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"), "duration_seconds": round(time.monotonic() - self.started, 1)}
+                self.output = {**result, "pending": True, "notifying": not self.cancelled.is_set(), "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"), "duration_seconds": round(time.monotonic() - self.started, 1)}
+            # Stock checking and browser cleanup have finished. Do not hold the
+            # task lock across Telegram I/O; status polling must remain responsive.
+            if not self.cancelled.is_set():
+                notification = send_stock_test_result(self.product, self.snapshot())
+            else:
+                notification = {"status": "skipped", "message": "测试已停止，未发送 Telegram"}
+            with self.lock:
+                self.output.update(pending=False, notifying=False, notification=notification)
                 self.done.set()
 
 
@@ -548,6 +556,36 @@ def telegram_credentials(token_override: str = "", chat_id_override: str = "") -
     if chat_id and (len(chat_id) > 128 or not re.fullmatch(r"(?:-?\d{1,32}|@[A-Za-z0-9_]{5,64})", chat_id)):
         raise ValueError("Telegram chat_id 格式无效")
     return token, chat_id
+
+
+def send_stock_test_result(product: dict, result: dict) -> dict:
+    """Explicit manual delivery, like /api/telegram/test, independent of monitoring."""
+    try:
+        token, chat_id = telegram_credentials()
+        if not token or not chat_id:
+            return {"status": "unconfigured", "message": "未发送 Telegram：请先保存机器人 Token 和 Chat ID"}
+        if result.get("ok"):
+            available = result["available"]
+            stock = "缺货" if available <= 0 else "有货" if result.get("stock_mode") == "availability" else f"{available} 件"
+            detail = f"库存：{stock}"
+        else:
+            detail = f"测试失败：{str(result.get('error', '未知错误'))[:800]}"
+        message = (
+            "HostWatch · 商品单次测试\n"
+            f"商家：{str(product.get('provider') or product.get('adapter', ''))[:200]}\n"
+            f"商品：{str(product['name'])[:300]}\n{detail}\n"
+            f"检查时间：{result['checked_at']}\n耗时：{result['duration_seconds']} 秒"
+        )
+        if result.get("warning"):
+            message += f"\n提示：{str(result['warning'])[:400]}"
+        if result.get("ok") and result.get("purchase_url"):
+            message += f"\n商品入口：{str(result['purchase_url'])[:2048]}"
+        telegram_call(token, "sendMessage", chat_id=chat_id, text=message, disable_web_page_preview=True)
+        return {"status": "sent", "message": "测试结果已发送至 Telegram"}
+    except TelegramAPIError as exc:
+        return {"status": "failed", "message": f"测试结果发送失败：{exc}"}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {"status": "failed", "message": "测试结果发送失败：请检查已保存的 Telegram 配置和管理页日志"}
 
 
 def request_body(handler: BaseHTTPRequestHandler) -> dict:

@@ -377,7 +377,7 @@ function productEditor(item, index) {
   const result = text("div", "", "product-test-result");
   result.setAttribute("role", "status");
   result.setAttribute("aria-live", "polite");
-  body.append(actions, text("p", "测试仅访问此商品一次，使用页面当前配置；无需保存或开启监控，不发送提醒、不修改库存历史。", "hint"), result, grid, modeWrap);
+  body.append(actions, text("p", "单次检查使用当前商品配置，无需保存商品或开启监控；结果通过已保存的 Telegram 机器人发送（含缺货和错误），不受自动提醒开关影响。请先保存机器人 Token 和 Chat ID；停止检查不发送结果。", "hint"), result, grid, modeWrap);
   article.append(head, body);
   renderProductTest(article, item.id);
   updateProductEditorTitle(article, item);
@@ -441,24 +441,25 @@ function renderProductTest(article, id) {
   node.hidden = !result;
   if (!result) { node.textContent = ""; return; }
   node.className = `product-test-result ${result.pending || result.cancelled ? "pending" : result.ok ? "success" : "error"}`;
-  node.textContent = result.pending ? (result.stopping ? "正在停止测试并释放浏览器资源…" : "正在读取此商品库存，可点击“停止测试”，页面其他功能仍可使用。") : result.cancelled ? "测试已停止，未改动自动监控和库存历史。" : result.ok
+  node.textContent = result.pending ? (result.notifying ? `${result.ok ? `库存检查完成：${stockLabel(result)}` : `测试失败：${result.error}`}。正在发送 Telegram 测试结果…` : result.stopping ? "正在停止测试并释放浏览器资源…" : "正在读取此商品库存，可点击“停止测试”，页面其他功能仍可使用。") : result.cancelled ? "测试已停止，未改动自动监控和库存历史。" : result.ok
     ? `测试成功：${stockLabel(result)}。${new Date(result.checked_at).toLocaleString()} · 耗时 ${result.duration_seconds} 秒。自动监控状态保持不变。`
     : `测试失败：${result.error}${result.checked_at ? `（${new Date(result.checked_at).toLocaleString()}）` : ""}`;
   if (result.warning) node.textContent += ` ${result.warning}`;
+  if (result.notification) node.append(text("span", result.notification.message, `test-notification ${result.notification.status === "sent" ? "success" : "error"}`));
 }
 
 function syncTestControls() {
   document.querySelector("#stock-test-bar").hidden = !activeTest;
-  document.querySelector("#stock-test-status").textContent = activeTest?.stopping ? "正在停止测试并释放资源…" : "商品测试正在运行，页面仍可操作。";
+  document.querySelector("#stock-test-status").textContent = activeTest?.notifying ? "库存检查已结束，正在发送 Telegram 结果，页面仍可操作。" : activeTest?.stopping ? "正在停止测试并释放资源…" : "商品测试正在运行，页面仍可操作。";
   const globalStop = document.querySelector("#stock-test-stop");
-  globalStop.disabled = Boolean(activeTest?.stopping);
+  globalStop.disabled = Boolean(activeTest?.stopping || activeTest?.notifying);
   editorNode.querySelectorAll(".product-editor").forEach((article) => {
     const running = activeTest?.id === article.dataset.id;
     const test = article.querySelector(".product-test");
     test.disabled = Boolean(activeTest) || actionRunning;
-    test.textContent = running ? "测试中…" : "测试此商品";
+    test.textContent = running ? (activeTest.notifying ? "发送结果中…" : "测试中…") : "测试此商品";
     const stop = article.querySelector(".product-test-stop");
-    stop.hidden = !running;
+    stop.hidden = !running || Boolean(activeTest?.notifying);
     stop.disabled = Boolean(activeTest?.stopping);
     stop.textContent = activeTest?.stopping ? "停止中…" : "停止测试";
     article.querySelector(".actions > .danger:not(.product-test-stop)").disabled = running || actionRunning;
@@ -468,7 +469,7 @@ function syncTestControls() {
 
 async function stopProductTest() {
   const task = activeTest;
-  if (!task || task.stopping) return;
+  if (!task || task.stopping || task.notifying) return;
   task.stopping = true;
   productTests.set(task.id, { pending: true, stopping: true });
   setMessage("正在停止本次测试并释放资源…", "pending");
@@ -511,6 +512,12 @@ async function followProductTest(task, initial) {
       }
     }
     while (result.pending) {
+      if (result.notifying) {
+        task.notifying = true;
+        task.stopping = false;
+        productTests.set(task.id, result);
+        syncTestControls();
+      }
       await new Promise((resolve) => setTimeout(resolve, 700));
       try { result = await requestJSON(`/api/products/test/status/${encodeURIComponent(task.taskId)}`, { timeoutMs: 10000 }); }
       catch (error) {
@@ -523,7 +530,9 @@ async function followProductTest(task, initial) {
       result.warning = [result.warning, "此结果使用测试开始时的配置；页面已修改，请按需重新测试。"].filter(Boolean).join(" ");
     }
     productTests.set(task.id, result);
-    setMessage(result.warning || (result.cancelled ? "测试已停止。" : result.ok ? "单次库存测试完成，结果已显示在该商品配置内。" : `单次库存测试失败：${result.error}`), result.warning || (!result.ok && !result.cancelled) ? "error" : "success");
+    const notificationIssue = result.notification && !["sent", "skipped"].includes(result.notification.status);
+    const summary = result.cancelled ? "测试已停止。" : result.ok ? "单次库存测试完成，结果已显示在该商品配置内。" : `单次库存测试失败：${result.error}`;
+    setMessage([summary, result.notification?.message, result.warning].filter(Boolean).join(" "), result.warning || notificationIssue || (!result.ok && !result.cancelled) ? "error" : "success");
   } catch (error) {
     productTests.set(task.id, { ok: false, error: error.message });
     setMessage(error.message, "error");
@@ -762,13 +771,32 @@ function addProducts(items) {
   setMessage(items.length === 1 ? "商品已添加，请填写商品信息后保存。" : `已添加 ${items.length} 个商品，可先测试，勾选需要监控的套餐后保存。`, "pending");
   updateDraftState();
 }
-document.querySelector("#add").addEventListener("click", () => addProduct({ id: crypto.randomUUID(), adapter: "html", provider: "自定义网站", name: "", url: "", stock_selector: "", stock_mode: "quantity", stock_pattern: "([\\d,]+)", available_pattern: "(?i)in stock|available|有货|现货", unavailable_pattern: "(?i)out of stock|sold out|缺货|售罄", purchase_url: "", enabled: false }));
-document.querySelector("#add-vps-soy").addEventListener("click", () => addProduct({ id: crypto.randomUUID(), adapter: "vps_soy", provider: "VPS.SOY", name: "深港IX-MINI", url: "https://www.vps.soy/cart", selector: "深港IX-MINI", request_mode: "requests", enabled: false }));
-document.querySelector("#add-akile").addEventListener("click", () => {
-  const products = ["Mini", "Starter", "Standard", "Pro"].map((tier) => ({ id: crypto.randomUUID(), adapter: "akile", provider: "Akile", name: `HKL-TW-${tier}`, area_id: "6", node_name: "HKL-TW", selector: `HKL-TW-${tier}`, request_mode: "requests", enabled: false }))
-    .filter((item) => !config.products.some((existing) => existing.adapter === "akile" && String(existing.area_id) === item.area_id && existing.node_name?.trim().toLowerCase() === item.node_name.toLowerCase() && existing.selector?.trim().toLowerCase() === item.selector.toLowerCase()));
-  if (!products.length) { setMessage("HKL-TW 四个套餐已在商品列表中，可展开配置并测试。", "success"); return; }
-  addProducts(products);
+// Merchant defaults live in one registry so future presets share the same entry.
+const merchantPresets = {
+  html: { label: "其他商家 · 通用 HTTPS 网页", hint: "填写商品网址及库存规则，适用于其他公开商品网页。", product: { adapter: "html", provider: "自定义网站", name: "", url: "", stock_selector: "", stock_mode: "quantity", stock_pattern: "([\\d,]+)", available_pattern: "(?i)in stock|available|有货|现货", unavailable_pattern: "(?i)out of stock|sold out|缺货|售罄", purchase_url: "" } },
+  vmiss: { label: "VMISS", hint: "填写分类页、商品选择器和分组 ID，使用 VMISS 专用解析。", product: { adapter: "vmiss", provider: "VMISS", name: "", category_url: "", selector: "", gid: "" } },
+  vps_soy: { label: "VPS.SOY", hint: "默认深港IX-MINI，可修改套餐完整名称。", product: { adapter: "vps_soy", provider: "VPS.SOY", name: "深港IX-MINI", url: "https://www.vps.soy/cart", selector: "深港IX-MINI", request_mode: "requests" } },
+  akile: { label: "Akile", hint: "默认仅添加 HKL-TW-Mini，使用普通 HTTPS 请求。", product: { adapter: "akile", provider: "Akile", name: "HKL-TW-Mini", area_id: "6", node_name: "HKL-TW", selector: "HKL-TW-Mini", request_mode: "requests" } },
+};
+const merchantSelect = document.querySelector("#add-merchant");
+for (const [key, preset] of Object.entries(merchantPresets)) {
+  merchantSelect.add(new Option(preset.label, key));
+}
+function updateMerchantHint() { document.querySelector("#add-merchant-hint").textContent = merchantPresets[merchantSelect.value].hint; }
+merchantSelect.addEventListener("change", updateMerchantHint);
+updateMerchantHint();
+document.querySelector("#add").addEventListener("click", () => {
+  const item = { ...structuredClone(merchantPresets[merchantSelect.value].product), id: crypto.randomUUID(), enabled: false };
+  const existing = item.adapter === "akile" && config.products.find((product) => product.adapter === "akile" && String(product.area_id) === item.area_id && product.node_name?.trim().toLowerCase() === item.node_name.toLowerCase() && product.selector?.trim().toLowerCase() === item.selector.toLowerCase());
+  if (existing) {
+    openProducts.add(existing.id);
+    renderProducts();
+    editorNode.closest("details").open = true;
+    editorNode.querySelector(`[data-id="${CSS.escape(existing.id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setMessage("HKL-TW-Mini 已存在，已展开配置；监控其他套餐可修改此商品的套餐完整名称后再添加。", "success");
+    return;
+  }
+  addProduct(item);
 });
 document.querySelector("#refresh-status").addEventListener("click", (event) => runAction(event.currentTarget, "刷新中…", "正在刷新监控状态…", async () => {
   await Promise.all([loadStatus(), refreshManagement()]);

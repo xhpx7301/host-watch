@@ -17,6 +17,7 @@ class AdminAPITests(unittest.TestCase):
         self.config = Path(self.temp.name) / "config.json"
         for setting in (patch.object(admin, "CONFIG_PATH", self.config),
                         patch.object(admin, "authorized", return_value=True),
+                        patch.object(admin, "telegram_credentials", return_value=("", "")),
                         patch.dict(os.environ, {"ADMIN_ALLOWED_HOSTS": "127.0.0.1"})):
             setting.start()
             self.addCleanup(setting.stop)
