@@ -842,10 +842,13 @@ function renderMonitorState() {
   else if (config.enabled) note += "服务尚未运行，可点击“开始监控”恢复。";
   else note += "点击“开始监控”后开始检查。";
   const runtime = document.querySelector("#monitor-runtime");
+  const tone = active === "active" ? "ok" : ["inactive", "failed"].includes(active) ? "error" : ["activating", "deactivating"].includes(active) ? "pending" : "";
   runtime.textContent = label;
-  runtime.className = `state ${active === "active" ? "ok" : active === "failed" ? "error" : ""}`;
+  runtime.className = `state ${tone}`;
   document.querySelector("#monitor-runtime-note").textContent = note;
-  document.querySelector("#overview-state").textContent = label;
+  const overview = document.querySelector("#overview-state");
+  overview.textContent = label;
+  overview.className = `overview-value state ${tone}`;
   document.querySelector("#overview-state-note").textContent = note;
   renderProductList();
 }

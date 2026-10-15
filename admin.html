@@ -27,9 +27,10 @@
     .toolbar,.actions,.status-line { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
     .status-line { justify-content:flex-end; color:var(--muted); font-size:12px; }
     .state { display:inline-flex; align-items:center; gap:7px; font-weight:700; color:var(--muted); }
-    .state::before { content:""; width:8px; height:8px; border-radius:50%; background:#9aa5a8; }
+    .state::before { content:""; flex-shrink:0; width:8px; height:8px; border-radius:50%; background:#9aa5a8; }
     .state.ok { color:var(--green); } .state.ok::before { background:#1f9a70; }
     .state.blocked,.state.error { color:var(--red); } .state.blocked::before,.state.error::before { background:#c8564c; }
+    .state.pending { color:var(--amber); } .state.pending::before { background:#b5822d; }
     #message { min-height:0; margin:0; padding:0; color:var(--muted); }
     #message:not(:empty) { margin-top:12px; padding:9px 12px; border:1px solid var(--line); border-radius:4px; background:#fff; }
     #message.pending { color:var(--blue); border-color:#b9d2df; }
@@ -46,6 +47,7 @@
     .overview-item + .overview-item { padding-left:18px; border-left:1px solid var(--line); }
     .eyebrow { color:var(--muted); font-size:11px; font-weight:700; text-transform:uppercase; }
     .overview-value { display:block; margin-top:7px; font-size:19px; font-weight:680; overflow-wrap:anywhere; }
+    .overview-value.state { display:flex; }
     .overview-note { display:block; margin-top:2px; color:var(--muted); font-size:12px; }
     .section { padding:22px 0; border-bottom:1px solid var(--line); }
     .section-head { display:flex; justify-content:space-between; align-items:flex-start; gap:18px; margin-bottom:15px; }
@@ -130,6 +132,8 @@
     .monitor-control p { margin:7px 0; }
     .draft-note { color:var(--amber); font-weight:600; }
     .savebar { position:sticky; bottom:10px; z-index:2; display:flex; justify-content:space-between; align-items:center; gap:14px; margin-top:18px; padding:10px 12px; border:1px solid #ccd6d5; border-radius:5px; background:rgba(255,255,255,.96); box-shadow:0 4px 18px rgba(25,43,42,.08); }
+    .savebar .actions { flex-shrink:0; flex-wrap:nowrap; }
+    .savebar .actions button { white-space:nowrap; }
     @media(max-width:780px) { .shell { padding:16px 14px 40px; } .overview { grid-template-columns:repeat(2,minmax(0,1fr)); } .overview-item { padding:14px 10px 14px 0; min-height:85px; } .overview-item + .overview-item { padding-left:12px; } .overview-item:nth-child(3) { padding-left:0; border-left:0; } .product { grid-template-columns:1fr 1fr; gap:11px; } .product-name { grid-column:1/-1; } .product-actions { grid-column:1/-1; justify-content:flex-start; } }
     @media(max-width:780px) { .manage-grid { grid-template-columns:1fr; } .manage-form { grid-template-columns:1fr; } }
     @media(max-width:520px) { .topbar,.section-head { align-items:flex-start; flex-direction:column; } .status-line { justify-content:flex-start; } .form-grid { grid-template-columns:1fr; } .span-2 { grid-column:auto; } .savebar { align-items:stretch; flex-direction:column; } .savebar .actions button { flex:1; } }
@@ -144,7 +148,7 @@
   <div id="message"></div>
   <div id="stock-test-bar" class="section actions" hidden><span id="stock-test-status" role="status"></span><button id="stock-test-stop" class="product-test-stop danger" type="button">停止测试</button></div>
   <section class="overview" aria-label="监控摘要">
-    <div class="overview-item"><span class="eyebrow">监控服务</span><strong id="overview-state" class="overview-value">读取中</strong><span id="overview-state-note" class="overview-note">等待状态数据</span></div>
+    <div class="overview-item"><span class="eyebrow">监控服务</span><strong id="overview-state" class="overview-value state" role="status" aria-live="polite">读取中</strong><span id="overview-state-note" class="overview-note">等待状态数据</span></div>
     <div class="overview-item"><span class="eyebrow">商品总数</span><strong id="overview-total" class="overview-value">0</strong><span id="overview-total-note" class="overview-note">0 个厂商</span></div>
     <div class="overview-item"><span class="eyebrow">上次记录有货</span><strong id="overview-stock" class="overview-value">0</strong><span class="overview-note">历史结果，暂停后不会更新</span></div>
     <div class="overview-item"><span class="eyebrow">检查间隔</span><strong id="overview-interval" class="overview-value">10 分钟</strong><span class="overview-note">每轮完成后的等待时间</span></div>
@@ -161,10 +165,6 @@
     <div class="monitor-control">
       <strong id="monitor-runtime" class="state">正在读取服务状态</strong>
       <p id="monitor-runtime-note" class="subtle">以服务器实际运行状态为准。</p>
-      <div class="manage-actions">
-        <button id="monitor-start" type="button" class="primary">开始监控</button>
-        <button id="monitor-stop" type="button">暂停监控</button>
-      </div>
       <p id="monitor-draft" class="hint" aria-live="polite">配置读取中。</p>
       <p class="hint">开始后立即检查一次，再按间隔自动检查；暂停后停止检查和库存提醒。刷新状态只读取记录，不会检查商品。</p>
     </div>
@@ -235,7 +235,7 @@
       <button id="manage-backup" type="button">立即备份</button>
       <button id="manage-update" type="button">更新 HostWatch</button>
     </div>
-    <p class="hint">监控启停请使用“监控设置”中的开始或暂停按钮；配置修改统一使用底部“保存配置”。</p>
+    <p class="hint">监控启停请使用底部“开始监控”“暂停监控”；配置修改使用旁边的“保存配置”。</p>
     <p id="manage-task-status" class="hint" aria-live="polite"></p>
     <h3>管理页管理员</h3>
     <p class="hint">密码至少 12 个字符。账号立即生效；删除最后一个管理员会被拒绝。</p>
@@ -259,7 +259,7 @@
     </div>
   </details>
 
-  <footer class="savebar"><span class="subtle">统一保存全部配置，保持当前监控开关；自动监控开启时会重新应用配置。</span><div class="actions"><button id="save" class="primary" type="button">保存配置</button></div></footer>
+  <footer class="savebar"><span class="subtle">统一保存全部配置，保持当前监控开关；自动监控开启时会重新应用配置。</span><div class="actions" role="group" aria-label="监控与配置操作"><button id="monitor-start" type="button" class="primary">开始监控</button><button id="monitor-stop" type="button">暂停监控</button><button id="save" class="primary" type="button">保存配置</button></div></footer>
 </main>
 <aside id="toast" class="toast" hidden aria-label="操作提示"><div><strong id="toast-label" class="toast-label"></strong><div id="toast-message" role="status" aria-live="polite" aria-atomic="true"></div></div><button id="toast-close" type="button" aria-label="关闭操作提示">×</button></aside>
 <script src="/admin.js"></script>
