@@ -86,7 +86,7 @@ def read_payload(session, fetcher: dict | None = None) -> dict:
 
 
 def _scopes(payload: dict) -> list[dict]:
-    result = [{"id": "all", "name": "全部公开套餐"}]
+    result = [{"id": "all", "name": "全部公开套餐（手动）"}]
     for location in payload["locations"]:
         if not isinstance(location, dict):
             continue

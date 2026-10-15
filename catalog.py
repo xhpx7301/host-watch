@@ -68,7 +68,7 @@ def akile_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[lis
     if not isinstance(payload, dict) or str(payload.get("status_code")) not in {"0", "200"} or not isinstance(payload.get("data"), dict) or not isinstance(payload["data"].get("areas"), list):
         raise MonitorError("Akile 目录结构异常")
     areas = payload["data"]["areas"]
-    scopes = [{"id": "all", "name": "全部地区"}] + [{"id": str(a["id"]), "name": f"{clean(a.get('area_name'))}（{a['id']}）"} for a in areas]
+    scopes = [{"id": "all", "name": "全部公开套餐（手动）"}] + [{"id": str(a["id"]), "name": f"{clean(a.get('area_name'))}（{a['id']}）"} for a in areas]
     selected = scoped(scopes, scope, "all")
     rows = []
     for area in areas:
@@ -103,7 +103,7 @@ def vmiss_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[lis
         match = re.fullmatch(r"/store/([A-Za-z0-9_-]+)", parsed.path)
         if parsed.scheme == "https" and parsed.hostname == "app.vmiss.com" and not parsed.query and match:
             scopes_by_id.setdefault(match[1], {"id": match[1], "name": clean(link.get_text(" ", strip=True))})
-    scopes = [{"id": "all", "name": "全部公开套餐"}] + list(scopes_by_id.values())
+    scopes = [{"id": "all", "name": "全部公开套餐（手动）"}] + list(scopes_by_id.values())
     selected = scoped(scopes, scope, "cn-hong-kong-bgp")
     targets = list(scopes_by_id.values()) if selected["id"] == "all" else [selected]
     rows = []
@@ -145,7 +145,7 @@ def soy_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[list,
             scopes.append({"id": f"{match[2]}:{match[3]}", "name": f"{clean(node.get_text(' ', strip=True))}（GID={match[3]}）", "url": "https://www.vps.soy" + match[1]})
     if not scopes:
         raise MonitorError("VPS.SOY 返回页面缺少商品分类")
-    scopes = [{"id": "all", "name": "全部公开套餐"}] + scopes
+    scopes = [{"id": "all", "name": "全部公开套餐（手动）"}] + scopes
     selected = scoped(scopes, scope, "1:8")
     targets = [row for row in scopes if row["id"] != "all"] if selected["id"] == "all" else [selected]
     rows = []
@@ -182,7 +182,7 @@ def isvoro_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[li
             scopes.append({"id": f"{kind['id']}:{line['id']}", "name": f"{kind['name']} / {line['name']}（{line['id']}）", "type": kind, "line": line})
     if not scopes:
         raise MonitorError("Isvoro 返回页面缺少商品分类")
-    scopes = [{"id": "all", "name": "全部公开套餐"}] + scopes
+    scopes = [{"id": "all", "name": "全部公开套餐（手动）"}] + scopes
     selected = scoped(scopes, scope, "24:27")
     targets = [row for row in scopes if row["id"] != "all"] if selected["id"] == "all" else [selected]
     cache = {("categories", mode): raw_types}

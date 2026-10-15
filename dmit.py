@@ -249,7 +249,7 @@ def directory(session, scope: str, fetcher: dict) -> tuple[list, str, list]:
     from catalog import clean, make_row, scoped
     from monitor import MonitorError, Product
     body, final = fetch_catalog(session, PRICING_URL, fetcher)
-    scopes = [{"id": "all", "name": "全部公开套餐", "url": PRICING_URL}]
+    scopes = [{"id": "all", "name": "全部公开套餐（手动）", "url": PRICING_URL}]
     seen = {PRICING_URL}
     for a in BeautifulSoup(body, "html.parser").select("a[href]"):
         try:
