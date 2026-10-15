@@ -248,6 +248,16 @@ def fetch_html_stock(session: requests.Session, item: dict, fetcher: dict | None
     )
 
 
+def inspect_product(session: requests.Session, item: dict, fetcher: dict) -> Product:
+    """Read one product without saving history, changing services or notifying."""
+    if item["adapter"] == "html":
+        return fetch_html_stock(session, item, fetcher)
+    products = fetch_products(session, item["category_url"], [item["selector"]], product_fetcher(fetcher, item))
+    if len(products) != 1:
+        raise MonitorError("商品无法唯一匹配页面套餐；请检查商品选择标识")
+    return products[0]
+
+
 def affiliate_url(product_url: str, affiliate_id: str, gid: str, pid: str) -> str:
     parsed = urlsplit(product_url)
     query = {"aff": affiliate_id, "pid" if pid else "gid": pid or gid}

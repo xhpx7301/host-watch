@@ -108,6 +108,54 @@ class AdminAPITests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "请求方式无效"):
             admin.validate_config({"products": [{**item, "request_mode": "unknown"}]})
 
+    def test_single_product_test_uses_unsaved_disabled_product_without_side_effects(self):
+        from monitor import Product
+        item = {"id": "test", "name": "test", "adapter": "html", "url": "https://shop.example.com/item", "stock_selector": ".stock", "enabled": False}
+        with patch("monitor.inspect_product", return_value=Product("test", "test", 7, item["url"], stock_mode="quantity")) as inspect, patch.object(admin, "manager_action") as manager, patch("monitor.write_state") as history, patch("monitor.write_status") as status, patch("monitor.telegram_request") as telegram:
+            code, body = self.request("/api/products/test", {"product": item, "fetcher": {"mode": "flaresolverr", "wait_seconds": 3}})
+        result = json.loads(body)
+        self.assertEqual(code, 200)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["available"], 7)
+        self.assertIn("checked_at", result)
+        self.assertFalse(inspect.call_args.args[1]["enabled"])
+        self.assertEqual(inspect.call_args.args[2]["wait_seconds"], 3)
+        for action in [manager, history, status, telegram]:
+            action.assert_not_called()
+        self.assertFalse(self.config.exists())
+
+    def test_single_product_test_returns_inline_error(self):
+        from monitor import SiteBlocked
+        item = {"id": "test", "name": "test", "adapter": "html", "url": "https://shop.example.com/item", "stock_selector": ".stock"}
+        with patch("monitor.inspect_product", side_effect=SiteBlocked("HTTP 403")):
+            code, body = self.request("/api/products/test", {"product": item})
+        self.assertEqual(code, 200)
+        self.assertFalse(json.loads(body)["ok"])
+        self.assertEqual(json.loads(body)["error"], "HTTP 403")
+
+    def test_single_product_validation_prevents_network_request(self):
+        with patch("monitor.inspect_product") as inspect:
+            code, _ = self.request("/api/products/test", {"product": {"id": "bad"}})
+        self.assertEqual(code, 400)
+        inspect.assert_not_called()
+
+    def test_save_cannot_change_monitoring_switch(self):
+        value = admin.default_config()
+        value["enabled"] = True
+        with patch.object(admin, "manager_action", return_value={"ok": True}):
+            code, body = self.request("/api/config", value)
+        self.assertEqual(code, 200)
+        self.assertFalse(json.loads(body)["config"]["enabled"])
+
+    def test_saving_while_monitoring_preserves_enabled_flag(self):
+        item = {"id": "test", "name": "test", "adapter": "html", "url": "https://shop.example.com/item", "stock_selector": ".stock", "enabled": True}
+        value = {**admin.default_config(), "enabled": True, "products": [item]}
+        self.config.write_text(json.dumps(value))
+        with patch.object(admin, "manager_action", return_value={"ok": True}):
+            code, body = self.request("/api/config", {**value, "enabled": False})
+        self.assertEqual(code, 200)
+        self.assertTrue(json.loads(body)["config"]["enabled"])
+
 
 if __name__ == "__main__":
     unittest.main()

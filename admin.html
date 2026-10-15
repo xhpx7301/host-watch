@@ -8,6 +8,7 @@
   <style>
     :root { color-scheme: light; --ink:#1d252c; --muted:#68747d; --line:#dce2e5; --paper:#fff; --canvas:#f5f7f6; --green:#166b54; --green-soft:#e7f3ee; --blue:#245d78; --blue-soft:#eaf2f6; --red:#a13d3d; --red-soft:#fbefed; --amber:#8a5b13; --amber-soft:#faf2df; }
     * { box-sizing:border-box; }
+    [hidden] { display:none !important; }
     body { margin:0; color:var(--ink); background:var(--canvas); font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
     button,input,select { font:inherit; }
     button { min-height:36px; padding:7px 11px; border:1px solid #c4cdd0; border-radius:4px; color:var(--ink); background:#fff; cursor:pointer; }
@@ -94,9 +95,16 @@
     .check input { width:16px; height:16px; margin:0; accent-color:var(--green); }
     .span-2 { grid-column:1/-1; }
     .hint { margin:10px 0 0; color:var(--muted); font-size:12px; }
-    .product-editor { padding:15px 0; border-top:1px solid var(--line); }
-    .editor-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
+    .product-editor .actions { margin-bottom:10px; }
+    .product-editor .form-grid { margin-top:14px; }
+    .editor-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
     .editor-head strong { overflow-wrap:anywhere; }
+    .editor-identity { min-width:0; }
+    .editor-identity strong,.editor-meta { display:block; }
+    .editor-meta { margin-top:3px; font-size:12px; font-weight:500; overflow-wrap:anywhere; }
+    .product-test-result { margin:12px 0; padding:12px; border:1px solid #bed2df; border-radius:5px; background:var(--blue-soft); color:var(--blue); overflow-wrap:anywhere; }
+    .product-test-result.success { border-color:#b7d7c9; background:var(--green-soft); color:var(--green); }
+    .product-test-result.error { border-color:#e7c1bc; background:var(--red-soft); color:var(--red); }
     .blocked-help { margin-top:13px; padding:12px 14px; border-left:3px solid var(--red); color:#6e3030; background:var(--red-soft); }
     .blocked-help strong { display:block; margin-bottom:3px; }
     .chat-list { display:grid; gap:7px; margin-top:10px; }
@@ -145,9 +153,8 @@
       <strong id="monitor-runtime" class="state">正在读取服务状态</strong>
       <p id="monitor-runtime-note" class="subtle">以服务器实际运行状态为准。</p>
       <div class="manage-actions">
-        <button id="monitor-start" type="button" class="primary">保存并开始监控</button>
-        <button id="monitor-stop" type="button">保存并暂停监控</button>
-        <button id="manage-restart" type="button">重启监控（已保存配置）</button>
+        <button id="monitor-start" type="button" class="primary">开始监控</button>
+        <button id="monitor-stop" type="button">暂停监控</button>
       </div>
       <p id="monitor-draft" class="hint" aria-live="polite">配置读取中。</p>
       <p class="hint">开始后立即检查一次，再按间隔自动检查；暂停后停止检查和库存提醒。刷新状态只读取记录，不会检查商品。</p>
@@ -161,7 +168,7 @@
     <p class="hint">“首次记录”指该商品还没有库存历史；重启服务不会清除历史。提醒还需要启用并配置 Telegram。</p>
     <div id="blocked-help" class="blocked-help" hidden><strong>上次库存检查被网站拦截（历史记录）</strong><span id="blocked-message">检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。</span><p class="hint">该记录保留至下一次检查；当前服务状态请看上方。请先确认访问方式，避免反复重启。</p></div>
     <p id="request-error" class="blocked-help" hidden></p>
-    <p class="hint">底部“保存配置”保持已保存的监控开关：已启用时重启应用，已暂停时保持停止。</p>
+    <p class="hint">修改配置后统一点击底部“保存配置”；开始、暂停只管理自动监控，不保存页面修改。暂停时也可展开商品并单次测试库存。</p>
     </div>
   </details>
 
@@ -193,14 +200,14 @@
     <p id="fetcher-status" class="hint">普通 HTTPS 请求已启用。</p>
     <p class="hint">安装和更新时自动部署本机 FlareSolverr；已有服务会复用。默认 API 地址为 http://127.0.0.1:8191/v1。动态库存可增加渲染等待；普通 HTTPS 不使用该等待。仅监控你拥有或获准访问的页面。</p>
     <div class="actions" style="margin-top:10px"><button id="fetcher-test" type="button">测试 FlareSolverr 连接</button></div>
-    <p id="fetcher-health" class="hint" aria-live="polite">连接测试使用页面当前填写的地址，无需保存；不会访问商品网站。</p>
+    <p id="fetcher-health" class="hint" aria-live="polite">这里只测试 FlareSolverr 服务连接。实际库存请展开“商品配置”中的商品，点击“测试此商品”；无需保存或开启监控，结果直接显示在商品内。</p>
     </div>
   </details>
 
   <details class="section" data-tone="purple">
     <summary><span>商品配置</span><span class="section-toggle" aria-hidden="true"></span></summary>
     <div class="section-body">
-    <p class="hint">VMISS 使用套餐标识和推广 ID。其他厂商使用公开 HTTPS 商品页、CSS 库存选择器及数量或有货状态规则。购买入口始终由你确认。</p>
+    <p class="hint">点击商品标题展开配置。可直接“测试此商品”查看库存或错误；测试无需开启监控，不发送 Telegram 提醒。VMISS 和通用网页仅显示对应适配器的字段。</p>
     <div id="product-editors"></div>
     </div>
   </details>
@@ -219,7 +226,7 @@
       <button id="manage-backup" type="button">立即备份</button>
       <button id="manage-update" type="button">更新 HostWatch</button>
     </div>
-    <p class="hint">监控启停请使用“监控设置”中的开始或暂停按钮，操作时会一并保存页面配置。</p>
+    <p class="hint">监控启停请使用“监控设置”中的开始或暂停按钮；配置修改统一使用底部“保存配置”。</p>
     <p id="manage-task-status" class="hint" aria-live="polite"></p>
     <h3>管理页管理员</h3>
     <p class="hint">密码至少 12 个字符。账号立即生效；删除最后一个管理员会被拒绝。</p>
@@ -243,7 +250,7 @@
     </div>
   </details>
 
-  <footer class="savebar"><span class="subtle">保存后自动应用配置；启用监控后会按设定间隔检查商品。</span><div class="actions"><button id="reload" type="button">重新载入</button><button id="save" class="primary" type="button">保存配置</button></div></footer>
+  <footer class="savebar"><span class="subtle">统一保存全部配置，保持当前监控开关；自动监控开启时会重新应用配置。</span><div class="actions"><button id="save" class="primary" type="button">保存配置</button></div></footer>
 </main>
 <aside id="toast" class="toast" hidden aria-label="操作提示"><div><strong id="toast-label" class="toast-label"></strong><div id="toast-message" role="status" aria-live="polite" aria-atomic="true"></div></div><button id="toast-close" type="button" aria-label="关闭操作提示">×</button></aside>
 <script src="/admin.js"></script>

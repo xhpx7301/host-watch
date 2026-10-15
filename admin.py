@@ -7,6 +7,8 @@ import re
 import subprocess
 import tempfile
 import threading
+import time
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
 from pathlib import Path
@@ -545,11 +547,28 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if self.path not in {"/api/config", "/api/telegram/test", "/api/manage", "/api/fetcher/test"}:
+        if self.path not in {"/api/config", "/api/telegram/test", "/api/manage", "/api/fetcher/test", "/api/products/test"}:
             self.send_error(404)
             return
         try:
             submitted = request_body(self)
+            if self.path == "/api/products/test":
+                # Validate only the selected draft; other unfinished products and
+                # Telegram settings must not prevent a standalone stock test.
+                from monitor import MonitorError, inspect_product
+                product = submitted.get("product")
+                value = validate_config({"products": [product], "fetcher": submitted.get("fetcher", {})})
+                started = time.monotonic()
+                try:
+                    with requests.Session() as session:
+                        session.headers["User-Agent"] = "HostWatch/1.0 (manual stock test)"
+                        result = inspect_product(session, value["products"][0], value["fetcher"])
+                    output = {"ok": True, "available": result.available, "stock_mode": result.stock_mode}
+                except MonitorError as exc:
+                    output = {"ok": False, "error": str(exc)}
+                output.update({"checked_at": datetime.now().astimezone().isoformat(timespec="seconds"), "duration_seconds": round(time.monotonic() - started, 1)})
+                self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
+                return
             if self.path == "/api/fetcher/test":
                 fetcher = normalize_fetcher(submitted)
                 data = json.dumps(flaresolverr_health(fetcher["flaresolverr_url"]), ensure_ascii=False).encode("utf-8")
@@ -599,6 +618,9 @@ class Handler(BaseHTTPRequestHandler):
                 }
             if "fetcher" not in submitted:
                 submitted["fetcher"] = current["fetcher"]
+            # Saving settings never toggles monitoring. Start/stop are explicit
+            # management actions against the persisted configuration.
+            submitted["enabled"] = current["enabled"]
             value = validate_config(submitted)
             save_config(value)
         except (OSError, ValueError, json.JSONDecodeError) as exc:

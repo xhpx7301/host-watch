@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 import requests
 
 from admin import validate_config
-from monitor import MonitorError, Product, RequestServiceError, SiteBlocked, fetch_html_stock, notification_text, check_once
+from monitor import MonitorError, Product, RequestServiceError, SiteBlocked, fetch_html_stock, notification_text, check_once, inspect_product
 
 
 class FakeResponse:
@@ -169,6 +169,14 @@ class BrowserRequestTests(unittest.TestCase):
             self.assertEqual(main(), 0)
         self.assertEqual(status.call_args.args[1]["state"], "error")
         self.assertEqual(status.call_args.args[1]["message"], "browser offline")
+
+    def test_single_vmiss_product_requires_unique_match(self):
+        item = {"adapter": "vmiss", "category_url": "https://app.vmiss.com/store/test", "selector": "p", "request_mode": "requests"}
+        with patch("monitor.fetch_products", return_value=[]) as fetch:
+            with self.assertRaisesRegex(MonitorError, "无法唯一匹配"):
+                inspect_product(self.session, item, self.fetcher)
+        self.assertEqual(fetch.call_args.args[2], ["p"])
+        self.assertEqual(fetch.call_args.args[3]["mode"], "requests")
 
 
 if __name__ == "__main__":
