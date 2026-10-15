@@ -135,7 +135,7 @@ class AkileTests(unittest.TestCase):
                 parse_akile(payload, item())
 
     def test_config_validates_without_url_css_or_affiliate(self):
-        config = validate_config({"enabled": True, "products": [item(area_id=6)]})
+        config = validate_config({"enabled": True, "products": [item(area_id=6)], "affiliates": {"vmiss": "", "akile": ""}})
         self.assertEqual(config["products"][0]["area_id"], "6")
         self.assertEqual(config["products"][0]["area_mode"], "auto")
         self.assertEqual(config["affiliate_id"], "")

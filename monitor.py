@@ -16,7 +16,8 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-from admin import effective_telegram, normalize_vps_soy_url, validate_config
+from admin import default_config, effective_telegram, normalize_vps_soy_url, validate_config
+from affiliates import affiliate_purchase_url
 
 
 ROOT = Path(__file__).resolve().parent
@@ -548,27 +549,12 @@ def affiliate_url(product_url: str, affiliate_id: str, gid: str, pid: str) -> st
 
 
 def purchase_link(product: Product, item: dict, config: dict) -> str:
-    if item["adapter"] == "vmiss" and config.get("affiliate_id"):
-        return affiliate_url(product.url, str(config["affiliate_id"]), str(item.get("gid", "")), str(item.get("pid", "")))
-    return item.get("purchase_url") or product.url
+    return affiliate_purchase_url(item.get("purchase_url") or product.url, item["adapter"], config, item)
 
 
 def read_config(path: Path) -> dict:
     if not path.exists():
-        return {
-            "enabled": False,
-            "interval_seconds": 600,
-            "notify_current_stock_on_start": False,
-            "affiliate_id": "",
-            "fetcher": {
-                "mode": "requests",
-                "flaresolverr_url": "http://127.0.0.1:8191/v1",
-                "timeout_seconds": 60,
-                "wait_seconds": 0,
-            },
-            "telegram": {"bot_token": "", "chat_id": "", "disabled": False},
-            "products": [],
-        }
+        return default_config()
     try:
         config = json.loads(path.read_text(encoding="utf-8"))
         return validate_config(config)

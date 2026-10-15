@@ -84,10 +84,10 @@ class CatalogParsingTests(unittest.TestCase):
 
     def test_vmiss_watch_without_affiliate_uses_direct_link(self):
         item = {"id": "one", "adapter": "vmiss", "provider": "VMISS", "name": "Mini", "selector": "product44", "category_url": "https://app.vmiss.com/store/test", "pid": "44", "enabled": True}
-        config = admin.validate_config({"enabled": True, "products": [item]})
+        config = admin.validate_config({"enabled": True, "products": [item], "affiliates": {"vmiss": ""}})
         product = monitor.Product("mini", "Mini", 1, "https://app.vmiss.com/store/test/mini")
         self.assertEqual(monitor.purchase_link(product, item, config), product.url)
-        self.assertIn("aff=123", monitor.purchase_link(product, item, {**config, "affiliate_id": "123"}))
+        self.assertIn("aff=123", monitor.purchase_link(product, item, {**config, "affiliates": {"vmiss": "123"}}))
 
     def test_selected_catalog_product_sends_restock_only_after_stock_increase(self):
         payload = akile_fixture()
@@ -102,9 +102,19 @@ class CatalogParsingTests(unittest.TestCase):
             monitor.check_once(Mock(), config, state, status, "token", "123")
             send.assert_called_once()
             self.assertIn("HKL-TW-Mini", send.call_args.kwargs["text"])
-            self.assertIn("planId=1047", send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["url"])
+            link = send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["url"]
+            self.assertIn("planId=1047", link)
+            self.assertIn("aff_code=" + config["affiliates"]["akile"], link)
+            snapshot = json.loads(status.read_text())["products"][0]
+            self.assertEqual(snapshot["purchase_url"], link)
+            self.assertNotIn("aff_code", snapshot["url"])
             monitor.check_once(Mock(), config, state, status, "token", "123")
             self.assertEqual(send.call_count, 1)
+            config["affiliates"]["akile"] = "updated-code"
+            payload["data"]["areas"][0]["nodes"][0]["plans"][0]["stock"] = 3
+            monitor.check_once(Mock(), config, state, status, "token", "123")
+            self.assertEqual(send.call_count, 2)
+            self.assertIn("aff_code=updated-code", send.call_args.kwargs["text"])
 
 
 class CatalogServiceTests(unittest.TestCase):

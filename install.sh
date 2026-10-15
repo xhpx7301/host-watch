@@ -45,7 +45,7 @@ tar -xzf "$TEMP_DIR/source.tar.gz" -C "$TEMP_DIR"
 SOURCE_DIR="$(find "$TEMP_DIR" -mindepth 1 -maxdepth 1 -type d -name 'host-watch-*' -print -quit)"
 [[ -n "$SOURCE_DIR" ]] || fail "源码压缩包格式不正确。"
 
-for file in monitor.py admin.py catalog.py auth.py manage.py stockwatch.sh admin.html admin.js catalog.js requirements.txt config.example.json .env.example admin.env.example vmiss-monitor.service vmiss-monitor-admin.service host-watch-admin.sudoers install-flaresolverr.sh; do
+for file in monitor.py admin.py catalog.py affiliates.py auth.py manage.py stockwatch.sh admin.html admin.js catalog.js requirements.txt config.example.json .env.example admin.env.example vmiss-monitor.service vmiss-monitor-admin.service host-watch-admin.sudoers install-flaresolverr.sh; do
   [[ -f "$SOURCE_DIR/$file" ]] || fail "源码缺少必需文件：$file"
 done
 
@@ -61,7 +61,7 @@ install -d -o root -g root -m 0755 "$INSTALL_DIR"
 install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$DATA_DIR"
 [[ ! -L "$DATA_DIR/config.json" ]] || fail "$DATA_DIR/config.json 不能是符号链接。"
 install -o root -g root -m 0644 \
-  "$SOURCE_DIR/monitor.py" "$SOURCE_DIR/admin.py" "$SOURCE_DIR/catalog.py" "$SOURCE_DIR/auth.py" "$SOURCE_DIR/manage.py" "$SOURCE_DIR/admin.html" \
+  "$SOURCE_DIR/monitor.py" "$SOURCE_DIR/admin.py" "$SOURCE_DIR/catalog.py" "$SOURCE_DIR/affiliates.py" "$SOURCE_DIR/auth.py" "$SOURCE_DIR/manage.py" "$SOURCE_DIR/admin.html" \
   "$SOURCE_DIR/admin.js" "$SOURCE_DIR/catalog.js" "$SOURCE_DIR/requirements.txt" "$SOURCE_DIR/config.example.json" \
   "$SOURCE_DIR/.env.example" "$SOURCE_DIR/vmiss-monitor.service" \
   "$SOURCE_DIR/vmiss-monitor-admin.service" "$SOURCE_DIR/admin.env.example" "$SOURCE_DIR/host-watch-admin.sudoers" "$INSTALL_DIR/"

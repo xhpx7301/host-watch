@@ -215,6 +215,16 @@
     @media(max-width:780px) { .shell { display:block; } .sidebar { position:sticky; z-index:5; height:auto; padding:14px 14px 0; border-right:0; border-bottom:1px solid var(--line); } .sidebar .brand { padding:0 4px 12px; } .brand strong { font-size:19px; } .brand p { font-size:11px; } .brand-mark { width:32px; height:32px; } .nav-label,.sidebar-note { display:none; } .page-nav { display:flex; gap:5px; overflow-x:auto; padding:2px 0 10px; scrollbar-width:thin; } .page-nav a { flex-shrink:0; min-height:40px; padding:9px 12px; gap:7px; font-size:12px; } .page-nav svg { width:16px; height:16px; } .workspace { min-height:calc(100vh - 119px); padding:22px 16px 16px; } .overview-item { min-height:130px; padding:16px; } .page-heading h1 { font-size:25px; } .header-status { justify-items:start; } .topbar { align-items:flex-start; flex-direction:column; gap:16px; } .header-status .status-line { justify-content:flex-start; } .page-stage { padding-top:20px; } .panel-card > .section-body,#page-overview > .section { padding:18px; } }
     @media(max-width:780px) { .manage-grid { grid-template-columns:1fr; } .manage-form { grid-template-columns:1fr; } .product-editor { scroll-margin-top:140px; } }
     @media(max-width:520px) { .section-head { align-items:flex-start; flex-direction:column; } .status-line { justify-content:flex-start; } .form-grid { grid-template-columns:1fr; } .span-2 { grid-column:auto; } .overview { gap:10px; } .overview-value { font-size:22px; } #overview-state { font-size:16px; } .savebar { bottom:8px; padding:12px; } .savebar .actions button { flex:1; padding:7px 8px; } .savebar .subtle { font-size:11px; } .merchant-add { width:100%; } }
+    .watchlist-filters { display:flex; flex-wrap:wrap; gap:12px; margin:14px 0; }
+    .watchlist-filters label { flex:1; min-width:150px; }
+    .monitor-settings-title { margin:28px 0 14px; padding-top:24px; border-top:1px solid var(--line); }
+    .affiliate-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-top:18px; }
+    .affiliate-card { min-width:0; padding:20px; border:1px solid var(--line); border-radius:10px; background:var(--canvas); }
+    .affiliate-card a { overflow-wrap:anywhere; }
+    #merchant-order-panel { margin-bottom:18px; }
+    .merchant-order-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid var(--line); }
+    .product-actions { flex-wrap:wrap; }
+    @media (max-width:640px) { #page-catalog > .section-head { flex-wrap:wrap; } .watchlist-filters label { min-width:100%; } .affiliate-grid { grid-template-columns:minmax(0,1fr); } }
   </style>
 </head>
 <body>
@@ -225,10 +235,11 @@
     <nav class="page-nav" aria-label="主要栏目">
       <a href="#overview" data-page-link="overview" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>运行概览</a>
       <a href="#catalog" data-page-link="catalog"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12M15 9v12"/></svg>VPS 库存大盘</a>
-      <a href="#monitor" data-page-link="monitor"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4M6 11h3l2-4 3 7 2-3h2"/></svg>监控设置</a>
-      <a href="#telegram" data-page-link="telegram"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-6 18-4-8-8-4 18-6Zm-10 10L21 3"/></svg>Telegram 通知</a>
-      <a href="#requests" data-page-link="requests"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></svg>网页请求</a>
+      <a href="#monitor" data-page-link="monitor"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4M6 11h3l2-4 3 7 2-3h2"/></svg>VPS 库存监控</a>
       <a href="#products" data-page-link="products"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 5v9l9 5 9-5V8m-9 5v9M7.5 5.5l9 5"/></svg>商品配置</a>
+      <a href="#affiliates" data-page-link="affiliates"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 13 4-4m-6 7-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 1 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0"/></svg>AFF 管理</a>
+      <a href="#requests" data-page-link="requests"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></svg>网页请求</a>
+      <a href="#telegram" data-page-link="telegram"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-6 18-4-8-8-4 18-6Zm-10 10L21 3"/></svg>Telegram 通知</a>
       <a href="#management" data-page-link="management"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/></svg>管理员管理</a>
     </nav>
     <div class="sidebar-note"><span class="sidebar-note-dot" aria-hidden="true"></span>库存提醒 · 快速人工下单</div>
@@ -250,14 +261,15 @@
   </section>
 
   <section class="section">
-    <div class="section-head"><div><h2>商品监控</h2><p>商品运行状态与监控服务一致；暂停后保留上次库存记录。运行时发现有货可通过 Telegram 提醒。</p></div><button id="open-products" type="button">管理 / 添加商品</button></div>
-    <div id="product-list" class="product-list"></div>
+    <div class="section-head"><div><h2>你的库存工作台</h2><p>大盘浏览全部套餐，库存监控只关注你选中的商品。暂停后保留历史结果。</p></div></div>
+    <div class="actions"><button type="button" id="overview-open-catalog">浏览库存大盘</button><button type="button" id="overview-open-monitor">查看我的监控</button><button id="open-products" type="button">管理 / 添加商品</button></div>
   </section>
   </div>
 
   <section class="page-panel" id="page-catalog" data-page="catalog" aria-labelledby="page-title" hidden>
     <div class="catalog-intro"><div><span class="eyebrow">VPS DIRECTORY</span><h2>发现套餐，关注补货</h2><p>商家公开目录直接同步，按需选择提醒。无需先配置每一款商品。</p></div><span class="catalog-private">个人库存看板</span></div>
-    <div class="catalog-merchants" role="group" aria-label="选择商家"><button type="button" data-catalog-provider="vmiss" aria-pressed="false">VMISS</button><button type="button" data-catalog-provider="vps_soy" aria-pressed="false">VPS.SOY</button><button type="button" data-catalog-provider="akile" aria-pressed="true">Akile</button><button type="button" data-catalog-provider="isvoro" aria-pressed="false">Isvoro</button></div>
+    <div class="section-head"><div class="catalog-merchants" role="group" aria-label="选择商家"><button type="button" data-catalog-provider="vmiss" aria-pressed="false">VMISS</button><button type="button" data-catalog-provider="vps_soy" aria-pressed="false">VPS.SOY</button><button type="button" data-catalog-provider="akile" aria-pressed="true">Akile</button><button type="button" data-catalog-provider="isvoro" aria-pressed="false">Isvoro</button></div><button id="merchant-order-toggle" type="button" aria-expanded="false" aria-controls="merchant-order-panel">调整商家顺序</button></div>
+    <div id="merchant-order-panel" class="panel-card section-body" hidden><h2>商家显示顺序</h2><p class="hint">使用上移 / 下移调整大盘、监控筛选和添加商品中的顺序，点击底部“保存配置”后保存在服务器。</p><div id="merchant-order-list"></div></div>
     <div class="panel-card catalog-browser">
       <div class="catalog-filters"><label>地区 / 线路分类<select id="catalog-scope" disabled><option value="">等待目录</option></select></label><label>搜索套餐<input id="catalog-search" type="search" placeholder="名称、地区、线路或配置"></label><label>库存状态<select id="catalog-stock"><option value="all">全部库存</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">状态未知</option><option value="watched">已选提醒</option></select></label><label>大盘自动刷新<select id="catalog-auto"><option value="0">仅手动</option><option value="60">1 分钟</option><option value="300" selected>5 分钟</option><option value="600">10 分钟</option></select></label></div>
       <div class="catalog-sync"><div><strong id="catalog-summary">尚未载入目录</strong><span id="catalog-updated" class="subtle"></span></div><div class="actions"><button id="catalog-refresh" type="button">刷新分类库存</button><button id="catalog-stop" type="button" class="danger" hidden>停止刷新</button></div></div>
@@ -267,12 +279,17 @@
       <div id="catalog-empty" class="empty">尚无目录数据，点击“刷新分类库存”读取。</div>
       <div class="catalog-pagination"><span id="catalog-page-label" class="subtle"></span><div class="actions"><button id="catalog-prev" type="button" disabled>上一页</button><button id="catalog-next" type="button" disabled>下一页</button></div></div>
     </div>
-    <div class="catalog-reminders"><div><h2>我的补货提醒 <span id="catalog-watch-count">0</span></h2><p id="catalog-reminder-note" class="hint">加入后点击底部“保存配置”，再开始监控。</p></div><button id="catalog-open-products" type="button">管理已选商品</button></div>
+    <div class="catalog-reminders"><div><h2>我的补货提醒 <span id="catalog-watch-count">0</span></h2><p id="catalog-reminder-note" class="hint">加入后点击底部“保存配置”，再开始监控。</p></div><button id="catalog-open-products" type="button">查看 VPS 库存监控</button></div>
     <p class="hint">大盘自动刷新仅在此栏目打开且页面可见时运行，使用普通 HTTPS；可随时停止。关闭网页后，已保存并启动的商品监控仍会在服务器检查并通过 Telegram 提醒。大盘刷新不发送通知，也不改动提醒历史。价格与购买资格以商家下单页为准。</p>
   </section>
 
   <section class="page-panel panel-card" id="page-monitor" data-page="monitor" aria-labelledby="page-title" hidden>
     <div class="section-body">
+    <div class="section-head"><div><h2>我的 VPS 库存监控 <span id="watchlist-count" class="subtle">0</span></h2><p>只展示参与监控的商品；从大盘加入或在商品配置中勾选。移出监控保留商品配置和历史，保存后生效。</p></div><button id="watchlist-browse" type="button">从大盘添加</button></div>
+    <div class="watchlist-filters"><label>搜索商品<input id="watchlist-search" type="search" placeholder="商品、商家或线路"></label><label>商家<select id="watchlist-provider"><option value="all">全部商家</option></select></label><label>最近库存<select id="watchlist-stock"><option value="all">全部状态</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">暂无记录</option></select></label></div>
+    <p id="watchlist-note" class="hint" role="status"></p>
+    <div id="product-list" class="product-list"></div>
+    <h2 class="monitor-settings-title">监控设置</h2>
     <div class="monitor-control">
       <strong id="monitor-runtime" class="state">正在读取服务状态</strong>
       <p id="monitor-runtime-note" class="subtle">以服务器实际运行状态为准。</p>
@@ -306,10 +323,19 @@
     </div>
   </section>
 
+  <section class="page-panel panel-card" id="page-affiliates" data-page="affiliates" aria-labelledby="page-title" hidden>
+    <div class="section-body"><h2>商家 AFF 推广设置</h2><p class="hint">填写推广码或该商家的完整推广链接，留空则使用普通商品入口。点击底部“保存配置”后，库存大盘、库存监控和新发出的 Telegram 商品入口统一使用新设置。已发送的历史消息不会更改。</p>
+    <div class="affiliate-grid">
+      <div class="affiliate-card"><label>VMISS · aff<input id="affiliate" data-affiliate="vmiss" autocomplete="off" placeholder="推广码或完整推广链接，留空不添加" maxlength="2048"></label><p class="hint" data-affiliate-state="vmiss"></p><a data-affiliate-preview="vmiss" target="_blank" rel="noopener noreferrer">推广入口预览</a></div>
+      <div class="affiliate-card"><label>VPS.SOY · aff<input id="affiliate-vps_soy" data-affiliate="vps_soy" autocomplete="off" placeholder="推广码或完整推广链接，留空不添加" maxlength="2048"></label><p class="hint" data-affiliate-state="vps_soy"></p><a data-affiliate-preview="vps_soy" target="_blank" rel="noopener noreferrer">推广入口预览</a></div>
+      <div class="affiliate-card"><label>Akile · aff_code<input id="affiliate-akile" data-affiliate="akile" autocomplete="off" placeholder="推广码或完整推广链接，留空不添加" maxlength="2048"></label><p class="hint" data-affiliate-state="akile"></p><a data-affiliate-preview="akile" target="_blank" rel="noopener noreferrer">推广入口预览</a></div>
+      <div class="affiliate-card"><label>Isvoro · aff<input id="affiliate-isvoro" data-affiliate="isvoro" autocomplete="off" placeholder="推广码或完整推广链接，留空不添加" maxlength="2048"></label><p class="hint" data-affiliate-state="isvoro"></p><a data-affiliate-preview="isvoro" target="_blank" rel="noopener noreferrer">推广入口预览</a></div>
+    </div><p class="hint">Akile 与 Isvoro 的商品入口附加对应推广参数，并保留套餐定位。推广归属、已有账号资格和有效期由商家规则决定。</p></div>
+  </section>
+
   <section class="page-panel panel-card" id="page-requests" data-page="requests" aria-labelledby="page-title" hidden>
     <div class="section-body">
     <div class="form-grid">
-      <label>VMISS 推广 ID（aff，可选）<input id="affiliate" autocomplete="off" placeholder="留空直接打开商家商品页"></label>
       <label>全局请求方式<select id="fetcher-mode"><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option></select></label>
       <label>FlareSolverr API 地址<input id="flaresolverr-url" type="url" placeholder="http://127.0.0.1:8191/v1"></label>
       <label>FlareSolverr 超时（秒）<input id="flaresolverr-timeout" type="number" min="10" max="180"></label>

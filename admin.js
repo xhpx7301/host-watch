@@ -3,6 +3,8 @@ let config = {
   interval_seconds: 600,
   notify_current_stock_on_start: false,
   affiliate_id: "",
+  affiliates: {},
+  merchant_order: ["vmiss", "vps_soy", "akile", "isvoro"],
   fetcher: { mode: "requests", flaresolverr_url: "http://127.0.0.1:8191/v1", timeout_seconds: 60 },
   telegram: {},
   products: [],
@@ -26,7 +28,8 @@ let activeTest = null;
 const pages = {
   overview: { title: "运行概览", description: "查看监控服务、商品库存与最近检查结果。" },
   catalog: { title: "VPS 库存大盘", description: "浏览商家套餐与库存，选择你关心的 VPS 加入补货提醒。" },
-  monitor: { title: "监控设置", description: "设置检查间隔和提醒规则，管理自动监控。" },
+  monitor: { title: "VPS 库存监控", description: "集中查看你关注的 VPS，管理补货提醒和检查规则。" },
+  affiliates: { title: "AFF 管理", description: "统一管理各商家推广码，保存后应用到新的购买入口。" },
   telegram: { title: "Telegram 通知", description: "配置通知机器人，接收库存提醒与商品测试结果。" },
   requests: { title: "网页请求", description: "选择全局请求方式，配置并检测浏览器服务。" },
   products: { title: "商品配置", description: "按商家添加商品，配置库存规则并单次测试。" },
@@ -134,6 +137,7 @@ async function runAction(button, label, message, action, notify = true) {
     }
     actionRunning = false;
     document.querySelector(".shell").inert = false;
+    renderMerchantOrder();
     syncTestControls();
     window.dispatchEvent(new Event("hostwatch-action-change"));
   }
@@ -817,14 +821,92 @@ function productMonitorLabel(item, saved) {
   return ({ failed: "监控服务运行失败", activating: "监控服务启动中", deactivating: "监控服务停止中" })[active] || "监控服务状态未知";
 }
 
+const merchantNames = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", isvoro: "Isvoro" };
+const merchantHosts = { vmiss: "app.vmiss.com", vps_soy: "www.vps.soy", akile: "akile.ai", isvoro: "isvoro.com" };
+function merchantOrder() {
+  return [...new Set([...(config.merchant_order || []), ...Object.keys(merchantNames)])].filter((key) => Object.hasOwn(merchantNames, key));
+}
+function affiliatePurchaseURL(raw, provider, item = {}, affiliates = config.affiliates || {}) {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:" || url.hostname !== merchantHosts[provider] || url.username || url.password || url.port && url.port !== "443") return raw;
+    const code = affiliates[provider] ?? (provider === "vmiss" ? config.affiliate_id || "" : "");
+    url.searchParams.delete("aff"); url.searchParams.delete("aff_code");
+    if (provider === "vmiss" && code && (item.pid || item.gid)) return `https://${merchantHosts.vmiss}/aff.php?${new URLSearchParams({ aff: code, [item.pid ? "pid" : "gid"]: item.pid || item.gid })}`;
+    if (code) url.searchParams.set(provider === "akile" ? "aff_code" : "aff", code);
+    return url.href;
+  } catch { return raw; }
+}
+function collectAffiliates() {
+  return Object.fromEntries([...document.querySelectorAll("[data-affiliate]")].map((input) => [input.dataset.affiliate, input.value.trim()]));
+}
+function renderAffiliatePreviews() {
+  for (const [key, raw] of Object.entries(collectAffiliates())) {
+    let code = raw, valid = true;
+    if (code.includes("://")) {
+      try {
+        const url = new URL(code), parameter = key === "akile" ? "aff_code" : "aff";
+        valid = url.protocol === "https:" && url.hostname === merchantHosts[key] && !url.username && !url.password && (!url.port || url.port === "443") && url.searchParams.getAll(parameter).length === 1;
+        code = url.searchParams.get(parameter) || "";
+      } catch { valid = false; }
+    }
+    valid = valid && (!code || (key === "vmiss" ? /^\d{1,20}$/ : /^[A-Za-z0-9_-]{1,128}$/).test(code));
+    const state = document.querySelector(`[data-affiliate-state="${key}"]`), link = document.querySelector(`[data-affiliate-preview="${key}"]`);
+    state.textContent = !valid ? "推广码或商家链接格式无效，请修改后保存。" : code ? "已填写，保存后在购买入口添加推广参数。" : "未设置，使用普通商品入口。";
+    state.className = valid ? "hint" : "hint error";
+    link.hidden = !valid || !code;
+    if (valid && code) {
+      const entry = key === "vmiss" ? "https://app.vmiss.com/aff.php" : key === "akile" ? "https://akile.ai/register" : `https://${merchantHosts[key]}/`;
+      link.href = affiliatePurchaseURL(entry, key, {}, { [key]: code });
+      link.textContent = link.href;
+    } else link.removeAttribute("href");
+  }
+}
+function renderMerchantOrder(focusKey = null, direction = null) {
+  const order = merchantOrder();
+  document.querySelector("#merchant-order-list").replaceChildren(...order.map((key, index) => {
+    const row = text("div", "", "merchant-order-row"), actions = text("div", "", "actions");
+    row.append(text("strong", `${index + 1}. ${merchantNames[key]}`));
+    for (const [offset, label] of [[-1, "上移"], [1, "下移"]]) {
+      const button = text("button", label); button.type = "button"; button.dataset.orderKey = key; button.dataset.offset = offset;
+      button.setAttribute("aria-label", `${label} ${merchantNames[key]}`);
+      button.disabled = actionRunning || index + offset < 0 || index + offset >= order.length;
+      button.addEventListener("click", () => {
+        const next = merchantOrder(); [next[index], next[index + offset]] = [next[index + offset], next[index]];
+        config.merchant_order = next; renderMerchantOrder(key, offset); renderProductList(); updateDraftState();
+        setMessage("商家顺序已调整，点击底部“保存配置”后保存到服务器。", "pending");
+      }); actions.append(button);
+    }
+    row.append(actions); return row;
+  }));
+  const tabs = document.querySelector(".catalog-merchants");
+  for (const key of order) tabs.append(tabs.querySelector(`[data-catalog-provider="${key}"]`));
+  const filter = document.querySelector("#watchlist-provider"), selected = filter.value || "all";
+  filter.replaceChildren(new Option("全部商家", "all"), ...order.map((key) => new Option(merchantNames[key], key)), new Option("其他商家", "other")); filter.value = selected;
+  const add = document.querySelector("#add-merchant"), chosen = add.value;
+  for (const key of [...order, "html"]) { const option = [...add.options].find((option) => option.value === key); if (option) add.append(option); } add.value = chosen;
+  if (focusKey) document.querySelector(`[data-order-key="${focusKey}"][data-offset="${direction}"]:not(:disabled)`)?.focus({ preventScroll: true });
+}
+
 function renderProductList() {
   const statusProducts = new Map((lastStatus?.products || []).map((product) => [product.id, product]));
   const savedProducts = new Map((savedConfig ? JSON.parse(savedConfig).products : []).map((product) => [product.id, product]));
-  if (!config.products.length) {
-    listNode.replaceChildren(text("div", "尚未添加商品。添加 VMISS 商品或通用 HTTPS 商品页开始监控。", "empty"));
+  const watched = config.products.filter((item) => item.enabled);
+  const search = document.querySelector("#watchlist-search").value.trim().toLowerCase(), provider = document.querySelector("#watchlist-provider").value, stockFilter = document.querySelector("#watchlist-stock").value;
+  const order = merchantOrder();
+  const visible = watched.filter((item) => {
+    const status = statusProducts.get(item.id);
+    return (!search || [item.name, item.provider, item.node_name, item.selector, item.category_name].join(" ").toLowerCase().includes(search)) &&
+      (provider === "all" || provider === "other" && !Object.hasOwn(merchantNames, item.adapter) || provider === item.adapter) &&
+      (stockFilter === "all" || stockFilter === "unknown" && !status || stockFilter === "in" && status?.available > 0 || stockFilter === "out" && status?.available === 0);
+  }).sort((a, b) => (order.includes(a.adapter) ? order.indexOf(a.adapter) : 99) - (order.includes(b.adapter) ? order.indexOf(b.adapter) : 99));
+  document.querySelector("#watchlist-count").textContent = `共 ${watched.length} 个 · 显示 ${visible.length} 个`;
+  document.querySelector("#watchlist-note").textContent = config.enabled && !watched.length ? "已取消全部商品，请先点击底部“暂停监控”，再保存配置。商品配置和历史记录会保留。" : "库存展示最近一次后台检查记录及时间；大盘刷新不更新此记录。保存后开始监控，关闭网页也会继续检查和发送补货提醒。";
+  if (!visible.length) {
+    listNode.replaceChildren(text("div", watched.length ? "没有符合筛选条件的商品。" : "还没有关注的商品，从库存大盘点击“加入补货提醒”添加到这里。", "empty"));
     return;
   }
-  const rows = config.products.map((item) => {
+  const rows = visible.map((item) => {
     const status = statusProducts.get(item.id);
     const article = text("article", "", "product");
     const identity = text("div", "", "product-name");
@@ -834,9 +916,9 @@ function renderProductList() {
     const checked = text("div", "", "metric");
     checked.append(text("span", "上次检查结果", "metric-label"), text("strong", status ? (status.available > 0 ? "有货" : "缺货") : "暂无记录", "metric-value"));
     const updated = text("div", "", "metric");
-    updated.append(text("span", "最近检查", "metric-label"), text("strong", lastStatus?.last_checked ? new Date(lastStatus.last_checked).toLocaleString() : "尚无记录", "metric-value"));
+    updated.append(text("span", "最近检查", "metric-label"), text("strong", status && lastStatus?.last_checked ? new Date(lastStatus.last_checked).toLocaleString() : "尚无记录", "metric-value"));
     const actions = text("div", "", "product-actions");
-    const purchaseUrl = status?.purchase_url || item.purchase_url || item.url || item.category_url;
+    const purchaseUrl = affiliatePurchaseURL(item.purchase_url || status?.url || item.url || item.category_url || status?.purchase_url, item.adapter, item);
     if (purchaseUrl && item.enabled && status?.available > 0) {
       const link = document.createElement("a");
       link.href = purchaseUrl;
@@ -854,7 +936,13 @@ function renderProductList() {
       openProducts.add(item.id);
       editor.scrollIntoView({ behavior: "smooth", block: "start" });
     });
-    actions.append(edit);
+    const remove = text("button", "移出监控", "danger"); remove.type = "button";
+    remove.addEventListener("click", () => {
+      if (actionRunning) return;
+      item.enabled = false; renderProducts(); updateDraftState();
+      setMessage("已移出库存监控，商品配置和历史保留；点击底部“保存配置”生效。", "pending");
+    });
+    actions.append(edit, remove);
     article.append(identity, stock, checked, updated, actions);
     return article;
   });
@@ -903,7 +991,9 @@ function collectConfig(enabled = config.enabled) {
   return {
     enabled,
     interval_seconds: Number(document.querySelector("#interval").value || NaN),
-    affiliate_id: document.querySelector("#affiliate").value.trim(),
+    affiliate_id: config.affiliate_id || "",
+    affiliates: collectAffiliates(),
+    merchant_order: merchantOrder(),
     notify_current_stock_on_start: document.querySelector("#notify-current").checked,
     fetcher: { mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value), wait_seconds: Number(document.querySelector("#fetcher-wait").value) },
     telegram: { bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim(), disabled: document.querySelector("#telegram-disabled").checked, clear: document.querySelector("#telegram-clear").checked },
@@ -951,7 +1041,8 @@ async function loadConfig() {
 function applyConfig(value) {
   config = value;
   document.querySelector("#interval").value = config.interval_seconds ?? 600;
-  document.querySelector("#affiliate").value = config.affiliate_id || "";
+  for (const input of document.querySelectorAll("[data-affiliate]")) input.value = config.affiliates?.[input.dataset.affiliate] ?? (input.dataset.affiliate === "vmiss" ? config.affiliate_id || "" : "");
+  renderAffiliatePreviews(); renderMerchantOrder();
   document.querySelector("#notify-current").checked = Boolean(config.notify_current_stock_on_start);
   const fetcher = config.fetcher || {};
   document.querySelector("#fetcher-mode").value = fetcher.mode || "requests";
@@ -1027,6 +1118,15 @@ document.querySelector("#open-products").addEventListener("click", () => {
   navigatePage("products");
   merchantSelect.focus({ preventScroll: true });
 });
+document.querySelector("#overview-open-catalog").addEventListener("click", () => navigatePage("catalog"));
+document.querySelector("#overview-open-monitor").addEventListener("click", () => navigatePage("monitor"));
+document.querySelector("#watchlist-browse").addEventListener("click", () => navigatePage("catalog"));
+for (const id of ["watchlist-search", "watchlist-provider", "watchlist-stock"]) document.getElementById(id).addEventListener(id === "watchlist-search" ? "input" : "change", renderProductList);
+for (const input of document.querySelectorAll("[data-affiliate]")) input.addEventListener("input", renderAffiliatePreviews);
+document.querySelector("#merchant-order-toggle").addEventListener("click", (event) => {
+  const panel = document.querySelector("#merchant-order-panel"); panel.hidden = !panel.hidden;
+  event.currentTarget.setAttribute("aria-expanded", String(!panel.hidden));
+});
 document.querySelector("#add").addEventListener("click", () => {
   const item = { ...structuredClone(merchantPresets[merchantSelect.value].product), id: crypto.randomUUID(), enabled: false };
   const existing = item.adapter === "akile" && config.products.find((product) => product.adapter === "akile" && (product.area_mode !== "manual" || String(product.area_id) === item.area_id) && product.node_name?.trim().toLowerCase() === item.node_name.toLowerCase() && product.selector?.trim().toLowerCase() === item.selector.toLowerCase());
@@ -1060,10 +1160,10 @@ document.querySelector("#interval-preset").addEventListener("change", (event) =>
   }
 });
 document.querySelector(".shell").addEventListener("input", (event) => {
-  if (!event.target.closest("#page-catalog") && event.target.id !== "interval-preset") updateDraftState();
+  if (!event.target.closest("#page-catalog, .watchlist-filters") && event.target.id !== "interval-preset") updateDraftState();
 });
 document.querySelector(".shell").addEventListener("change", (event) => {
-  if (!event.target.closest("#page-catalog")) updateDraftState();
+  if (!event.target.closest("#page-catalog, .watchlist-filters")) updateDraftState();
 });
 document.querySelector("#monitor-start").addEventListener("click", (event) => {
   if (hasUnsavedChanges()) { setMessage("请先点击底部“保存配置”，再开始监控；未保存商品也可以先单次测试。", "pending"); return; }

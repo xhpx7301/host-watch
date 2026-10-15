@@ -54,7 +54,7 @@ class VPSSoyTests(unittest.TestCase):
                 parse_vps_soy(card(stock="2", href=link, sold_out=False), URL, "深港IX-MINI")
 
     def test_config_needs_no_css_selector_or_affiliate(self):
-        config = validate_config({"enabled": True, "products": [item()]})
+        config = validate_config({"enabled": True, "products": [item()], "affiliates": {"vmiss": "", "vps_soy": ""}})
         self.assertEqual(config["products"][0]["selector"], "深港IX-MINI")
         self.assertEqual(config["affiliate_id"], "")
         for url in ["https://evil.example/cart", "https://www.vps.soy/login", "http://www.vps.soy/cart", "https://www.vps.soy:8443/cart"]:

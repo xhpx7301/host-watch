@@ -19,6 +19,7 @@ import requests
 
 from auth import DEFAULT_USERS_PATH, authentication_required, authorized, users_path
 from catalog import CatalogBusy, CatalogService
+from affiliates import DEFAULT_AFFILIATES, PROVIDERS, affiliate_purchase_url, normalize_affiliates, normalize_merchant_order
 
 
 ROOT = Path(__file__).resolve().parent
@@ -203,6 +204,12 @@ class StockTestTask:
         except (OSError, ValueError):
             result = {"ok": False, "error": "测试进程异常退出，请检查服务器内存及管理页日志"}
         finally:
+            if result.get("ok") and result.get("purchase_url"):
+                result["url"] = result["purchase_url"]
+                try:
+                    result["purchase_url"] = affiliate_purchase_url(result["url"], self.product["adapter"], current_config(), self.product)
+                except (OSError, ValueError):
+                    pass  # The stock result remains available if config was removed.
             with self.lock:
                 if self.cancelled.is_set():
                     result = {"ok": False, "cancelled": True, "error": "测试已停止"}
@@ -263,7 +270,9 @@ def default_config() -> dict:
         "enabled": False,
         "interval_seconds": 600,
         "notify_current_stock_on_start": False,
-        "affiliate_id": "",
+        "affiliate_id": DEFAULT_AFFILIATES["vmiss"],
+        "affiliates": dict(DEFAULT_AFFILIATES),
+        "merchant_order": list(PROVIDERS),
         "fetcher": {
             "mode": "requests",
             "flaresolverr_url": "http://127.0.0.1:8191/v1",
@@ -419,6 +428,9 @@ def validate_config(value: object) -> dict:
     if affiliate_id and not re.fullmatch(r"\d{1,20}", affiliate_id):
         raise ValueError("推广 ID 格式无效")
 
+    affiliates = normalize_affiliates(value)
+    merchant_order = normalize_merchant_order(value.get("merchant_order", []))
+
     for key in ("enabled", "notify_current_stock_on_start"):
         if key in value and not isinstance(value[key], bool):
             raise ValueError(f"{key} 必须是布尔值")
@@ -573,7 +585,9 @@ def validate_config(value: object) -> dict:
         "enabled": enabled,
         "interval_seconds": interval,
         "notify_current_stock_on_start": value.get("notify_current_stock_on_start", False),
-        "affiliate_id": affiliate_id,
+        "affiliate_id": affiliates["vmiss"],
+        "affiliates": affiliates,
+        "merchant_order": merchant_order,
         "fetcher": fetcher,
         "telegram": telegram,
         "products": normalized,
@@ -694,7 +708,8 @@ def send_stock_test_result(product: dict, result: dict) -> dict:
         if result.get("catalog_url"):
             message += f"\n检查分类：{str(result['catalog_url'])[:2048]}"
         if result.get("ok") and result.get("purchase_url"):
-            message += f"\n商品入口：{str(result['purchase_url'])[:2048]}"
+            link = affiliate_purchase_url(result.get("url") or result["purchase_url"], product.get("adapter", ""), current_config(), product)
+            message += f"\n商品入口：{str(link)[:2048]}"
         telegram_call(token, "sendMessage", chat_id=chat_id, text=message, disable_web_page_preview=True)
         return {"status": "sent", "message": "测试结果已发送至 Telegram"}
     except TelegramAPIError as exc:
@@ -960,6 +975,12 @@ class Handler(BaseHTTPRequestHandler):
                 }
             if "fetcher" not in submitted:
                 submitted["fetcher"] = current["fetcher"]
+            if "affiliates" not in submitted:
+                submitted["affiliates"] = dict(current["affiliates"])
+                if "affiliate_id" in submitted:
+                    submitted["affiliates"]["vmiss"] = str(submitted["affiliate_id"]).strip()
+            if "merchant_order" not in submitted:
+                submitted["merchant_order"] = current["merchant_order"]
             # Saving settings never toggles monitoring. Start/stop are explicit
             # management actions against the persisted configuration.
             submitted["enabled"] = current["enabled"]

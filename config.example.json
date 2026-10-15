@@ -2,7 +2,7 @@
   "enabled": false,
   "interval_seconds": 600,
   "notify_current_stock_on_start": false,
-  "affiliate_id": "",
+  "affiliate_id": "5340",
   "fetcher": {
     "mode": "requests",
     "flaresolverr_url": "http://127.0.0.1:8191/v1",
@@ -14,5 +14,17 @@
     "chat_id": "",
     "disabled": false
   },
-  "products": []
+  "products": [],
+  "affiliates": {
+    "vmiss": "5340",
+    "vps_soy": "",
+    "akile": "eb2ff10d-f57f-485f-9621-ed873b36c2c0",
+    "isvoro": "c57baee34737"
+  },
+  "merchant_order": [
+    "vmiss",
+    "vps_soy",
+    "akile",
+    "isvoro"
+  ]
 }

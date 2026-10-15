@@ -63,7 +63,7 @@
     const rows = filtered();
     page = Math.max(0, Math.min(page, Math.ceil(rows.length / pageSize) - 1));
     const visible = rows.slice(page * pageSize, (page + 1) * pageSize);
-    const signature = JSON.stringify([visible, rows.length, page, [...selected], config.products, savedConfig, config.enabled, monitorService?.active, actionRunning]);
+    const signature = JSON.stringify([visible, rows.length, page, [...selected], config.products, config.affiliates, savedConfig, config.enabled, monitorService?.active, actionRunning]);
     if (signature === tableSignature) { renderSelection(visible); renderReminders(); return; }
     tableSignature = signature;
     const body = get("catalog-rows");
@@ -94,7 +94,7 @@
       if (row.purchase_url) {
         const url = new URL(row.purchase_url);
         if (url.protocol === "https:" && ["app.vmiss.com", "www.vps.soy", "akile.ai", "isvoro.com"].includes(url.hostname) && !url.username && !url.password) {
-          const link = text("a", "查看 / 手动购买"); link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer"; actions.append(link);
+          const link = text("a", "查看 / 手动购买"); link.href = affiliatePurchaseURL(url.href, row.watch.adapter, row.watch); link.target = "_blank"; link.rel = "noopener noreferrer"; actions.append(link);
         }
       }
       cell().append(actions);
@@ -230,7 +230,7 @@
   get("catalog-unwatch-selected").addEventListener("click", () => setReminders((data?.rows || []).filter((row) => selected.has(row.key)), false));
   get("catalog-prev").addEventListener("click", () => { page--; renderTable(); });
   get("catalog-next").addEventListener("click", () => { page++; renderTable(); });
-  get("catalog-open-products").addEventListener("click", () => navigatePage("products"));
+  get("catalog-open-products").addEventListener("click", () => navigatePage("monitor"));
   window.addEventListener("hostwatch-page-change", (event) => {
     generation++; clearTimeout(autoTimer); clearTimeout(pollTimer); loading = false;
     if (event.detail === "catalog") void loadSnapshot();
