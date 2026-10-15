@@ -371,10 +371,11 @@ function productEditor(item, index) {
   const akileFields = text("div", "", "form-grid span-2");
   akileFields.dataset.adapterFields = "akile";
   akileFields.append(
-    inputField("Akile 地区 ID（网址中的 areaId）", item.area_id || "6", "akile_area_id", "text", "6"),
+    selectField("地区识别方式", item.area_mode || "auto", "akile_area_mode", [["auto", "自动识别地区（推荐）"], ["manual", "指定地区 ID（用于区分重名商品）"]]),
+    inputField("指定地区 ID（仅指定地区模式生效）", item.area_id || "", "akile_area_id", "text", "例如：澳门 14、台湾 6"),
     inputField("线路完整名称（精确匹配）", item.node_name || "HKL-TW", "akile_node_name", "text", "HKL-TW"),
     inputField("套餐完整名称（精确匹配）", item.adapter === "akile" ? item.selector : "HKL-TW-Mini", "akile_selector", "text", "HKL-TW-Mini"),
-    text("p", "HKL-TW 归属台湾分类（areaId=6），机器位于香港。Mini、Starter、Standard、Pro 分别监控库存。推荐普通 HTTPS 请求，无需登录或 CSS 选择器；购买入口自动定位到具体套餐。", "hint span-2"),
+    text("p", "默认按线路＋套餐完整名称在实际商品目录中自动识别地区；官网切换地区后地址栏可能仍保留旧 areaId，请勿据此判断。HKL-TW 属于台湾（6），MOLite 属于澳门（14）。自动模式忽略旧地区 ID，重名时需指定地区；推荐普通 HTTPS 请求。", "hint span-2"),
   );
   modeWrap.append(vmissFields, htmlFields, soyFields, akileFields);
   const result = text("div", "", "product-test-result");
@@ -413,6 +414,7 @@ function syncEditor(article) {
     item.url = get("soy_url").value.trim();
     item.selector = get("soy_selector").value.trim();
   } else if (item.adapter === "akile") {
+    item.area_mode = get("akile_area_mode").value;
     item.area_id = get("akile_area_id").value.trim();
     item.node_name = get("akile_node_name").value.trim();
     item.selector = get("akile_selector").value.trim();
@@ -448,6 +450,10 @@ function renderProductTest(article, id) {
     ? `测试成功：${stockLabel(result)}。${new Date(result.checked_at).toLocaleString()} · 耗时 ${result.duration_seconds} 秒。自动监控状态保持不变。`
     : `测试失败：${result.error}${result.checked_at ? `（${new Date(result.checked_at).toLocaleString()}）` : ""}`;
   if (result.warning) node.textContent += ` ${result.warning}`;
+  if (result.matched_product) {
+    const matched = result.matched_product;
+    node.append(text("span", `实际匹配：${matched.area_name}（地区 ID=${matched.area_id}） · ${matched.node_name} · ${matched.plan_name}`, "test-notification"));
+  }
   if (result.notification) node.append(text("span", result.notification.message, `test-notification ${result.notification.status === "sent" ? "success" : "error"}`));
 }
 
@@ -607,6 +613,10 @@ function updateAdapterFields(article) {
     label.hidden = label.dataset.stockMode !== mode;
     label.querySelector("input").disabled = label.hidden;
   });
+  const areaId = article.querySelector('[data-key="akile_area_id"]');
+  const manualArea = article.querySelector('[data-key="akile_area_mode"]').value === "manual";
+  areaId.disabled = adapter !== "akile" || !manualArea;
+  areaId.closest("label").hidden = !manualArea;
 }
 
 function renderProducts() {
@@ -816,7 +826,7 @@ const merchantPresets = {
   html: { label: "其他商家 · 通用 HTTPS 网页", hint: "填写商品网址及库存规则，适用于其他公开商品网页。", product: { adapter: "html", provider: "自定义网站", name: "", url: "", stock_selector: "", stock_mode: "quantity", stock_pattern: "([\\d,]+)", available_pattern: "(?i)in stock|available|有货|现货", unavailable_pattern: "(?i)out of stock|sold out|缺货|售罄", purchase_url: "" } },
   vmiss: { label: "VMISS", hint: "填写分类页、商品选择器和分组 ID，使用 VMISS 专用解析。", product: { adapter: "vmiss", provider: "VMISS", name: "", category_url: "", selector: "", gid: "" } },
   vps_soy: { label: "VPS.SOY", hint: "默认深港IX-MINI，可修改套餐完整名称。", product: { adapter: "vps_soy", provider: "VPS.SOY", name: "深港IX-MINI", url: "https://www.vps.soy/cart", selector: "深港IX-MINI", request_mode: "requests" } },
-  akile: { label: "Akile", hint: "默认仅添加 HKL-TW-Mini，使用普通 HTTPS 请求。", product: { adapter: "akile", provider: "Akile", name: "HKL-TW-Mini", area_id: "6", node_name: "HKL-TW", selector: "HKL-TW-Mini", request_mode: "requests" } },
+  akile: { label: "Akile", hint: "默认仅添加 HKL-TW-Mini，自动识别地区，使用普通 HTTPS 请求。", product: { adapter: "akile", provider: "Akile", name: "HKL-TW-Mini", area_mode: "auto", area_id: "6", node_name: "HKL-TW", selector: "HKL-TW-Mini", request_mode: "requests" } },
 };
 const merchantSelect = document.querySelector("#add-merchant");
 for (const [key, preset] of Object.entries(merchantPresets)) {
@@ -827,7 +837,7 @@ merchantSelect.addEventListener("change", updateMerchantHint);
 updateMerchantHint();
 document.querySelector("#add").addEventListener("click", () => {
   const item = { ...structuredClone(merchantPresets[merchantSelect.value].product), id: crypto.randomUUID(), enabled: false };
-  const existing = item.adapter === "akile" && config.products.find((product) => product.adapter === "akile" && String(product.area_id) === item.area_id && product.node_name?.trim().toLowerCase() === item.node_name.toLowerCase() && product.selector?.trim().toLowerCase() === item.selector.toLowerCase());
+  const existing = item.adapter === "akile" && config.products.find((product) => product.adapter === "akile" && (product.area_mode !== "manual" || String(product.area_id) === item.area_id) && product.node_name?.trim().toLowerCase() === item.node_name.toLowerCase() && product.selector?.trim().toLowerCase() === item.selector.toLowerCase());
   if (existing) {
     openProducts.add(existing.id);
     renderProducts();

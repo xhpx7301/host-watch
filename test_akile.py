@@ -52,10 +52,10 @@ class AkileTests(unittest.TestCase):
         payload["data"]["areas"].append(other)
         node = payload["data"]["areas"][0]["nodes"][0]
         node["plans"].insert(0, {"id": 9, "plan_name": "HKL-TW-Mini-Plus", "stock": 99, "tag": "traffic"})
-        self.assertEqual(parse_akile(payload, item()).available, 0)
+        self.assertEqual(parse_akile(payload, item(area_mode="manual")).available, 0)
         for override in [{"area_id": "99"}, {"node_name": "HKL"}, {"selector": "HKL-TW"}]:
             with self.subTest(override=override), self.assertRaisesRegex(MonitorError, "无法唯一匹配"):
-                parse_akile(payload, item(**override))
+                parse_akile(payload, item(area_mode="manual", **override))
 
     def test_missing_or_duplicate_area_node_or_plan_is_error(self):
         for level in ["area", "node", "plan"]:
@@ -68,7 +68,46 @@ class AkileTests(unittest.TestCase):
                 else:
                     entries.clear()
                 with self.subTest(level=level, duplicate=duplicate), self.assertRaisesRegex(MonitorError, "无法唯一匹配"):
-                    parse_akile(payload, item())
+                    parse_akile(payload, item(area_mode="manual"))
+
+    def test_automatic_region_ignores_stale_url_area_and_reports_actual_match(self):
+        payload = catalog()
+        payload["data"]["areas"].append({"id": 14, "area_name": "中国澳门", "nodes": [
+            {"id": 38, "group_name": "MOLite", "plans": [
+                {"id": 1017, "plan_name": "MOLite-高级竞技A", "stock": 0, "tag": "traffic"}
+            ]}
+        ]})
+        for area_id in ["6", "", "99"]:
+            with self.subTest(area_id=area_id):
+                product = parse_akile(payload, item(area_id=area_id, node_name=" MOLite ", selector="MOLite-高级竞技A"))
+                self.assertEqual(product.available, 0)
+                self.assertEqual((product.area_id, product.area_name, product.node_name), ("14", "中国澳门", "MOLite"))
+                self.assertEqual(product.url, "https://akile.ai/shop/server?type=traffic&areaId=14&nodeId=38&planId=1017")
+        with self.assertRaisesRegex(MonitorError, "实际位于.*ID=14"):
+            parse_akile(payload, item(area_mode="manual", node_name="MOLite", selector="MOLite-高级竞技A"))
+
+    def test_automatic_region_requires_unique_full_pair(self):
+        payload = catalog()
+        other = copy.deepcopy(payload["data"]["areas"][0])
+        other["id"] = 14
+        payload["data"]["areas"].append(other)
+        with self.assertRaisesRegex(MonitorError, "找到 2 项.*指定地区"):
+            parse_akile(payload, item())
+        other["nodes"][0]["plans"] = [{"id": 1017, "plan_name": "HKL-TW-Mini-Plus", "stock": 99, "tag": "traffic"}]
+        self.assertEqual(parse_akile(payload, item()).available, 0)
+        for overrides in [{"node_name": "HKL"}, {"selector": "HKL-TW"}]:
+            with self.subTest(overrides=overrides), self.assertRaisesRegex(MonitorError, "找到 0 项"):
+                parse_akile(payload, item(**overrides))
+
+    def test_automatic_region_rejects_malformed_nested_catalog(self):
+        for level in ["nodes", "plans"]:
+            payload = catalog()
+            parent = payload["data"]["areas"][0]
+            if level == "plans":
+                parent = parent["nodes"][0]
+            parent[level] = [None]
+            with self.subTest(level=level), self.assertRaisesRegex(MonitorError, "列表结构异常"):
+                parse_akile(payload, item())
 
     def test_missing_negative_boolean_fractional_or_text_stock_is_error(self):
         for stock in [None, -1, True, 0.5, "0", "unknown"]:
@@ -98,11 +137,21 @@ class AkileTests(unittest.TestCase):
     def test_config_validates_without_url_css_or_affiliate(self):
         config = validate_config({"enabled": True, "products": [item(area_id=6)]})
         self.assertEqual(config["products"][0]["area_id"], "6")
+        self.assertEqual(config["products"][0]["area_mode"], "auto")
         self.assertEqual(config["affiliate_id"], "")
         self.assertNotIn("url", config["products"][0])
         for override in [{"area_id": "0"}, {"area_id": "-3"}, {"area_id": "3&test=1"}, {"area_id": True}, {"node_name": ""}, {"selector": ""}]:
             with self.subTest(override=override), self.assertRaises(ValueError):
                 validate_config({"products": [item(**override)]})
+
+    def test_config_automatic_and_explicit_regions(self):
+        for overrides in [{"area_mode": "manual", "area_id": ""}, {"area_mode": "unknown"}]:
+            with self.subTest(overrides=overrides), self.assertRaises(ValueError):
+                validate_config({"products": [item(**overrides)]})
+        for mode, area_id in [("auto", ""), ("manual", "14")]:
+            config = validate_config({"products": [item(area_mode=mode, area_id=area_id)]})
+            self.assertEqual(config["products"][0]["area_mode"], mode)
+            self.assertEqual(config["products"][0]["area_id"], area_id)
 
     def test_public_api_fetch_and_standalone_override(self):
         session = Mock()
@@ -136,7 +185,7 @@ class AkileTests(unittest.TestCase):
         products = [item(tier) for tier in ["Mini", "Starter", "Standard", "Pro"]]
         previous = {product["id"]: {"available": 0 if i == 0 else [0, 1, 14, 16][i]} for i, product in enumerate(products)}
         with patch("monitor.fetch_akile_catalog", return_value=payload) as fetch, patch("monitor.read_state", return_value=previous), patch("monitor.write_state"), patch("monitor.write_status") as status, patch("monitor.telegram_request") as notify:
-            check_once(Mock(), {"products": products}, None, None, "bot", "chat")
+            check_once(Mock(), {"products": [dict(product, area_id="") for product in products]}, None, None, "bot", "chat")
         fetch.assert_called_once()
         notify.assert_called_once()
         self.assertIn("HKL-TW-Mini", notify.call_args.kwargs["text"])

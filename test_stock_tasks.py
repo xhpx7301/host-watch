@@ -1,4 +1,5 @@
 from contextlib import nullcontext
+import io
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
@@ -133,6 +134,25 @@ class StockTaskTests(unittest.TestCase):
         send.assert_not_called()
         spawn.assert_not_called()
         self.assertEqual(task.snapshot()["notification"]["status"], "skipped")
+
+    def test_akile_worker_and_notification_report_actual_catalog_match(self):
+        resolved = monitor.Product("1017", "MOLite-高级竞技A", 0,
+            "https://akile.ai/shop/server?type=traffic&areaId=14&nodeId=38&planId=1017",
+            vendor="Akile", area_id="14", area_name="中国澳门", node_name="MOLite")
+        output = io.StringIO()
+        submitted = {"product": {"adapter": "akile"}, "fetcher": {"mode": "requests"}}
+        with patch.object(admin.sys, "stdin", io.StringIO(json.dumps(submitted))), patch.object(admin.sys, "stdout", output), patch.object(monitor, "inspect_product", return_value=resolved):
+            admin.stock_test_worker()
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["matched_product"], {"area_id": "14", "area_name": "中国澳门", "node_name": "MOLite", "plan_name": "MOLite-高级竞技A"})
+        self.assertEqual(result["available"], 0)
+        result.update(checked_at="2026-10-15T17:00:00+08:00", duration_seconds=0.1)
+        with patch.object(admin, "telegram_credentials", return_value=("test-token", "123")), patch.object(admin, "telegram_call") as send:
+            notification = admin.send_stock_test_result({"name": "MOLite", "adapter": "akile"}, result)
+        self.assertEqual(notification["status"], "sent")
+        message = send.call_args.kwargs["text"]
+        for expected in ["中国澳门", "ID=14", "MOLite-高级竞技A", resolved.url, "库存：缺货"]:
+            self.assertIn(expected, message)
 
     def test_missing_bot_and_delivery_failure_preserve_stock_result(self):
         for credentials, error, status in [(("", ""), None, "unconfigured"), (("test-token", "123"), admin.TelegramAPIError("无法连接 Telegram"), "failed")]:

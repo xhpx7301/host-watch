@@ -84,6 +84,8 @@ def stock_test_worker() -> None:
             session.headers["User-Agent"] = "HostWatch/1.0 (manual stock test)"
             result = inspect_product(session, value["product"], value["fetcher"])
         output = {"ok": True, "available": result.available, "stock_mode": result.stock_mode, "purchase_url": result.url}
+        if result.vendor == "Akile":
+            output["matched_product"] = {"area_id": result.area_id, "area_name": result.area_name, "node_name": result.node_name, "plan_name": result.name}
     except MonitorError as exc:
         output = {"ok": False, "error": str(exc)}
     print(json.dumps(output))
@@ -463,14 +465,17 @@ def validate_config(value: object) -> dict:
                 raise ValueError(f"产品 {name} 需要填写 VPS.SOY 套餐完整名称（最多 200 个字符）")
             normalized_item = {"id": product_id, "name": name, "provider": provider, "adapter": adapter, "url": catalog_url, "selector": selector, "enabled": item.get("enabled", False)}
         elif adapter == "akile":
-            area_id = str(item.get("area_id", "6")).strip()
+            area_mode = str(item.get("area_mode", "auto")).strip().casefold()
+            if area_mode not in {"auto", "manual"}:
+                raise ValueError(f"产品 {name} 的 Akile 地区识别方式必须是 auto 或 manual")
+            area_id = str(item.get("area_id", "")).strip()
             node_name = str(item.get("node_name", "HKL-TW")).strip()
             selector = str(item.get("selector", name)).strip()
-            if not re.fullmatch(r"[1-9][0-9]{0,9}", area_id):
+            if (area_mode == "manual" or area_id) and not re.fullmatch(r"[1-9][0-9]{0,9}", area_id):
                 raise ValueError(f"产品 {name} 的 Akile 地区 ID 必须是正整数（最多 10 位）")
             if not node_name or not selector or max(len(node_name), len(selector), len(name)) > 200:
                 raise ValueError(f"产品 {name} 需要填写 Akile 线路及套餐完整名称（最多 200 个字符）")
-            normalized_item = {"id": product_id, "name": name, "provider": provider, "adapter": adapter, "area_id": area_id, "node_name": node_name, "selector": selector, "enabled": item.get("enabled", False)}
+            normalized_item = {"id": product_id, "name": name, "provider": provider, "adapter": adapter, "area_mode": area_mode, "area_id": area_id, "node_name": node_name, "selector": selector, "enabled": item.get("enabled", False)}
         else:
             check_url = str(item.get("url", item.get("category_url", ""))).strip()
             parsed = urlsplit(check_url)
@@ -658,6 +663,9 @@ def send_stock_test_result(product: dict, result: dict) -> dict:
         )
         if result.get("warning"):
             message += f"\n提示：{str(result['warning'])[:400]}"
+        matched = result.get("matched_product")
+        if isinstance(matched, dict):
+            message += f"\n实际地区：{str(matched.get('area_name', ''))[:80]}（ID={str(matched.get('area_id', ''))[:10]}）\n线路：{str(matched.get('node_name', ''))[:200]}\n套餐：{str(matched.get('plan_name', ''))[:200]}"
         if result.get("ok") and result.get("purchase_url"):
             message += f"\n商品入口：{str(result['purchase_url'])[:2048]}"
         telegram_call(token, "sendMessage", chat_id=chat_id, text=message, disable_web_page_preview=True)

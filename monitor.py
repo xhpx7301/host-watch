@@ -46,6 +46,9 @@ class Product:
     card_id: str = ""
     vendor: str = "VMISS"
     stock_mode: str = "quantity"
+    area_id: str = ""
+    area_name: str = ""
+    node_name: str = ""
 
 
 def parse_products(html: str, page_url: str, selectors: list[str]) -> list[Product]:
@@ -349,31 +352,55 @@ def fetch_akile_catalog(session: requests.Session, fetcher: dict) -> object:
 
 
 def parse_akile(payload: object, item: dict) -> Product:
-    """Select exactly one area, node and plan; unknown stock is an error."""
+    """Resolve one exact node/plan pair; never infer stock from a shop URL."""
     if not isinstance(payload, dict) or type(payload.get("status_code")) not in {int, str} or str(payload["status_code"]) not in {"0", "200"}:
         raise MonitorError("Akile 商品接口返回失败状态，未更新库存")
     data = payload.get("data")
     if not isinstance(data, dict):
         raise MonitorError("Akile 商品接口缺少目录数据，未更新库存")
 
-    def unique(entries: object, field: str, target: str, label: str) -> dict:
-        if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
+    def entries(value: object, label: str) -> list[dict]:
+        if not isinstance(value, list) or any(not isinstance(entry, dict) for entry in value):
             raise MonitorError(f"Akile {label}列表结构异常，未更新库存")
-        matches = [entry for entry in entries if str(entry.get(field, "")).strip().casefold() == target.strip().casefold()]
+        return value
+
+    def matching(value: object, field: str, target: str, label: str) -> list[dict]:
+        return [entry for entry in entries(value, label) if str(entry.get(field, "")).strip().casefold() == target.strip().casefold()]
+
+    def unique(value: object, field: str, target: str, label: str) -> dict:
+        matches = matching(value, field, target, label)
         if len(matches) != 1:
             raise MonitorError(f"Akile {label} {target} 无法唯一匹配（找到 {len(matches)} 项），请核对配置")
         return matches[0]
 
-    area = unique(data.get("areas"), "id", item["area_id"], "地区")
-    node = unique(area.get("nodes"), "group_name", item["node_name"], "线路")
-    plan = unique(node.get("plans"), "plan_name", item["selector"], "套餐")
+    all_areas = entries(data.get("areas"), "地区")
+    automatic = item.get("area_mode", "auto") == "auto"
+    areas = all_areas if automatic else [unique(all_areas, "id", item["area_id"], "地区")]
+    nodes = [(area, node) for area in areas for node in matching(area.get("nodes"), "group_name", item["node_name"], "线路")]
+    if not nodes:
+        hint = "请核对线路完整名称"
+        if not automatic:
+            elsewhere = [area for area in all_areas if matching(area.get("nodes"), "group_name", item["node_name"], "线路")]
+            locations = "、".join(f"{str(area.get('area_name') or '地区')[:40]}（ID={area.get('id')}）" for area in elsewhere[:6])
+            hint = f"当前限定地区 ID={item['area_id']}；" + (f"该线路实际位于 {locations}，请选择自动识别地区或修改地区 ID" if locations else hint)
+        raise MonitorError(f"Akile 线路 {item['node_name']} 无法唯一匹配（找到 0 项）；{hint}")
+    candidates = [(area, node, plan) for area, node in nodes for plan in matching(node.get("plans"), "plan_name", item["selector"], "套餐")]
+    if len(candidates) != 1:
+        if not candidates:
+            names = list(dict.fromkeys(str(plan.get("plan_name", ""))[:80] for _, node in nodes for plan in entries(node.get("plans"), "套餐")))
+            hint = "请填写该线路的套餐完整名称" + (f"，可选：{'、'.join(names[:6])}" if names else "，目录中可能已下架")
+        else:
+            locations = "、".join(f"{str(area.get('area_name') or '地区')[:40]}（ID={area.get('id')}）" for area, _, _ in candidates[:6])
+            hint = f"匹配地区：{locations}；请使用指定地区 ID 缩小范围，不能自动选择重名商品"
+        raise MonitorError(f"Akile 套餐 {item['selector']} 无法唯一匹配（找到 {len(candidates)} 项）；{hint}")
+    area, node, plan = candidates[0]
     stock = plan.get("stock")
     if type(stock) is not int or stock < 0:
         raise MonitorError("Akile 套餐库存不是非负整数，未更新库存")
     if any(type(entry.get("id")) is not int or entry["id"] <= 0 for entry in (area, node, plan)) or not isinstance(plan.get("tag"), str) or plan["tag"] not in {"traffic", "bandwidth", "performance"}:
         raise MonitorError("Akile 套餐缺少有效购买标识，未更新库存")
     purchase_url = "https://akile.ai/shop/server?" + urlencode({"type": plan["tag"], "areaId": area["id"], "nodeId": node["id"], "planId": plan["id"]})
-    return Product(str(plan["id"]), plan["plan_name"], stock, purchase_url, vendor="Akile")
+    return Product(str(plan["id"]), plan["plan_name"], stock, purchase_url, vendor="Akile", area_id=str(area["id"]), area_name=str(area.get("area_name") or f"地区 {area['id']}")[:80], node_name=str(node["group_name"]))
 
 
 def inspect_product(session: requests.Session, item: dict, fetcher: dict) -> Product:
@@ -444,7 +471,9 @@ def selected_products(config: dict) -> list[dict]:
             if urlsplit(str(item.get("url", ""))).hostname != "www.vps.soy" or not item.get("selector"):
                 raise MonitorError(f"商品 {name} 的 VPS.SOY 配置不完整")
         elif item.get("adapter") == "akile":
-            if not re.fullmatch(r"[1-9][0-9]{0,9}", str(item.get("area_id", ""))) or not item.get("node_name") or not item.get("selector"):
+            area_mode = item.get("area_mode", "auto")
+            area_id = str(item.get("area_id", ""))
+            if area_mode not in {"auto", "manual"} or ((area_mode == "manual" or area_id) and not re.fullmatch(r"[1-9][0-9]{0,9}", area_id)) or not item.get("node_name") or not item.get("selector"):
                 raise MonitorError(f"商品 {name} 的 Akile 配置不完整")
         elif item.get("adapter") == "html":
             url = str(item.get("url", ""))
