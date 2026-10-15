@@ -169,14 +169,35 @@
     .blocked-help strong { display:block; margin-bottom:3px; }
     .chat-list { display:grid; gap:7px; margin-top:10px; }
     .chat-option { display:flex; justify-content:space-between; text-align:left; }
-    .manage-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px 18px; margin-top:14px; }
-    .manage-service { padding:12px 0; border-top:1px solid var(--line); }
-    .manage-service strong { display:inline-block; min-width:115px; }
-    .manage-form { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); align-items:end; gap:12px; margin:14px 0; }
-    .manage-users { display:flex; flex-wrap:wrap; gap:7px; margin:12px 0; }
-    .manage-users span { padding:5px 8px; border:1px solid var(--line); border-radius:4px; background:#fff; }
-    .manage-logs { max-height:320px; overflow:auto; padding:12px; border:1px solid var(--line); border-radius:4px; background:#fff; color:var(--ink); font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .management-intro { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; padding:4px 0 18px; border-bottom:1px solid var(--line); }
+    .management-intro .eyebrow { display:block; margin-bottom:5px; color:var(--blue); font-size:10px; letter-spacing:1.8px; }
+    .management-intro h2 { margin:0; font-size:20px; letter-spacing:-.2px; }
+    .management-intro p { margin:5px 0 0; color:var(--muted); font-size:12px; }
+    .management-secure,.section-badge { display:inline-flex; align-items:center; flex-shrink:0; min-height:28px; padding:5px 10px; border:1px solid #c7e4d8; border-radius:999px; color:var(--green); background:var(--green-soft); font-size:11px; font-weight:700; }
+    .manage-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:16px; }
+    .manage-service { display:flex; align-items:center; gap:11px; min-height:76px; padding:14px 16px; border:1px solid var(--line); border-radius:9px; background:#fbfcfe; }
+    .manage-service-icon { display:grid; place-items:center; width:30px; height:30px; flex-shrink:0; border-radius:8px; color:var(--blue); background:var(--blue-soft); font-size:16px; }
+    .manage-service:nth-child(1) .manage-service-icon { color:var(--green); background:var(--green-soft); }
+    .manage-service > div { min-width:0; }
+    .manage-service-label { display:block; margin-bottom:4px; color:var(--muted); font-size:11px; font-weight:700; }
+    .manage-service .state { font-size:14px; }
+    .manage-service .subtle { display:inline; margin-left:8px; font-size:11px; }
+    .manage-block { margin-top:22px; padding-top:18px; border-top:1px solid var(--line); }
+    .manage-section-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+    .manage-section-head h3 { margin:0; font-size:15px; }
+    .manage-section-head p { margin:4px 0 0; color:var(--muted); font-size:12px; }
+    .manage-operations .manage-actions { margin:14px 0 0; }
+    .manage-global-note { margin-top:14px; }
+    .manage-task-status { min-height:18px; margin:8px 0 0; padding:0; color:var(--blue); font-size:12px; }
+    .manage-form { display:grid; grid-template-columns:minmax(180px,240px) minmax(220px,300px) minmax(220px,300px); align-items:end; gap:12px; margin:16px 0 14px; }
+    .manage-users { display:flex; flex-wrap:wrap; gap:7px; margin:13px 0; }
+    .manage-users button,.manage-users span { min-height:30px; padding:5px 10px; border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--ink); font-size:12px; font-weight:650; }
+    .manage-users button:hover { border-color:#aebfe0; color:var(--blue); background:var(--blue-soft); }
+    .manage-logs { max-height:320px; overflow:auto; margin:12px 0 0; padding:12px; border:1px solid var(--line); border-radius:7px; background:#f8fafc; color:var(--ink); font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
     .manage-actions { display:flex; flex-wrap:wrap; gap:8px; margin:14px 0; }
+    .manage-record-grid { display:grid; grid-template-columns:minmax(0,1.45fr) minmax(240px,.75fr); gap:28px; }
+    .manage-record-grid > div + div { padding-left:28px; border-left:1px solid var(--line); }
+    .manage-record-grid .manage-users { align-content:flex-start; }
     .monitor-control { margin-bottom:18px; padding:14px; border:1px solid var(--line); border-radius:5px; background:var(--paper); }
     .monitor-control .state { font-size:16px; }
     .monitor-control p { margin:7px 0; }
@@ -239,7 +260,7 @@
     @media(max-width:520px) { .catalog-intro,.catalog-sync,.catalog-reminders { align-items:flex-start; flex-direction:column; } .catalog-browser { padding:14px; } .catalog-merchants { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); } .catalog-merchants button { min-width:0; } .catalog-filters { grid-template-columns:minmax(0,1fr); } .catalog-bulk .subtle { margin-right:0; } .catalog-table { min-width:0; } .catalog-table thead { display:none; } .catalog-table,.catalog-table tbody,.catalog-table tr,.catalog-table td { display:block; } .catalog-table tr { display:grid; grid-template-columns:52px minmax(0,1fr); padding:14px 10px; gap:8px; } .catalog-table tr + tr { border-top:1px solid var(--line); } .catalog-table td { grid-column:2; min-width:0 !important; max-width:none !important; width:auto !important; padding:0; border:0; } .catalog-table td:first-child { grid-column:1; grid-row:1; } .catalog-table td:nth-child(2) { grid-column:2; grid-row:1; } .catalog-table td:nth-child(4)::before { content:"配置："; } .catalog-table td:nth-child(5)::before { content:"价格："; color:var(--muted); font-weight:400; } .catalog-row-actions { display:flex; flex-wrap:wrap; align-items:center; } .catalog-pagination { flex-wrap:wrap; } }
     @media(max-width:1100px) { .shell { grid-template-columns:200px minmax(0,1fr); } .workspace { padding:26px 24px 20px; } .sidebar { padding-left:12px; padding-right:12px; } .overview { grid-template-columns:repeat(2,minmax(0,1fr)); } .product { grid-template-columns:1fr 1fr; gap:11px; } .product-name { grid-column:1/-1; } .product-actions { grid-column:1/-1; justify-content:flex-start; } .savebar { align-items:stretch; flex-direction:column; } .savebar .actions { justify-content:flex-end; } }
     @media(max-width:780px) { .shell { display:block; } .sidebar { position:sticky; z-index:5; height:auto; padding:14px 14px 0; border-right:0; border-bottom:1px solid var(--line); } .sidebar .brand { padding:0 4px 12px; } .brand strong { font-size:19px; } .brand p { font-size:11px; } .brand-mark { width:32px; height:32px; } .nav-label,.sidebar-note { display:none; } .page-nav { display:flex; gap:5px; overflow-x:auto; padding:2px 0 10px; scrollbar-width:thin; } .page-nav a { flex-shrink:0; min-height:40px; padding:9px 12px; gap:7px; font-size:12px; } .page-nav svg { width:16px; height:16px; } .workspace { min-height:calc(100vh - 119px); padding:22px 16px 16px; } .overview-item { min-height:130px; padding:16px; } .page-heading h1 { font-size:25px; } .header-status { justify-items:start; } .topbar { align-items:flex-start; flex-direction:column; gap:16px; } .header-status .status-line { justify-content:flex-start; } .page-stage { padding-top:20px; } .panel-card > .section-body,#page-overview > .section { padding:18px; } }
-    @media(max-width:780px) { .manage-grid { grid-template-columns:1fr; } .manage-form { grid-template-columns:1fr; } .product-editor { scroll-margin-top:140px; } }
+    @media(max-width:780px) { .management-intro { flex-direction:column; gap:10px; } .manage-grid,.manage-record-grid { grid-template-columns:1fr; } .manage-record-grid > div + div { padding-left:0; padding-top:20px; border-top:1px solid var(--line); border-left:0; } .manage-form { grid-template-columns:1fr; } .manage-form label { width:100%; max-width:360px; } .manage-section-head { flex-direction:column; gap:8px; } .product-editor { scroll-margin-top:140px; } }
     @media(max-width:520px) { .section-head { align-items:flex-start; flex-direction:column; } .status-line { justify-content:flex-start; } .form-grid { grid-template-columns:1fr; } .span-2 { grid-column:auto; } .overview { gap:10px; } .overview-value { font-size:22px; } #overview-state { font-size:16px; } .savebar { bottom:8px; padding:12px; } .savebar .actions button { flex:1; padding:7px 8px; } .savebar .subtle { font-size:11px; } .merchant-add { width:100%; } }
     .watchlist-filters { display:flex; flex-wrap:wrap; gap:12px; margin:14px 0; }
     .watchlist-filters label { flex:0 1 220px; min-width:150px; }
@@ -576,38 +597,45 @@
 
   <section class="page-panel panel-card" id="management-panel" data-page="management" aria-labelledby="page-title" hidden>
     <div class="section-body">
-    <p class="hint">在网页查看服务状态、管理管理员账号、查看日志、备份配置或更新程序。</p>
-    <div class="manage-grid">
-      <div class="manage-service"><strong>库存监控</strong><span id="manage-monitor-state">读取中</span><span id="manage-monitor-enabled" class="subtle"></span></div>
-      <div class="manage-service"><strong>管理页面</strong><span id="manage-admin-state">读取中</span></div>
+    <div class="management-intro">
+      <div><span class="eyebrow">ADMIN CONSOLE</span><h2>服务器与账号管理</h2><p>集中查看服务运行情况，管理管理员账号、备份和 HostWatch 更新。</p></div>
+      <span class="management-secure">受保护操作</span>
     </div>
-    <div class="manage-actions">
+    <div class="manage-grid" aria-label="服务状态">
+      <div class="manage-service"><span class="manage-service-icon">◉</span><div><span class="manage-service-label">库存监控服务</span><span id="manage-monitor-state" class="state">读取中</span><span id="manage-monitor-enabled" class="subtle"></span></div></div>
+      <div class="manage-service"><span class="manage-service-icon">▣</span><div><span class="manage-service-label">管理页面服务</span><span id="manage-admin-state" class="state">读取中</span></div></div>
+    </div>
+    <div class="manage-block manage-operations">
+      <div class="manage-section-head"><div><h3>运维操作</h3><p>读取状态不会触发库存检查；更新会先创建备份。</p></div></div>
+      <div class="manage-actions">
       <button id="manage-refresh" type="button">刷新状态</button>
       <button id="manage-restart-admin" type="button">重启管理页</button>
       <button id="manage-backup" type="button">立即备份</button>
-      <button id="manage-update" type="button">更新 HostWatch</button>
+      <button id="manage-update" type="button" class="primary">更新 HostWatch</button>
+      </div>
     </div>
-    <p class="hint">监控启停请使用底部“开始监控”“暂停监控”；配置修改使用旁边的“保存配置”。</p>
-    <p id="manage-task-status" class="hint" aria-live="polite"></p>
-    <h3>管理页管理员</h3>
-    <p class="hint">密码至少 12 个字符。账号立即生效；删除最后一个管理员会被拒绝。</p>
-    <div id="manage-users" class="manage-users"></div>
-    <div class="manage-form">
-      <label>用户名<input id="manager-username" autocomplete="username" maxlength="64" placeholder="英文字母、数字、_ . @ -"></label>
-      <label>新密码<input id="manager-password" type="password" autocomplete="new-password" minlength="12" maxlength="256"></label>
-      <label>确认密码<input id="manager-confirm" type="password" autocomplete="new-password" minlength="12" maxlength="256"></label>
+    <p class="hint manage-global-note">监控启停请使用页面底部“开始监控 / 暂停监控”；配置修改使用“保存配置”。</p>
+    <p id="manage-task-status" class="manage-task-status" aria-live="polite"></p>
+    <div class="manage-block manage-accounts">
+      <div class="manage-section-head"><div><h3>管理员账号</h3><p>密码至少 12 个字符，账号修改立即生效。删除最后一个管理员会被拒绝。</p></div><span class="section-badge">账号安全</span></div>
+      <div id="manage-users" class="manage-users"></div>
+      <div class="manage-form">
+        <label>用户名<input id="manager-username" autocomplete="username" maxlength="64" placeholder="英文字母、数字、_ . @ -"></label>
+        <label>新密码<input id="manager-password" type="password" autocomplete="new-password" minlength="12" maxlength="256" placeholder="至少 12 个字符"></label>
+        <label>确认密码<input id="manager-confirm" type="password" autocomplete="new-password" minlength="12" maxlength="256" placeholder="再次输入新密码"></label>
+      </div>
+      <div class="manage-actions">
+        <button id="manage-add-user" type="button" class="primary">添加管理员</button>
+        <button id="manage-change-password" type="button">修改该管理员密码</button>
+        <button id="manage-delete-user" type="button" class="danger">删除该管理员</button>
+      </div>
     </div>
-    <div class="manage-actions">
-      <button id="manage-add-user" type="button" class="primary">添加管理员</button>
-      <button id="manage-change-password" type="button">修改该管理员密码</button>
-      <button id="manage-delete-user" type="button" class="danger">删除该管理员</button>
+    <div class="manage-block manage-records">
+      <div class="manage-record-grid">
+        <div><div class="manage-section-head"><div><h3>最近日志</h3><p>监控和管理服务的最近记录。</p></div></div><div class="manage-actions"><button id="manage-load-logs" type="button">载入日志</button></div><pre id="manage-logs" class="manage-logs">点击“载入日志”查看最近记录。</pre></div>
+        <div><div class="manage-section-head"><div><h3>最近备份</h3><p>更新前自动备份，凭据仅限管理员访问。</p></div></div><div id="manage-backups" class="manage-users"><span>读取中</span></div></div>
+      </div>
     </div>
-    <h3>最近日志</h3>
-    <div class="manage-actions"><button id="manage-load-logs" type="button">载入日志</button></div>
-    <pre id="manage-logs" class="manage-logs">点击“载入日志”查看监控和管理服务最近记录。</pre>
-    <h3>最近备份</h3>
-    <div id="manage-backups" class="manage-users"><span>读取中</span></div>
-    <p class="hint">更新会先备份并重启相关服务；备份包含配置凭据，请按敏感文件保管。</p>
     </div>
   </section>
   </div>
