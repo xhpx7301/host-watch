@@ -198,7 +198,7 @@ def service_status() -> None:
 def start_monitor() -> None:
     config = json.loads((DATA_DIR / "config.json").read_text(encoding="utf-8"))
     if config.get("enabled") is not True:
-        raise ValueError("请先在管理页勾选“启用库存检查”并保存，再从菜单启动服务")
+        raise ValueError("监控配置处于暂停状态，请在网页点击“保存并开始监控”")
     run("systemctl", "enable", "--now", MONITOR)
     print("监控服务已启动并设置开机自启。")
 
@@ -211,7 +211,7 @@ def stop_monitor() -> None:
 def restart_monitor() -> None:
     config = json.loads((DATA_DIR / "config.json").read_text(encoding="utf-8"))
     if config.get("enabled") is not True:
-        raise ValueError("请先在管理页勾选“启用库存检查”并保存")
+        raise ValueError("监控配置处于暂停状态，请在网页点击“保存并开始监控”")
     run("systemctl", "restart", MONITOR)
     print("监控服务已重启，将重新读取配置。")
 

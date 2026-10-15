@@ -17,6 +17,8 @@ let toastTimer;
 let actionRunning = false;
 let updateUnit = sessionStorage.getItem("hostwatch-update-unit") || "";
 let managementUsers = [];
+let monitorService = null;
+let savedConfig = null;
 
 function setMessage(message, kind = "", notify = true) {
   messageNode.textContent = message;
@@ -94,7 +96,15 @@ async function managementRequest(value) {
 }
 
 async function refreshManagement() {
-  const state = await requestJSON("/api/manage");
+  let state;
+  try { state = await requestJSON("/api/manage"); }
+  catch (error) {
+    monitorService = null;
+    renderMonitorState();
+    throw error;
+  }
+  monitorService = state.monitor;
+  renderMonitorState();
   const serviceLabel = (value) => ({ active: "运行中", inactive: "已停止", failed: "运行失败", activating: "启动中", deactivating: "停止中", unknown: "未知" })[value] || value;
   const monitorState = document.querySelector("#manage-monitor-state");
   monitorState.textContent = serviceLabel(state.monitor.active);
@@ -199,14 +209,18 @@ function bindManagementActions() {
     setMessage("服务器服务、管理员账号和备份列表已刷新。", "success");
   }));
   for (const [id, action, label, message] of [
-    ["manage-start", "monitor-start", "启动中…", "正在启用并启动库存监控…"],
-    ["manage-stop", "monitor-stop", "停止中…", "正在停止库存监控…"],
     ["manage-restart", "monitor-restart", "重启中…", "正在重启库存监控并载入配置…"],
     ["manage-restart-admin", "admin-restart", "安排中…", "正在安排管理页服务重启…"],
     ["manage-backup", "backup", "备份中…", "正在备份程序和配置…"],
     ["manage-update", "update", "启动中…", "正在启动 HostWatch 更新任务…"],
   ]) {
-    document.querySelector(`#${id}`).addEventListener("click", (event) => runAction(event.currentTarget, label, message, () => performManagementAction(action)));
+    document.querySelector(`#${id}`).addEventListener("click", (event) => {
+      if (action === "monitor-restart" && hasUnsavedChanges()) {
+        setMessage("当前有未保存的修改，请先保存配置；保存时会自动应用，无需再重启。", "pending");
+        return;
+      }
+      runAction(event.currentTarget, label, message, () => performManagementAction(action));
+    });
   }
   document.querySelector("#manage-load-logs").addEventListener("click", (event) => runAction(event.currentTarget, "载入中…", "正在读取最近服务日志…", async () => {
     const result = await requestJSON("/api/manage/logs");
@@ -284,6 +298,8 @@ function productEditor(item, index) {
     config.products = config.products.filter((product) => product.id !== item.id);
     renderProducts();
     renderOverview();
+    updateDraftState();
+    setMessage("商品已移除，保存后生效。", "pending");
   });
   actions.append(remove);
   head.append(actions);
@@ -391,11 +407,11 @@ function renderProductList() {
     const status = statusProducts.get(item.id);
     const article = text("article", "", "product");
     const identity = text("div", "", "product-name");
-    identity.append(text("strong", item.name || "未命名商品"), text("span", `${item.provider || "自定义网站"}${item.enabled ? " · 监控中" : " · 已停用"}`));
+    identity.append(text("strong", item.name || "未命名商品"), text("span", `${item.provider || "自定义网站"}${item.enabled ? " · 已纳入监控" : " · 未纳入监控"}`));
     const stock = text("div", "", "metric");
     stock.append(text("span", "最近库存", "metric-label"), text("strong", status ? stockLabel(status) : "暂无数据", `metric-value ${status?.available > 0 ? "in" : "out"}`));
     const checked = text("div", "", "metric");
-    checked.append(text("span", "商品状态", "metric-label"), text("strong", item.enabled ? (status ? (status.available > 0 ? "有货" : "缺货") : "等待检查") : "已停用", "metric-value"));
+    checked.append(text("span", "上次检查结果", "metric-label"), text("strong", status ? (status.available > 0 ? "有货" : "缺货") : "暂无记录", "metric-value"));
     const updated = text("div", "", "metric");
     updated.append(text("span", "最近检查", "metric-label"), text("strong", lastStatus?.last_checked ? new Date(lastStatus.last_checked).toLocaleString() : "尚无记录", "metric-value"));
     const actions = text("div", "", "product-actions");
@@ -431,9 +447,53 @@ function renderOverview() {
   document.querySelector("#overview-total-note").textContent = `${vendors.size} 个厂商 · ${enabled.length} 个启用`;
   document.querySelector("#overview-stock").textContent = String(inStock);
   document.querySelector("#overview-interval").textContent = `${Math.round((config.interval_seconds || 600) / 60)} 分钟`;
-  const stateLabel = ({ ok: "运行正常", blocked: "访问被拦截", error: "检查异常", unknown: "等待检查" })[lastStatus?.state] || "等待检查";
-  document.querySelector("#overview-state").textContent = config.enabled ? stateLabel : "监控已停用";
-  document.querySelector("#overview-state-note").textContent = config.enabled ? (lastStatus?.message || "等待下一次检查") : "启用后按设定间隔检查";
+  renderMonitorState();
+}
+
+function renderMonitorState() {
+  const active = monitorService?.active;
+  const labels = { active: "监控服务运行中", inactive: "监控服务已停止", failed: "监控服务运行失败", activating: "监控服务启动中", deactivating: "监控服务停止中" };
+  const label = labels[active] || "监控服务状态未知";
+  let note = config.enabled ? "已保存：开启自动监控。" : "已保存：暂停自动监控。";
+  if (!savedConfig) note = "正在读取配置。";
+  if (!monitorService) note += "请刷新状态核对服务器实际运行情况。";
+  else if (active === "active") note += "服务已启动，库存检查是否成功请查看最近检查结果。";
+  else if (config.enabled) note += "服务尚未运行，可点击“保存并开始监控”恢复。";
+  else note += "点击“保存并开始监控”后开始检查。";
+  const runtime = document.querySelector("#monitor-runtime");
+  runtime.textContent = label;
+  runtime.className = `state ${active === "active" ? "ok" : active === "failed" ? "error" : ""}`;
+  document.querySelector("#monitor-runtime-note").textContent = note;
+  document.querySelector("#overview-state").textContent = label;
+  document.querySelector("#overview-state-note").textContent = note;
+}
+
+function collectConfig(enabled = config.enabled) {
+  return {
+    enabled,
+    interval_seconds: Number(document.querySelector("#interval").value),
+    affiliate_id: document.querySelector("#affiliate").value.trim(),
+    notify_current_stock_on_start: document.querySelector("#notify-current").checked,
+    fetcher: { mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value) },
+    telegram: { bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim(), disabled: document.querySelector("#telegram-disabled").checked, clear: document.querySelector("#telegram-clear").checked },
+    products: config.products.map((item) => ({ ...item })),
+  };
+}
+
+function hasUnsavedChanges() {
+  return savedConfig !== null && JSON.stringify(collectConfig()) !== savedConfig;
+}
+
+function updateDraftState() {
+  if (savedConfig === null) return;
+  const dirty = hasUnsavedChanges();
+  const node = document.querySelector("#monitor-draft");
+  node.textContent = dirty ? "有未保存的修改。开始、暂停或保存配置时会一并保存。" : "页面配置已保存。";
+  node.className = dirty ? "hint draft-note" : "hint";
+  const seconds = Number(document.querySelector("#interval").value);
+  const valid = Number.isInteger(seconds) && seconds >= 300 && seconds <= 86400;
+  document.querySelector("#interval-description").textContent = valid ? `每 ${seconds % 60 === 0 ? `${seconds / 60} 分钟` : `${seconds} 秒`}检查一次；开始监控后立即进行第一次检查。` : "检查间隔必须是 300–86400 秒的整数。";
+  document.querySelector("#interval-preset").value = [300, 600, 1800, 3600].includes(seconds) ? String(seconds) : "";
 }
 
 function updateFetcherStatus() {
@@ -451,7 +511,6 @@ async function loadConfig() {
 
 function applyConfig(value) {
   config = value;
-  document.querySelector("#enabled").checked = Boolean(config.enabled);
   document.querySelector("#interval").value = config.interval_seconds || 600;
   document.querySelector("#affiliate").value = config.affiliate_id || "";
   document.querySelector("#notify-current").checked = Boolean(config.notify_current_stock_on_start);
@@ -468,12 +527,15 @@ function applyConfig(value) {
   document.querySelector("#telegram-status").textContent = telegram.configured ? "Telegram 已配置（token 不会回显）。" : (telegram.disabled ? "Telegram 已停用。" : "Telegram 尚未完整配置。");
   document.querySelector("#telegram-chats").replaceChildren();
   renderProducts();
+  savedConfig = JSON.stringify(collectConfig());
+  updateDraftState();
+  renderMonitorState();
 }
 
 async function loadStatus() {
   lastStatus = await requestJSON("/api/status");
   const state = document.querySelector("#state");
-  state.textContent = ({ ok: "最近检查成功", blocked: "因网站拦截已停止", error: "检查出错", unknown: "尚无检查记录" })[lastStatus.state] || lastStatus.state || "尚无检查记录";
+  state.textContent = ({ ok: "上次检查成功", blocked: "上次检查被拦截", error: "上次检查失败", unknown: "尚无检查记录" })[lastStatus.state] || lastStatus.state || "尚无检查记录";
   state.className = `state ${lastStatus.state || ""}`;
   document.querySelector("#last-checked").textContent = lastStatus.last_checked ? `上次检查：${new Date(lastStatus.last_checked).toLocaleString()}` : "";
   blockedHelpNode.hidden = lastStatus.state !== "blocked";
@@ -483,9 +545,9 @@ async function loadStatus() {
 }
 
 async function reloadConfig(notify = true) {
-  const results = await Promise.allSettled([loadConfig(), loadStatus()]);
+  const results = await Promise.allSettled([loadConfig(), loadStatus(), refreshManagement()]);
   const failures = results.map((result, index) => result.status === "rejected"
-    ? `${index === 0 ? "配置" : "监控状态"}载入失败：${result.reason.message}` : "").filter(Boolean);
+    ? `${["配置", "检查结果", "服务状态"][index]}载入失败：${result.reason.message}` : "").filter(Boolean);
   if (failures.length) throw new Error(failures.join("；"));
   setMessage(notify ? "配置和状态已重新载入，未保存的修改已丢弃；此次操作不会触发库存检查。" : "配置和监控状态已载入。", "success", notify);
 }
@@ -497,14 +559,29 @@ document.querySelector("#add").addEventListener("click", () => {
   document.querySelector("#product-editors").closest("details").open = true;
   editorNode.lastElementChild?.scrollIntoView({ behavior: "smooth", block: "center" });
   setMessage("商品已添加，请填写商品信息后保存。", "pending");
+  updateDraftState();
 });
 document.querySelector("#reload").addEventListener("click", (event) => runAction(event.currentTarget, "载入中…", "正在重新载入配置和状态…", () => reloadConfig()));
 document.querySelector("#refresh-status").addEventListener("click", (event) => runAction(event.currentTarget, "刷新中…", "正在刷新监控状态…", async () => {
-  await loadStatus();
+  await Promise.all([loadStatus(), refreshManagement()]);
   setMessage("监控状态已刷新；此次操作不会触发库存检查。", "success");
 }));
 document.querySelector("#fetcher-mode").addEventListener("change", updateFetcherStatus);
 document.querySelector("#interval").addEventListener("input", () => { config.interval_seconds = Number(document.querySelector("#interval").value); renderOverview(); });
+document.querySelector("#interval-preset").addEventListener("change", (event) => {
+  if (event.target.value) {
+    document.querySelector("#interval").value = event.target.value;
+    config.interval_seconds = Number(event.target.value);
+    renderOverview();
+    updateDraftState();
+  }
+});
+document.querySelector(".shell").addEventListener("input", (event) => {
+  if (event.target.id !== "interval-preset") updateDraftState();
+});
+document.querySelector(".shell").addEventListener("change", updateDraftState);
+document.querySelector("#monitor-start").addEventListener("click", (event) => runAction(event.currentTarget, "启动中…", "正在保存当前配置并开始监控…", () => saveConfig(true)));
+document.querySelector("#monitor-stop").addEventListener("click", (event) => runAction(event.currentTarget, "暂停中…", "正在保存当前配置并暂停监控…", () => saveConfig(false)));
 document.querySelector("#telegram-test").addEventListener("click", (event) => runAction(event.currentTarget, "发送中…", "正在发送 Telegram 测试消息…", async () => {
   await requestJSON("/api/telegram/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim() }) });
   setMessage("Telegram 测试消息已发送。", "success");
@@ -523,36 +600,26 @@ document.querySelector("#telegram-load-chats").addEventListener("click", (event)
     const option = text("button", "", "chat-option");
     option.type = "button";
     option.append(text("span", `${chat.name}（${chat.type}）`), text("span", chat.id));
-    option.addEventListener("click", () => { document.querySelector("#telegram-chat-id").value = chat.id; setMessage(`已选择 ${chat.name}，保存后生效。`, "pending"); });
+    option.addEventListener("click", () => { document.querySelector("#telegram-chat-id").value = chat.id; updateDraftState(); setMessage(`已选择 ${chat.name}，保存后生效。`, "pending"); });
     chatsNode.append(option);
   }
   setMessage(`已读取 ${result.chats.length} 个聊天。`, "success");
 }));
 
-async function saveConfig() {
-  const products = config.products.map((item) => ({ ...item }));
-  const next = {
-    enabled: document.querySelector("#enabled").checked,
-    interval_seconds: Number(document.querySelector("#interval").value),
-    affiliate_id: document.querySelector("#affiliate").value.trim(),
-    notify_current_stock_on_start: document.querySelector("#notify-current").checked,
-    fetcher: { mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value) },
-    telegram: { bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim(), disabled: document.querySelector("#telegram-disabled").checked, clear: document.querySelector("#telegram-clear").checked },
-    products,
-  };
+async function saveConfig(enabled = config.enabled) {
+  const next = collectConfig(enabled);
   const result = await requestJSON("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
   document.querySelector("#telegram-token").value = "";
   applyConfig(result.config);
   if (result.service?.ok) {
     setMessage(next.enabled ? "配置已保存并应用，监控服务已启动。" : "配置已保存并应用，监控服务已停止。", "success");
   } else {
-    setMessage(`配置已保存，但自动应用服务失败：${result.service?.error || "请在管理员管理中重试"}`, "error");
+    setMessage(`配置已保存，但自动应用服务失败：${result.service?.error || "请在监控设置中重试"}`, "error");
   }
-  try { await refreshManagement(); }
+  try { await Promise.all([refreshManagement(), loadStatus()]); }
   catch (error) { document.querySelector("#manage-task-status").textContent = `配置已保存，管理状态刷新失败：${error.message}`; }
 }
-document.querySelector("#save").addEventListener("click", (event) => runAction(event.currentTarget, "保存中…", "正在保存配置…", saveConfig));
+document.querySelector("#save").addEventListener("click", (event) => runAction(event.currentTarget, "保存中…", "正在保存配置…", () => saveConfig()));
 runAction(null, "", "正在载入配置和监控状态…", () => reloadConfig(false), false);
 bindManagementActions();
-refreshManagement().catch((error) => { document.querySelector("#manage-task-status").textContent = error.message; });
 if (updateUnit) pollUpdateStatus();

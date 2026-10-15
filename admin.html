@@ -93,6 +93,10 @@
     .manage-users span { padding:5px 8px; border:1px solid var(--line); border-radius:4px; background:#fff; }
     .manage-logs { max-height:320px; overflow:auto; padding:12px; border:1px solid var(--line); border-radius:4px; background:#fff; color:var(--ink); font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
     .manage-actions { display:flex; flex-wrap:wrap; gap:8px; margin:14px 0; }
+    .monitor-control { margin-bottom:18px; padding:14px; border:1px solid var(--line); border-radius:5px; background:var(--paper); }
+    .monitor-control .state { font-size:16px; }
+    .monitor-control p { margin:7px 0; }
+    .draft-note { color:var(--amber); font-weight:600; }
     .savebar { position:sticky; bottom:10px; z-index:2; display:flex; justify-content:space-between; align-items:center; gap:14px; margin-top:18px; padding:10px 12px; border:1px solid #ccd6d5; border-radius:5px; background:rgba(255,255,255,.96); box-shadow:0 4px 18px rgba(25,43,42,.08); }
     @media(max-width:780px) { .shell { padding:16px 14px 40px; } .overview { grid-template-columns:repeat(2,minmax(0,1fr)); } .overview-item { padding:14px 10px 14px 0; min-height:85px; } .overview-item + .overview-item { padding-left:12px; } .overview-item:nth-child(3) { padding-left:0; border-left:0; } .product { grid-template-columns:1fr 1fr; gap:11px; } .product-name { grid-column:1/-1; } .product-actions { grid-column:1/-1; justify-content:flex-start; } }
     @media(max-width:780px) { .manage-grid { grid-template-columns:1fr; } .manage-form { grid-template-columns:1fr; } }
@@ -120,13 +124,26 @@
 
   <details class="section" open>
     <summary>监控设置</summary>
-    <div class="form-grid">
-      <label class="check"><input id="enabled" type="checkbox">启用库存检查</label>
-      <label>检查间隔（秒）<input id="interval" type="number" min="300" max="86400" step="60"></label>
-      <label class="check span-2"><input id="notify-current" type="checkbox">首次运行时，已有库存也发送提醒</label>
+    <div class="monitor-control">
+      <strong id="monitor-runtime" class="state">正在读取服务状态</strong>
+      <p id="monitor-runtime-note" class="subtle">以服务器实际运行状态为准。</p>
+      <div class="manage-actions">
+        <button id="monitor-start" type="button" class="primary">保存并开始监控</button>
+        <button id="monitor-stop" type="button">保存并暂停监控</button>
+        <button id="manage-restart" type="button">重启监控（已保存配置）</button>
+      </div>
+      <p id="monitor-draft" class="hint" aria-live="polite">配置读取中。</p>
+      <p class="hint">开始后立即检查一次，再按间隔自动检查；暂停后停止检查和库存提醒。刷新状态只读取记录，不会检查商品。</p>
     </div>
-    <div id="blocked-help" class="blocked-help" hidden><strong>监控因网站拦截而停止</strong><span id="blocked-message">检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。</span></div>
-    <p class="hint">保存配置会自动应用到监控服务；启用库存检查时启动服务，关闭时停止服务。</p>
+    <div class="form-grid">
+      <label>检查间隔（秒）<input id="interval" type="number" min="300" max="86400" step="1"></label>
+      <label>常用检查间隔<select id="interval-preset"><option value="">自定义间隔</option><option value="300">每 5 分钟</option><option value="600">每 10 分钟</option><option value="1800">每 30 分钟</option><option value="3600">每 1 小时</option></select></label>
+      <p id="interval-description" class="hint span-2"></p>
+      <label class="check span-2"><input id="notify-current" type="checkbox">首次记录该商品时，有货也发送提醒</label>
+    </div>
+    <p class="hint">“首次记录”指该商品还没有库存历史；重启服务不会清除历史。提醒还需要启用并配置 Telegram。</p>
+    <div id="blocked-help" class="blocked-help" hidden><strong>上次库存检查被网站拦截（历史记录）</strong><span id="blocked-message">检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。</span><p class="hint">该记录保留至下一次检查；当前服务状态请看上方。请先确认访问方式，避免反复重启。</p></div>
+    <p class="hint">底部“保存配置”保持已保存的监控开关：已启用时重启应用，已暂停时保持停止。</p>
   </details>
 
   <details class="section">
@@ -161,21 +178,18 @@
 
   <details class="section" id="management-panel">
     <summary>管理员管理</summary>
-    <p class="hint">在网页查看服务状态、启停监控、管理管理员账号、查看日志、备份配置或更新程序。</p>
+    <p class="hint">在网页查看服务状态、管理管理员账号、查看日志、备份配置或更新程序。</p>
     <div class="manage-grid">
       <div class="manage-service"><strong>库存监控</strong><span id="manage-monitor-state">读取中</span><span id="manage-monitor-enabled" class="subtle"></span></div>
       <div class="manage-service"><strong>管理页面</strong><span id="manage-admin-state">读取中</span></div>
     </div>
     <div class="manage-actions">
       <button id="manage-refresh" type="button">刷新状态</button>
-      <button id="manage-start" type="button" class="primary">启动监控</button>
-      <button id="manage-stop" type="button" class="danger">停止监控</button>
-      <button id="manage-restart" type="button">重启监控</button>
       <button id="manage-restart-admin" type="button">重启管理页</button>
       <button id="manage-backup" type="button">立即备份</button>
       <button id="manage-update" type="button">更新 HostWatch</button>
     </div>
-    <p class="hint">服务操作使用服务器已保存的配置；编辑后请先保存。启动和停止监控也会同步更新“启用库存检查”开关。</p>
+    <p class="hint">监控启停请使用“监控设置”中的开始或暂停按钮，操作时会一并保存页面配置。</p>
     <p id="manage-task-status" class="hint" aria-live="polite"></p>
     <h3>管理页管理员</h3>
     <p class="hint">密码至少 12 个字符。账号立即生效；删除最后一个管理员会被拒绝。</p>
