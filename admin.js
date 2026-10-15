@@ -291,6 +291,43 @@ function checkField(labelText, checked, key) {
   return label;
 }
 
+const soyGroups = [["8", "深港 · CNIX"], ["5", "香港 · 三网直连"], ["6", "香港 · Global"], ["4", "新加坡 · Global"], ["2", "日本 · SoftBank"], ["3", "日本 · IIJ"], ["7", "英国 · Global"]];
+
+function soyCategory(url) {
+  try {
+    const query = new URL(url).searchParams;
+    const fid = query.get("fid") || "", gid = query.get("gid") || "";
+    return { fid, gid, preset: !fid && !gid ? "" : fid === "1" && soyGroups.some(([id]) => id === gid) ? gid : "custom" };
+  } catch { return { fid: "", gid: "", preset: "custom" }; }
+}
+
+function syncSoyCategory(article, source) {
+  if (article.querySelector('[data-key="adapter"]').value !== "vps_soy") return;
+  const get = (key) => article.querySelector(`[data-key="soy_${key}"]`);
+  if (["soy_group", "soy_fid", "soy_gid"].includes(source)) {
+    if (source === "soy_group" && get("group").value === "custom") return;
+    if (source === "soy_group") {
+      get("fid").value = get("group").value ? "1" : "";
+      get("gid").value = get("group").value;
+    }
+    let url;
+    try { url = new URL(get("url").value); }
+    catch { url = new URL("https://www.vps.soy/cart"); }
+    for (const key of ["fid", "gid"]) {
+      const value = get(key).value.trim();
+      if (value) url.searchParams.set(key, value);
+      else url.searchParams.delete(key);
+    }
+    get("url").value = url.href;
+  }
+  if (["soy_url", "soy_group", "soy_fid", "soy_gid"].includes(source)) {
+    const category = soyCategory(get("url").value);
+    get("fid").value = category.fid;
+    get("gid").value = category.gid;
+    get("group").value = category.preset;
+  }
+}
+
 function productEditor(item, index) {
   const article = text("details", "", "product-editor section");
   article.dataset.id = item.id;
@@ -363,10 +400,15 @@ function productEditor(item, index) {
   htmlFields.append(quantity, available, unavailable);
   const soyFields = text("div", "", "form-grid span-2");
   soyFields.dataset.adapterFields = "vps_soy";
+  const soyUrl = item.adapter === "vps_soy" ? item.url : "https://www.vps.soy/cart?fid=1&gid=8";
+  const soy = soyCategory(soyUrl);
   soyFields.append(
-    inputField("VPS.SOY 商品分类页", item.adapter === "vps_soy" ? item.url : "https://www.vps.soy/cart", "soy_url", "url", "https://www.vps.soy/cart"),
+    selectField("地区 / 线路分组", soy.preset, "soy_group", [["", "网站默认分类"], ...soyGroups, ["custom", "自定义 FID / GID（更多分组）"]]),
+    inputField("产品类型 FID（留空使用网站默认）", soy.fid, "soy_fid", "text", "例如：1"),
+    inputField("地区 / 线路 GID（留空使用网站默认）", soy.gid, "soy_gid", "text", "例如：日本 SoftBank 2、深港 CNIX 8"),
+    inputField("VPS.SOY 商品分类页（与 FID / GID 同步）", soyUrl, "soy_url", "url", "https://www.vps.soy/cart?fid=1&gid=2"),
     inputField("套餐完整名称（精确匹配）", item.adapter === "vps_soy" ? item.selector : "深港IX-MINI", "soy_selector", "text", "深港IX-MINI"),
-    text("p", "自动识别套餐卡片、库存和购买入口。负库存按缺货处理；名称或库存无法识别时会报错，避免误报。无需填写 CSS 选择器或 VMISS 推广 ID。", "hint span-2"),
+    text("p", "FID 选择产品类型，GID 选择地区/线路；支持直接粘贴官网分类页网址（含 fid、gid）或编辑上方分组，双向同步。快捷分组对应当前 NAT（FID=1），后续新分组可手动填写。切换分组后需填写该页套餐完整名称，例如日本 SoftBank（GID=2）的“日本软银”；仅改商品显示名称不会切换套餐。负库存按缺货处理，未匹配会显示当前分组及本页套餐。", "hint span-2"),
   );
   const akileFields = text("div", "", "form-grid span-2");
   akileFields.dataset.adapterFields = "akile";
@@ -386,8 +428,9 @@ function productEditor(item, index) {
   renderProductTest(article, item.id);
   updateProductEditorTitle(article, item);
 
-  article.addEventListener("input", () => syncEditor(article));
-  article.addEventListener("change", () => {
+  article.addEventListener("input", (event) => { syncSoyCategory(article, event.target.dataset.key); syncEditor(article); });
+  article.addEventListener("change", (event) => {
+    syncSoyCategory(article, event.target.dataset.key);
     syncEditor(article);
     updateAdapterFields(article);
   });
@@ -454,6 +497,7 @@ function renderProductTest(article, id) {
     const matched = result.matched_product;
     node.append(text("span", `实际匹配：${matched.area_name}（地区 ID=${matched.area_id}） · ${matched.node_name} · ${matched.plan_name}`, "test-notification"));
   }
+  if (result.catalog_url) node.append(text("span", `检查分类：${result.catalog_url}`, "test-notification"));
   if (result.notification) node.append(text("span", result.notification.message, `test-notification ${result.notification.status === "sent" ? "success" : "error"}`));
 }
 
@@ -825,7 +869,7 @@ function addProducts(items) {
 const merchantPresets = {
   html: { label: "其他商家 · 通用 HTTPS 网页", hint: "填写商品网址及库存规则，适用于其他公开商品网页。", product: { adapter: "html", provider: "自定义网站", name: "", url: "", stock_selector: "", stock_mode: "quantity", stock_pattern: "([\\d,]+)", available_pattern: "(?i)in stock|available|有货|现货", unavailable_pattern: "(?i)out of stock|sold out|缺货|售罄", purchase_url: "" } },
   vmiss: { label: "VMISS", hint: "填写分类页、商品选择器和分组 ID，使用 VMISS 专用解析。", product: { adapter: "vmiss", provider: "VMISS", name: "", category_url: "", selector: "", gid: "" } },
-  vps_soy: { label: "VPS.SOY", hint: "默认深港IX-MINI，可修改套餐完整名称。", product: { adapter: "vps_soy", provider: "VPS.SOY", name: "深港IX-MINI", url: "https://www.vps.soy/cart", selector: "深港IX-MINI", request_mode: "requests" } },
+  vps_soy: { label: "VPS.SOY", hint: "默认深港IX-MINI（FID=1、GID=8），支持切换地区/线路分组。", product: { adapter: "vps_soy", provider: "VPS.SOY", name: "深港IX-MINI", url: "https://www.vps.soy/cart?fid=1&gid=8", selector: "深港IX-MINI", request_mode: "requests" } },
   akile: { label: "Akile", hint: "默认仅添加 HKL-TW-Mini，自动识别地区，使用普通 HTTPS 请求。", product: { adapter: "akile", provider: "Akile", name: "HKL-TW-Mini", area_mode: "auto", area_id: "6", node_name: "HKL-TW", selector: "HKL-TW-Mini", request_mode: "requests" } },
 };
 const merchantSelect = document.querySelector("#add-merchant");

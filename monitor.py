@@ -11,12 +11,12 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlencode, urljoin, urlsplit
+from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-from admin import effective_telegram, validate_config
+from admin import effective_telegram, normalize_vps_soy_url, validate_config
 
 
 ROOT = Path(__file__).resolve().parent
@@ -49,6 +49,7 @@ class Product:
     area_id: str = ""
     area_name: str = ""
     node_name: str = ""
+    catalog_url: str = ""
 
 
 def parse_products(html: str, page_url: str, selectors: list[str]) -> list[Product]:
@@ -302,7 +303,12 @@ def parse_vps_soy(html: str, page_url: str, selector: str) -> Product:
         if len(titles) == 1 and " ".join(titles[0].get_text(" ", strip=True).split()).casefold() == target:
             matches.append((card, titles[0]))
     if len(matches) != 1:
-        raise MonitorError(f"VPS.SOY 套餐 {selector} 无法唯一匹配（找到 {len(matches)} 项）；请核对分类页和完整名称")
+        query = parse_qs(urlsplit(page_url).query)
+        names = [title.get_text(" ", strip=True)[:80] for title in soup.select(".cartitem .card-body h4")][:6]
+        hint = f"当前分类 FID={query.get('fid', ['默认'])[0]}、GID={query.get('gid', ['默认'])[0]}；请核对分组及套餐完整名称"
+        if not matches and names:
+            hint += f"，本页套餐：{'、'.join(names)}"
+        raise MonitorError(f"VPS.SOY 套餐 {selector} 无法唯一匹配（找到 {len(matches)} 项）；{hint}")
     card, title = matches[0]
     stocks = [node.get_text(" ", strip=True) for node in card.select("p.card-text") if re.match(r"^库存\s*[:：]", node.get_text(" ", strip=True))]
     if len(stocks) != 1:
@@ -328,7 +334,19 @@ def parse_vps_soy(html: str, page_url: str, selector: str) -> Product:
             raise MonitorError("VPS.SOY 购买入口离开本站，已停止处理")
     elif count > 0:
         raise MonitorError("VPS.SOY 显示有库存但购买按钮不可用，未更新库存")
-    return Product(selector, title.get_text(" ", strip=True), max(0, count), purchase_url, vendor="VPS.SOY")
+    return Product(selector, title.get_text(" ", strip=True), max(0, count), purchase_url, vendor="VPS.SOY", catalog_url=page_url)
+
+
+def fetch_vps_soy_page(session: requests.Session, catalog_url: str, fetcher: dict) -> tuple[str, str]:
+    try:
+        catalog_url = normalize_vps_soy_url(catalog_url)
+    except ValueError as exc:
+        raise MonitorError(str(exc)) from exc
+    body, final_url = fetch_page(session, catalog_url, fetcher, "www.vps.soy")
+    requested, actual = (parse_qs(urlsplit(url).query) for url in (catalog_url, final_url))
+    if any(key in requested and requested[key] != actual.get(key) for key in ("fid", "gid")):
+        raise MonitorError("VPS.SOY 返回页面的 FID/GID 与请求分类不一致，未更新库存；请核对商品分类页")
+    return body, final_url
 
 
 AKILE_STORE_URL = "https://api.akile.ai/api/v1/store/GetVpsStoreV3"
@@ -408,7 +426,7 @@ def inspect_product(session: requests.Session, item: dict, fetcher: dict) -> Pro
     if item["adapter"] == "html":
         return fetch_html_stock(session, item, fetcher)
     if item["adapter"] == "vps_soy":
-        body, final_url = fetch_page(session, item["url"], product_fetcher(fetcher, item), "www.vps.soy")
+        body, final_url = fetch_vps_soy_page(session, item["url"], product_fetcher(fetcher, item))
         return parse_vps_soy(body, final_url, item["selector"])
     if item["adapter"] == "akile":
         return parse_akile(fetch_akile_catalog(session, product_fetcher(fetcher, item)), item)
@@ -601,9 +619,9 @@ def check_once(
             found[item["id"]] = fetch_html_stock(session, item, config.get("fetcher"))
         elif item["adapter"] == "vps_soy":
             fetcher = product_fetcher(config.get("fetcher"), item)
-            key = (item["url"], fetcher.get("mode", "requests"))
+            key = (normalize_vps_soy_url(item["url"]), fetcher.get("mode", "requests"))
             if key not in soy_pages:
-                soy_pages[key] = fetch_page(session, item["url"], fetcher, "www.vps.soy")
+                soy_pages[key] = fetch_vps_soy_page(session, key[0], fetcher)
             body, final_url = soy_pages[key]
             found[item["id"]] = parse_vps_soy(body, final_url, item["selector"])
         elif item["adapter"] == "akile":

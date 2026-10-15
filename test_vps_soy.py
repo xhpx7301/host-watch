@@ -61,6 +61,43 @@ class VPSSoyTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 validate_config({"products": [item(url=url)]})
 
+    def test_category_url_preserves_groups_and_normalizes_browser_hostname(self):
+        for url in ["https://vps.soy/cart?gid=2&fid=1", URL + "?fid=1&gid=2"]:
+            config = validate_config({"products": [item(url=url)]})
+            self.assertEqual(config["products"][0]["url"], URL + "?fid=1&gid=2")
+        for query in ["gid=0", "gid=-2", "gid=", "gid=2&gid=8", "fid=1&fid=2", "fid=hello", "gid=2abc", "gid=12345678901", "action=configureproduct&pid=1", "pid=1"]:
+            with self.subTest(query=query), self.assertRaises(ValueError):
+                validate_config({"products": [item(url=URL + "?" + query)]})
+
+    def test_grouped_single_test_and_sold_out_entry_keep_region(self):
+        url = URL + "?fid=1&gid=2"
+        with patch("monitor.fetch_page", return_value=(card("日本软银", "0"), url)) as fetch:
+            result = inspect_product(Mock(), item("日本软银", url=url), {})
+        self.assertEqual(fetch.call_args.args[1], url)
+        self.assertEqual(result.url, url)
+        self.assertEqual(result.catalog_url, url)
+        self.assertEqual(result.available, 0)
+        with self.assertRaisesRegex(MonitorError, "FID=1、GID=2.*本页套餐：日本软银"):
+            parse_vps_soy(card("日本软银", "0"), url, "深港IX-MINI")
+
+    def test_redirect_cannot_silently_drop_or_change_requested_group(self):
+        for final in [URL, URL + "?fid=1&gid=8", URL + "?fid=2&gid=2", URL + "?fid=1&gid=2&gid=8"]:
+            with self.subTest(final=final), patch("monitor.fetch_page", return_value=(card(), final)), self.assertRaisesRegex(MonitorError, "FID/GID.*不一致"):
+                inspect_product(Mock(), item(url=URL + "?fid=1&gid=2"), {})
+
+    def test_distinct_groups_never_share_stock_but_same_group_shares_fetch(self):
+        products = [item("MINI", id="one", url=URL + "?fid=1&gid=2"),
+                    item("MINI", id="two", url=URL + "?fid=1&gid=8"),
+                    item("PRO", id="three", url=URL + "?gid=2&fid=1")]
+        def page(session, url, *args):
+            if "gid=2" in url:
+                return card("MINI", "0") + card("PRO", "0"), url
+            return card("MINI", "5", "/cart?pid=8", False), url
+        with patch("monitor.fetch_page", side_effect=page) as fetch, patch("monitor.read_state", return_value={}), patch("monitor.write_state"), patch("monitor.write_status") as status:
+            check_once(Mock(), {"products": products}, None, None, "", "")
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual([p["available"] for p in status.call_args.args[1]["products"]], [0, 5, 0])
+
     def test_single_test_uses_product_request_override(self):
         with patch("monitor.fetch_page", return_value=(card(), URL)) as fetch:
             result = inspect_product(Mock(), item(), {"mode": "flaresolverr"})

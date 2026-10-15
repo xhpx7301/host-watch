@@ -154,6 +154,19 @@ class StockTaskTests(unittest.TestCase):
         for expected in ["中国澳门", "ID=14", "MOLite-高级竞技A", resolved.url, "库存：缺货"]:
             self.assertIn(expected, message)
 
+    def test_soy_test_result_and_message_include_checked_group(self):
+        url = "https://www.vps.soy/cart?fid=1&gid=2"
+        resolved = monitor.Product("日本软银", "日本软银", 0, url, vendor="VPS.SOY", catalog_url=url)
+        output = io.StringIO()
+        with patch.object(admin.sys, "stdin", io.StringIO(json.dumps({"product": {}, "fetcher": {}}))), patch.object(admin.sys, "stdout", output), patch.object(monitor, "inspect_product", return_value=resolved):
+            admin.stock_test_worker()
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["catalog_url"], url)
+        result.update(checked_at="2026-10-15", duration_seconds=0.1)
+        with patch.object(admin, "telegram_credentials", return_value=("test-token", "123")), patch.object(admin, "telegram_call") as send:
+            self.assertEqual(admin.send_stock_test_result({"name": "日本软银", "adapter": "vps_soy"}, result)["status"], "sent")
+        self.assertIn("检查分类：" + url, send.call_args.kwargs["text"])
+
     def test_missing_bot_and_delivery_failure_preserve_stock_result(self):
         for credentials, error, status in [(("", ""), None, "unconfigured"), (("test-token", "123"), admin.TelegramAPIError("无法连接 Telegram"), "failed")]:
             task = self.task()

@@ -13,7 +13,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import requests
 
@@ -86,6 +86,8 @@ def stock_test_worker() -> None:
         output = {"ok": True, "available": result.available, "stock_mode": result.stock_mode, "purchase_url": result.url}
         if result.vendor == "Akile":
             output["matched_product"] = {"area_id": result.area_id, "area_name": result.area_name, "node_name": result.node_name, "plan_name": result.name}
+        if result.vendor == "VPS.SOY":
+            output["catalog_url"] = result.catalog_url
     except MonitorError as exc:
         output = {"ok": False, "error": str(exc)}
     print(json.dumps(output))
@@ -379,6 +381,21 @@ def allowed_hosts() -> set[str]:
     return {item.strip().casefold() for item in raw.split(",") if item.strip()}
 
 
+def normalize_vps_soy_url(value: object) -> str:
+    catalog_url = str(value).strip()
+    parsed = urlsplit(catalog_url)
+    if parsed.scheme != "https" or parsed.hostname not in {"www.vps.soy", "vps.soy"} or parsed.path.rstrip("/") != "/cart" or parsed.username or parsed.password or parsed.fragment or parsed.port not in {None, 443} or len(catalog_url) > 2048:
+        raise ValueError("VPS.SOY 商品页必须是 https://www.vps.soy/cart，可带 fid、gid 分类参数")
+    query = parse_qsl(parsed.query, keep_blank_values=True)
+    for key in ("fid", "gid"):
+        values = [value for name, value in query if name == key]
+        if values and (len(values) != 1 or not re.fullmatch(r"[1-9][0-9]{0,9}", values[0])):
+            raise ValueError(f"VPS.SOY 的 {key.upper()} 必须是唯一的正整数（最多 10 位），或移除此参数使用默认分类")
+    if any(key in {"action", "pid"} for key, _ in query):
+        raise ValueError("VPS.SOY 请填写带 fid、gid 的商品分类页，不要填写含 action 或 pid 的下单链接")
+    return "https://www.vps.soy/cart" + ("?" + urlencode(sorted(query)) if query else "")
+
+
 def validate_config(value: object) -> dict:
     if not isinstance(value, dict):
         raise ValueError("配置必须是 JSON 对象")
@@ -456,10 +473,7 @@ def validate_config(value: object) -> dict:
                 "enabled": item.get("enabled", False),
             }
         elif adapter == "vps_soy":
-            catalog_url = str(item.get("url", "https://www.vps.soy/cart")).strip()
-            parsed = urlsplit(catalog_url)
-            if parsed.scheme != "https" or parsed.hostname != "www.vps.soy" or parsed.path.rstrip("/") != "/cart" or parsed.username or parsed.password or parsed.fragment or parsed.port not in {None, 443} or len(catalog_url) > 2048:
-                raise ValueError(f"产品 {name} 的 VPS.SOY 商品页必须是 https://www.vps.soy/cart，可带分类查询参数")
+            catalog_url = normalize_vps_soy_url(item.get("url", "https://www.vps.soy/cart"))
             selector = str(item.get("selector", name)).strip()
             if not selector or len(selector) > 200:
                 raise ValueError(f"产品 {name} 需要填写 VPS.SOY 套餐完整名称（最多 200 个字符）")
@@ -666,6 +680,8 @@ def send_stock_test_result(product: dict, result: dict) -> dict:
         matched = result.get("matched_product")
         if isinstance(matched, dict):
             message += f"\n实际地区：{str(matched.get('area_name', ''))[:80]}（ID={str(matched.get('area_id', ''))[:10]}）\n线路：{str(matched.get('node_name', ''))[:200]}\n套餐：{str(matched.get('plan_name', ''))[:200]}"
+        if result.get("catalog_url"):
+            message += f"\n检查分类：{str(result['catalog_url'])[:2048]}"
         if result.get("ok") and result.get("purchase_url"):
             message += f"\n商品入口：{str(result['purchase_url'])[:2048]}"
         telegram_call(token, "sendMessage", chat_id=chat_id, text=message, disable_web_page_preview=True)
