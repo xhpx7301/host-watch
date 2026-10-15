@@ -14,6 +14,10 @@ Environment=VMISS_CONFIG=/var/lib/vmiss-monitor/config.json
 Environment=VMISS_STATUS=/var/lib/vmiss-monitor/status.json
 Environment=STATE_FILE=/var/lib/vmiss-monitor/state.json
 ExecStart=/opt/vmiss-monitor/.venv/bin/python /opt/vmiss-monitor/monitor.py
+# A stuck dependency or network setup must become a failed unit instead of
+# leaving the admin page in "starting" forever.
+TimeoutStartSec=60
+TimeoutStopSec=30
 Restart=on-failure
 RestartSec=30
 NoNewPrivileges=true

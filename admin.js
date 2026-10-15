@@ -25,6 +25,8 @@ let managementUsers = [];
 let monitorService = null;
 let savedConfig = null;
 let serviceRefreshTimer, serviceRefreshPending = false;
+let serviceTransitionStartedAt = 0;
+const SERVICE_TRANSITION_TIMEOUT_MS = 60_000;
 const openProducts = new Set();
 const productTests = new Map();
 let activeTest = null;
@@ -210,7 +212,15 @@ async function refreshManagement() {
     scheduleServiceRefresh();
     throw error;
   }
+  const previousActive = monitorService?.active;
   monitorService = state.monitor;
+  if (["activating", "deactivating"].includes(monitorService?.active)) {
+    if (previousActive !== monitorService.active || !serviceTransitionStartedAt) serviceTransitionStartedAt = Date.now();
+    monitorService.transition_timeout = Date.now() - serviceTransitionStartedAt >= SERVICE_TRANSITION_TIMEOUT_MS;
+  } else {
+    serviceTransitionStartedAt = 0;
+    monitorService.transition_timeout = false;
+  }
   scheduleServiceRefresh();
   renderMonitorState();
   const serviceLabel = (value) => ({ active: "运行中", inactive: "已停止", failed: "运行失败", activating: "启动中", deactivating: "停止中", unknown: "未知" })[value] || value;
@@ -230,11 +240,13 @@ async function refreshManagement() {
 }
 
 function serviceTone(active) {
+  if (monitorService?.transition_timeout && ["activating", "deactivating"].includes(active)) return "error";
   return active === "active" ? "ok" : ["inactive", "failed"].includes(active) ? "error" : ["activating", "deactivating"].includes(active) ? "pending" : "";
 }
 function scheduleServiceRefresh() {
   clearTimeout(serviceRefreshTimer);
-  const delay = ["activating", "deactivating"].includes(monitorService?.active) ? 2000 : 10000;
+  const transition = ["activating", "deactivating"].includes(monitorService?.active);
+  const delay = transition && !monitorService?.transition_timeout ? 2000 : 10000;
   serviceRefreshTimer = setTimeout(refreshLiveState, delay);
 }
 async function refreshLiveState() {
@@ -1430,13 +1442,16 @@ function renderOverviewRecent() {
 
 function renderMonitorState() {
   const active = monitorService?.active;
-  const labels = { active: "监控服务运行中", inactive: "监控服务已停止", failed: "监控服务运行失败", activating: "监控服务启动中", deactivating: "监控服务停止中" };
+  const transitionTimedOut = monitorService?.transition_timeout;
+  const labels = { active: "监控服务运行中", inactive: "监控服务已停止", failed: "监控服务运行失败", activating: transitionTimedOut ? "监控服务启动超时" : "监控服务启动中", deactivating: transitionTimedOut ? "监控服务停止超时" : "监控服务停止中" };
   const label = labels[active] || "监控服务状态未知";
   let note = config.enabled ? "已保存：开启自动监控。" : "已保存：暂停自动监控。";
   if (!savedConfig) note = "正在读取配置。";
   if (!monitorService) note += "请刷新状态核对服务器实际运行情况。";
   else if (active === "active") note += config.enabled ? "服务已启动，库存检查是否成功请查看最近检查结果。" : "暂停尚未生效，服务仍在运行，请重新暂停监控。";
-  else if (active === "activating") note += "服务尚未确认启动成功，正在自动刷新；持续启动中请查看日志，可能在失败后等待重试。";
+  else if (active === "activating" && transitionTimedOut) note += "超过 60 秒仍未确认启动；请刷新状态并查看服务日志，必要时重试启动。";
+  else if (active === "activating") note += "服务尚未确认启动成功，正在自动刷新；超过 60 秒会提示启动超时。";
+  else if (active === "deactivating" && transitionTimedOut) note += "超过 60 秒仍未确认停止；请刷新状态并查看服务日志，必要时重试暂停。";
   else if (active === "deactivating") note += "服务正在停止，正在自动刷新最终状态。";
   else if (config.enabled) note += "服务尚未运行，请查看最近检查错误及服务日志，修正配置后再开始监控。";
   else note += "点击“开始监控”后开始检查。";
@@ -1451,7 +1466,7 @@ function renderMonitorState() {
   const header = document.querySelector("#header-monitor-state");
   header.textContent = label;
   header.className = `state ${tone}`;
-  document.querySelector("#overview-state-note").textContent = active === "active" ? "后台持续检查，关闭网页后仍运行" : active === "activating" ? "正在确认启动状态，页面自动刷新" : active === "failed" ? "请检查配置或查看服务日志" : active === "deactivating" ? "正在停止，等待最终状态" : active === "inactive" ? "已暂停，保留最近库存记录" : "等待服务器返回服务状态";
+  document.querySelector("#overview-state-note").textContent = active === "active" ? "后台持续检查，关闭网页后仍运行" : active === "activating" && transitionTimedOut ? "启动超过 60 秒未完成，请查看服务日志" : active === "activating" ? "正在确认启动状态，页面自动刷新" : active === "failed" ? "请检查配置或查看服务日志" : active === "deactivating" && transitionTimedOut ? "停止超过 60 秒未完成，请查看服务日志" : active === "deactivating" ? "正在停止，等待最终状态" : active === "inactive" ? "已暂停，保留最近库存记录" : "等待服务器返回服务状态";
   renderProductList();
   window.dispatchEvent(new Event("hostwatch-service-change"));
 }
