@@ -1759,7 +1759,7 @@ function renderOverviewRecent() {
     cell().textContent = p.region || "—";
     const priceCell = cell("", "overview-price");
     if (!String(p.price || "").trim() || p.price === "—") {
-      const pending = text("span", "等待首次读取", "price-pending");
+      const pending = text("span", "—", "price-pending");
       pending.title = "监控服务完成首次成功检查后显示价格";
       priceCell.append(pending);
     } else renderPrice(priceCell, p.price, expanded.has(item.id));
