@@ -265,6 +265,41 @@
     .watchlist-filters { display:flex; flex-wrap:wrap; gap:12px; margin:14px 0; }
     .watchlist-filters label { flex:0 1 220px; min-width:150px; }
     .watchlist-filters label:has(#watchlist-search) { flex:1 1 320px; }
+     .watch-compare-bar { position:sticky; bottom:86px; z-index:3; display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:14px; padding:11px 14px; border:1px solid #c7d5ec; border-radius:10px; background:rgba(255,255,255,.98); box-shadow:0 8px 24px rgba(32,53,85,.14); animation:compare-bar-enter .2s ease-out both; }
+     @keyframes compare-bar-enter { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+     .watch-compare-bar strong { display:block; color:var(--blue); font-size:13px; }
+     .watch-compare-bar .subtle { display:block; margin-top:2px; }
+     .watch-compare-bar .actions { flex-shrink:0; margin:0; }
+     .watch-compare-bar #watch-compare-clear { color:var(--muted); }
+     .watch-compare-dialog { width:min(1180px,calc(100vw - 32px)); max-width:none; max-height:calc(100vh - 40px); padding:0; border:0; border-radius:14px; color:var(--ink); background:var(--paper); box-shadow:0 24px 70px rgba(22,37,64,.28); overflow:hidden; }
+     .watch-compare-dialog::backdrop { background:rgba(17,27,45,.46); backdrop-filter:blur(2px); }
+     .watch-compare-dialog-head { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; padding:20px 22px 16px; border-bottom:1px solid var(--line); background:#fbfcff; }
+     .watch-compare-dialog-head .eyebrow { display:block; margin-bottom:5px; color:var(--blue); font-size:10px; letter-spacing:1.8px; }
+     .watch-compare-dialog-head h2 { font-size:19px; }
+     .watch-compare-dialog-head p { margin:5px 0 0; color:var(--muted); font-size:12px; }
+     .watch-compare-dialog-head .icon-button { width:32px; min-height:32px; padding:0; border-radius:7px; color:var(--muted); font-size:22px; line-height:1; }
+     .watch-compare-dialog-head .icon-button:hover { color:var(--red); border-color:#e7c1bc; background:var(--red-soft); }
+     #watch-compare-content { padding:18px 22px 22px; }
+     .watch-compare-table-wrap { max-width:100%; overflow-x:auto; border:1px solid var(--line); border-radius:9px; }
+     .watch-compare-table { width:100%; min-width:760px; border-collapse:collapse; font-size:12px; }
+     .watch-compare-table th,.watch-compare-table td { padding:11px 12px; border-top:1px solid #edf0f4; text-align:center; vertical-align:middle; }
+     .watch-compare-table thead th { border-top:0; color:var(--ink); background:#f5f7fc; font-weight:700; }
+     .watch-compare-table thead th:first-child { width:112px; color:var(--muted); background:#f8fafc; text-align:left; }
+     .watch-compare-table tbody th { width:112px; color:var(--muted); background:#f8fafc; font-weight:650; text-align:left; white-space:nowrap; }
+     .watch-compare-table td { min-width:145px; overflow-wrap:anywhere; }
+     .watch-compare-table thead strong,.watch-compare-table thead small { display:block; }
+     .watch-compare-table thead strong { color:var(--blue); font-size:13px; }
+     .watch-compare-table thead small { margin-top:3px; color:var(--muted); font-size:11px; font-weight:500; }
+     .watch-compare-table .compare-line { display:inline-flex; align-items:center; margin:2px; padding:3px 6px; border-radius:5px; color:#31545a; background:#e9f5f1; font-size:11px; white-space:nowrap; }
+     .watch-compare-table .compare-line:nth-child(2) { color:#365981; background:#edf3ff; }
+     .watch-compare-table .compare-line:nth-child(3) { color:#5b4d89; background:#f1edff; }
+     .watch-compare-table .buy-link { display:inline-flex; align-items:center; justify-content:center; min-height:30px; padding:5px 10px; border:1px solid #d9cdf9; border-radius:6px; color:var(--purple); background:var(--purple-soft); font-size:11px; font-weight:700; text-decoration:none; white-space:nowrap; }
+     .watch-compare-table .buy-link:hover { border-color:#bca9ef; background:#e9e2ff; }
+     .compare-cell { width:54px; min-width:54px !important; text-align:center !important; }
+     .compare-check { width:18px; height:18px; margin:0; accent-color:var(--blue); cursor:pointer; }
+     .compare-check:disabled { cursor:not-allowed; }
+     @media(max-width:620px) { .watch-compare-bar { align-items:stretch; flex-direction:column; gap:9px; bottom:102px; } .watch-compare-bar .actions { justify-content:flex-end; } .watch-compare-dialog { width:calc(100vw - 20px); max-height:calc(100vh - 20px); border-radius:11px; } .watch-compare-dialog-head { padding:16px; } #watch-compare-content { padding:12px 16px 16px; } }
+     @media(prefers-reduced-motion:reduce) { .watch-compare-bar { animation:none; } }
     .monitor-settings-title { margin:28px 0 14px; padding-top:16px; border-top:1px solid var(--line); }
     .request-tool { margin-top:18px; padding:16px; border:1px solid var(--line); border-radius:10px; background:#fafcff; }
     .request-tool.cloudscraper { border-left:3px solid #15916b; background:#f7fcfa; }
@@ -484,6 +519,7 @@
     <div class="watchlist-filters"><label>搜索商品<input id="watchlist-search" type="search" placeholder="商品、商家或线路"></label><label>商家<select id="watchlist-provider"><option value="all">全部商家</option></select></label><label>最近库存<select id="watchlist-stock"><option value="all">全部状态</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">暂无记录</option></select></label></div>
     <details class="help-note"><summary>库存监控说明</summary><p id="watchlist-note" class="hint" role="status"></p></details>
     <div id="product-list"></div>
+     <div id="watch-compare-bar" class="watch-compare-bar" hidden role="region" aria-live="polite"><div><strong id="watch-compare-count">已选 0 项</strong><span id="watch-compare-note" class="subtle">再选择至少 1 个商品开始参数对比</span></div><div class="actions"><button id="watch-compare-clear" type="button">清除选择</button><button id="watch-compare-start" type="button" class="primary" disabled>开始对比</button></div></div>
     <p class="table-footnote">拖动商家旁的 ⠿ 调整顺序，保存后保留 · 购买链接已应用 AFF · 备注与线路可点击编辑</p>
     </div>
   </section>
@@ -644,6 +680,7 @@
   </div>
 </main>
 <aside id="toast" class="toast" hidden aria-label="操作提示"><div><strong id="toast-label" class="toast-label"></strong><div id="toast-message" role="status" aria-live="polite" aria-atomic="true"></div></div><button id="toast-close" type="button" aria-label="关闭操作提示">×</button></aside>
+<dialog id="watch-compare-dialog" class="watch-compare-dialog" aria-labelledby="watch-compare-title"><div class="watch-compare-dialog-head"><div><span class="eyebrow">PRODUCT COMPARE</span><h2 id="watch-compare-title">产品参数对比</h2><p>对比当前库存监控中的商品，直接购买入口会保留 AFF。</p></div><button id="watch-compare-close" type="button" class="icon-button" aria-label="关闭产品参数对比">×</button></div><div id="watch-compare-content"></div></dialog>
 <script src="/admin.js"></script>
 <script src="/catalog.js"></script>
 </body>

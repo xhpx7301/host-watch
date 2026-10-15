@@ -27,6 +27,7 @@ let savedConfig = null;
 let serviceRefreshTimer, serviceRefreshPending = false;
 let serviceTransitionStartedAt = 0;
 const SERVICE_TRANSITION_TIMEOUT_MS = 60_000;
+const compareSelection = new Set();
 const openProducts = new Set();
 const productTests = new Map();
 let activeTest = null;
@@ -1284,6 +1285,101 @@ function productSortHandle(item, type, group, count) {
   });
   return handle;
 }
+
+function compareLineSummary(item) {
+  const lines = [["电信", item.line_telecom], ["联通", item.line_unicom], ["移动", item.line_mobile]]
+    .filter(([, value]) => value).map(([label, value]) => `${label}：${value}`);
+  return lines.length ? lines : item.line_label ? [item.line_label] : ["—"];
+}
+
+function renderCompareBar() {
+  const bar = document.querySelector("#watch-compare-bar");
+  if (!bar) return;
+  const count = compareSelection.size;
+  bar.hidden = count === 0;
+  document.querySelector("#watch-compare-count").textContent = `已选 ${count} 项`;
+  document.querySelector("#watch-compare-note").textContent = count < 2 ? "再选择至少 1 个商品开始参数对比" : "仅用于临时对比，不会修改监控配置";
+  const start = document.querySelector("#watch-compare-start");
+  start.disabled = count < 2 || actionRunning;
+  document.querySelector("#watch-compare-clear").disabled = actionRunning;
+}
+
+function renderCompareContent() {
+  const target = document.querySelector("#watch-compare-content");
+  if (!target) return;
+  const latest = new Map((lastStatus?.products || []).map(p => [p.id, p]));
+  const products = config.products.filter(item => compareSelection.has(item.id) && membership(item, "watch"));
+  if (products.length < 2) {
+    target.replaceChildren(text("p", "请选择至少 2 个库存监控商品。", "empty"));
+    return;
+  }
+  const table = text("table", "", "watch-compare-table");
+  const head = document.createElement("thead"), headRow = document.createElement("tr");
+  headRow.append(text("th", "对比维度"));
+  products.forEach(item => {
+    const th = document.createElement("th");
+    th.append(text("strong", item.name || "未命名商品"), text("small", item.provider || item.adapter));
+    headRow.append(th);
+  });
+  head.append(headRow); table.append(head);
+  const body = document.createElement("tbody");
+  const rows = [
+    ["产品名称", item => productSnapshot(item, latest.get(item.id)).name || item.name],
+    ["地区", item => productSnapshot(item, latest.get(item.id)).region || "—"],
+    ["备注", item => item.remarks || "—"],
+    ["线路", item => compareLineSummary(item)],
+    ["硬件配置", item => formatHardware(productSnapshot(item, latest.get(item.id)).specs)],
+    ["流量 / 带宽", item => formatNetwork(productSnapshot(item, latest.get(item.id)).traffic)],
+    ["价格", item => formatPrice(productSnapshot(item, latest.get(item.id)).price)],
+    ["状态", item => {
+      const p = productSnapshot(item, latest.get(item.id));
+      return { value: Number.isInteger(p.available) ? stockLabel(p) : "未知", tone: !Number.isInteger(p.available) ? "pending" : p.available > 0 ? "ok" : "error" };
+    }],
+    ["快速购买", item => {
+      const p = productSnapshot(item, latest.get(item.id)), raw = p.url || item.purchase_url;
+      return raw && /^https:\/\//i.test(raw) ? affiliatePurchaseURL(raw, item.adapter, item) : "";
+    }],
+  ];
+  rows.forEach(([label, getter]) => {
+    const row = document.createElement("tr"); row.append(text("th", label));
+    products.forEach(item => {
+      const cell = document.createElement("td"), value = getter(item);
+      if (label === "线路" && Array.isArray(value)) {
+        cell.append(...value.map(line => text("span", line, "compare-line")));
+      } else if (label === "状态") {
+        cell.append(text("span", value.value, `state ${value.tone}`));
+      } else if (label === "快速购买" && value) {
+        const link = text("a", "直接购买", "buy-link"); link.href = value; link.target = "_blank"; link.rel = "noopener noreferrer"; cell.append(link);
+      } else {
+        cell.textContent = value || "—";
+      }
+      row.append(cell);
+    });
+    body.append(row);
+  });
+  table.append(body);
+  const wrap = text("div", "", "watch-compare-table-wrap"); wrap.append(table); target.replaceChildren(wrap);
+}
+
+function openCompareDialog() {
+  if (compareSelection.size < 2) return;
+  const dialog = document.querySelector("#watch-compare-dialog");
+  renderCompareContent();
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
+}
+
+function closeCompareDialog() {
+  const dialog = document.querySelector("#watch-compare-dialog");
+  if (dialog?.open && typeof dialog.close === "function") dialog.close();
+  else dialog?.removeAttribute("open");
+}
+
+function updateCompareSelection(id, checked) {
+  if (checked) compareSelection.add(id); else compareSelection.delete(id);
+  renderCompareBar();
+}
+
 window.addEventListener("pointermove", event => {
   const drag = productDrag;
   if (!drag || drag.pointerId !== event.pointerId) return;
@@ -1309,6 +1405,8 @@ function renderProductList() {
   const expanded = expandedPrices(listNode);
   const latest = new Map((lastStatus?.products || []).map(p => [p.id, p]));
   const watched = orderedProducts("watch");
+  const watchedIds = new Set(watched.map(item => item.id));
+  for (const id of compareSelection) if (!watchedIds.has(id)) compareSelection.delete(id);
   const search = document.querySelector("#watchlist-search").value.trim().toLowerCase();
   const provider = document.querySelector("#watchlist-provider").value, stock = document.querySelector("#watchlist-stock").value;
   const visible = watched.filter(item => {
@@ -1319,14 +1417,18 @@ function renderProductList() {
   });
   document.querySelector("#watchlist-count").textContent = `共 ${watched.length} 个 · 显示 ${visible.length} 个`;
   document.querySelector("#watchlist-note").textContent = "此列表仅检查和展示库存，不发送消息。加入库存通知后才会推送。后台检查更新商品数据，暂停后保留历史快照。";
+  renderCompareBar();
   if (!visible.length) { listNode.replaceChildren(text("div", watched.length ? "没有符合条件的商品。" : "从库存大盘点击“加入库存监控”，添加关心的商品。", "empty")); return; }
   const wrap = text("div", "", "catalog-table-wrap"); wrap.tabIndex = 0; wrap.setAttribute("role", "region"); wrap.setAttribute("aria-label", "关注商品库存表");
   const table = text("table", "", "watch-table"), head = document.createElement("thead"), tr = document.createElement("tr");
-  for (const label of ["商家", "产品名称", "地区", "备注", "线路", "硬件配置", "流量 / 带宽", "价格", "状态", "操作"]) { const th = text("th", label); th.scope = "col"; tr.append(th); }
+  for (const label of ["对比", "商家", "产品名称", "地区", "备注", "线路", "硬件配置", "流量 / 带宽", "价格", "状态", "操作"]) { const th = text("th", label); th.scope = "col"; tr.append(th); }
   head.append(tr); const body = document.createElement("tbody");
   for (const item of visible) {
     const runtime = latest.get(item.id), p = productSnapshot(item, runtime), row = document.createElement("tr"); row.dataset.id = item.id;
     const cell = (value = "", cls = "") => { const td = text("td", value, cls); row.append(td); return td; };
+    const compareCell = cell("", "compare-cell");
+    const compare = document.createElement("input"); compare.type = "checkbox"; compare.className = "compare-check"; compare.checked = compareSelection.has(item.id); compare.disabled = actionRunning; compare.setAttribute("aria-label", `选择 ${item.name} 进行对比`);
+    compare.addEventListener("change", () => updateCompareSelection(item.id, compare.checked)); compareCell.append(compare);
     const merchant = text("div", "", "merchant-sort"); merchant.append(productSortHandle(item, "watch", row, visible.length), text("span", item.provider)); cell().append(merchant);
     const identity = cell(); identity.append(text("strong", p.name || item.name));
     const time = runtime ? runtime.checked_at || lastStatus?.last_checked : p.checked_at;
@@ -1351,6 +1453,8 @@ function renderProductList() {
     actions.append(moreActions(`watch-${item.id}`, item.name, [notify, remove])); cell().append(actions); body.append(row);
   }
   table.append(head, body); wrap.append(table); listNode.replaceChildren(wrap);
+  renderCompareBar();
+  if (document.querySelector("#watch-compare-dialog")?.open) renderCompareContent();
   restoreProductSortFocus(listNode, focusedSortId);
 }
 
@@ -1652,6 +1756,20 @@ document.querySelector("#watchlist-browse").addEventListener("click", () => navi
 for (const id of ["watchlist-search", "watchlist-provider", "watchlist-stock"]) document.getElementById(id).addEventListener(id === "watchlist-search" ? "input" : "change", () => {
   renderProductList();
   animateFilterResult(listNode);
+});
+document.querySelector("#watch-compare-start").addEventListener("click", openCompareDialog);
+document.querySelector("#watch-compare-clear").addEventListener("click", () => {
+  compareSelection.clear();
+  closeCompareDialog();
+  renderProductList();
+});
+document.querySelector("#watch-compare-close").addEventListener("click", closeCompareDialog);
+document.querySelector("#watch-compare-dialog").addEventListener("click", event => {
+  if (event.target === event.currentTarget) closeCompareDialog();
+});
+document.querySelector("#watch-compare-dialog").addEventListener("cancel", event => {
+  event.preventDefault();
+  closeCompareDialog();
 });
 for (const input of document.querySelectorAll("[data-affiliate]")) input.addEventListener("input", renderAffiliatePreviews);
 for (const input of document.querySelectorAll("[data-provider-mode]")) input.addEventListener("change", updateFetcherStatus);
