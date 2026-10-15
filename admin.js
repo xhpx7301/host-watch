@@ -1044,6 +1044,9 @@ function affiliatePurchaseURL(raw, provider, item = {}, affiliates = config.affi
 function collectAffiliates() {
   return Object.fromEntries([...document.querySelectorAll("[data-affiliate]")].map((input) => [input.dataset.affiliate, input.value.trim()]));
 }
+function collectAffiliateNotes() {
+  return Object.fromEntries([...document.querySelectorAll("[data-affiliate-note]")].map((input) => [input.dataset.affiliateNote, input.value.trim()]));
+}
 function renderAffiliatePreviews() {
   for (const [key, raw] of Object.entries(collectAffiliates())) {
     let code = raw, valid = true;
@@ -1602,6 +1605,7 @@ function collectConfig(enabled = config.enabled) {
     interval_seconds: Number(document.querySelector("#interval").value || NaN),
     affiliate_id: config.affiliate_id || "",
     affiliates: collectAffiliates(),
+    affiliate_notes: collectAffiliateNotes(),
     merchant_order: merchantOrder(),
     watch_order: config.watch_order || [],
     notify_order: config.notify_order || [],
@@ -1685,6 +1689,7 @@ function applyConfig(value) {
   config.products.forEach(item => { setMembership(item, "watch", membership(item, "watch")); });
   document.querySelector("#interval").value = config.interval_seconds ?? 600;
   for (const input of document.querySelectorAll("[data-affiliate]")) input.value = config.affiliates?.[input.dataset.affiliate] ?? (input.dataset.affiliate === "vmiss" ? config.affiliate_id || "" : "");
+  for (const input of document.querySelectorAll("[data-affiliate-note]")) input.value = config.affiliate_notes?.[input.dataset.affiliateNote] ?? "";
   renderAffiliatePreviews(); renderMerchantOrder();
   setOptionPressed("notify-current", config.notify_current_stock_on_start);
   setOptionPressed("isvoro-seckill", config.isvoro_seckill);

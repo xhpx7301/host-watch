@@ -12,6 +12,23 @@ DEFAULT_AFFILIATES = {
 HOSTS = {"vmiss": "app.vmiss.com", "vps_soy": "www.vps.soy", "akile": "akile.ai", "isvoro": "isvoro.com", "dmit": "www.dmit.io", "bwh": "bwh81.net"}
 
 
+def normalize_affiliate_notes(value: dict) -> dict:
+    supplied = value.get("affiliate_notes", {})
+    if supplied is None:
+        supplied = {}
+    if not isinstance(supplied, dict) or any(key not in PROVIDERS for key in supplied):
+        raise ValueError("AFF 备注必须是支持商家的对象")
+    result = {provider: "" for provider in PROVIDERS}
+    for provider, raw in supplied.items():
+        if not isinstance(raw, str):
+            raise ValueError("AFF 备注必须是文本")
+        note = raw.strip()
+        if len(note) > 240:
+            raise ValueError(f"{provider} AFF 备注不能超过 240 个字符")
+        result[provider] = note
+    return result
+
+
 def normalize_affiliates(value: dict) -> dict:
     supplied = value.get("affiliates", {})
     if not isinstance(supplied, dict) or any(key not in PROVIDERS for key in supplied):

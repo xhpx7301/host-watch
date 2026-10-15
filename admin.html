@@ -312,7 +312,8 @@
     .request-probe-controls button { margin-bottom:1px; }
     .request-tool .product-test-result { margin-top:12px; white-space:pre-line; overflow-wrap:anywhere; }
     .affiliate-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-top:18px; }
-    .affiliate-card { min-width:0; padding:20px; border:1px solid var(--line); border-radius:10px; background:var(--canvas); }
+    .affiliate-card { display:grid; gap:8px; min-width:0; padding:20px; border:1px solid var(--line); border-radius:10px; background:var(--canvas); }
+    .affiliate-card .hint { margin:0; }
     .affiliate-card a { overflow-wrap:anywhere; }
     #merchant-order-panel { margin-bottom:18px; }
     .merchant-order-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid var(--line); }
@@ -583,14 +584,14 @@
   </section>
 
   <section class="page-panel panel-card" id="page-affiliates" data-page="affiliates" aria-labelledby="page-title" hidden>
-    <div class="section-body"><h2>商家 AFF 推广设置</h2><p class="hint">填写推广码或该商家的完整推广链接，留空则使用普通商品入口。点击底部“保存配置”后，库存大盘、库存监控和新发出的 Telegram 商品入口统一使用新设置。已发送的历史消息不会更改。</p>
+    <div class="section-body"><h2>商家 AFF 推广设置</h2><p class="hint">填写推广码或该商家的完整推广链接，留空则使用普通商品入口；备注可记录 AFF 所属账号和推广比例。点击底部“保存配置”后，库存大盘、库存监控和新发出的 Telegram 商品入口统一使用新设置。已发送的历史消息不会更改。</p>
     <div class="affiliate-grid">
-      <div class="affiliate-card"><label>VMISS · aff<input id="affiliate" data-affiliate="vmiss" autocomplete="off" placeholder="推广码或完整推广链接，留空不添加" maxlength="2048"></label><p class="hint" data-affiliate-state="vmiss"></p><a data-affiliate-preview="vmiss" target="_blank" rel="noopener noreferrer">推广入口预览</a></div>
-      <div class="affiliate-card"><label>VPS.SOY · aff<input id="affiliate-vps_soy" data-affiliate="vps_soy" autocomplete="off" placeholder="推广码或完整推广链接，留空不添加" maxlength="2048"></label><p class="hint" data-affiliate-state="vps_soy"></p><a data-affiliate-preview="vps_soy" target="_blank" rel="noopener noreferrer">推广入口预览</a></div>
-      <div class="affiliate-card"><label>Akile · aff_code<input id="affiliate-akile" data-affiliate="akile" autocomplete="off" placeholder="推广码或完整推广链接，留空不添加" maxlength="2048"></label><p class="hint" data-affiliate-state="akile"></p><a data-affiliate-preview="akile" target="_blank" rel="noopener noreferrer">推广入口预览</a></div>
-      <div class="affiliate-card"><label>Isvoro · aff<input id="affiliate-isvoro" data-affiliate="isvoro" autocomplete="off" placeholder="推广码或完整推广链接，留空不添加" maxlength="2048"></label><p class="hint" data-affiliate-state="isvoro"></p><a data-affiliate-preview="isvoro" target="_blank" rel="noopener noreferrer">推广入口预览</a></div>
-      <div class="affiliate-card"><label>DMIT · aff<input id="affiliate-dmit" data-affiliate="dmit" autocomplete="off" placeholder="22544 或完整推广链接，留空不添加" maxlength="2048"></label><p class="hint" data-affiliate-state="dmit"></p><a data-affiliate-preview="dmit" target="_blank" rel="noopener noreferrer">推广入口预览</a></div>
-      <div class="affiliate-card"><label>搬瓦工 · aff<input id="affiliate-bwh" data-affiliate="bwh" autocomplete="off" placeholder="84938 或完整推广链接，留空不添加" maxlength="2048"></label><p class="hint" data-affiliate-state="bwh"></p><a data-affiliate-preview="bwh" target="_blank" rel="noopener noreferrer">推广入口预览</a></div>
+      <div class="affiliate-card"><label>VMISS · aff<input id="affiliate" data-affiliate="vmiss" autocomplete="off" placeholder="推广码或完整推广链接，留空不添加" maxlength="2048"></label><label class="affiliate-note">备注（账号 / 比例）<input data-affiliate-note="vmiss" autocomplete="off" placeholder="例如：主账号 · 10%" maxlength="240"></label><p class="hint" data-affiliate-state="vmiss"></p><a data-affiliate-preview="vmiss" target="_blank" rel="noopener noreferrer">推广入口预览</a></div>
+      <div class="affiliate-card"><label>VPS.SOY · aff<input id="affiliate-vps_soy" data-affiliate="vps_soy" autocomplete="off" placeholder="推广码或完整推广链接，留空不添加" maxlength="2048"></label><label class="affiliate-note">备注（账号 / 比例）<input data-affiliate-note="vps_soy" autocomplete="off" placeholder="例如：主账号 · 10%" maxlength="240"></label><p class="hint" data-affiliate-state="vps_soy"></p><a data-affiliate-preview="vps_soy" target="_blank" rel="noopener noreferrer">推广入口预览</a></div>
+      <div class="affiliate-card"><label>Akile · aff_code<input id="affiliate-akile" data-affiliate="akile" autocomplete="off" placeholder="推广码或完整推广链接，留空不添加" maxlength="2048"></label><label class="affiliate-note">备注（账号 / 比例）<input data-affiliate-note="akile" autocomplete="off" placeholder="例如：主账号 · 10%" maxlength="240"></label><p class="hint" data-affiliate-state="akile"></p><a data-affiliate-preview="akile" target="_blank" rel="noopener noreferrer">推广入口预览</a></div>
+      <div class="affiliate-card"><label>Isvoro · aff<input id="affiliate-isvoro" data-affiliate="isvoro" autocomplete="off" placeholder="推广码或完整推广链接，留空不添加" maxlength="2048"></label><label class="affiliate-note">备注（账号 / 比例）<input data-affiliate-note="isvoro" autocomplete="off" placeholder="例如：主账号 · 10%" maxlength="240"></label><p class="hint" data-affiliate-state="isvoro"></p><a data-affiliate-preview="isvoro" target="_blank" rel="noopener noreferrer">推广入口预览</a></div>
+      <div class="affiliate-card"><label>DMIT · aff<input id="affiliate-dmit" data-affiliate="dmit" autocomplete="off" placeholder="22544 或完整推广链接，留空不添加" maxlength="2048"></label><label class="affiliate-note">备注（账号 / 比例）<input data-affiliate-note="dmit" autocomplete="off" placeholder="例如：主账号 · 10%" maxlength="240"></label><p class="hint" data-affiliate-state="dmit"></p><a data-affiliate-preview="dmit" target="_blank" rel="noopener noreferrer">推广入口预览</a></div>
+      <div class="affiliate-card"><label>搬瓦工 · aff<input id="affiliate-bwh" data-affiliate="bwh" autocomplete="off" placeholder="84938 或完整推广链接，留空不添加" maxlength="2048"></label><label class="affiliate-note">备注（账号 / 比例）<input data-affiliate-note="bwh" autocomplete="off" placeholder="例如：主账号 · 10%" maxlength="240"></label><p class="hint" data-affiliate-state="bwh"></p><a data-affiliate-preview="bwh" target="_blank" rel="noopener noreferrer">推广入口预览</a></div>
     </div><p class="hint">DMIT 与搬瓦工使用 aff.php 推广入口并保留商品参数；Akile 与 Isvoro 的商品入口附加对应推广参数，并保留套餐定位。推广归属、已有账号资格和有效期由商家规则决定。</p></div>
   </section>
 

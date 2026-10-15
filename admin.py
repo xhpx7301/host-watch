@@ -20,7 +20,7 @@ import requests
 
 from auth import DEFAULT_USERS_PATH, authentication_required, authorized, users_path
 from catalog import CatalogBusy, CatalogService
-from affiliates import DEFAULT_AFFILIATES, PROVIDERS, affiliate_purchase_url, normalize_affiliates, normalize_merchant_order
+from affiliates import DEFAULT_AFFILIATES, PROVIDERS, affiliate_purchase_url, normalize_affiliate_notes, normalize_affiliates, normalize_merchant_order
 from notifications import purchase_button, stock_message
 
 
@@ -310,6 +310,7 @@ def default_config() -> dict:
         "isvoro_seckill": False,
         "affiliate_id": DEFAULT_AFFILIATES["vmiss"],
         "affiliates": dict(DEFAULT_AFFILIATES),
+        "affiliate_notes": {provider: "" for provider in PROVIDERS},
         "merchant_order": list(PROVIDERS),
         "watch_order": [],
         "notify_order": [],
@@ -510,6 +511,7 @@ def validate_config(value: object) -> dict:
         raise ValueError("推广 ID 格式无效")
 
     affiliates = normalize_affiliates(value)
+    affiliate_notes = normalize_affiliate_notes(value)
     merchant_order = normalize_merchant_order(value.get("merchant_order", []))
 
     for key in ("enabled", "notify_current_stock_on_start", "isvoro_seckill"):
@@ -714,6 +716,7 @@ def validate_config(value: object) -> dict:
         "isvoro_seckill": value.get("isvoro_seckill", False),
         "affiliate_id": affiliates["vmiss"],
         "affiliates": affiliates,
+        "affiliate_notes": affiliate_notes,
         "merchant_order": merchant_order,
         **product_orders,
         "fetcher": fetcher,
@@ -1121,6 +1124,8 @@ class Handler(BaseHTTPRequestHandler):
                 submitted["affiliates"] = dict(current["affiliates"])
                 if "affiliate_id" in submitted:
                     submitted["affiliates"]["vmiss"] = str(submitted["affiliate_id"]).strip()
+            if "affiliate_notes" not in submitted:
+                submitted["affiliate_notes"] = dict(current["affiliate_notes"])
             if "merchant_order" not in submitted:
                 submitted["merchant_order"] = current["merchant_order"]
             for key in ("watch_order", "notify_order"):

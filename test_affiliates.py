@@ -12,11 +12,25 @@ import test_admin
 class AffiliateTests(unittest.TestCase):
     def test_defaults_migrate_legacy_and_explicit_blanks_persist(self):
         self.assertEqual(admin.validate_config({})["affiliates"], DEFAULT_AFFILIATES)
+        self.assertEqual(admin.validate_config({})["affiliate_notes"], {key: "" for key in PROVIDERS})
         self.assertEqual(admin.validate_config({"affiliate_id": "321"})["affiliates"]["vmiss"], "321")
         blank = {key: "" for key in PROVIDERS}
         config = admin.validate_config({"affiliate_id": "321", "affiliates": blank})
         self.assertEqual(config["affiliate_id"], "")
         self.assertEqual(admin.validate_config(config)["affiliates"], blank)
+
+    def test_affiliate_notes_are_normalized_and_validated(self):
+        notes = {key: f"{key} account · 10%" for key in PROVIDERS}
+        config = admin.validate_config({"affiliate_notes": notes})
+        self.assertEqual(config["affiliate_notes"], notes)
+        for payload in [
+            {"affiliate_notes": []},
+            {"affiliate_notes": {"unknown": "note"}},
+            {"affiliate_notes": {"vmiss": 10}},
+            {"affiliate_notes": {"vmiss": "x" * 241}},
+        ]:
+            with self.subTest(payload=payload), self.assertRaises(ValueError):
+                admin.validate_config(payload)
 
     def test_full_referral_links_are_normalized(self):
         config = admin.validate_config({"affiliates": {
@@ -97,21 +111,24 @@ class AffiliateAPITests(unittest.TestCase):
         value = admin.default_config()
         value["affiliates"]["akile"] = "changed"
         value["affiliates"]["vmiss"] = ""
+        value["affiliate_notes"]["akile"] = "主账号 · 10%"
         value["merchant_order"] = list(reversed(PROVIDERS))
         with patch.object(admin, "manager_action", return_value={"ok": True}):
             code, body = self.request("/api/config", value)
             self.assertEqual(code, 200)
             saved = json.loads(body)["config"]
             self.assertEqual(saved["affiliates"], value["affiliates"])
+            self.assertEqual(saved["affiliate_notes"], value["affiliate_notes"])
             self.assertEqual(saved["merchant_order"], value["merchant_order"])
             self.assertEqual(saved["affiliate_id"], "")
-            legacy = {k: v for k, v in saved.items() if k not in ("affiliates", "merchant_order")}
+            legacy = {k: v for k, v in saved.items() if k not in ("affiliates", "affiliate_notes", "merchant_order")}
             legacy["affiliate_id"] = "999"
             code, body = self.request("/api/config", legacy)
         self.assertEqual(code, 200)
         actual = json.loads(body)["config"]
         self.assertEqual(actual["affiliates"]["vmiss"], "999")
         self.assertEqual(actual["affiliates"]["akile"], "changed")
+        self.assertEqual(actual["affiliate_notes"]["akile"], "主账号 · 10%")
         self.assertEqual(actual["merchant_order"], value["merchant_order"])
         self.assertEqual(admin.current_config()["affiliates"], actual["affiliates"])
 
