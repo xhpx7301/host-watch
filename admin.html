@@ -40,11 +40,11 @@
     .page-heading h1:focus { outline:none; }
     .page-heading p:last-child { margin:4px 0 0; color:var(--muted); font-size:13px; }
     .header-status { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:8px 14px; max-width:530px; flex-shrink:0; }
-    .exchange-rates { display:grid; gap:3px; min-width:180px; max-width:420px; color:var(--muted); font-size:11px; text-align:right; }
-    .exchange-time { color:var(--ink); font-weight:650; font-variant-numeric:tabular-nums; }
-    .exchange-rate-list { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:3px 8px; font-variant-numeric:tabular-nums; }
-    .exchange-rate-item { white-space:nowrap; }
-    .exchange-rate-note { font-size:10px; }
+    .exchange-rates { display:grid; gap:4px; min-width:210px; max-width:420px; color:var(--muted); font-size:14px; line-height:1.4; text-align:right; }
+    .exchange-time { color:var(--ink); font-size:15px; font-weight:650; font-variant-numeric:tabular-nums; }
+    .exchange-rate-list { display:grid; justify-items:end; gap:2px; font-variant-numeric:tabular-nums; }
+    .exchange-rate-item { display:block; white-space:nowrap; }
+    .exchange-rate-note { font-size:13px; }
     #header-monitor-state { padding:4px 9px; border:1px solid var(--line); border-radius:20px; background:var(--paper); font-size:12px; }
     .page-stage { flex:1; min-width:0; padding-top:16px; }
     .page-panel { min-width:0; }
@@ -460,7 +460,7 @@
     @media(max-width:780px) {
       .workspace { padding:16px 12px 12px; } .sidebar { padding:10px 12px 0; }
       .page-heading h1 { font-size:22px; } .brand strong { font-size:18px; }
-      .topbar { gap:10px; padding-bottom:12px; } .exchange-rates { min-width:0; max-width:100%; text-align:left; } .exchange-rate-list { justify-content:flex-start; } .header-status { gap:6px 10px; justify-content:flex-start; max-width:100%; }
+      .topbar { gap:10px; padding-bottom:12px; } .exchange-rates { min-width:0; max-width:100%; text-align:left; } .exchange-rate-list { justify-content:start; justify-items:start; } .header-status { gap:6px 10px; justify-content:flex-start; max-width:100%; }
       .header-status #last-checked { text-align:left; } .page-stage { padding-top:12px; }
       .overview-item { min-height:112px; padding:12px; } .overview-value { font-size:24px; }
       .overview-note { font-size:11px; } #overview-state { font-size:14px; }
