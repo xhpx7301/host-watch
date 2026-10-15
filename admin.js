@@ -31,13 +31,13 @@ const pages = {
   monitor: { title: "VPS 库存监控", description: "集中查看你关注的 VPS，管理补货提醒和检查规则。" },
   affiliates: { title: "AFF 管理", description: "统一管理各商家推广码，保存后应用到新的购买入口。" },
   telegram: { title: "Telegram 通知", description: "配置通知机器人，接收库存提醒与商品测试结果。" },
-  requests: { title: "网页请求", description: "选择全局请求方式，配置并检测浏览器服务。" },
-  products: { title: "商品配置", description: "按商家添加商品，配置库存规则并单次测试。" },
+  requests: { title: "网页请求", description: "统一设置各商家的监控请求方式，配置并检测浏览器服务。" },
   management: { title: "管理员管理", description: "管理服务与账号，查看日志、备份及更新程序。" },
 };
 let currentPage = null;
 
 function navigatePage(name, { history = true, focus = true } = {}) {
+  if (name === "products") { navigatePage("monitor", { history, focus }); openAdvancedProducts(); return; }
   if (!Object.hasOwn(pages, name)) name = "overview";
   if (history && location.hash !== `#${name}`) window.history.pushState(null, "", `#${name}`);
   if (currentPage === name) return;
@@ -455,7 +455,7 @@ function productEditor(item, index) {
   stop.type = "button";
   stop.addEventListener("click", () => stopProductTest());
   actions.append(stop);
-  const remove = text("button", "移除", "danger");
+  const remove = text("button", "移除", "danger product-remove");
   remove.type = "button";
   remove.addEventListener("click", () => {
     config.products = config.products.filter((product) => product.id !== item.id);
@@ -473,7 +473,6 @@ function productEditor(item, index) {
     selectField("监控适配器", item.adapter || (item.category_url ? "vmiss" : "html"), "adapter", [["html", "通用 HTTPS 网页"], ["vmiss", "VMISS WHMCS"], ["vps_soy", "VPS.SOY 商品页"], ["akile", "Akile 商品库存"], ["isvoro", "Isvoro 商品库存"]]),
     inputField("厂商名称", item.provider || (item.adapter === "vmiss" || item.category_url ? "VMISS" : "自定义网站"), "provider", "text", "例如 ExampleHost"),
     inputField("商品名称", item.name, "name", "text", "例如 US VPS 2 GB"),
-    selectField("此商品的请求方式", item.request_mode || "inherit", "request_mode", [["inherit", "跟随全局设置"], ["requests", "普通 HTTPS 请求"], ["flaresolverr", "FlareSolverr 浏览器请求"]]),
   );
   const modeWrap = text("div", "", "span-2");
   const vmissFields = text("div", "", "form-grid span-2");
@@ -566,7 +565,6 @@ function syncEditor(article) {
   item.provider = get("provider").value.trim();
   item.name = get("name").value.trim();
   item.enabled = get("enabled").checked;
-  item.request_mode = get("request_mode").value;
   if (item.adapter === "vmiss") {
     item.category_url = get("category_url").value.trim();
     item.selector = get("selector").value.trim();
@@ -634,7 +632,7 @@ function syncTestControls() {
   const globalStop = document.querySelector("#stock-test-stop");
   globalStop.disabled = Boolean(activeTest?.stopping || activeTest?.notifying);
   globalStop.textContent = activeTest?.stopUnconfirmed ? "重试停止" : "停止测试";
-  editorNode.querySelectorAll(".product-editor").forEach((article) => {
+  document.querySelectorAll(".product-editor, .watchlist-item").forEach((article) => {
     const running = activeTest?.id === article.dataset.id;
     const test = article.querySelector(".product-test");
     test.disabled = Boolean(activeTest) || actionRunning;
@@ -643,7 +641,7 @@ function syncTestControls() {
     stop.hidden = !running || Boolean(activeTest?.notifying);
     stop.disabled = Boolean(activeTest?.stopping);
     stop.textContent = activeTest?.stopping ? "停止中…" : activeTest?.stopUnconfirmed ? "重试停止" : "停止测试";
-    article.querySelector(".actions > .danger:not(.product-test-stop)").disabled = running || actionRunning;
+    article.querySelector(".product-remove").disabled = running || actionRunning;
     renderProductTest(article, article.dataset.id);
   });
 }
@@ -745,7 +743,7 @@ async function followProductTest(task, initial) {
     }
     productTests.set(task.id, result);
     const notificationIssue = result.notification && !["sent", "skipped"].includes(result.notification.status);
-    const summary = result.cancelled ? "测试已停止。" : result.ok ? "单次库存测试完成，结果已显示在该商品配置内。" : `单次库存测试失败：${result.error}`;
+    const summary = result.cancelled ? "测试已停止。" : result.ok ? "单次库存测试完成，结果已显示在商品下方。" : `单次库存测试失败：${result.error}`;
     setMessage([summary, result.notification?.message, result.warning].filter(Boolean).join(" "), result.warning || notificationIssue || (!result.ok && !result.cancelled) ? "error" : "success");
   } catch (error) {
     productTests.set(task.id, { ok: false, error: error.message });
@@ -908,7 +906,8 @@ function renderProductList() {
   }
   const rows = visible.map((item) => {
     const status = statusProducts.get(item.id);
-    const article = text("article", "", "product");
+    const article = text("article", "", "product watchlist-item");
+    article.dataset.id = item.id;
     const identity = text("div", "", "product-name");
     identity.append(text("strong", item.name || "未命名商品"), text("span", `${item.provider || "自定义网站"} · ${productMonitorLabel(item, savedProducts.get(item.id))}`));
     const stock = text("div", "", "metric");
@@ -927,26 +926,22 @@ function renderProductList() {
       link.textContent = "手动购买";
       actions.append(link);
     }
-    const edit = text("button", "配置", "");
-    edit.type = "button";
-    edit.addEventListener("click", () => {
-      navigatePage("products");
-      const editor = editorNode.querySelector(`[data-id="${CSS.escape(item.id)}"]`);
-      editor.open = true;
-      openProducts.add(item.id);
-      editor.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-    const remove = text("button", "移出监控", "danger"); remove.type = "button";
+    const test = text("button", "测试此商品", "product-test"); test.type = "button";
+    test.addEventListener("click", () => testProduct(item.id));
+    const stop = text("button", "停止测试", "product-test-stop danger"); stop.type = "button";
+    stop.addEventListener("click", stopProductTest);
+    const remove = text("button", "移出监控", "danger product-remove"); remove.type = "button";
     remove.addEventListener("click", () => {
       if (actionRunning) return;
       item.enabled = false; renderProducts(); updateDraftState();
       setMessage("已移出库存监控，商品配置和历史保留；点击底部“保存配置”生效。", "pending");
     });
-    actions.append(edit, remove);
-    article.append(identity, stock, checked, updated, actions);
+    actions.append(test, stop, remove);
+    article.append(identity, stock, checked, updated, actions, text("div", "", "product-test-result"));
     return article;
   });
   listNode.replaceChildren(...rows);
+  syncTestControls();
 }
 
 function renderOverview() {
@@ -995,7 +990,7 @@ function collectConfig(enabled = config.enabled) {
     affiliates: collectAffiliates(),
     merchant_order: merchantOrder(),
     notify_current_stock_on_start: document.querySelector("#notify-current").checked,
-    fetcher: { mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value), wait_seconds: Number(document.querySelector("#fetcher-wait").value) },
+    fetcher: { provider_modes: collectProviderModes(), mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value), wait_seconds: Number(document.querySelector("#fetcher-wait").value) },
     telegram: { bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim(), disabled: document.querySelector("#telegram-disabled").checked, clear: document.querySelector("#telegram-clear").checked },
     products: config.products.map((item) => ({ ...item })),
   };
@@ -1027,11 +1022,28 @@ function updateDraftState() {
   window.dispatchEvent(new Event("hostwatch-draft-change"));
 }
 
+function collectProviderModes() {
+  return Object.fromEntries([...document.querySelectorAll("[data-provider-mode]")].filter((input) => input.value !== "legacy").map((input) => [input.dataset.providerMode, input.value]));
+}
+function applyProviderModes(fetcher) {
+  for (const select of document.querySelectorAll("[data-provider-mode]")) {
+    select.querySelector('[value="legacy"]')?.remove();
+    const key = select.dataset.providerMode, explicit = fetcher.provider_modes?.[key];
+    const previous = [...new Set(config.products.filter((item) => item.adapter === key).map((item) => item.request_mode || "inherit"))];
+    if (!explicit && previous.length > 1) select.add(new Option("保留已有商品的不同请求方式", "legacy"));
+    select.value = explicit || (previous.length > 1 ? "legacy" : previous[0] || "inherit");
+  }
+}
 function updateFetcherStatus() {
   const enabled = document.querySelector("#fetcher-mode").value === "flaresolverr";
-  document.querySelector("#fetcher-status").textContent = enabled
-    ? "全局使用 FlareSolverr 浏览器请求，支持所有适配器；商品可单独覆盖。浏览器验证仍可能失败，请查看具体错误。"
-    : "全局使用普通 HTTPS 请求；需要浏览器的商品可单独选择 FlareSolverr。保存后自动应用。";
+  document.querySelector("#fetcher-status").textContent = `全局默认使用${enabled ? " FlareSolverr 浏览器请求" : "普通 HTTPS 请求"}；商家选择优先于全局设置，保存后自动应用。`;
+  const legacy = [...document.querySelectorAll("[data-provider-mode]")].filter((input) => input.value === "legacy");
+  document.querySelector("#provider-request-note").textContent = legacy.length ? "部分商家原有商品使用不同请求方式，目前保留。为该商家选择统一方式并保存后，会覆盖这些旧选择。" : "新增商品自动使用对应商家设置，测试使用当前页面填写的请求方式；后台自动监控使用已保存的设置。";
+}
+
+function openAdvancedProducts() {
+  const panel = document.querySelector("#advanced-products"); panel.open = true;
+  panel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 async function loadConfig() {
@@ -1049,6 +1061,7 @@ function applyConfig(value) {
   document.querySelector("#flaresolverr-url").value = fetcher.flaresolverr_url || "http://127.0.0.1:8191/v1";
   document.querySelector("#flaresolverr-timeout").value = fetcher.timeout_seconds || 60;
   document.querySelector("#fetcher-wait").value = fetcher.wait_seconds || 0;
+  applyProviderModes(fetcher);
   updateFetcherStatus();
   const telegram = config.telegram || {};
   document.querySelector("#telegram-token").value = "";
@@ -1094,7 +1107,7 @@ function addProducts(items) {
   config.products.push(...items);
   openProducts.add(items[0].id);
   renderProducts();
-  navigatePage("products");
+  navigatePage("monitor"); openAdvancedProducts();
   editorNode.querySelector(`[data-id="${CSS.escape(items[0].id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
   setMessage(items.length === 1 ? "商品已添加，请填写商品信息后保存。" : `已添加 ${items.length} 个商品，可先测试，勾选需要监控的套餐后保存。`, "pending");
   updateDraftState();
@@ -1103,9 +1116,9 @@ function addProducts(items) {
 const merchantPresets = {
   html: { label: "其他商家 · 通用 HTTPS 网页", hint: "填写商品网址及库存规则，适用于其他公开商品网页。", product: { adapter: "html", provider: "自定义网站", name: "", url: "", stock_selector: "", stock_mode: "quantity", stock_pattern: "([\\d,]+)", available_pattern: "(?i)in stock|available|有货|现货", unavailable_pattern: "(?i)out of stock|sold out|缺货|售罄", purchase_url: "" } },
   vmiss: { label: "VMISS", hint: "填写分类页、商品选择器和分组 ID，使用 VMISS 专用解析。", product: { adapter: "vmiss", provider: "VMISS", name: "", category_url: "", selector: "", gid: "" } },
-  vps_soy: { label: "VPS.SOY", hint: "默认深港IX-MINI（FID=1、GID=8），支持切换地区/线路分组。", product: { adapter: "vps_soy", provider: "VPS.SOY", name: "深港IX-MINI", url: "https://www.vps.soy/cart?fid=1&gid=8", selector: "深港IX-MINI", request_mode: "requests" } },
-  akile: { label: "Akile", hint: "默认仅添加 HKL-TW-Mini，自动识别地区，使用普通 HTTPS 请求。", product: { adapter: "akile", provider: "Akile", name: "HKL-TW-Mini", area_mode: "auto", area_id: "6", node_name: "HKL-TW", selector: "HKL-TW-Mini", request_mode: "requests" } },
-  isvoro: { label: "Isvoro", hint: "按类型、地区/线路、套餐分别选择，默认中国香港 → HK PROD → HK PROD MiNi。", product: { adapter: "isvoro", provider: "Isvoro", name: "HK PROD MiNi", type_id: "24", type_name: "中国香港", category_id: "27", category_name: "HK PROD", product_id: "188", product_name: "HK PROD MiNi", request_mode: "requests" } },
+  vps_soy: { label: "VPS.SOY", hint: "默认深港IX-MINI（FID=1、GID=8），支持切换地区/线路分组。", product: { adapter: "vps_soy", provider: "VPS.SOY", name: "深港IX-MINI", url: "https://www.vps.soy/cart?fid=1&gid=8", selector: "深港IX-MINI", request_mode: "inherit" } },
+  akile: { label: "Akile", hint: "默认仅添加 HKL-TW-Mini，自动识别地区，请求方式在“网页请求”中设置。", product: { adapter: "akile", provider: "Akile", name: "HKL-TW-Mini", area_mode: "auto", area_id: "6", node_name: "HKL-TW", selector: "HKL-TW-Mini", request_mode: "inherit" } },
+  isvoro: { label: "Isvoro", hint: "按类型、地区/线路、套餐分别选择，默认中国香港 → HK PROD → HK PROD MiNi。", product: { adapter: "isvoro", provider: "Isvoro", name: "HK PROD MiNi", type_id: "24", type_name: "中国香港", category_id: "27", category_name: "HK PROD", product_id: "188", product_name: "HK PROD MiNi", request_mode: "inherit" } },
 };
 const merchantSelect = document.querySelector("#add-merchant");
 for (const [key, preset] of Object.entries(merchantPresets)) {
@@ -1115,7 +1128,7 @@ function updateMerchantHint() { document.querySelector("#add-merchant-hint").tex
 merchantSelect.addEventListener("change", updateMerchantHint);
 updateMerchantHint();
 document.querySelector("#open-products").addEventListener("click", () => {
-  navigatePage("products");
+  navigatePage("monitor"); openAdvancedProducts();
   merchantSelect.focus({ preventScroll: true });
 });
 document.querySelector("#overview-open-catalog").addEventListener("click", () => navigatePage("catalog"));
@@ -1123,6 +1136,7 @@ document.querySelector("#overview-open-monitor").addEventListener("click", () =>
 document.querySelector("#watchlist-browse").addEventListener("click", () => navigatePage("catalog"));
 for (const id of ["watchlist-search", "watchlist-provider", "watchlist-stock"]) document.getElementById(id).addEventListener(id === "watchlist-search" ? "input" : "change", renderProductList);
 for (const input of document.querySelectorAll("[data-affiliate]")) input.addEventListener("input", renderAffiliatePreviews);
+for (const input of document.querySelectorAll("[data-provider-mode]")) input.addEventListener("change", updateFetcherStatus);
 document.querySelector("#merchant-order-toggle").addEventListener("click", (event) => {
   const panel = document.querySelector("#merchant-order-panel"); panel.hidden = !panel.hidden;
   event.currentTarget.setAttribute("aria-expanded", String(!panel.hidden));
@@ -1133,7 +1147,7 @@ document.querySelector("#add").addEventListener("click", () => {
   if (existing) {
     openProducts.add(existing.id);
     renderProducts();
-    navigatePage("products");
+    navigatePage("monitor"); openAdvancedProducts();
     editorNode.querySelector(`[data-id="${CSS.escape(existing.id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
     setMessage("HKL-TW-Mini 已存在，已展开配置；监控其他套餐可修改此商品的套餐完整名称后再添加。", "success");
     return;
@@ -1148,7 +1162,7 @@ document.querySelector("#fetcher-mode").addEventListener("change", updateFetcher
 document.querySelector("#fetcher-test").addEventListener("click", (event) => runAction(event.currentTarget, "检测中…", "正在测试 FlareSolverr 服务连接，不访问商品网站…", async () => {
   const result = await requestJSON("/api/fetcher/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(collectConfig().fetcher) });
   document.querySelector("#fetcher-health").textContent = `版本 ${result.version}：${result.message}`;
-  setMessage(`FlareSolverr ${result.version} 服务连接成功；实际库存请在商品配置中点击“测试此商品”，无需开启监控。`, "success");
+  setMessage(`FlareSolverr ${result.version} 服务连接成功；实际库存请在 VPS 库存监控中点击“测试此商品”，无需开启监控。`, "success");
 }));
 document.querySelector("#interval").addEventListener("input", () => { config.interval_seconds = Number(document.querySelector("#interval").value || NaN); renderOverview(); });
 document.querySelector("#interval-preset").addEventListener("change", (event) => {

@@ -46,7 +46,7 @@ def make_row(key: str, watch: dict, region: str, line: str, specs: str, price: s
     return {"key": key, "name": watch["name"], "provider": watch["provider"], "region": clean(region), "line": clean(line),
             "specs": clean(specs, 500), "price": clean(price), "available": product.available if product else None,
             "stock_mode": product.stock_mode if product else "quantity", "purchase_url": product.url if product else "",
-            "error": clean(error), "watch": {**watch, "enabled": True, "request_mode": "requests"}}
+            "error": clean(error), "watch": {**watch, "enabled": True, "request_mode": "inherit"}}
 
 
 def scoped(scopes: list[dict], requested: str, preferred: str = "") -> dict:

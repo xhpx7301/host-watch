@@ -105,7 +105,7 @@ class CatalogParsingTests(unittest.TestCase):
             link = send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["url"]
             self.assertIn("planId=1047", link)
             self.assertIn("aff_code=" + config["affiliates"]["akile"], link)
-            snapshot = json.loads(status.read_text())["products"][0]
+            snapshot = json.loads(status.read_text(encoding="utf-8"))["products"][0]
             self.assertEqual(snapshot["purchase_url"], link)
             self.assertNotIn("aff_code", snapshot["url"])
             monitor.check_once(Mock(), config, state, status, "token", "123")

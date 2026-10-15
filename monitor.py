@@ -228,7 +228,9 @@ def _fetch_with_flaresolverr(session: requests.Session, url: str, fetcher: dict,
 
 def product_fetcher(fetcher: dict | None, item: dict) -> dict:
     result = dict(fetcher or {"mode": "requests"})
-    mode = item.get("request_mode", "inherit")
+    # An explicit merchant policy also overrides old per-product choices.
+    # Missing policies preserve legacy configurations until the user unifies them.
+    mode = result.get("provider_modes", {}).get(item.get("adapter", "html"), item.get("request_mode", "inherit"))
     if mode != "inherit":
         result["mode"] = mode
     return result

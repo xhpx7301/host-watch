@@ -7,7 +7,14 @@
     "mode": "requests",
     "flaresolverr_url": "http://127.0.0.1:8191/v1",
     "timeout_seconds": 60,
-    "wait_seconds": 0
+    "wait_seconds": 0,
+    "provider_modes": {
+      "vmiss": "inherit",
+      "vps_soy": "inherit",
+      "akile": "inherit",
+      "isvoro": "inherit",
+      "html": "inherit"
+    }
   },
   "telegram": {
     "bot_token": "",

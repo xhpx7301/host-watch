@@ -100,16 +100,17 @@ def stock_test_worker() -> None:
 
 class StockTestTask:
     def __init__(self, task_id: str, product: dict, fetcher: dict):
+        from monitor import product_fetcher
         self.id = task_id
         self.product = product
-        self.fetcher = fetcher
+        self.fetcher = product_fetcher(fetcher, product)
         self.started = time.monotonic()
         self.cancelled = threading.Event()
         self.done = threading.Event()
         self.lock = threading.Lock()
         self.process = None
         self.output = {"pending": True}
-        self.browser = product.get("request_mode", "inherit") == "flaresolverr" or (product.get("request_mode", "inherit") == "inherit" and fetcher["mode"] == "flaresolverr")
+        self.browser = self.fetcher["mode"] == "flaresolverr"
         self.session_id = f"hostwatch-test-{task_id}"
 
     def snapshot(self) -> dict:
@@ -343,11 +344,15 @@ def normalize_fetcher(value: object) -> dict:
     wait = value.get("wait_seconds", 0)
     if isinstance(wait, bool) or not isinstance(wait, int) or not 0 <= wait <= 30:
         raise ValueError("网页渲染等待必须是 0 到 30 秒的整数")
+    provider_modes = value.get("provider_modes", {})
+    if not isinstance(provider_modes, dict) or any(key not in (*PROVIDERS, "html") or not isinstance(mode, str) or mode not in {"inherit", "requests", "flaresolverr"} for key, mode in provider_modes.items()):
+        raise ValueError("商家请求方式必须是支持商家的 inherit、requests 或 flaresolverr")
     return {
         "mode": mode,
         "flaresolverr_url": endpoint.rstrip("/"),
         "timeout_seconds": timeout_seconds,
         "wait_seconds": wait,
+        "provider_modes": dict(provider_modes),
     }
 
 
@@ -975,6 +980,8 @@ class Handler(BaseHTTPRequestHandler):
                 }
             if "fetcher" not in submitted:
                 submitted["fetcher"] = current["fetcher"]
+            elif isinstance(submitted["fetcher"], dict) and "provider_modes" not in submitted["fetcher"]:
+                submitted["fetcher"]["provider_modes"] = current["fetcher"].get("provider_modes", {})
             if "affiliates" not in submitted:
                 submitted["affiliates"] = dict(current["affiliates"])
                 if "affiliate_id" in submitted:
