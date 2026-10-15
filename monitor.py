@@ -19,6 +19,7 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from admin import default_config, effective_telegram, normalize_vps_soy_url, validate_config
 from affiliates import affiliate_purchase_url
+from notifications import purchase_button, stock_message
 
 
 ROOT = Path(__file__).resolve().parent
@@ -743,27 +744,11 @@ def show_chat_ids(session: requests.Session, token: str) -> None:
         print(f"chat_id={chat_id}  type={chat_type}  name={label}")
 
 
-def notification_text(product: Product, old_count: int | None, purchase_url: str) -> str:
-    if product.stock_mode == "availability":
-        increase = "（由缺货变为有货）" if old_count is not None else "（首次运行时已有库存）"
-        stock = "有货"
-    else:
-        increase = f"（增加 {product.available - old_count} 台）" if old_count is not None else "（首次运行时已有库存）"
-        stock = f"{product.available} 台"
-    now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-    context = f"类型：{product.match_details['type_name']}\n地区/线路：{product.match_details['category_name']}\n" if product.match_details else ""
-    return (
-        f"🟢 {product.vendor} 检测到库存变化\n"
-        f"{context}"
-        f"套餐：{product.name}\n"
-        f"库存：{stock} {increase}\n"
-        f"地区：{product.region or product.area_name or '—'}\n"
-        f"配置：{product.specs or '—'}\n"
-        f"流量/带宽：{product.traffic or '—'}\n"
-        f"价格：{product.price or '以商家页面为准'}\n"
-        f"手动购买：{purchase_url}\n"
-        f"检查时间：{now}"
-    )
+def notification_text(product: Product, old_count: int | None, purchase_url: str, item: dict | None = None) -> str:
+    return stock_message(vendor=product.vendor, name=product.name, available=product.available, stock_mode=product.stock_mode,
+        region=product.region or product.area_name, specs=product.specs, traffic=product.traffic, price=product.price,
+        line=(product.match_details or {}).get("category_name", "") or product.node_name or (item or {}).get("category_name", ""), item=item, old_count=old_count, purchase_url=purchase_url,
+        checked_at=datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"))
 
 
 def check_once(
@@ -857,14 +842,14 @@ def check_once(
     if notifications and bot_token and chat_id:
         for item, product, old_count in notifications:
             purchase_url = purchase_link(product, item, config)
-            button_text = "🛒 打开 VMISS 购买页" if item["adapter"] == "vmiss" else "🛒 打开购买页面"
-            reply_markup = {"inline_keyboard": [[{"text": button_text, "url": purchase_url}]]}
+            reply_markup = purchase_button(purchase_url)
             telegram_request(
                 session,
                 bot_token,
                 "sendMessage",
                 chat_id=chat_id,
-                text=notification_text(product, old_count, purchase_url),
+                text=notification_text(product, old_count, purchase_url, item),
+                parse_mode="HTML",
                 disable_web_page_preview=True,
                 reply_markup=reply_markup,
             )

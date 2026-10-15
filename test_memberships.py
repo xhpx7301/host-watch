@@ -94,7 +94,7 @@ class MembershipTests(unittest.TestCase):
             with patch.object(monitor, "fetch_html_stock", return_value=result), patch.object(monitor, "telegram_request") as send:
                 monitor.check_once(Mock(), config, state, status, "token", "123")
                 self.assertEqual(send.call_count, 1)
-                self.assertIn("1 TB", send.call_args.kwargs["text"])
+                self.assertIn("1TB@1Gbps", send.call_args.kwargs["text"])
                 monitor.check_once(Mock(), config, state, status, "token", "123")
                 self.assertEqual(send.call_count, 1)  # No repeated in-stock message.
                 saved = json.loads(status.read_text(encoding="utf-8"))["products"]

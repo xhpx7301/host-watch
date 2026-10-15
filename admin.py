@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import time
+from html import escape
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
@@ -20,6 +21,7 @@ import requests
 from auth import DEFAULT_USERS_PATH, authentication_required, authorized, users_path
 from catalog import CatalogBusy, CatalogService
 from affiliates import DEFAULT_AFFILIATES, PROVIDERS, affiliate_purchase_url, normalize_affiliates, normalize_merchant_order
+from notifications import purchase_button, stock_message
 
 
 ROOT = Path(__file__).resolve().parent
@@ -721,31 +723,32 @@ def send_stock_test_result(product: dict, result: dict) -> dict:
         token, chat_id = telegram_credentials()
         if not token or not chat_id:
             return {"status": "unconfigured", "message": "未发送 Telegram：请先保存机器人 Token 和 Chat ID"}
-        if result.get("ok"):
-            available = result["available"]
-            stock = "缺货" if available <= 0 else "有货" if result.get("stock_mode") == "availability" else f"{available} 件"
-            detail = f"库存：{stock}"
-        else:
-            detail = f"测试失败：{str(result.get('error', '未知错误'))[:800]}"
-        message = (
-            "HostWatch · 商品单次测试\n"
-            f"商家：{str(product.get('provider') or product.get('adapter', ''))[:200]}\n"
-            f"商品：{str(product['name'])[:300]}\n{detail}\n"
-            f"检查时间：{result['checked_at']}\n耗时：{result['duration_seconds']} 秒"
-        )
-        if result.get("warning"):
-            message += f"\n提示：{str(result['warning'])[:400]}"
         matched = result.get("matched_product")
-        if isinstance(matched, dict) and "type_name" in matched:
-            message += f"\n类型：{str(matched['type_name'])[:200]}（ID={str(matched.get('type_id', ''))[:10]}）\n地区/线路：{str(matched.get('category_name', ''))[:200]}（ID={str(matched.get('category_id', ''))[:10]}）\n套餐：{str(matched.get('plan_name', ''))[:200]}（ID={str(matched.get('product_id', ''))[:10]}）"
-        elif isinstance(matched, dict):
-            message += f"\n实际地区：{str(matched.get('area_name', ''))[:80]}（ID={str(matched.get('area_id', ''))[:10]}）\n线路：{str(matched.get('node_name', ''))[:200]}\n套餐：{str(matched.get('plan_name', ''))[:200]}"
+        matched = matched if isinstance(matched, dict) else {}
+        link = ""
+        if result.get("ok"):
+            if result.get("purchase_url"):
+                link = affiliate_purchase_url(result.get("url") or result["purchase_url"], product.get("adapter", ""), current_config(), product)
+            message = stock_message(vendor=product.get("provider") or product.get("adapter", ""),
+                name=result.get("name") or matched.get("plan_name") or product["name"], available=result["available"], stock_mode=result.get("stock_mode", "quantity"),
+                region=result.get("region") or matched.get("area_name") or matched.get("type_name", ""),
+                specs=result.get("specs", ""), traffic=result.get("traffic", ""), price=result.get("price", ""),
+                line=matched.get("category_name") or matched.get("node_name") or product.get("category_name") or product.get("node_name", ""),
+                item=product, checked_at=result["checked_at"], test=True, duration=result["duration_seconds"], warning=result.get("warning", ""), purchase_url=link)
+        else:
+            message = escape("❌ HostWatch · 商品单次测试\n"
+                f"商家：{str(product.get('provider') or product.get('adapter', ''))[:80]}\n"
+                f"商品：{str(product['name'])[:200]}\n测试失败：{str(result.get('error', '未知错误'))[:800]}\n"
+                f"检查时间：{result['checked_at']}\n耗时：{result['duration_seconds']} 秒")
+            if result.get("warning"):
+                message += "\n提示：" + escape(str(result["warning"])[:300])
+        if matched:
+            # Keep the exact match identities available for diagnosing selection errors.
+            identities = [(label, matched.get(key)) for key, label in (("type_id", "类型 ID"), ("category_id", "线路 ID"), ("product_id", "套餐 ID"), ("area_id", "地区 ID")) if matched.get(key)]
+            message += "\n" + escape(" · ".join(f"{label}={str(value)[:10]}" for label, value in identities))
         if result.get("catalog_url"):
-            message += f"\n检查分类：{str(result['catalog_url'])[:2048]}"
-        if result.get("ok") and result.get("purchase_url"):
-            link = affiliate_purchase_url(result.get("url") or result["purchase_url"], product.get("adapter", ""), current_config(), product)
-            message += f"\n商品入口：{str(link)[:2048]}"
-        telegram_call(token, "sendMessage", chat_id=chat_id, text=message, disable_web_page_preview=True)
+            message += "\n检查分类：" + escape(str(result["catalog_url"])[:400])
+        telegram_call(token, "sendMessage", chat_id=chat_id, text=message, parse_mode="HTML", disable_web_page_preview=True, reply_markup=purchase_button(link))
         return {"status": "sent", "message": "测试结果已发送至 Telegram"}
     except TelegramAPIError as exc:
         return {"status": "failed", "message": f"测试结果发送失败：{exc}"}

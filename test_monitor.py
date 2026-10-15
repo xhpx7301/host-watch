@@ -69,8 +69,9 @@ class GenericAdapterTests(unittest.TestCase):
     def test_manual_notification_names_vendor_and_link(self):
         product = Product("key", "VPS 2 GB", 1, "https://shop.example.com/item", vendor="ExampleHost", stock_mode="availability")
         message = notification_text(product, 0, "https://shop.example.com/order")
-        self.assertIn("ExampleHost 检测到库存变化", message)
-        self.assertIn("手动购买：https://shop.example.com/order", message)
+        self.assertIn("HostWatch · 补货提醒", message)
+        self.assertIn("ExampleHost · VPS 2 GB", message)
+        self.assertIn('href="https://shop.example.com/order"', message)
         self.assertIn("由缺货变为有货", message)
 
     def test_accepts_generic_and_legacy_vmiss_configs(self):

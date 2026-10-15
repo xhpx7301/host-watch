@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 
 import admin
 import monitor
+from notifications import network_text
 
 
 def item(**overrides):
@@ -44,7 +45,7 @@ class IsvoroTests(unittest.TestCase):
         self.assertEqual(result.url, "https://isvoro.com/buy/HK-prod?product=188")
         self.assertEqual(result.match_details["type_name"], "中国香港")
         self.assertEqual(result.match_details["category_name"], "HK PROD")
-        self.assertIn("地区/线路：HK PROD", monitor.notification_text(result, 0, result.url))
+        self.assertIn("地区/线路：</b>HK PROD", monitor.notification_text(result, 0, result.url))
 
     def test_network_settings_match_storefront_bandwidth_units(self):
         for speed_fields, expected in [
@@ -62,7 +63,7 @@ class IsvoroTests(unittest.TestCase):
                     data["products/hkpordmini"]["settings"] = [{"key": k, "value": v} for k, v in settings.items()] if as_list else settings
                     result = self.inspect(data)
                     self.assertEqual(result.traffic, expected)
-                    self.assertIn(expected, monitor.notification_text(result, 0, result.url))
+                    self.assertIn(network_text(expected), monitor.notification_text(result, 0, result.url))
 
     def test_missing_network_settings_are_not_unlimited(self):
         for value in [None, "", True, -1, "NaN", "inf"]:

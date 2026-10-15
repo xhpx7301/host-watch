@@ -1021,7 +1021,7 @@ function formatHardware(raw) {
     .replace(/(?:内存|memory|RAM)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(Mi?B|Gi?B|M|G)\b/gi, (_, amount, unit) => memoryG(amount, unit.toUpperCase() === "M" ? "MB" : unit))
     .replace(/(?:硬盘|磁盘|disk|storage)\s*[:：]?\s*(?=\d)/gi, "")
     .replace(/(\d+(?:\.\d+)?)\s*(Mi?B)\b/gi, (_, amount, unit) => memoryG(amount, unit))
-    .replace(/(\d+(?:\.\d+)?C\s*\/\s*)(\d+(?:\.\d+)?)\s*(Gi?B)\b/gi, (_, cpu, amount, unit) => cpu + memoryG(amount, unit)));
+    .replace(/(\d+(?:\.\d+)?C\s*\/\s*)(\d+(?:\.\d+)?)\s*(Gi?B)\b/gi, (_, cpu, amount, unit) => cpu + memoryG(amount, unit))).replace(/\s*\/\s*/g, "/");
 }
 function formatNetwork(raw) {
   const parts = String(raw || "—").split(/\s*(?:·|@|\||\n)\s*|\s+\/\s+/).map(value => compactUnits(value

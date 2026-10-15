@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+from bs4 import BeautifulSoup
 from unittest.mock import Mock, patch
 
 import admin
@@ -105,7 +106,7 @@ class StockTaskTests(unittest.TestCase):
 
     def test_manual_results_send_once_including_sold_out_and_errors(self):
         for result, expected in [
-            ({"ok": True, "available": 4, "stock_mode": "quantity"}, "库存：4 件"),
+            ({"ok": True, "available": 4, "stock_mode": "quantity"}, "库存：4 台"),
             ({"ok": True, "available": 0, "stock_mode": "quantity"}, "库存：缺货"),
             ({"ok": True, "available": 1, "stock_mode": "availability"}, "库存：有货"),
             ({"ok": False, "error": "HTTP 403"}, "测试失败：HTTP 403"),
@@ -122,9 +123,11 @@ class StockTaskTests(unittest.TestCase):
                 send.assert_called_once()
                 self.assertEqual(send.call_args.args, ("test-token", "sendMessage"))
                 self.assertEqual(send.call_args.kwargs["chat_id"], "123")
-                self.assertIn(expected, send.call_args.kwargs["text"])
-                self.assertIn("商品：test", send.call_args.kwargs["text"])
-                self.assertIn("检查时间：", send.call_args.kwargs["text"])
+                message = BeautifulSoup(send.call_args.kwargs["text"], "html.parser").get_text()
+                self.assertIn(expected, message)
+                self.assertIn("test", message)
+                self.assertIn("检查时间：", message)
+                self.assertEqual(send.call_args.kwargs["parse_mode"], "HTML")
 
     def test_cancelled_task_never_sends_result(self):
         task = self.task()
@@ -150,9 +153,10 @@ class StockTaskTests(unittest.TestCase):
         with patch.object(admin, "telegram_credentials", return_value=("test-token", "123")), patch.object(admin, "telegram_call") as send:
             notification = admin.send_stock_test_result({"name": "MOLite", "adapter": "akile"}, result)
         self.assertEqual(notification["status"], "sent")
-        message = send.call_args.kwargs["text"]
-        for expected in ["中国澳门", "ID=14", "MOLite-高级竞技A", resolved.url, "库存：缺货"]:
+        message = BeautifulSoup(send.call_args.kwargs["text"], "html.parser").get_text()
+        for expected in ["中国澳门", "ID=14", "MOLite-高级竞技A", "库存：缺货"]:
             self.assertIn(expected, message)
+        self.assertTrue(send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["url"].startswith(resolved.url))
 
     def test_soy_test_result_and_message_include_checked_group(self):
         url = "https://www.vps.soy/cart?fid=1&gid=2"
@@ -165,7 +169,7 @@ class StockTaskTests(unittest.TestCase):
         result.update(checked_at="2026-10-15", duration_seconds=0.1)
         with patch.object(admin, "telegram_credentials", return_value=("test-token", "123")), patch.object(admin, "telegram_call") as send:
             self.assertEqual(admin.send_stock_test_result({"name": "日本软银", "adapter": "vps_soy"}, result)["status"], "sent")
-        self.assertIn("检查分类：" + url, send.call_args.kwargs["text"])
+        self.assertIn("检查分类：" + url, BeautifulSoup(send.call_args.kwargs["text"], "html.parser").get_text())
 
     def test_missing_bot_and_delivery_failure_preserve_stock_result(self):
         for credentials, error, status in [(("", ""), None, "unconfigured"), (("test-token", "123"), admin.TelegramAPIError("无法连接 Telegram"), "failed")]:
@@ -397,8 +401,9 @@ class StockTestTelegramTests(unittest.TestCase):
         self.assertEqual(notification["status"], "sent")
         self.assertEqual(send.call_args.args, ("saved-token", "sendMessage"))
         self.assertEqual(send.call_args.kwargs["chat_id"], "123")
-        self.assertIn("商品入口：https://shop.example.com/item", send.call_args.kwargs["text"])
-        self.assertNotIn("parse_mode", send.call_args.kwargs)
+        self.assertEqual(send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["url"], "https://shop.example.com/item")
+        self.assertIn('href="https://shop.example.com/item"', send.call_args.kwargs["text"])
+        self.assertEqual(send.call_args.kwargs["parse_mode"], "HTML")
 
     def test_api_error_does_not_expose_saved_token_in_notification_status(self):
         response = Mock(ok=False)
