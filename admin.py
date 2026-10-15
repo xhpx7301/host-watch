@@ -524,7 +524,7 @@ def main() -> None:
     if "*" in hosts:
         raise SystemExit("ADMIN_ALLOWED_HOSTS 不允许使用通配符；请填写精确域名")
     if any(item not in {"127.0.0.1", "localhost"} for item in hosts) and not authentication_required():
-        raise SystemExit("允许域名访问时必须设置 ADMIN_PASSWORD 或使用 jk add-user 创建管理页账号")
+        raise SystemExit("允许域名访问时必须设置 ADMIN_PASSWORD 或使用 hw add-user 创建管理页账号")
     port = int(os.getenv("ADMIN_PORT", "8765"))
     print(f"HostWatch admin listening on http://{host}:{port}")
     ThreadingHTTPServer((host, port), Handler).serve_forever()

@@ -23,26 +23,28 @@ curl -fsSL https://raw.githubusercontent.com/xhpx7301/host-watch/main/install.sh
 
 脚本可重复执行用于升级，已有的 `/var/lib/vmiss-monitor/config.json`、`/etc/vmiss-monitor.env` 和 `/etc/vmiss-monitor-admin.env` 会保留。
 
-项目已更名为 HostWatch，仓库名为 `host-watch`。为兼容已部署版本，继续沿用 `vmiss-monitor` 安装目录、系统用户和 systemd 服务名，以及 `/etc/stockwatch-users.json`、`/var/backups/stockwatch/` 等数据路径；`jk` 快捷命令保持不变。
+项目已更名为 HostWatch，仓库名为 `host-watch`。为兼容已部署版本，继续沿用 `vmiss-monitor` 安装目录、系统用户和 systemd 服务名，以及 `/etc/stockwatch-users.json`、`/var/backups/stockwatch/` 等数据路径；菜单快捷命令改为 `hw`。
 
 ## Debian 管理菜单
 
 安装或升级完成后，在 Debian 12/13 终端运行：
 
 ```sh
-jk
+hw
 ```
 
-直接输入 `jk` 即可调出菜单；普通用户会自动通过 sudo 请求权限，root 无需 sudo。`host-watch` 命令也可调用同一菜单，原 `stockwatch` 命令继续兼容。菜单支持查看状态、更新脚本、启动/停止/重启库存监控、重启管理页、查看最近 100 条日志、管理管理页用户和备份。也可以直接执行：
+直接输入 `hw` 即可调出菜单；普通用户会自动通过 sudo 请求权限，root 无需 sudo。`host-watch` 命令也可调用同一菜单，原 `stockwatch` 命令继续兼容。菜单支持查看状态、更新脚本、启动/停止/重启库存监控、重启管理页、查看最近 100 条日志、管理管理页用户和备份。也可以直接执行：
+
+旧版使用 `jk` 的服务器，重新执行一键安装后改用 `hw`；安装器会移除内容与本项目旧启动脚本完全一致的 `jk` 文件，不会删除其他同名脚本。
 
 ```sh
-jk update       # 下载更新，先备份，再安装
-jk backup       # 备份程序、配置和账号
-jk status       # 查看服务状态
-jk users        # 列出管理页用户
-jk add-user     # 交互式添加用户
-jk passwd       # 交互式修改密码
-jk delete-user  # 交互式删除用户
+hw update       # 下载更新，先备份，再安装
+hw backup       # 备份程序、配置和账号
+hw status       # 查看服务状态
+hw users        # 列出管理页用户
+hw add-user     # 交互式添加用户
+hw passwd       # 交互式修改密码
+hw delete-user  # 交互式删除用户
 ```
 
 这里的用户是**管理页管理员**，都有完整配置权限，不是 Debian/SSH 系统账号。密码在终端中隐藏输入，不支持通过命令行参数传递。账号保存于 `/etc/stockwatch-users.json`，使用独立随机盐和 PBKDF2-SHA256 哈希，权限为 `root:vmiss-monitor 0640`。不能删除最后一个管理员。
@@ -73,7 +75,7 @@ ssh -N -L 8765:127.0.0.1:8765 your-user@your-server
 sudoedit /etc/vmiss-monitor-admin.env
 ```
 
-可以先执行 `jk add-user` 创建账号，再只设置允许的域名；如果继续使用旧单账号方式，至少填写：
+可以先执行 `hw add-user` 创建账号，再只设置允许的域名；如果继续使用旧单账号方式，至少填写：
 
 ```env
 ADMIN_ALLOWED_HOSTS=127.0.0.1,localhost,host-watch.example.com

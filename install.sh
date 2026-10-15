@@ -57,9 +57,13 @@ install -o root -g root -m 0644 \
   "$SOURCE_DIR/.env.example" "$SOURCE_DIR/vmiss-monitor.service" \
   "$SOURCE_DIR/vmiss-monitor-admin.service" "$SOURCE_DIR/admin.env.example" "$INSTALL_DIR/"
 install -d -o root -g root -m 0755 /usr/local/bin
+if [[ -f /usr/local/bin/jk && ! -L /usr/local/bin/jk ]] && \
+  cmp -s /usr/local/bin/jk <(sed 's/运行 hw/运行 jk/g' "$SOURCE_DIR/stockwatch.sh"); then
+  rm -- /usr/local/bin/jk
+fi
 install -o root -g root -m 0755 "$SOURCE_DIR/stockwatch.sh" /usr/local/bin/host-watch
 install -o root -g root -m 0755 "$SOURCE_DIR/stockwatch.sh" /usr/local/bin/stockwatch
-install -o root -g root -m 0755 "$SOURCE_DIR/stockwatch.sh" /usr/local/bin/jk
+install -o root -g root -m 0755 "$SOURCE_DIR/stockwatch.sh" /usr/local/bin/hw
 
 if [[ ! -e "$DATA_DIR/config.json" ]]; then
   install -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0600 \
@@ -103,8 +107,8 @@ systemctl enable --now vmiss-monitor-admin.service
 systemctl restart vmiss-monitor-admin.service
 
 log "安装完成。监控总开关和已有配置保持原值；新安装默认关闭，安装程序不会主动启动库存监控。"
-log "Debian 管理菜单：jk（更新、服务管理、管理页用户管理；普通用户自动调用 sudo）。"
+log "Debian 管理菜单：hw（更新、服务管理、管理页用户管理；普通用户自动调用 sudo）。"
 log "Telegram、厂商、商品和人工购买入口请在管理页配置。"
 log "管理页：在本地电脑运行 ssh -N -L 8765:127.0.0.1:8765 your-user@your-server，然后打开 http://127.0.0.1:8765"
-log "若使用反向代理域名，请设置 ADMIN_ALLOWED_HOSTS，并用 jk add-user 创建账号（也兼容原 ADMIN_PASSWORD）。"
+log "若使用反向代理域名，请设置 ADMIN_ALLOWED_HOSTS，并用 hw add-user 创建账号（也兼容原 ADMIN_PASSWORD）。"
 log "确认各厂商允许自动访问并在管理页配置商品后，手动运行：sudo systemctl enable --now vmiss-monitor.service"

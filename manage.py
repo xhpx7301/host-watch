@@ -146,7 +146,7 @@ def backup() -> Path:
     target = Path(name)
     paths = [DATA_DIR, Path("/etc/vmiss-monitor.env"), ADMIN_ENV, DEFAULT_USERS_PATH,
              Path("/etc/systemd/system") / MONITOR, Path("/etc/systemd/system") / ADMIN,
-             Path("/usr/local/bin/host-watch"), Path("/usr/local/bin/stockwatch"), Path("/usr/local/bin/jk")]
+             Path("/usr/local/bin/host-watch"), Path("/usr/local/bin/stockwatch"), Path("/usr/local/bin/hw")]
     if INSTALL_DIR.exists():
         paths.extend(path for path in INSTALL_DIR.iterdir() if path.name not in {".venv", "__pycache__"})
     try:
@@ -253,7 +253,7 @@ def main() -> int:
     parser.add_argument("command", nargs="?", default="menu", choices=["menu", "status", "update", "backup", "users", "add-user", "passwd", "delete-user"])
     args = parser.parse_args()
     if os.geteuid() != 0:
-        parser.error("请使用 sudo jk 或切换至 root")
+        parser.error("请使用 sudo hw 或切换至 root")
     release = {}
     for line in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
         if "=" in line and not line.startswith("#"):
