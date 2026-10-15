@@ -83,7 +83,7 @@ function setMessage(message, kind = "", notify = true) {
   toastNode.hidden = false;
   document.querySelector("#toast-label").textContent = ({ pending: "操作提示", success: "操作成功", error: "操作失败" })[kind] || "操作提示";
   document.querySelector("#toast-message").textContent = message;
-  // Errors and in-progress actions stay visible until dismissed or replaced.
+  // Routine success feedback stays in the toast; errors also remain inline.
   if (kind === "success") toastTimer = setTimeout(() => { toastNode.hidden = true; }, 6500);
 }
 
@@ -936,10 +936,58 @@ function productSnapshot(item, status) {
   }
   return data;
 }
+function compactDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? "时间未知" : date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+function renderSpecs(cell, raw, network = false) {
+  const value = raw || "—";
+  const label = value.split(/\s*·\s*/).join(" / ").replace(/(\d)\s+(核|MB|GB|TB|Mbps|Gbps)\b/gi, "$1$2").replace(/(\d)\s+核/g, "$1核");
+  const chip = text("span", label, network ? "network-detail" : "spec-chip"); chip.title = value; cell.append(chip);
+}
+function expandedPrices(target) {
+  return new Set([...target.querySelectorAll(".price-options[open]")].map(detail => detail.closest("[data-id]")?.dataset.id));
+}
+function renderPrice(cell, raw, expanded = false) {
+  const prices = (raw || "—").split(/[；;]/).map(p => p.trim()).filter(Boolean);
+  if (prices.length < 2) { cell.append(text("span", prices[0], "price-main")); return; }
+  const details = text("details", "", "price-options"), summary = text("summary", prices[0], "price-main");
+  details.open = expanded;
+  summary.title = "展开其他计费周期"; details.append(summary);
+  prices.slice(1).forEach(price => details.append(text("div", price))); cell.append(details);
+}
+function moreActions(id, name, buttons) {
+  const wrap = text("div", "", "more-actions"), trigger = text("button", "更多 ⋯"), panel = text("div", "", "action-popover");
+  panel.id = `product-actions-${id}`; panel.popover = "auto"; panel.setAttribute("role", "group"); panel.setAttribute("aria-label", `${name} 的更多操作`);
+  trigger.type = "button"; trigger.setAttribute("aria-label", `${name} 更多操作`); trigger.setAttribute("aria-expanded", "false"); trigger.dataset.menuTrigger = "";
+  trigger.setAttribute("popovertarget", panel.id); trigger.disabled = actionRunning;
+  trigger.addEventListener("click", () => {
+    const rect = trigger.getBoundingClientRect();
+    panel.style.left = `${Math.max(12, Math.min(rect.right - 175, innerWidth - 187))}px`;
+    panel.style.top = `${Math.max(12, Math.min(rect.bottom + 5, innerHeight - buttons.length * 38 - 24))}px`;
+  });
+  panel.addEventListener("toggle", event => {
+    trigger.setAttribute("aria-expanded", String(event.newState === "open"));
+    if (event.newState === "closed" && panel.isConnected) requestAnimationFrame(() => {
+      if (!panel.isConnected || actionRunning) return;
+      const restoreFocus = document.activeElement === trigger;
+      renderProductList();
+      if (restoreFocus) document.getElementById(panel.id)?.previousElementSibling?.focus({ preventScroll: true });
+    });
+  });
+  buttons.forEach(button => { button.addEventListener("click", () => { if (panel.matches(":popover-open")) panel.hidePopover(); }, { capture: true }); panel.append(button); });
+  wrap.append(trigger, panel); return wrap;
+}
+function closeActionMenus() { document.querySelectorAll(".action-popover:popover-open").forEach(panel => panel.hidePopover()); }
+window.addEventListener("resize", closeActionMenus);
+window.addEventListener("scroll", closeActionMenus, { passive: true });
+window.addEventListener("hostwatch-page-change", closeActionMenus);
+
 function renderProductList() {
   renderNotificationList();
   // Keep a focused manual editor alive during status polling.
-  if (listNode.contains(document.activeElement) && document.activeElement.matches("input")) return;
+  if (listNode.querySelector(".action-popover:popover-open") || listNode.contains(document.activeElement) && document.activeElement.matches("input")) return;
+  const expanded = expandedPrices(listNode);
   const latest = new Map((lastStatus?.products || []).map(p => [p.id, p]));
   const watched = config.products.filter(item => membership(item, "watch"));
   const search = document.querySelector("#watchlist-search").value.trim().toLowerCase();
@@ -962,13 +1010,13 @@ function renderProductList() {
     const cell = (value = "", cls = "") => { const td = text("td", value, cls); row.append(td); return td; };
     cell(item.provider); const identity = cell(); identity.append(text("strong", p.name || item.name));
     const time = runtime ? runtime.checked_at || lastStatus?.last_checked : p.checked_at;
-    identity.append(text("small", time ? `读取于 ${new Date(time).toLocaleString()}` : "等待首次读取")); cell(p.region || "—");
+    const updated = text("small", time ? `读取 ${compactDate(time)}` : "等待首次读取"); updated.title = time ? new Date(time).toLocaleString() : "尚无商品快照"; identity.append(updated); cell(p.region || "—");
     for (const [key, label] of [["remarks", "备注"], ["line_label", "线路"]]) {
       const input = document.createElement("input"); input.className = "manual-field"; input.value = item[key] || ""; input.maxLength = 500; input.placeholder = "管理员填写";
       input.setAttribute("aria-label", `${item.name} ${label}`); input.disabled = actionRunning;
       input.addEventListener("input", () => { item[key] = input.value; updateDraftState(); }); cell().append(input);
     }
-    cell(p.specs || "—", "watch-specs"); cell(p.traffic || "—", "watch-specs"); cell(p.price || "—", "watch-price");
+    renderSpecs(cell("", "watch-specs"), p.specs); renderSpecs(cell("", "watch-specs"), p.traffic, true); renderPrice(cell("", "watch-price"), p.price, expanded.has(item.id));
     cell().append(text("span", Number.isInteger(p.available) ? stockLabel(p) : "未知", `state ${!Number.isInteger(p.available) ? "pending" : p.available > 0 ? "ok" : "error"}`));
     const actions = text("div", "", "watch-operations");
     const raw = p.url || item.purchase_url;
@@ -978,12 +1026,14 @@ function renderProductList() {
     notify.addEventListener("click", () => { setMembership(item, "notify", true); renderProducts(); updateDraftState(); setMessage("已加入库存通知，保存配置后生效。", "pending"); });
     const remove = text("button", "移出监控", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.addEventListener("click", () => { setMembership(item, "watch", false); renderProducts(); updateDraftState(); setMessage("已移出库存监控，通知选择保持原样，请保存配置。", "pending"); });
-    actions.append(notify, remove); cell().append(actions); body.append(row);
+    actions.append(moreActions(`watch-${item.id}`, item.name, [notify, remove])); cell().append(actions); body.append(row);
   }
   table.append(head, body); wrap.append(table); listNode.replaceChildren(wrap);
 }
 
 function renderNotificationList() {
+  if (document.querySelector("#notification-list .action-popover:popover-open")) return;
+  const expanded = expandedPrices(document.querySelector("#notification-list"));
   const statusProducts = new Map((lastStatus?.products || []).map(p => [p.id, p]));
   const savedProducts = new Map((savedConfig ? JSON.parse(savedConfig).products : []).map(p => [p.id, p]));
   const selected = config.products.filter(item => membership(item, "notify"));
@@ -1008,10 +1058,11 @@ function renderNotificationList() {
     const cell = (value = "", cls = "") => { const td = text("td", value, cls); row.append(td); return td; };
     cell(item.provider);
     const identity = cell(); identity.append(text("strong", p.name || item.name));
-    identity.append(text("small", productMonitorLabel(item, savedProducts.get(item.id))));
+    const savedItem = savedProducts.get(item.id);
+    if (!savedItem || JSON.stringify(item) !== JSON.stringify(savedItem)) identity.append(text("small", "修改待保存", "draft-note"));
     const time = testIsLatest ? testResult.checked_at : runtime ? runtime.checked_at || lastStatus?.last_checked : p.checked_at;
-    identity.append(text("small", time ? `${testIsLatest ? "测试于" : "读取于"} ${new Date(time).toLocaleString()}` : "等待首次读取"));
-    cell(p.region || "—"); cell(p.specs || "—", "watch-specs"); cell(p.traffic || "—", "watch-specs"); cell(p.price || "—", "watch-price");
+    const updated = text("small", time ? `${testIsLatest ? "测试" : "读取"} ${compactDate(time)}` : "等待首次读取"); updated.title = time ? new Date(time).toLocaleString() : "尚无商品快照"; identity.append(updated);
+    cell(p.region || "—"); renderSpecs(cell("", "watch-specs"), p.specs); renderSpecs(cell("", "watch-specs"), p.traffic, true); renderPrice(cell("", "watch-price"), p.price, expanded.has(item.id));
     const stock = cell();
     stock.append(text("span", Number.isInteger(p.available) ? stockLabel(p) : "未知", `state ${!Number.isInteger(p.available) ? "pending" : p.available > 0 ? "ok" : "error"}`));
     if (p.error) stock.append(text("small", p.error, "error"));
@@ -1024,7 +1075,7 @@ function renderNotificationList() {
     edit.addEventListener("click", () => { openProducts.add(item.id); renderProducts(); openAdvancedProducts(); editorNode.querySelector(`[data-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }); });
     const remove = text("button", "移出通知", "danger product-remove"); remove.type = "button";
     remove.addEventListener("click", () => { if (actionRunning) return; setMembership(item, "notify", false); renderProducts(); updateDraftState(); setMessage("已移出库存通知，库存监控选择保留，请保存配置。", "pending"); });
-    actions.append(test, stop, edit, remove); cell().append(actions); body.append(row);
+    actions.append(test, stop, moreActions(`notify-${item.id}`, item.name, [edit, remove])); cell().append(actions); body.append(row);
     const resultRow = text("tr", "", "notification-result-row"), resultCell = document.createElement("td"); resultCell.colSpan = 8;
     resultCell.append(text("div", "", "product-test-result")); resultRow.append(resultCell); body.append(resultRow); table.append(body);
   }
@@ -1037,10 +1088,32 @@ function renderOverview() {
   const latest = new Map((lastStatus?.products || []).map((product) => [product.id, product]));
   const inStock = enabled.filter((item) => (latest.get(item.id)?.available || 0) > 0).length;
   document.querySelector("#overview-total").textContent = String(config.products.length);
-  document.querySelector("#overview-total-note").textContent = `页面配置：${vendors.size} 个厂商 · ${enabled.length} 个商品参与检查`;
+  document.querySelector("#overview-total-note").textContent = `${vendors.size} 个商家 · ${config.products.filter(p => membership(p, "watch")).length} 个监控 / ${config.products.filter(p => membership(p, "notify")).length} 个通知`;
   document.querySelector("#overview-stock").textContent = String(inStock);
   document.querySelector("#overview-interval").textContent = intervalLabel(config.interval_seconds ?? 600);
+  renderOverviewRecent();
   renderMonitorState();
+}
+
+function renderOverviewRecent() {
+  const target = document.querySelector("#overview-recent");
+  const expanded = expandedPrices(target);
+  const latest = new Map((lastStatus?.products || []).map(p => [p.id, p]));
+  const products = config.products.filter(item => item.enabled).slice(0, 6);
+  if (!products.length) { target.replaceChildren(text("div", "还没有关注的商品，从库存大盘加入后将在这里显示。", "empty")); return; }
+  const wrap = text("div", "", "catalog-table-wrap"), table = text("table", "", "overview-table"), head = document.createElement("thead"), heading = document.createElement("tr");
+  wrap.tabIndex = 0; wrap.setAttribute("role", "region"); wrap.setAttribute("aria-label", "关注商品最近库存");
+  ["商品", "地区", "价格", "库存", "关注方式"].forEach(label => { const th = text("th", label); th.scope = "col"; heading.append(th); }); head.append(heading); table.append(head);
+  const body = document.createElement("tbody");
+  products.forEach(item => {
+    const p = productSnapshot(item, latest.get(item.id)), row = document.createElement("tr"); row.dataset.id = item.id;
+    const cell = () => { const td = document.createElement("td"); row.append(td); return td; };
+    const identity = cell(); identity.append(text("strong", p.name || item.name), text("small", item.provider));
+    cell().textContent = p.region || "—"; renderPrice(cell(), p.price, expanded.has(item.id));
+    cell().append(text("span", Number.isInteger(p.available) ? stockLabel(p) : "未知", `state ${!Number.isInteger(p.available) ? "pending" : p.available > 0 ? "ok" : "error"}`));
+    const tags = cell(); if (membership(item, "watch")) tags.append(text("span", "库存监控", "membership-tag")); if (membership(item, "notify")) tags.append(text("span", "TG 通知", "membership-tag notify"));
+    body.append(row);
+  }); table.append(body); wrap.append(table); target.replaceChildren(wrap);
 }
 
 function renderMonitorState() {
@@ -1066,7 +1139,7 @@ function renderMonitorState() {
   const header = document.querySelector("#header-monitor-state");
   header.textContent = label;
   header.className = `state ${tone}`;
-  document.querySelector("#overview-state-note").textContent = note;
+  document.querySelector("#overview-state-note").textContent = active === "active" ? "后台持续检查，关闭网页后仍运行" : active === "activating" ? "正在确认启动状态，页面自动刷新" : active === "failed" ? "请检查配置或查看服务日志" : active === "deactivating" ? "正在停止，等待最终状态" : active === "inactive" ? "已暂停，保留最近库存记录" : "等待服务器返回服务状态";
   renderProductList();
   window.dispatchEvent(new Event("hostwatch-service-change"));
 }
