@@ -1,8 +1,15 @@
-# VMISS 库存监控
+# Stockwatch 库存监控
 
-按配置检查 VMISS 商品库存，并在库存增加时通过 Telegram bot 通知。每条通知带有 `aff.php` 推广链接，可为商品指定 `gid`（商品组）或 `pid`（单品）。程序不会下单。
+自托管的多厂商库存监控脚本。支持 VMISS 专用套餐解析和通用公开 HTTPS 商品页；发现库存增加或由缺货转为有货时，可通过 Telegram 发送提醒与人工购买入口。程序不会登录厂商账户、绕过验证或自动下单。
 
-> VMISS 曾对自动化访问返回拦截页。部署前请先向 VMISS 确认允许的访问方式。普通请求模式不会绕过 Cloudflare；遇到 HTTP 403、429 或验证页会记录状态、尝试发送告警并停止访问，不会自动重试。FlareSolverr 仅适用于你拥有或明确获准测试的站点，默认关闭。检查间隔不能低于 5 分钟。
+VMISS 曾对自动化访问返回拦截页。请先确认目标厂商允许自动检查及访问频率。遇到 HTTP 403、429 或安全验证页时，程序会记录状态、尝试告警并停止，不会自动重试。FlareSolverr 仅适用于你拥有或明确获准测试的站点，默认关闭。检查间隔不能低于 5 分钟。
+
+## 支持的监控方式
+
+- **VMISS WHMCS**：解析商品卡片和库存数量，可生成 `aff.php` 推广入口。
+- **通用 HTTPS 网页**：配置 CSS 库存元素选择器，支持提取数量或匹配有货/缺货文本；购买入口可单独设置，留空时使用商品页。
+
+通用网页适配器适合服务器返回 HTML 的公开商品页面，不执行 JavaScript，也不登录账户。页面结构若由前端脚本动态生成，或库存来自私有 API，需要后续为该厂商添加专用适配器。所有购买动作由用户在收到通知后手动完成。
 
 ## 一键安装
 
@@ -73,13 +80,35 @@ sudo systemctl restart vmiss-monitor.service
 
 ## 配置商品
 
-在管理页设置：
+在管理页可添加 VMISS 商品，或选择“通用 HTTPS 网页”适配器。通用网页示例：
+
+```json
+{
+  "id": "provider-vps-2g",
+  "adapter": "html",
+  "provider": "ExampleHost",
+  "name": "VPS 2 GB",
+  "enabled": true,
+  "url": "https://shop.example.com/vps-2g",
+  "stock_selector": ".stock-status",
+  "stock_mode": "availability",
+  "available_pattern": "(?i)in stock|available|有货",
+  "unavailable_pattern": "(?i)out of stock|sold out|缺货|售罄",
+  "purchase_url": "https://shop.example.com/order/vps-2g"
+}
+```
+
+如果网页显示精确数量，设置 `stock_mode` 为 `quantity`，并将 `stock_pattern` 配置为带捕获组的正则，例如默认的 `([\\d,]+)` 可匹配 `库存 1,203 台` 中的 `1,203`。CSS 选择器必须只匹配一个非空元素；解析不确定时会报错停止，不会把不确定状态当成有货或缺货。
+
+VMISS 商品在管理页设置：
 
 - `aff` 推广 ID，例如 `2762`
 - 分类页，例如 `https://app.vmiss.com/store/dedicated-server`
 - 商品选择标识：商品卡片 ID（如 `product44`）、完整名称，或订购链接路径末段 slug
 - `gid` 或 `pid`，只能填写一个
 - 检查间隔，最少 300 秒
+
+VMISS 的推广 ID 是全局配置；通用网页可各自设置购买链接。两类商品可以同时监控。
 
 保存配置不会访问 VMISS。确认 VMISS 允许当前访问方式后，再打开总开关并启用商品。
 

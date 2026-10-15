@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hmac
+import ipaddress
 import json
 import os
 import re
@@ -159,45 +160,117 @@ def validate_config(value: object) -> dict:
         raise ValueError("产品列表无效或超过 100 项")
     normalized = []
     seen_ids = set()
+    vmiss_products = False
     for item in products:
         if not isinstance(item, dict):
             raise ValueError("产品配置必须是对象")
         product_id = str(item.get("id", "")).strip()
         name = str(item.get("name", "")).strip()
-        category_url = str(item.get("category_url", "")).strip()
-        selector = str(item.get("selector", "")).strip()
+        adapter = str(item.get("adapter", "vmiss" if any(key in item for key in ("category_url", "selector", "gid", "pid")) else "html")).strip().casefold()
+        provider = str(item.get("provider", "VMISS" if adapter == "vmiss" else "自定义网站")).strip()
         gid = str(item.get("gid", "")).strip()
         pid = str(item.get("pid", "")).strip()
         if "enabled" in item and not isinstance(item["enabled"], bool):
             raise ValueError(f"产品 {name or product_id} 的启用状态必须是布尔值")
-        parsed = urlsplit(category_url)
         if not product_id or product_id in seen_ids:
             raise ValueError("每个产品都需要唯一 ID")
-        if not name or not selector:
-            raise ValueError(f"产品 {name or product_id} 需要填写名称和商品标识")
-        if parsed.scheme != "https" or parsed.hostname != "app.vmiss.com" or parsed.query or parsed.fragment or not parsed.path.startswith("/store/"):
-            raise ValueError(f"产品 {name} 的分类页必须是干净的 app.vmiss.com HTTPS URL")
-        if bool(gid) == bool(pid):
-            raise ValueError(f"产品 {name} 必须且只能填写 gid 或 pid")
-        target_id = pid or gid
-        if not target_id.isdigit():
-            raise ValueError(f"产品 {name} 的 gid/pid 必须是数字")
-        if len(name) > 120 or len(selector) > 200 or len(category_url) > 2048 or len(target_id) > 20:
-            raise ValueError(f"产品 {name} 的字段长度超限")
+        if adapter not in {"vmiss", "html"}:
+            raise ValueError(f"产品 {name or product_id} 的适配器必须是 vmiss 或 html")
+        if not name:
+            raise ValueError(f"产品 {product_id} 需要填写商品名称")
+        if not provider or len(provider) > 80:
+            raise ValueError(f"产品 {name} 的厂商名称必填且不能超过 80 个字符")
+
+        if adapter == "vmiss":
+            vmiss_products = True
+            category_url = str(item.get("category_url", "")).strip()
+            selector = str(item.get("selector", "")).strip()
+            parsed = urlsplit(category_url)
+            if not selector:
+                raise ValueError(f"产品 {name} 需要填写商品选择标识")
+            if parsed.scheme != "https" or parsed.hostname != "app.vmiss.com" or parsed.query or parsed.fragment or not parsed.path.startswith("/store/"):
+                raise ValueError(f"产品 {name} 的分类页必须是干净的 app.vmiss.com HTTPS URL")
+            if bool(gid) == bool(pid):
+                raise ValueError(f"产品 {name} 必须且只能填写 gid 或 pid")
+            target_id = pid or gid
+            if not target_id.isdigit():
+                raise ValueError(f"产品 {name} 的 gid/pid 必须是数字")
+            if len(selector) > 200 or len(category_url) > 2048 or len(target_id) > 20:
+                raise ValueError(f"产品 {name} 的字段长度超限")
+            normalized_item = {
+                "id": product_id,
+                "name": name,
+                "provider": provider,
+                "adapter": adapter,
+                "category_url": category_url,
+                "selector": selector,
+                "gid": gid,
+                "pid": pid,
+                "enabled": item.get("enabled", False),
+            }
+        else:
+            check_url = str(item.get("url", item.get("category_url", ""))).strip()
+            parsed = urlsplit(check_url)
+            host = (parsed.hostname or "").casefold()
+            if parsed.scheme != "https" or not host or parsed.username or parsed.password or parsed.fragment:
+                raise ValueError(f"产品 {name} 的监控网址必须是有效的 HTTPS URL，不能包含账号或片段")
+            if host == "localhost" or host.endswith((".localhost", ".local")):
+                raise ValueError(f"产品 {name} 不能监控本机或 .local 地址")
+            try:
+                address = ipaddress.ip_address(host)
+            except ValueError:
+                address = None
+            if address is not None and not address.is_global:
+                raise ValueError(f"产品 {name} 不能监控内网或保留 IP 地址")
+            stock_selector = str(item.get("stock_selector", "")).strip()
+            stock_mode = str(item.get("stock_mode", "quantity")).strip().casefold()
+            stock_pattern = str(item.get("stock_pattern", r"([\d,]+)")).strip()
+            available_pattern = str(item.get("available_pattern", r"(?i)in stock|available|有货|现货|库存充足")).strip()
+            unavailable_pattern = str(item.get("unavailable_pattern", r"(?i)out of stock|unavailable|sold out|缺货|售罄|无货")).strip()
+            purchase_url = str(item.get("purchase_url", "")).strip()
+            if not stock_selector or len(stock_selector) > 512:
+                raise ValueError(f"产品 {name} 需要填写 CSS 库存选择器（最多 512 个字符）")
+            if stock_mode not in {"quantity", "availability"}:
+                raise ValueError(f"产品 {name} 的库存识别方式必须是 quantity 或 availability")
+            if stock_mode == "quantity":
+                try:
+                    compiled = re.compile(stock_pattern, re.IGNORECASE)
+                except re.error as exc:
+                    raise ValueError(f"产品 {name} 的数量正则无效：{exc}") from None
+                if compiled.groups < 1:
+                    raise ValueError(f"产品 {name} 的数量正则必须包含一个捕获组，例如 (\\d+)")
+            else:
+                for label, pattern in (("有货", available_pattern), ("缺货", unavailable_pattern)):
+                    try:
+                        re.compile(pattern, re.IGNORECASE)
+                    except re.error as exc:
+                        raise ValueError(f"产品 {name} 的{label}正则无效：{exc}") from None
+            if purchase_url:
+                purchase = urlsplit(purchase_url)
+                if purchase.scheme != "https" or not purchase.hostname or purchase.username or purchase.password or purchase.fragment:
+                    raise ValueError(f"产品 {name} 的购买链接必须是有效 HTTPS URL，不能包含账号或片段")
+            if len(name) > 120 or len(check_url) > 2048 or len(stock_pattern) > 500 or len(available_pattern) > 500 or len(unavailable_pattern) > 500 or len(purchase_url) > 2048:
+                raise ValueError(f"产品 {name} 的字段长度超限")
+            normalized_item = {
+                "id": product_id,
+                "name": name,
+                "provider": provider,
+                "adapter": adapter,
+                "url": check_url,
+                "stock_selector": stock_selector,
+                "stock_mode": stock_mode,
+                "stock_pattern": stock_pattern,
+                "available_pattern": available_pattern,
+                "unavailable_pattern": unavailable_pattern,
+                "purchase_url": purchase_url,
+                "enabled": item.get("enabled", False),
+            }
         seen_ids.add(product_id)
-        normalized.append({
-            "id": product_id,
-            "name": name,
-            "category_url": category_url,
-            "selector": selector,
-            "gid": gid,
-            "pid": pid,
-            "enabled": item.get("enabled", False),
-        })
+        normalized.append(normalized_item)
     enabled = value.get("enabled", False)
     if enabled and not any(item["enabled"] for item in normalized):
         raise ValueError("启用监控前至少启用一个产品")
-    if enabled and not affiliate_id:
+    if enabled and vmiss_products and not affiliate_id:
         raise ValueError("启用监控前请填写推广 ID（aff）")
     fetcher = normalize_fetcher(value.get("fetcher", {}))
     telegram = normalize_telegram(value.get("telegram", {}))
@@ -312,7 +385,7 @@ def request_body(handler: BaseHTTPRequestHandler) -> dict:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "VMISSMonitorAdmin/1.0"
+    server_version = "StockwatchAdmin/1.0"
 
     def _secure(self) -> bool:
         try:
@@ -408,7 +481,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 if not token or not chat_id:
                     raise ValueError("请填写 Telegram bot token 和 chat ID")
-                telegram_call(token, "sendMessage", chat_id=chat_id, text="✅ VMISS Telegram 配置测试成功")
+                telegram_call(token, "sendMessage", chat_id=chat_id, text="✅ Stockwatch Telegram 配置测试成功")
                 self._send(200, "application/json; charset=utf-8", b'{"ok":true}')
                 return
 
@@ -459,7 +532,7 @@ def main() -> None:
     if any(item not in {"127.0.0.1", "localhost"} for item in hosts) and not os.getenv("ADMIN_PASSWORD", ""):
         raise SystemExit("允许域名访问时必须设置 ADMIN_PASSWORD")
     port = int(os.getenv("ADMIN_PORT", "8765"))
-    print(f"VMISS monitor admin listening on http://{host}:{port}")
+    print(f"Stockwatch admin listening on http://{host}:{port}")
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 

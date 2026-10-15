@@ -9,8 +9,8 @@ ADMIN_ENV_FILE="/etc/vmiss-monitor-admin.env"
 SERVICE_USER="vmiss-monitor"
 SERVICE_GROUP="vmiss-monitor"
 
-log() { printf '[vmiss-monitor] %s\n' "$*"; }
-fail() { printf '[vmiss-monitor] ERROR: %s\n' "$*" >&2; exit 1; }
+log() { printf '[stockwatch] %s\n' "$*"; }
+fail() { printf '[stockwatch] ERROR: %s\n' "$*" >&2; exit 1; }
 
 [[ "${EUID}" -eq 0 ]] || fail "请使用 root 运行，例如：curl -fsSL https://raw.githubusercontent.com/xhpx7301/jiankong/main/install.sh | sudo bash"
 [[ -f /etc/debian_version && -f /etc/os-release ]] || fail "此安装脚本仅支持 Debian 12/13。"
@@ -99,7 +99,7 @@ systemctl enable --now vmiss-monitor-admin.service
 systemctl restart vmiss-monitor-admin.service
 
 log "安装完成。库存监控仍为关闭状态，未启用或启动 vmiss-monitor.service。"
-log "Telegram、商品和推广设置请在管理页配置。"
+log "Telegram、厂商、商品和人工购买入口请在管理页配置。"
 log "管理页：在本地电脑运行 ssh -N -L 8765:127.0.0.1:8765 your-user@your-server，然后打开 http://127.0.0.1:8765"
 log "若使用反向代理域名，请在 $ADMIN_ENV_FILE 设置 ADMIN_ALLOWED_HOSTS 和 ADMIN_PASSWORD。"
-log "确认 VMISS 允许访问并在管理页配置商品后，手动运行：sudo systemctl enable --now vmiss-monitor.service"
+log "确认各厂商允许自动访问并在管理页配置商品后，手动运行：sudo systemctl enable --now vmiss-monitor.service"

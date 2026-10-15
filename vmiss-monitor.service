@@ -1,5 +1,5 @@
 [Unit]
-Description=VMISS stock monitor
+Description=Stockwatch inventory monitor
 After=network-online.target
 Wants=network-online.target
 

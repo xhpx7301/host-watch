@@ -40,6 +40,8 @@ class Product:
     available: int
     url: str
     card_id: str = ""
+    vendor: str = "VMISS"
+    stock_mode: str = "quantity"
 
 
 def parse_products(html: str, page_url: str, selectors: list[str]) -> list[Product]:
@@ -101,23 +103,23 @@ def _blocked_body(body: str) -> bool:
     return any(marker in lowered for marker in blocked_markers)
 
 
-def _validate_page_response(status_code: int, body: str, final_url: str) -> tuple[str, str]:
+def _validate_page_response(status_code: int, body: str, final_url: str, expected_host: str = "app.vmiss.com") -> tuple[str, str]:
     if status_code in (403, 429) or _blocked_body(body):
-        raise SiteBlocked(f"网站返回 HTTP {status_code} 或 Cloudflare 风控页面；监控已停止，请先联系 VMISS 确认允许的访问方式")
+        raise SiteBlocked(f"{expected_host} 返回 HTTP {status_code} 或安全验证页面；监控已停止，请确认目标网站允许自动检查")
     if status_code < 200 or status_code >= 300:
-        raise MonitorError(f"商品页返回 HTTP {status_code}，监控已停止")
+        raise MonitorError(f"{expected_host} 商品页返回 HTTP {status_code}，本轮监控已停止")
     parsed_url = urlsplit(final_url)
-    if parsed_url.scheme != "https" or parsed_url.hostname != "app.vmiss.com":
-        raise MonitorError("商品页重定向离开 app.vmiss.com；已停止，未处理页面内容")
+    if parsed_url.scheme != "https" or (parsed_url.hostname or "").casefold() != expected_host.casefold():
+        raise MonitorError(f"商品页重定向离开 {expected_host}；已停止，未处理页面内容")
     return body, final_url
 
 
-def fetch_with_requests(session: requests.Session, url: str) -> tuple[str, str]:
+def fetch_with_requests(session: requests.Session, url: str, expected_host: str = "app.vmiss.com") -> tuple[str, str]:
     try:
         response = session.get(url, timeout=(10, 25), allow_redirects=True)
     except requests.RequestException:
-        raise SiteBlocked("访问商品页失败，监控已停止；请检查网络或联系 VMISS 确认允许的访问方式") from None
-    return _validate_page_response(response.status_code, response.text, response.url)
+        raise SiteBlocked(f"访问 {expected_host} 商品页失败，监控已停止；请检查网络并确认目标网站允许自动检查") from None
+    return _validate_page_response(response.status_code, response.text, response.url, expected_host)
 
 
 def fetch_with_flaresolverr(session: requests.Session, url: str, fetcher: dict) -> tuple[str, str]:
@@ -172,6 +174,53 @@ def fetch_products(session: requests.Session, url: str, selectors: list[str], fe
     return parse_products(body, final_url_text, selectors)
 
 
+def fetch_html_stock(session: requests.Session, item: dict) -> Product:
+    """Read one configured public HTML stock indicator without bypass services."""
+    url = str(item["url"])
+    expected_host = (urlsplit(url).hostname or "").casefold()
+    body, final_url = fetch_with_requests(session, url, expected_host)
+    soup = BeautifulSoup(body, "html.parser")
+    selector = str(item["stock_selector"])
+    try:
+        matches = soup.select(selector)
+    except Exception as exc:
+        raise MonitorError(f"商品 {item['name']} 的 CSS 选择器无效：{exc}") from None
+    if len(matches) != 1:
+        raise MonitorError(f"商品 {item['name']} 的 CSS 选择器应精确匹配一个库存元素，实际匹配 {len(matches)} 个")
+    stock_text = " ".join(matches[0].get_text(" ", strip=True).split())
+    if not stock_text:
+        raise MonitorError(f"商品 {item['name']} 的库存元素为空，不能安全判断库存")
+
+    stock_mode = item["stock_mode"]
+    if stock_mode == "quantity":
+        try:
+            match = re.search(item["stock_pattern"], stock_text, re.IGNORECASE)
+        except re.error as exc:
+            raise MonitorError(f"商品 {item['name']} 的数量正则无效：{exc}") from None
+        if not match:
+            raise MonitorError(f"商品 {item['name']} 的库存文本无法匹配数量规则：{stock_text[:160]}")
+        quantity_text = match.group(1)
+        digits = re.sub(r"[^0-9]", "", quantity_text)
+        if not digits:
+            raise MonitorError(f"商品 {item['name']} 的库存数量不是有效整数：{quantity_text!r}")
+        available = int(digits)
+    else:
+        if re.search(item["unavailable_pattern"], stock_text, re.IGNORECASE):
+            available = 0
+        elif re.search(item["available_pattern"], stock_text, re.IGNORECASE):
+            available = 1
+        else:
+            raise MonitorError(f"商品 {item['name']} 的库存文本未匹配有货或缺货规则：{stock_text[:160]}")
+    return Product(
+        key=url,
+        name=item["name"],
+        available=available,
+        url=final_url,
+        vendor=item["provider"],
+        stock_mode=stock_mode,
+    )
+
+
 def affiliate_url(product_url: str, affiliate_id: str, gid: str, pid: str) -> str:
     parsed = urlsplit(product_url)
     query = {"aff": affiliate_id, "pid" if pid else "gid": pid or gid}
@@ -210,14 +259,22 @@ def write_status(path: Path, status: dict) -> None:
 def selected_products(config: dict) -> list[dict]:
     products = [item for item in config.get("products", []) if item.get("enabled")]
     for item in products:
-        url = str(item.get("category_url", ""))
-        parsed = urlsplit(url)
-        if parsed.scheme != "https" or parsed.hostname != "app.vmiss.com":
-            raise MonitorError(f"商品 {item.get('name', '(未命名)')} 的分类页必须是 app.vmiss.com 的 HTTPS 地址")
-        if bool(item.get("gid")) == bool(item.get("pid")):
-            raise MonitorError(f"商品 {item.get('name', '(未命名)')} 必须且只能填写 gid 或 pid 其中一个")
-        if not str(item.get("selector", "")).strip():
-            raise MonitorError(f"商品 {item.get('name', '(未命名)')} 缺少商品选择标识")
+        name = item.get("name", "(未命名)")
+        if item.get("adapter") == "vmiss":
+            url = str(item.get("category_url", ""))
+            parsed = urlsplit(url)
+            if parsed.scheme != "https" or parsed.hostname != "app.vmiss.com":
+                raise MonitorError(f"商品 {name} 的分类页必须是 app.vmiss.com 的 HTTPS 地址")
+            if bool(item.get("gid")) == bool(item.get("pid")):
+                raise MonitorError(f"商品 {name} 必须且只能填写 gid 或 pid 其中一个")
+            if not str(item.get("selector", "")).strip():
+                raise MonitorError(f"商品 {name} 缺少商品选择标识")
+        elif item.get("adapter") == "html":
+            url = str(item.get("url", ""))
+            if urlsplit(url).scheme != "https" or not str(item.get("stock_selector", "")).strip():
+                raise MonitorError(f"商品 {name} 的通用网页配置不完整")
+        else:
+            raise MonitorError(f"商品 {name} 的监控适配器无效")
     return products
 
 
@@ -274,13 +331,18 @@ def show_chat_ids(session: requests.Session, token: str) -> None:
 
 
 def notification_text(product: Product, old_count: int | None, purchase_url: str) -> str:
-    increase = f"（增加 {product.available - old_count} 台）" if old_count is not None else "（首次运行时已有库存）"
+    if product.stock_mode == "availability":
+        increase = "（由缺货变为有货）" if old_count is not None else "（首次运行时已有库存）"
+        stock = "有货"
+    else:
+        increase = f"（增加 {product.available - old_count} 台）" if old_count is not None else "（首次运行时已有库存）"
+        stock = f"{product.available} 台"
     now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     return (
-        f"🟢 VMISS 检测到库存增加\n"
+        f"🟢 {product.vendor} 检测到库存变化\n"
         f"套餐：{product.name}\n"
-        f"库存：{product.available} 台 {increase}\n"
-        f"购买链接：{purchase_url}\n"
+        f"库存：{stock} {increase}\n"
+        f"手动购买：{purchase_url}\n"
         f"检查时间：{now}"
     )
 
@@ -299,6 +361,8 @@ def check_once(
 
     by_category: dict[str, list[dict]] = {}
     for item in selected:
+        if item["adapter"] != "vmiss":
+            continue
         by_category.setdefault(item["category_url"].strip(), []).append(item)
     found: dict[str, Product] = {}
     for category_url, items in by_category.items():
@@ -313,7 +377,19 @@ def check_once(
             }]
             if len(candidates) != 1:
                 raise MonitorError(f"商品 {item.get('name', selector)} 无法唯一匹配页面套餐；请检查 selector")
-            found[item["id"]] = candidates[0]
+            matched = candidates[0]
+            found[item["id"]] = Product(
+                key=matched.key,
+                name=matched.name,
+                available=matched.available,
+                url=matched.url,
+                card_id=matched.card_id,
+                vendor=item["provider"],
+                stock_mode="quantity",
+            )
+    for item in selected:
+        if item["adapter"] == "html":
+            found[item["id"]] = fetch_html_stock(session, item)
 
     previous = read_state(state_path)
     current = dict(previous)
@@ -329,14 +405,19 @@ def check_once(
             notifications.append((item, product, old_count))
         current[item["id"]] = {
             "name": product.name,
+            "vendor": item["provider"],
             "available": product.available,
             "url": product.url,
         }
 
     if notifications and bot_token and chat_id:
         for item, product, old_count in notifications:
-            purchase_url = affiliate_url(product.url, str(config.get("affiliate_id", "")), str(item.get("gid", "")), str(item.get("pid", "")))
-            button_text = "🛒 立即购买（推广链接）"
+            purchase_url = (
+                affiliate_url(product.url, str(config.get("affiliate_id", "")), str(item.get("gid", "")), str(item.get("pid", "")))
+                if item["adapter"] == "vmiss"
+                else (item.get("purchase_url") or product.url)
+            )
+            button_text = "🛒 打开购买页面" if item["adapter"] == "html" else "🛒 打开 VMISS 购买页"
             reply_markup = {"inline_keyboard": [[{"text": button_text, "url": purchase_url}]]}
             telegram_request(
                 session,
@@ -353,19 +434,34 @@ def check_once(
             logging.warning("发现库存增加但未设置 Telegram：%s，目前 %s 台，%s", product.name, product.available, product.url)
 
     write_state(state_path, current)
-    summary = "；".join(f"{found[item['id']].name}: {found[item['id']].available} 台" for item in selected)
+    summary = "；".join(f"{item['provider']} / {found[item['id']].name}: {found[item['id']].available}" for item in selected)
     write_status(status_path, {
         "last_checked": datetime.now().astimezone().isoformat(timespec="seconds"),
         "state": "ok",
         "message": "检查完成",
-        "products": [{"id": item["id"], "name": found[item["id"]].name, "available": found[item["id"]].available} for item in selected],
+        "products": [
+            {
+                "id": item["id"],
+                "name": found[item["id"]].name,
+                "vendor": item["provider"],
+                "available": found[item["id"]].available,
+                "stock_mode": item.get("stock_mode", "quantity"),
+                "url": found[item["id"]].url,
+                "purchase_url": (
+                    affiliate_url(found[item["id"]].url, str(config.get("affiliate_id", "")), str(item.get("gid", "")), str(item.get("pid", "")))
+                    if item["adapter"] == "vmiss"
+                    else (item.get("purchase_url") or found[item["id"]].url)
+                ),
+            }
+            for item in selected
+        ],
     })
     logging.info("检查成功（%s 个套餐）：%s", len(selected), summary)
 
 
 def main() -> int:
     load_dotenv(ROOT / ".env")
-    parser = argparse.ArgumentParser(description="低频监控 VMISS 商品库存，并在库存增加时通过 Telegram 通知。")
+    parser = argparse.ArgumentParser(description="低频监控多个厂商的商品库存，并在库存增加时通过 Telegram 通知。")
     parser.add_argument("--once", action="store_true", help="只检查一次后退出")
     parser.add_argument("--show-chat-ids", action="store_true", help="读取 bot 收到的对话并显示 chat_id")
     parser.add_argument("--config", default=os.getenv("VMISS_CONFIG", str(CONFIG_PATH)))
@@ -384,7 +480,7 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     session = requests.Session()
     session.headers.update({
-        "User-Agent": "VMISS-Restock-Monitor/1.0 (polite periodic stock check)",
+        "User-Agent": "SelfHosted-Stock-Monitor/1.0 (polite periodic stock check)",
         "Accept": "text/html,application/xhtml+xml",
     })
 
@@ -404,7 +500,7 @@ def main() -> int:
         try:
             config = read_config(config_path)
             if not config.get("enabled", False):
-                logging.info("监控总开关关闭，不访问 VMISS")
+                logging.info("监控总开关关闭，不访问商品网站")
                 return 0
             bot_token, chat_id = effective_telegram(config)
             telegram_config = config.get("telegram", {})
@@ -419,7 +515,7 @@ def main() -> int:
             write_status(status_path, {"last_checked": datetime.now().astimezone().isoformat(timespec="seconds"), "state": "blocked", "message": str(exc), "products": []})
             if bot_token and chat_id:
                 try:
-                    telegram_request(session, bot_token, "sendMessage", chat_id=chat_id, text=f"🔴 VMISS 监控已停止\n原因：{exc}\n请联系 VMISS 确认允许的监控方式后再手动重启。")
+                    telegram_request(session, bot_token, "sendMessage", chat_id=chat_id, text=f"🔴 库存监控已停止\n原因：{exc}\n请确认目标网站允许当前的自动检查方式后再恢复。")
                 except MonitorError as notify_error:
                     logging.error("发送停止告警失败：%s", notify_error)
             return 0

@@ -3,129 +3,148 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>VMISS 库存监控配置</title>
+  <meta name="color-scheme" content="light">
+  <title>Stockwatch | 库存监控</title>
   <style>
-    :root { color-scheme: light; --ink:#20242a; --muted:#68717c; --line:#d9dee5; --paper:#fff; --canvas:#f3f5f7; --accent:#315f9b; --good:#23734d; --warn:#945b00; }
+    :root { color-scheme: light; --ink:#1d252c; --muted:#68747d; --line:#dce2e5; --paper:#fff; --canvas:#f5f7f6; --green:#166b54; --green-soft:#e7f3ee; --blue:#245d78; --blue-soft:#eaf2f6; --red:#a13d3d; --red-soft:#fbefed; --amber:#8a5b13; --amber-soft:#faf2df; }
     * { box-sizing:border-box; }
-    body { margin:0; background:var(--canvas); color:var(--ink); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
-    main { max-width:1120px; margin:0 auto; padding:28px 20px 56px; }
-    header { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; border-bottom:1px solid var(--line); padding-bottom:18px; }
-    h1 { font-size:24px; margin:0 0 4px; } h2 { font-size:17px; margin:0 0 14px; }
-    p { margin:0; color:var(--muted); }
-    section { margin-top:22px; padding:18px 0; border-bottom:1px solid var(--line); }
-    .toolbar { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
-    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px 18px; }
-    label { display:grid; gap:5px; color:#39414a; font-size:13px; font-weight:600; }
-    input,select { min-width:0; width:100%; height:38px; padding:7px 9px; border:1px solid #b9c2cc; border-radius:4px; background:white; color:var(--ink); font:inherit; }
-    input:focus,select:focus { outline:2px solid #a7c2e5; border-color:var(--accent); }
-    .check { display:flex; align-items:center; gap:9px; font-weight:500; font-size:14px; }
-    .check input { width:17px; height:17px; margin:0; }
-    button { min-height:36px; border:1px solid #aeb8c3; border-radius:4px; padding:7px 12px; background:white; color:var(--ink); font:inherit; cursor:pointer; }
-    button.primary { background:var(--accent); color:white; border-color:var(--accent); }
-    button.danger { color:#9b3030; }
-    .product { padding:16px 0; border-top:1px solid var(--line); }
-    .product-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
-    .product-head strong { overflow-wrap:anywhere; }
-    .preview { margin-top:12px; padding:10px 12px; background:#e9eef4; overflow-wrap:anywhere; font:13px/1.5 ui-monospace,monospace; }
-    .status { display:flex; flex-wrap:wrap; gap:14px; align-items:center; }
-    .pill { font-size:13px; font-weight:700; color:var(--muted); }
-    .pill.ok { color:var(--good); } .pill.blocked,.pill.error { color:#a32e2e; }
-    #message { min-height:24px; margin-top:16px; padding:10px 12px; border:1px solid var(--line); border-radius:4px; background:var(--paper); color:var(--muted); }
-    #message.pending { color:var(--accent); border-color:#a7c2e5; }
-    #message.success { color:var(--good); border-color:#9bc9ae; }
-    #message.error { color:#a32e2e; border-color:#e0aaaa; background:#fff8f8; }
-    .monitor-control { background:var(--paper); border:1px solid var(--line); border-radius:5px; padding:16px; }
-    .monitor-control h2 { margin-bottom:4px; }
-    .monitor-control .toolbar { margin-bottom:0; }
-    .blocked-help { margin-top:14px; padding:12px; border-left:4px solid #b43b3b; background:#fff5f5; color:#6e2525; }
-    .blocked-help strong { display:block; margin-bottom:4px; }
-    .command { display:block; margin-top:8px; padding:8px; overflow-wrap:anywhere; background:#f0f1f3; color:#30343a; font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; }
-    button:disabled { cursor:wait; opacity:.6; }
-    .actions { display:flex; gap:8px; }
-    .chat-list { display:grid; gap:8px; margin-top:12px; }
-    .chat-option { display:flex; justify-content:space-between; align-items:center; gap:12px; text-align:left; }
-    .chat-option span { overflow-wrap:anywhere; }
-    .hint { margin-top:10px; }
-    @media(max-width:680px) { main { padding:20px 14px 40px; } header { display:block; } .grid { grid-template-columns:1fr; } .toolbar { align-items:flex-start; } }
+    body { margin:0; color:var(--ink); background:var(--canvas); font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    button,input,select { font:inherit; }
+    button { min-height:36px; padding:7px 11px; border:1px solid #c4cdd0; border-radius:4px; color:var(--ink); background:#fff; cursor:pointer; }
+    button:hover { border-color:#7e9297; background:#fbfcfc; }
+    button:disabled { opacity:.55; cursor:wait; }
+    button.primary { border-color:var(--green); background:var(--green); color:#fff; }
+    button.primary:hover { background:#105641; }
+    button.danger { color:var(--red); }
+    a { color:var(--blue); }
+    .shell { max-width:1220px; margin:0 auto; padding:22px 24px 56px; }
+    .topbar { display:flex; justify-content:space-between; align-items:center; gap:18px; padding-bottom:18px; border-bottom:1px solid var(--line); }
+    .brand { display:flex; align-items:center; gap:11px; }
+    .brand-mark { display:grid; place-items:center; width:34px; height:34px; border-radius:7px; color:#fff; background:var(--green); font-weight:750; }
+    .brand h1 { margin:0; font-size:19px; line-height:1.2; }
+    .brand p { margin:3px 0 0; color:var(--muted); font-size:12px; }
+    .toolbar,.actions,.status-line { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+    .status-line { justify-content:flex-end; color:var(--muted); font-size:12px; }
+    .state { display:inline-flex; align-items:center; gap:7px; font-weight:700; color:var(--muted); }
+    .state::before { content:""; width:8px; height:8px; border-radius:50%; background:#9aa5a8; }
+    .state.ok { color:var(--green); } .state.ok::before { background:#1f9a70; }
+    .state.blocked,.state.error { color:var(--red); } .state.blocked::before,.state.error::before { background:#c8564c; }
+    #message { min-height:0; margin:0; padding:0; color:var(--muted); }
+    #message:not(:empty) { margin-top:12px; padding:9px 12px; border:1px solid var(--line); border-radius:4px; background:#fff; }
+    #message.pending { color:var(--blue); border-color:#b9d2df; }
+    #message.success { color:var(--green); border-color:#b7d7c9; }
+    #message.error { color:var(--red); border-color:#e7c1bc; background:#fffafa; }
+    .overview { display:grid; grid-template-columns:minmax(0,1.6fr) repeat(3,minmax(130px,1fr)); border-bottom:1px solid var(--line); }
+    .overview-item { min-height:98px; padding:19px 18px 16px 0; }
+    .overview-item + .overview-item { padding-left:18px; border-left:1px solid var(--line); }
+    .eyebrow { color:var(--muted); font-size:11px; font-weight:700; text-transform:uppercase; }
+    .overview-value { display:block; margin-top:7px; font-size:19px; font-weight:680; overflow-wrap:anywhere; }
+    .overview-note { display:block; margin-top:2px; color:var(--muted); font-size:12px; }
+    .section { padding:22px 0; border-bottom:1px solid var(--line); }
+    .section-head { display:flex; justify-content:space-between; align-items:flex-start; gap:18px; margin-bottom:15px; }
+    h2 { margin:0; font-size:16px; }
+    .section-head p,.subtle { margin:4px 0 0; color:var(--muted); font-size:12px; }
+    .product-list { display:grid; gap:9px; }
+    .product { display:grid; grid-template-columns:minmax(180px,1.35fr) minmax(90px,.55fr) minmax(110px,.65fr) minmax(110px,.65fr) auto; align-items:center; gap:14px; padding:13px 14px; border:1px solid var(--line); border-radius:5px; background:var(--paper); }
+    .product-name { min-width:0; }
+    .product-name strong { display:block; overflow-wrap:anywhere; }
+    .product-name span,.product-meta { display:block; margin-top:3px; color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+    .metric-label { display:block; color:var(--muted); font-size:11px; }
+    .metric-value { display:block; margin-top:3px; font-size:14px; font-weight:650; }
+    .metric-value.in { color:var(--green); } .metric-value.out { color:var(--muted); }
+    .product-actions { display:flex; align-items:center; gap:7px; justify-content:flex-end; }
+    .product-actions a { display:inline-flex; align-items:center; justify-content:center; min-height:34px; padding:6px 10px; border:1px solid #b8d2c8; border-radius:4px; color:var(--green); text-decoration:none; font-weight:650; white-space:nowrap; }
+    .product-actions a:hover { background:var(--green-soft); }
+    .product-actions button { padding:5px 9px; }
+    .empty { padding:28px 12px; border:1px dashed #c5cecf; border-radius:5px; color:var(--muted); text-align:center; background:rgba(255,255,255,.5); }
+    details.section { padding-top:18px; }
+    details > summary { display:flex; justify-content:space-between; align-items:center; gap:12px; cursor:pointer; list-style:none; font-weight:700; }
+    details > summary::-webkit-details-marker { display:none; }
+    details > summary::after { content:"＋"; color:var(--muted); font-size:17px; }
+    details[open] > summary::after { content:"−"; }
+    details[open] > summary { margin-bottom:16px; }
+    .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:13px 16px; }
+    label { display:grid; gap:5px; color:#39464c; font-size:12px; font-weight:650; }
+    input,select { width:100%; min-width:0; height:38px; padding:7px 9px; border:1px solid #bdc8cb; border-radius:4px; outline:none; color:var(--ink); background:#fff; }
+    input:focus,select:focus { border-color:#4b8790; box-shadow:0 0 0 2px #d9ebeb; }
+    input:disabled,select:disabled { color:#899397; background:#f1f3f3; }
+    .check { display:flex; align-items:center; gap:8px; min-height:38px; font-weight:500; }
+    .check input { width:16px; height:16px; margin:0; accent-color:var(--green); }
+    .span-2 { grid-column:1/-1; }
+    .hint { margin:10px 0 0; color:var(--muted); font-size:12px; }
+    .product-editor { padding:15px 0; border-top:1px solid var(--line); }
+    .editor-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
+    .editor-head strong { overflow-wrap:anywhere; }
+    .blocked-help { margin-top:13px; padding:12px 14px; border-left:3px solid var(--red); color:#6e3030; background:var(--red-soft); }
+    .blocked-help strong { display:block; margin-bottom:3px; }
+    .chat-list { display:grid; gap:7px; margin-top:10px; }
+    .chat-option { display:flex; justify-content:space-between; text-align:left; }
+    .savebar { position:sticky; bottom:10px; z-index:2; display:flex; justify-content:space-between; align-items:center; gap:14px; margin-top:18px; padding:10px 12px; border:1px solid #ccd6d5; border-radius:5px; background:rgba(255,255,255,.96); box-shadow:0 4px 18px rgba(25,43,42,.08); }
+    @media(max-width:780px) { .shell { padding:16px 14px 40px; } .overview { grid-template-columns:repeat(2,minmax(0,1fr)); } .overview-item { padding:14px 10px 14px 0; min-height:85px; } .overview-item + .overview-item { padding-left:12px; } .overview-item:nth-child(3) { padding-left:0; border-left:0; } .product { grid-template-columns:1fr 1fr; gap:11px; } .product-name { grid-column:1/-1; } .product-actions { grid-column:1/-1; justify-content:flex-start; } }
+    @media(max-width:520px) { .topbar,.section-head { align-items:flex-start; flex-direction:column; } .status-line { justify-content:flex-start; } .form-grid { grid-template-columns:1fr; } .span-2 { grid-column:auto; } .savebar { align-items:stretch; flex-direction:column; } .savebar .actions button { flex:1; } }
   </style>
 </head>
 <body>
-<main>
-  <header>
-    <div><h1>VMISS 库存监控</h1><p>管理监控商品与 Telegram 推广跳转设置</p></div>
-    <div class="status"><span id="state" class="pill">状态读取中</span><span id="last-checked" class="pill"></span><button id="refresh-status" type="button" title="刷新监控状态">刷新状态</button></div>
+<main class="shell">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">S</span><div><h1>Stockwatch</h1><p>自托管商品库存监控</p></div></div>
+    <div class="status-line"><span id="state" class="state">状态读取中</span><span id="last-checked"></span><button id="refresh-status" type="button" title="刷新状态">刷新</button></div>
   </header>
-  <div id="message" class="pending" role="status" aria-live="polite">正在读取配置…</div>
+  <div id="message" role="status" aria-live="polite"></div>
+  <section class="overview" aria-label="监控摘要">
+    <div class="overview-item"><span class="eyebrow">监控服务</span><strong id="overview-state" class="overview-value">读取中</strong><span id="overview-state-note" class="overview-note">等待状态数据</span></div>
+    <div class="overview-item"><span class="eyebrow">商品总数</span><strong id="overview-total" class="overview-value">0</strong><span id="overview-total-note" class="overview-note">0 个厂商</span></div>
+    <div class="overview-item"><span class="eyebrow">当前有货</span><strong id="overview-stock" class="overview-value">0</strong><span class="overview-note">按最近一次检查</span></div>
+    <div class="overview-item"><span class="eyebrow">检查间隔</span><strong id="overview-interval" class="overview-value">10 分钟</strong><span class="overview-note">最短 5 分钟</span></div>
+  </section>
 
-  <section>
-    <h2>监控设置</h2>
-    <div class="grid">
+  <section class="section">
+    <div class="section-head"><div><h2>商品监控</h2><p>发现有货时通过 Telegram 发送提醒和人工购买入口。</p></div><button id="add" type="button" class="primary">＋ 添加商品</button></div>
+    <div id="product-list" class="product-list"></div>
+  </section>
+
+  <details class="section" open>
+    <summary>监控设置</summary>
+    <div class="form-grid">
       <label class="check"><input id="enabled" type="checkbox">启用库存检查</label>
-      <label>检查间隔（秒，至少 300）<input id="interval" type="number" min="300" max="86400" step="60"></label>
-      <label>推广 ID（aff）<input id="affiliate" inputmode="text" autocomplete="off" placeholder="例如 2762"></label>
-      <label class="check"><input id="notify-current" type="checkbox">首次启动时，有库存也通知</label>
+      <label>检查间隔（秒）<input id="interval" type="number" min="300" max="86400" step="60"></label>
+      <label class="check span-2"><input id="notify-current" type="checkbox">首次运行时，已有库存也发送提醒</label>
     </div>
-  </section>
+    <div id="blocked-help" class="blocked-help" hidden><strong>监控因网站拦截而停止</strong><span id="blocked-message">检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。</span></div>
+    <p class="hint">安装后需在服务器启动 systemd 服务；修改配置后需要重启监控服务。</p>
+  </details>
 
-  <section>
-    <h2>网页请求方式</h2>
-    <div class="grid">
-      <label>请求方式
-        <select id="fetcher-mode">
-          <option value="requests">普通 HTTP 请求</option>
-          <option value="flaresolverr">FlareSolverr（已授权测试站点）</option>
-        </select>
-      </label>
-      <label>FlareSolverr API 地址
-        <input id="flaresolverr-url" type="url" inputmode="url" autocomplete="off" placeholder="http://127.0.0.1:8191/v1">
-      </label>
-      <label>FlareSolverr 超时（秒，10 至 180）
-        <input id="flaresolverr-timeout" type="number" min="10" max="180" step="1">
-      </label>
-    </div>
-    <p id="fetcher-status" class="hint">普通 HTTP 请求已启用。保存后监控服务会读取新设置。</p>
-  </section>
-
-  <section class="monitor-control">
-    <div class="toolbar">
-      <div><h2>监控控制</h2><p>按钮会保存页面中的监控开关。首次部署仍需在服务器启动一次 systemd 服务。</p></div>
-      <div class="actions">
-        <button id="enable-monitor" class="primary" type="button">启用监控并保存</button>
-        <button id="disable-monitor" type="button">停用监控并保存</button>
-      </div>
-    </div>
-    <div id="blocked-help" class="blocked-help" hidden>
-      <strong>VMISS 暂停了本次监控</strong>
-      <span>检测到 HTTP 403、429 或 Cloudflare 安全验证。程序已停止继续访问，请先联系 VMISS 确认允许的服务器 IP 和监控方式；不要连续重试或尝试绕过验证。获得许可后，再点击“启用监控并保存”，并按下方命令重启服务。</span>
-      <code class="command">sudo systemctl restart vmiss-monitor.service</code>
-    </div>
-  </section>
-
-  <section>
-    <h2>Telegram 通知</h2>
-    <div class="grid">
-      <label>Bot token（保存后不会回显）<input id="telegram-token" type="password" autocomplete="new-password" placeholder="输入 token；留空表示保持原值"></label>
-      <label>Chat ID 或频道用户名<input id="telegram-chat-id" inputmode="text" autocomplete="off" placeholder="例如 -1001234567890 或 @my_channel"></label>
-      <label class="check"><input id="telegram-disabled" type="checkbox">暂时停用 Telegram 通知</label>
-      <label class="check"><input id="telegram-clear" type="checkbox">清除已保存的 Telegram 凭据</label>
+  <details class="section">
+    <summary>Telegram 通知</summary>
+    <div class="form-grid">
+      <label>Bot token（保存后不会回显）<input id="telegram-token" type="password" autocomplete="new-password" placeholder="留空表示保持已保存的 token"></label>
+      <label>Chat ID 或频道用户名<input id="telegram-chat-id" autocomplete="off" placeholder="例如 -1001234567890 或 @my_channel"></label>
+      <label class="check"><input id="telegram-disabled" type="checkbox">暂时停用通知</label>
+      <label class="check"><input id="telegram-clear" type="checkbox">清除已保存的凭据</label>
     </div>
     <p id="telegram-status" class="hint">Telegram 状态读取中</p>
-    <div class="actions" style="margin-top:12px">
-      <button id="telegram-test" type="button">测试 Telegram</button>
-      <button id="telegram-load-chats" type="button">读取最近聊天</button>
-    </div>
+    <div class="actions" style="margin-top:10px"><button id="telegram-test" type="button">测试发送</button><button id="telegram-load-chats" type="button">读取最近聊天</button></div>
     <div id="telegram-chats" class="chat-list" aria-live="polite"></div>
-  </section>
+  </details>
 
-  <section>
-    <div class="toolbar"><div><h2>监控商品</h2><p>选择商品用 slug、完整名称或商品卡片 ID，例如 basic、US.LA.TRI.Basic、product44。</p></div><button id="add" type="button">添加商品</button></div>
-    <div id="products"></div>
-  </section>
+  <details class="section">
+    <summary>VMISS 请求设置</summary>
+    <div class="form-grid">
+      <label>VMISS 推广 ID（aff）<input id="affiliate" autocomplete="off" placeholder="仅 VMISS 商品使用"></label>
+      <label>请求方式<select id="fetcher-mode"><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr（仅获准站点）</option></select></label>
+      <label>FlareSolverr API 地址<input id="flaresolverr-url" type="url" placeholder="http://127.0.0.1:8191/v1"></label>
+      <label>FlareSolverr 超时（秒）<input id="flaresolverr-timeout" type="number" min="10" max="180"></label>
+    </div>
+    <p id="fetcher-status" class="hint">普通 HTTPS 请求已启用。</p>
+  </details>
 
-  <section>
-    <div class="toolbar"><p>Bot token 只写入服务器配置文件，页面不会回显已保存的 token。反向代理访问时请启用管理页密码。</p><div class="actions"><button id="reload" type="button">重新载入</button><button id="save" class="primary" type="button">保存配置</button></div></div>
-    <p>网站拒绝自动访问时，监控会停止并告警；请联系 VMISS 确认允许的检查方式。管理页不会发起商品页请求。</p>
-  </section>
+  <details class="section">
+    <summary>商品配置</summary>
+    <p class="hint">VMISS 使用套餐标识和推广 ID。其他厂商使用公开 HTTPS 商品页、CSS 库存选择器及数量或有货状态规则。购买入口始终由你确认。</p>
+    <div id="product-editors"></div>
+  </details>
+
+  <footer class="savebar"><span class="subtle">配置保存在服务器；网页保存不会访问商品页。</span><div class="actions"><button id="reload" type="button">重新载入</button><button id="save" class="primary" type="button">保存配置</button></div></footer>
 </main>
 <script src="/admin.js"></script>
 </body>

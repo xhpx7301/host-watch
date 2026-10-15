@@ -1,5 +1,5 @@
 [Unit]
-Description=VMISS stock monitor local admin
+Description=Stockwatch local admin
 After=network.target
 
 [Service]
