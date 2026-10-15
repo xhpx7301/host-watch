@@ -2,6 +2,7 @@
   "enabled": false,
   "interval_seconds": 600,
   "notify_current_stock_on_start": false,
+  "isvoro_seckill": false,
   "affiliate_id": "5340",
   "fetcher": {
     "mode": "requests",

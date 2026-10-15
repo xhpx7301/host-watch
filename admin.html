@@ -315,6 +315,14 @@
     .carrier-input:hover,.carrier-input:focus { border-color:currentColor; background:white; }
     .carrier-input::placeholder { color:inherit; opacity:.7; }
     .legacy-line { flex-basis:100%; color:var(--muted); font-size:11px; }
+    .seckill-panel { margin-top:18px; padding:14px; border:1px solid #f0d9b5; border-radius:8px; background:#fffcf6; }
+    .seckill-panel .section-head { margin-bottom:10px; flex-wrap:wrap; }
+    .campaign-list { display:grid; gap:10px; }
+    .campaign-card { min-width:0; padding:12px; border:1px solid var(--line); border-radius:7px; background:white; overflow-wrap:anywhere; }
+    .campaign-card .buy-link { display:inline-flex; padding:5px 10px; border-radius:5px; background:var(--purple-soft); color:var(--purple); text-decoration:none; }
+    .campaign-card h3 { margin:0 0 5px; font-size:13px; }
+    .campaign-card ul { margin:8px 0; padding-left:18px; }
+    .campaign-card li { margin:4px 0; overflow-wrap:anywhere; }
     .notification-result-row > td { text-align:left; }
     .merchant-sort { display:flex; align-items:center; justify-content:center; gap:3px; }
     .sort-handle { padding:2px; min-width:22px; min-height:30px; border-color:transparent; color:var(--muted); background:transparent; cursor:grab; touch-action:none; font-size:20px; line-height:1; }
@@ -431,6 +439,15 @@
     <details class="help-note"><summary>库存通知说明</summary><p id="notification-note" class="hint"></p></details>
     <div id="notification-list"></div>
     <p class="table-footnote">拖动商家旁的 ⠿ 调整顺序，保存后保留；与库存监控分别排序</p>
+    <div class="seckill-panel" id="seckill-panel">
+      <div class="section-head"><div><h2>⚡ Isvoro 限时秒杀</h2><p>发现新活动时通知一次，预告和进行中的活动均可提醒。</p></div><div class="actions">
+        <button id="isvoro-seckill" class="option-button" type="button" data-config-option data-on="已开启" data-off="未开启" aria-pressed="false"><span>新活动提醒</span><span data-option-state>未开启</span></button>
+        <button id="seckill-test" type="button">测试秒杀通知</button><button id="seckill-stop" class="product-test-stop danger" type="button" hidden>停止测试</button>
+      </div></div>
+      <p class="hint">开启后保存配置，再点击“开始监控”；与商品共用检查间隔，也可单独监控秒杀。同一活动只自动通知一次，重启、库存和倒计时变化不重复推送。测试会发送当前活动或暂无活动的结果，可停止，不改动自动通知记录。</p>
+      <p id="seckill-status" class="hint" role="status" aria-live="polite">尚无秒杀检查记录。</p>
+      <div id="seckill-activities" class="campaign-list"></div>
+    </div>
     <details class="monitor-settings"><summary>自动检查与通知设置 <span class="subtle">检查间隔 · 首次有货提醒</span></summary>
     <div class="monitor-control">
       <strong id="monitor-runtime" class="state">正在读取服务状态</strong>

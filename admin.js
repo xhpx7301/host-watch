@@ -2,6 +2,7 @@ let config = {
   enabled: false,
   interval_seconds: 600,
   notify_current_stock_on_start: false,
+  isvoro_seckill: false,
   affiliate_id: "",
   affiliates: {},
   merchant_order: ["vmiss", "vps_soy", "akile", "isvoro"],
@@ -28,6 +29,7 @@ const openProducts = new Set();
 const productTests = new Map();
 let activeTest = null;
 let productDrag = null;
+const seckillTestId = "isvoro-seckill";
 
 const pages = {
   overview: { title: "运行概览", description: "查看监控服务、商品库存与最近检查结果。" },
@@ -169,6 +171,7 @@ function setOptionPressed(id, pressed) {
 document.querySelectorAll("[data-config-option]").forEach(button => button.addEventListener("click", () => {
   setOptionPressed(button.id, !optionPressed(button.id));
   updateDraftState();
+  if (button.id === "isvoro-seckill") renderSeckill();
 }));
 
 const filterMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -702,6 +705,7 @@ function renderProductTest(article, id) {
 }
 
 function syncTestControls() {
+  renderSeckill();
   document.querySelector("#stock-test-bar").hidden = !activeTest;
   document.querySelector("#stock-test-status").textContent = activeTest?.notifying ? "库存检查已结束，正在发送 Telegram 结果，页面仍可操作。" : activeTest?.stopping ? "正在停止测试并释放资源…" : "商品测试正在运行，页面仍可操作。";
   updateDiscardControl();
@@ -766,16 +770,17 @@ function allowStopRetry(task) {
 async function testProduct(id) {
   if (activeTest || actionRunning) return;
   const task = { id, taskId: crypto.randomUUID(), stopping: false };
-  const item = structuredClone(config.products.find((product) => product.id === id));
+  const seckill = id === seckillTestId;
+  const item = seckill ? null : structuredClone(config.products.find((product) => product.id === id));
   const fetcher = collectConfig().fetcher;
-  task.draft = JSON.stringify({ product: item, fetcher });
+  task.draft = seckill ? null : JSON.stringify({ product: item, fetcher });
   activeTest = task;
   sessionStorage.setItem("hostwatch-stock-test", JSON.stringify({ id, taskId: task.taskId }));
   productTests.set(id, { pending: true });
   setMessage("正在单次测试商品，可随时点击“停止测试”；页面其他功能仍可使用。", "pending");
   syncTestControls();
   task.startController = new AbortController();
-  task.start = requestJSON("/api/products/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: task.taskId, product: item, fetcher }), timeoutMs: 15000, signal: task.startController.signal });
+  task.start = requestJSON("/api/products/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: task.taskId, ...(seckill ? { kind: "isvoro_seckill" } : { product: item }), fetcher }), timeoutMs: 15000, signal: task.startController.signal });
   await followProductTest(task, task.start);
 }
 
@@ -818,12 +823,13 @@ async function followProductTest(task, initial) {
     if (task.draft && task.draft !== JSON.stringify({ product: config.products.find((product) => product.id === task.id), fetcher: collectConfig().fetcher })) {
       result.warning = [result.warning, "此结果使用测试开始时的配置；页面已修改，请按需重新测试。"].filter(Boolean).join(" ");
     }
+    if (task.id === seckillTestId) result.checked_at ||= new Date().toISOString();
     productTests.set(task.id, result);
     const notificationIssue = result.notification && !["sent", "skipped"].includes(result.notification.status);
-    const summary = result.cancelled ? "测试已停止。" : result.ok ? "单次库存测试完成，结果已显示在商品下方。" : `单次库存测试失败：${result.error}`;
+    const summary = result.cancelled ? "测试已停止。" : result.ok ? (task.id === seckillTestId ? "秒杀单次测试完成，结果已显示在秒杀区域。" : "单次库存测试完成，结果已显示在商品下方。") : `单次库存测试失败：${result.error}`;
     setMessage([summary, result.notification?.message, result.warning].filter(Boolean).join(" "), result.warning || notificationIssue || (!result.ok && !result.cancelled) ? "error" : "success");
   } catch (error) {
-    productTests.set(task.id, { ok: false, error: error.message });
+    productTests.set(task.id, { ok: false, error: error.message, ...(task.id === seckillTestId ? { checked_at: new Date().toISOString() } : {}) });
     setMessage(error.message, "error");
   } finally {
     clearTimeout(task.retryStopTimer);
@@ -836,6 +842,42 @@ async function followProductTest(task, initial) {
   }
 }
 document.querySelector("#stock-test-stop").addEventListener("click", stopProductTest);
+document.querySelector("#seckill-test").addEventListener("click", () => testProduct(seckillTestId));
+document.querySelector("#seckill-stop").addEventListener("click", stopProductTest);
+
+function renderSeckill() {
+  const running = activeTest?.id === seckillTestId;
+  const testButton = document.querySelector("#seckill-test"), stopButton = document.querySelector("#seckill-stop");
+  testButton.disabled = Boolean(activeTest) || actionRunning;
+  testButton.textContent = running ? (activeTest.notifying ? "发送结果中…" : "测试中…") : "测试秒杀通知";
+  stopButton.hidden = !running || Boolean(activeTest?.notifying);
+  stopButton.disabled = Boolean(activeTest?.stopping);
+  stopButton.textContent = activeTest?.stopUnconfirmed ? "重试停止" : activeTest?.stopping ? "停止中…" : "停止测试";
+  const testResult = productTests.get(seckillTestId), automatic = lastStatus?.seckill;
+  const manual = testResult && (testResult.pending || !automatic || !testResult.checked_at || Date.parse(testResult.checked_at) >= Date.parse(automatic.checked_at));
+  const result = manual ? testResult : automatic;
+  const status = document.querySelector("#seckill-status");
+  const changed = optionPressed("isvoro-seckill") !== Boolean(config.isvoro_seckill);
+  const setting = changed ? "提醒开关有未保存修改。" : config.isvoro_seckill ? "自动提醒已开启，随监控服务运行。" : "自动提醒未开启。";
+  let message = !result ? "尚无秒杀检查记录。" : result.pending ? (result.notifying ? "秒杀检查已完成，正在发送 Telegram 结果…" : "正在读取秒杀活动，可停止测试。") : result.cancelled ? "秒杀测试已停止。" : !result.ok ? `秒杀检查失败：${result.error}` : `${manual ? "单次测试" : "最近自动检查"}：${result.activities.length ? `${result.activities.length} 个活动` : "暂无秒杀活动"}。${result.checked_at ? new Date(result.checked_at).toLocaleString() : ""}`;
+  if (manual && result.notification) message += ` ${result.notification.message}`;
+  if (result?.warning) message += ` ${result.warning}`;
+  status.textContent = setting + " " + message;
+  const signature = JSON.stringify([result?.activities, collectAffiliates().isvoro]);
+  const target = document.querySelector("#seckill-activities");
+  if (target.dataset.signature === signature) return;
+  target.dataset.signature = signature; target.replaceChildren();
+  for (const campaign of (result?.activities || []).slice(0, 6)) {
+    const card = text("article", "", "campaign-card");
+    card.append(text("h3", `${campaign.running ? "进行中" : "即将开始"} · ${campaign.title}`));
+    card.append(text("div", `${new Date(campaign.starts_at).toLocaleString()} 至 ${new Date(campaign.ends_at).toLocaleString()}`, "subtle"));
+    const list = document.createElement("ul");
+    for (const item of campaign.items.slice(0, 6)) list.append(text("li", `${item.name} · ${item.plan} · ${item.price} · 剩余 ${item.available} 份 · ${item.specs} · ${item.traffic}`));
+    card.append(list);
+    const link = text("a", "查看秒杀活动 / 手动购买", "buy-link"); link.href = affiliatePurchaseURL("https://isvoro.com/seckill", "isvoro"); link.target = "_blank"; link.rel = "noopener noreferrer"; card.append(link); target.append(card);
+  }
+  if ((result?.activities?.length || 0) > 6) target.append(text("p", "更多活动请前往 Isvoro 秒杀活动页查看。", "hint"));
+}
 
 function restoreProductTest() {
   if (activeTest) return;
@@ -1382,6 +1424,7 @@ function collectConfig(enabled = config.enabled) {
     watch_order: config.watch_order || [],
     notify_order: config.notify_order || [],
     notify_current_stock_on_start: optionPressed("notify-current"),
+    isvoro_seckill: optionPressed("isvoro-seckill"),
     fetcher: { provider_modes: collectProviderModes(), mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value), wait_seconds: Number(document.querySelector("#fetcher-wait").value) },
     telegram: { bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim(), disabled: optionPressed("telegram-disabled"), clear: optionPressed("telegram-clear") },
     products: config.products.map((item) => ({ ...item })),
@@ -1461,6 +1504,7 @@ function applyConfig(value) {
   for (const input of document.querySelectorAll("[data-affiliate]")) input.value = config.affiliates?.[input.dataset.affiliate] ?? (input.dataset.affiliate === "vmiss" ? config.affiliate_id || "" : "");
   renderAffiliatePreviews(); renderMerchantOrder();
   setOptionPressed("notify-current", config.notify_current_stock_on_start);
+  setOptionPressed("isvoro-seckill", config.isvoro_seckill);
   const fetcher = config.fetcher || {};
   document.querySelector("#fetcher-mode").value = fetcher.mode || "requests";
   document.querySelector("#flaresolverr-url").value = fetcher.flaresolverr_url || "http://127.0.0.1:8191/v1";
@@ -1494,6 +1538,7 @@ async function loadStatus() {
   errorNode.textContent = ["error", "partial"].includes(lastStatus.state) ? `最近检查提示：${lastStatus.message || "请查看服务日志"}` : "";
   renderProductList();
   renderOverview();
+  renderSeckill();
 }
 
 async function reloadConfig(notify = true) {

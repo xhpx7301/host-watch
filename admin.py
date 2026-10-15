@@ -87,6 +87,10 @@ def stock_test_worker() -> None:
     try:
         with requests.Session() as session:
             session.headers["User-Agent"] = "HostWatch/1.0 (manual stock test)"
+            if value["product"].get("_seckill"):
+                from seckill import activities
+                print(json.dumps({"ok": True, **activities(session, value["fetcher"])}))
+                return
             result = inspect_product(session, value["product"], value["fetcher"])
         output = {"ok": True, "available": result.available, "stock_mode": result.stock_mode, "purchase_url": result.url, "name": result.name, **{field: getattr(result, field) for field in ("region", "specs", "traffic", "price")}}
         if result.vendor == "Akile":
@@ -234,7 +238,11 @@ def start_stock_test(submitted: dict) -> dict:
     task_id = str(submitted.get("task_id", ""))
     if not re.fullmatch(r"[a-zA-Z0-9-]{16,64}", task_id):
         raise ValueError("测试任务编号无效")
-    value = validate_config({"products": [submitted.get("product")], "fetcher": submitted.get("fetcher", {})})
+    if submitted.get("kind") == "isvoro_seckill":
+        from seckill import TEST_PRODUCT_ID
+        value = {"products": [{"id": TEST_PRODUCT_ID, "adapter": "isvoro", "provider": "Isvoro", "name": "限时秒杀", "_seckill": True}], "fetcher": normalize_fetcher(submitted.get("fetcher", {}))}
+    else:
+        value = validate_config({"products": [submitted.get("product")], "fetcher": submitted.get("fetcher", {})})
     with TEST_LOCK:
         if task_id in TEST_TASKS:
             raise ValueError("测试任务编号已使用，请重新测试")
@@ -273,6 +281,7 @@ def default_config() -> dict:
         "enabled": False,
         "interval_seconds": 600,
         "notify_current_stock_on_start": False,
+        "isvoro_seckill": False,
         "affiliate_id": DEFAULT_AFFILIATES["vmiss"],
         "affiliates": dict(DEFAULT_AFFILIATES),
         "merchant_order": list(PROVIDERS),
@@ -440,7 +449,7 @@ def validate_config(value: object) -> dict:
     affiliates = normalize_affiliates(value)
     merchant_order = normalize_merchant_order(value.get("merchant_order", []))
 
-    for key in ("enabled", "notify_current_stock_on_start"):
+    for key in ("enabled", "notify_current_stock_on_start", "isvoro_seckill"):
         if key in value and not isinstance(value[key], bool):
             raise ValueError(f"{key} 必须是布尔值")
 
@@ -607,7 +616,7 @@ def validate_config(value: object) -> dict:
         seen_ids.add(product_id)
         normalized.append(normalized_item)
     enabled = value.get("enabled", False)
-    if enabled and not any(item["enabled"] for item in normalized):
+    if enabled and not any(item["enabled"] for item in normalized) and not value.get("isvoro_seckill", False):
         raise ValueError("启用监控前至少启用一个产品")
     fetcher = normalize_fetcher(value.get("fetcher", {}))
     telegram = normalize_telegram(value.get("telegram", {}))
@@ -621,6 +630,7 @@ def validate_config(value: object) -> dict:
         "enabled": enabled,
         "interval_seconds": interval,
         "notify_current_stock_on_start": value.get("notify_current_stock_on_start", False),
+        "isvoro_seckill": value.get("isvoro_seckill", False),
         "affiliate_id": affiliates["vmiss"],
         "affiliates": affiliates,
         "merchant_order": merchant_order,
@@ -726,6 +736,16 @@ def send_stock_test_result(product: dict, result: dict) -> dict:
         matched = result.get("matched_product")
         matched = matched if isinstance(matched, dict) else {}
         link = ""
+        if product.get("_seckill") and result.get("ok"):
+            from seckill import campaign_message, URL
+            settings = current_config()
+            for activity in result.get("activities", []):
+                message, keyboard = campaign_message(activity, settings, test=True)
+                telegram_call(token, "sendMessage", chat_id=chat_id, text=message, parse_mode="HTML", disable_web_page_preview=True, reply_markup=keyboard)
+            if not result.get("activities"):
+                link = affiliate_purchase_url(URL, "isvoro", settings)
+                telegram_call(token, "sendMessage", chat_id=chat_id, text="🧪 HostWatch · Isvoro 秒杀单次测试\n当前暂无秒杀活动。\n单次测试，不修改自动通知记录。", reply_markup=purchase_button(link))
+            return {"status": "sent", "message": "秒杀测试结果已发送至 Telegram；未修改自动通知记录"}
         if result.get("ok"):
             if result.get("purchase_url"):
                 link = affiliate_purchase_url(result.get("url") or result["purchase_url"], product.get("adapter", ""), current_config(), product)

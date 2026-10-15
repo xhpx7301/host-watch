@@ -531,7 +531,7 @@ def parse_akile(payload: object, item: dict) -> Product:
 
 
 def fetch_isvoro_json(session: requests.Session, path: str, fetcher: dict) -> object:
-    if not re.fullmatch(r"(?:categories|products)(?:/[A-Za-z0-9_-]{1,100})?", path):
+    if path != "seckill/activities" and not re.fullmatch(r"(?:categories|products)(?:/[A-Za-z0-9_-]{1,100})?", path):
         raise MonitorError("Isvoro 目录路径无效")
     body, _ = fetch_page(session, "https://isvoro.com/api/v1/" + path, fetcher, "isvoro.com")
     if fetcher.get("mode") == "flaresolverr":
@@ -784,8 +784,19 @@ def check_once(
     chat_id: str,
 ) -> None:
     selected = selected_products(config)
-    if not selected:
+    if not selected and not config.get("isvoro_seckill", False):
         raise MonitorError("没有启用的监控产品")
+
+    seckill_status = None
+    if config.get("isvoro_seckill", False):
+        from seckill import check_once as check_seckill
+        try:
+            seckill_status = {"ok": True, **check_seckill(session, config, state_path, bot_token, chat_id)}
+        except (SiteBlocked, RequestServiceError):
+            raise
+        except (MonitorError, requests.RequestException) as exc:
+            seckill_status = {"ok": False, "error": str(exc)}
+        seckill_status["checked_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
 
     by_category: dict[tuple[str, str], list[dict]] = {}
     for item in selected:
@@ -900,9 +911,10 @@ def check_once(
                      "purchase_url": purchase_link(product, item, config), "checked_at": checked_at,
                      **{field: getattr(product, field) for field in ("region", "specs", "traffic", "price")}})
     write_status(status_path, {
-        "last_checked": checked_at, "state": "partial" if unavailable else "ok",
-        "message": f"{len(unavailable)} 个商品未匹配，保留配置并继续检查其他商品：" + "；".join(f"{item['name']}：{unavailable[item['id']]}" for item in selected if item['id'] in unavailable) if unavailable else "检查完成",
+        "last_checked": checked_at, "state": "partial" if unavailable or seckill_status and not seckill_status["ok"] else "ok",
+        "message": (f"{len(unavailable)} 个商品未匹配，保留配置并继续检查其他商品：" + "；".join(f"{item['name']}：{unavailable[item['id']]}" for item in selected if item['id'] in unavailable) if unavailable else "检查完成") + (f"；秒杀检查失败：{seckill_status['error']}" if seckill_status and not seckill_status["ok"] else ""),
         "products": rows,
+        **({"seckill": seckill_status} if seckill_status is not None else {}),
     })
     logging.info("本轮检查完成：%s 个成功，%s 个未匹配", len(found), len(unavailable))
 
@@ -952,7 +964,7 @@ def main() -> int:
                 return 0
             bot_token, chat_id = effective_telegram(config)
             telegram_config = config.get("telegram", {})
-            if not any(product_membership(p, "notify") for p in config.get("products", [])):
+            if not any(product_membership(p, "notify") for p in config.get("products", [])) and not config.get("isvoro_seckill", False):
                 bot_token, chat_id = "", ""
                 telegram_config = {"disabled": True}
             if not telegram_config.get("disabled", False) and (not bot_token or not chat_id):
