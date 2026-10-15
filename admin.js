@@ -1223,7 +1223,16 @@ function priceTextWithConversion(raw) {
     return `${original}${converted ? `\n${converted}` : ""}`;
   }).join("；") || "—";
 }
+function lineSummary(item) {
+  const values = [item.line_telecom, item.line_unicom, item.line_mobile].map(value => String(value || "").trim()).filter(Boolean);
+  const unique = [...new Set(values.map(value => value.toLowerCase()))];
+  const label = values.length === 3 && unique.length === 1 ? values[0] : values.length ? "多线路" : "待填写";
+  return `三网 · ${label}`;
+}
 function renderLineEditor(cell, item) {
+  const summary = text("div", "", "line-summary");
+  summary.append(text("span", "线路总结", "line-summary-label"), text("strong", lineSummary(item), "line-summary-value"));
+  cell.append(summary);
   const lines = text("div", "", "carrier-lines");
   for (const [key, label, name] of [["telecom", "电", "电信"], ["unicom", "联", "联通"], ["mobile", "移", "移动"]]) {
     const field = `line_${key}`, wrap = text("label", "", `carrier-line ${key}`), input = document.createElement("input");
