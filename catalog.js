@@ -159,12 +159,12 @@
     const status = get("catalog-status");
     const stale = data && Date.now() - Date.parse(data.fetched_at) > 300000;
     status.className = "hint";
-    if (busy) { status.classList.add("pending"); status.textContent = task.cancelled ? "正在终止目录刷新，保留上次快照…" : `正在刷新 ${providers[task.provider] || "商家"} 目录，页面仍可操作；可点击“停止刷新”。`; }
+    if (busy) { status.classList.add("pending"); status.textContent = task.cancelled ? "正在终止目录刷新，保留上次快照…" : `正在刷新 ${providers[task.provider] || "商家"}${task.scope === "all" ? "全部公开套餐（会读取多个分类）" : "目录"}，页面仍可操作；可点击“停止刷新”。`; }
     else if (task?.provider === provider && task.error) { status.classList.add("error"); status.textContent = task.error; }
     else if (task?.provider === provider && task.cancelled) status.textContent = "刷新已停止，保留上次快照。";
     else if (loading) status.textContent = "正在读取目录缓存…";
     else if (metadataOutdated) { status.classList.add("stale"); status.textContent = "此分类为旧版快照，带宽信息尚未更新，请刷新分类库存。"; }
-    else { status.textContent = data ? `已读取此分类。${data.unknown ? `${data.unknown} 个套餐库存未知，未当作缺货或现货。` : ""}${stale ? "当前为历史快照，请刷新后核对。" : "库存以此快照的检查时间为准。"}` : "选择商家后刷新分类库存，无需先开启自动监控。"; if (stale) status.classList.add("stale"); }
+    else { status.textContent = data ? `已读取${scope === "all" ? "全部公开套餐" : "此分类"}。${data.unknown ? `${data.unknown} 个套餐库存未知，未当作缺货或现货。` : ""}${stale ? "当前为历史快照，请刷新后核对。" : "库存以此快照的检查时间为准。"}` : "选择商家后刷新公开套餐目录，无需先开启自动监控。"; if (stale) status.classList.add("stale"); }
     const filterArrived = filterGeneration === generation && !loading && (data?.fetched_at || !task?.pending);
     renderTable(Boolean(filterArrived));
     if (filterArrived) filterGeneration = null;

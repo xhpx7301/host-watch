@@ -282,7 +282,7 @@ def directory(session, scope: str, fetcher: dict) -> tuple[list, str, list]:
     for row in raw_rows:
         if selected["id"] in REGIONS and row["region"] != REGIONS[selected["id"]]:
             continue
-        watch = {"adapter": "dmit", "provider": "DMIT", "name": row["name"], "category_url": selected["url"], "pid": row["pid"]}
+        watch = {"adapter": "dmit", "provider": "DMIT", "name": row["name"], "category_url": selected["url"], "catalog_scope": selected["id"], "pid": row["pid"]}
         if row.get("plan_key"):
             watch["plan_key"] = row["plan_key"]
         product = Product("dmit:" + row["pid"], row["name"], row["available"], row["purchase_url"], vendor="DMIT", stock_mode=row["stock_mode"], **{k: row[k] for k in ("region", "specs", "traffic", "price")}) if row["available"] is not None else None

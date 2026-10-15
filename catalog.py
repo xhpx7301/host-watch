@@ -103,30 +103,32 @@ def vmiss_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[lis
         match = re.fullmatch(r"/store/([A-Za-z0-9_-]+)", parsed.path)
         if parsed.scheme == "https" and parsed.hostname == "app.vmiss.com" and not parsed.query and match:
             scopes_by_id.setdefault(match[1], {"id": match[1], "name": clean(link.get_text(" ", strip=True))})
-    scopes = list(scopes_by_id.values())
+    scopes = [{"id": "all", "name": "全部公开套餐"}] + list(scopes_by_id.values())
     selected = scoped(scopes, scope, "cn-hong-kong-bgp")
-    url = "https://app.vmiss.com/store/" + selected["id"]
-    body, final_url = fetch_page(session, url, fetcher, "app.vmiss.com")
-    if urlsplit(final_url).path.rstrip("/") != urlsplit(url).path:
-        raise MonitorError("VMISS 返回分类与请求分类不一致")
-    soup = BeautifulSoup(body, "html.parser")
+    targets = list(scopes_by_id.values()) if selected["id"] == "all" else [selected]
     rows = []
-    for card in soup.select(".section.products .package"):
-        title = card.select_one(".package-title")
-        identifier = re.fullmatch(r"product([1-9][0-9]*)", str(card.get("id", "")))
-        if not title or not identifier:
-            raise MonitorError("VMISS 商品缺少名称或独立产品 ID，未更新目录")
-        watch = {"adapter": "vmiss", "provider": "VMISS", "name": clean(title.get_text(" ", strip=True), 120), "category_url": url, "selector": str(card["id"]), "pid": identifier[1], "gid": ""}
-        error, product = "", None
-        try:
-            product = parse_products('<div class="section products">' + str(card) + '</div>', final_url, [watch["selector"]])[0]
-        except MonitorError as exc:
-            error = str(exc)
-        price = card.select_one(".price-amount")
-        cycle = card.select_one(".price-cycle")
-        specs = card.select_one(".package-content")
-        row = make_row("vmiss:" + identifier[1], watch, selected["name"], selected["name"], specs.get_text(" ", strip=True) if specs else "", " / ".join(n.get_text(" ", strip=True) for n in (price, cycle) if n), product, error)
-        rows.append(row)
+    for target in targets:
+        url = "https://app.vmiss.com/store/" + target["id"]
+        body, final_url = fetch_page(session, url, fetcher, "app.vmiss.com")
+        if urlsplit(final_url).path.rstrip("/") != urlsplit(url).path:
+            raise MonitorError("VMISS 返回分类与请求分类不一致")
+        soup = BeautifulSoup(body, "html.parser")
+        for card in soup.select(".section.products .package"):
+            title = card.select_one(".package-title")
+            identifier = re.fullmatch(r"product([1-9][0-9]*)", str(card.get("id", "")))
+            if not title or not identifier:
+                raise MonitorError("VMISS 商品缺少名称或独立产品 ID，未更新目录")
+            watch = {"adapter": "vmiss", "provider": "VMISS", "name": clean(title.get_text(" ", strip=True), 120), "category_url": url, "catalog_scope": target["id"], "selector": str(card["id"]), "pid": identifier[1], "gid": ""}
+            error, product = "", None
+            try:
+                product = parse_products('<div class="section products">' + str(card) + '</div>', final_url, [watch["selector"]])[0]
+            except MonitorError as exc:
+                error = str(exc)
+            price = card.select_one(".price-amount")
+            cycle = card.select_one(".price-cycle")
+            specs = card.select_one(".package-content")
+            row = make_row(f"vmiss:{target['id']}:{identifier[1]}", watch, target["name"], target["name"], specs.get_text(" ", strip=True) if specs else "", " / ".join(n.get_text(" ", strip=True) for n in (price, cycle) if n), product, error)
+            rows.append(row)
     if not rows:
         raise MonitorError("VMISS 分类没有可识别的商品卡片")
     return scopes, selected["id"], rows
@@ -141,24 +143,29 @@ def soy_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[list,
         match = re.fullmatch(r"window\.location\.href=['\"](/cart\?fid=([1-9][0-9]*)&gid=([1-9][0-9]*))['\"];?", node["onclick"].strip())
         if match:
             scopes.append({"id": f"{match[2]}:{match[3]}", "name": f"{clean(node.get_text(' ', strip=True))}（GID={match[3]}）", "url": "https://www.vps.soy" + match[1]})
+    if not scopes:
+        raise MonitorError("VPS.SOY 返回页面缺少商品分类")
+    scopes = [{"id": "all", "name": "全部公开套餐"}] + scopes
     selected = scoped(scopes, scope, "1:8")
-    body, final_url = fetch_vps_soy_page(session, selected["url"], fetcher)
-    soup = BeautifulSoup(body, "html.parser")
+    targets = [row for row in scopes if row["id"] != "all"] if selected["id"] == "all" else [selected]
     rows = []
-    for card in soup.select(".cartitem"):
-        title = card.select_one(".card-body h4")
-        if not title:
-            raise MonitorError("VPS.SOY 商品缺少名称")
-        name = clean(title.get_text(" ", strip=True), 120)
-        watch = {"adapter": "vps_soy", "provider": "VPS.SOY", "name": name, "url": selected["url"], "selector": name}
-        error, product = "", None
-        try:
-            product = parse_vps_soy(body, final_url, name)
-        except MonitorError as exc:
-            error = str(exc)
-        price_node = card.select_one(".cart-num")
-        metadata = soy_metadata(card)
-        rows.append(make_row(f"vps_soy:{selected['id']}:{name}", watch, selected["name"], selected["name"], metadata["specs"], price_node.parent.get_text(" ", strip=True) if price_node else "", product, error, traffic=metadata["traffic"]))
+    for target in targets:
+        body, final_url = fetch_vps_soy_page(session, target["url"], fetcher)
+        soup = BeautifulSoup(body, "html.parser")
+        for card in soup.select(".cartitem"):
+            title = card.select_one(".card-body h4")
+            if not title:
+                raise MonitorError("VPS.SOY 商品缺少名称")
+            name = clean(title.get_text(" ", strip=True), 120)
+            watch = {"adapter": "vps_soy", "provider": "VPS.SOY", "name": name, "url": target["url"], "catalog_scope": target["id"], "selector": name}
+            error, product = "", None
+            try:
+                product = parse_vps_soy(body, final_url, name)
+            except MonitorError as exc:
+                error = str(exc)
+            price_node = card.select_one(".cart-num")
+            metadata = soy_metadata(card)
+            rows.append(make_row(f"vps_soy:{target['id']}:{name}", watch, target["name"], target["name"], metadata["specs"], price_node.parent.get_text(" ", strip=True) if price_node else "", product, error, traffic=metadata["traffic"]))
     if not rows and not soup.select(".secondgroup_item"):
         raise MonitorError("VPS.SOY 返回页面缺少商品目录")
     return [{"id": row["id"], "name": row["name"]} for row in scopes], selected["id"], rows
@@ -173,36 +180,42 @@ def isvoro_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[li
     for kind in isvoro_categories(raw_types):
         for line in kind["children"] or [kind]:
             scopes.append({"id": f"{kind['id']}:{line['id']}", "name": f"{kind['name']} / {line['name']}（{line['id']}）", "type": kind, "line": line})
+    if not scopes:
+        raise MonitorError("Isvoro 返回页面缺少商品分类")
+    scopes = [{"id": "all", "name": "全部公开套餐"}] + scopes
     selected = scoped(scopes, scope, "24:27")
-    kind, line = selected["type"], selected["line"]
-    category_path = "categories/" + line["slug"]
-    raw_category = fetch_isvoro_json(session, category_path, fetcher)
-    category = isvoro_category(raw_category)
-    if category["id"] != line["id"]:
-        raise MonitorError("Isvoro 分类 ID 不一致")
-    cache = {("categories", mode): raw_types, (category_path, mode): raw_category}
+    targets = [row for row in scopes if row["id"] != "all"] if selected["id"] == "all" else [selected]
+    cache = {("categories", mode): raw_types}
     rows = []
-    for entry in category["products"]:
-        watch = {"adapter": "isvoro", "provider": "Isvoro", "name": clean(entry["name"], 120), "type_id": str(kind["id"]), "type_name": kind["name"], "category_id": str(line["id"]), "category_name": line["name"], "product_id": str(entry["id"]), "product_name": entry["name"]}
-        product, error, detail = None, "", {}
-        try:
-            detail = fetch_isvoro_json(session, "products/" + entry["slug"], fetcher)
-            cache[("products/" + entry["slug"], mode)] = detail
-            product = inspect_isvoro(session, watch, fetcher, cache)
-        except SiteBlocked:
-            raise
-        except MonitorError as exc:
-            error = str(exc)
-        props = settings(detail.get("settings")) if isinstance(detail, dict) else {}
-        specs = f"{props.get('cores', '—')} 核 · {props.get('memory', '—')} MB · {props.get('disk', '—')} GB"
-        prices = []
-        for plan in detail.get("plans", []) if isinstance(detail, dict) else []:
-            if plan.get("hidden") is True:
-                continue
-            for price in plan.get("prices", []):
-                if type(price.get("price")) in {int, float}:
-                    prices.append(f"{price.get('currency_code', '')} {price['price']:g} / {clean(plan.get('name'))}")
-        rows.append(make_row(f"isvoro:{kind['id']}:{line['id']}:{entry['id']}", watch, kind["name"], line["name"], specs, "；".join(prices[:3]), product, error, traffic=isvoro_network(props)))
+    for target in targets:
+        kind, line = target["type"], target["line"]
+        category_path = "categories/" + line["slug"]
+        raw_category = fetch_isvoro_json(session, category_path, fetcher)
+        category = isvoro_category(raw_category)
+        if category["id"] != line["id"]:
+            raise MonitorError("Isvoro 分类 ID 不一致")
+        cache[(category_path, mode)] = raw_category
+        for entry in category["products"]:
+            watch = {"adapter": "isvoro", "provider": "Isvoro", "name": clean(entry["name"], 120), "type_id": str(kind["id"]), "type_name": kind["name"], "category_id": str(line["id"]), "category_name": line["name"], "catalog_scope": target["id"], "product_id": str(entry["id"]), "product_name": entry["name"]}
+            product, error, detail = None, "", {}
+            try:
+                detail = fetch_isvoro_json(session, "products/" + entry["slug"], fetcher)
+                cache[("products/" + entry["slug"], mode)] = detail
+                product = inspect_isvoro(session, watch, fetcher, cache)
+            except SiteBlocked:
+                raise
+            except MonitorError as exc:
+                error = str(exc)
+            props = settings(detail.get("settings")) if isinstance(detail, dict) else {}
+            specs = f"{props.get('cores', '—')} 核 · {props.get('memory', '—')} MB · {props.get('disk', '—')} GB"
+            prices = []
+            for plan in detail.get("plans", []) if isinstance(detail, dict) else []:
+                if plan.get("hidden") is True:
+                    continue
+                for price in plan.get("prices", []):
+                    if type(price.get("price")) in {int, float}:
+                        prices.append(f"{price.get('currency_code', '')} {price['price']:g} / {clean(plan.get('name'))}")
+            rows.append(make_row(f"isvoro:{kind['id']}:{line['id']}:{entry['id']}", watch, kind["name"], line["name"], specs, "；".join(prices[:3]), product, error, traffic=isvoro_network(props)))
     return [{"id": row["id"], "name": row["name"]} for row in scopes], selected["id"], rows
 
 
@@ -268,6 +281,15 @@ class CatalogService:
                     data = self._akile_area_snapshot(full, scope)
             elif full is not None:
                 data = full
+        elif scope and scope != "all":
+            full = [v for v in cache.values() if v.get("provider") == provider and v.get("scope") == "all"]
+            full = max(full, key=lambda v: v["fetched_at"]) if full else None
+            if full is not None:
+                known = {str(row.get("id")) for row in full.get("scopes", [])}
+                if scope in known:
+                    scoped_data = self._catalog_scope_snapshot(full, scope)
+                    if scoped_data is not None:
+                        data = scoped_data
         with self.lock:
             task = dict(self.task) if self.task else None
         # Old Isvoro snapshots contain traffic only, even when the API supplies
@@ -281,6 +303,17 @@ class CatalogService:
             return data
         rows = [row for row in data.get("rows", []) if str(row.get("watch", {}).get("area_id", "")) == scope]
         return {**data, "scope": scope, "rows": rows, "unknown": sum(row.get("available") is None for row in rows)}
+
+    @staticmethod
+    def _catalog_scope_snapshot(data: dict, scope: str) -> dict:
+        rows = data.get("rows", [])
+        mapped_scopes = {str((row.get("watch") or {}).get("catalog_scope", "")) for row in rows}
+        mapped = [row for row in rows if str((row.get("watch") or {}).get("catalog_scope", "")) == scope]
+        # A provider may expose a full scope without assigning category metadata
+        # to every row. In that case let the caller fetch the requested category.
+        if rows and (not any("catalog_scope" in (row.get("watch") or {}) for row in rows) or scope not in mapped_scopes):
+            return None
+        return {**data, "scope": scope, "rows": mapped, "unknown": sum(row.get("available") is None for row in mapped)}
 
     def refresh(self, provider: str, scope: str = "") -> dict:
         provider, scope = validate_source(provider, scope)

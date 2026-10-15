@@ -102,7 +102,7 @@ class CatalogParsingTests(unittest.TestCase):
         card = '<div class="section products"><div class="package" id="product44"><h3 class="package-title">Mini</h3><div class="package-qty">3 Available</div><a class="btn-order-now" href="/store/test/mini">Buy</a><div class="price-amount">$5 CAD</div><div class="price-cycle">Monthly</div></div></div>'
         with patch("monitor.fetch_page", side_effect=[(navigation, "https://app.vmiss.com/store"), (card, "https://app.vmiss.com/store/test")]):
             scopes, scope, rows = catalog.vmiss_catalog(Mock(), "")
-        self.assertEqual(len(scopes), 1)
+        self.assertEqual([scope["id"] for scope in scopes], ["all", "test"])
         self.assertEqual(rows[0]["watch"]["pid"], "44")
         self.assertEqual(rows[0]["available"], 3)
         self.assertEqual(rows[0]["watch"]["selector"], "product44")
@@ -130,7 +130,7 @@ class CatalogParsingTests(unittest.TestCase):
         card = '<div class="cartitem"><div class="card-body"><h4>Mini</h4><div class="card-text">CPU 1</div></div><p class="card-text">库存：-3</p><div class="card-footer"><a href="javascript:void(0)">Buy</a></div></div>'
         with patch("monitor.fetch_vps_soy_page", side_effect=[(navigation, "https://www.vps.soy/cart"), (navigation + card, "https://www.vps.soy/cart?fid=1&gid=8")]):
             scopes, scope, rows = catalog.soy_catalog(Mock(), "")
-        self.assertEqual(len(scopes), 1)
+        self.assertEqual([scope["id"] for scope in scopes], ["all", "1:8"])
         self.assertEqual(scope, "1:8")
         self.assertEqual(rows[0]["available"], 0)
         self.assertEqual(rows[0]["watch"]["selector"], "Mini")
@@ -229,6 +229,15 @@ class CatalogServiceTests(unittest.TestCase):
         self.assertEqual(taiwan["unknown"], 1)
         self.assertEqual(self.service.snapshot("akile", "999")["data"], None)
         self.assertEqual(self.service.snapshot("akile")["data"], full)
+
+    def test_non_akile_categories_are_derived_from_full_catalog_when_mapped(self):
+        full = {**self.value, "provider": "vps_soy", "scope": "all",
+                "scopes": [{"id": "all", "name": "全部公开套餐"}, {"id": "1:8", "name": "深港"}],
+                "rows": [{"key": "mini", "available": 1, "watch": {"catalog_scope": "1:8"}}]}
+        self.path.write_text(json.dumps({"vps_soy:all": full}), encoding="utf-8")
+        scoped = self.service.snapshot("vps_soy", "1:8")["data"]
+        self.assertEqual(scoped["scope"], "1:8")
+        self.assertEqual([row["key"] for row in scoped["rows"]], ["mini"])
 
     def test_akile_region_refresh_fetches_and_caches_all_areas(self):
         full = {**self.value, "scopes": [{"id": "all", "name": "全部地区"}, {"id": "6", "name": "香港"}], "rows": [{"key": "hk", "watch": {"area_id": "6"}}]}

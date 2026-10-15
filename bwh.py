@@ -86,7 +86,7 @@ def read_payload(session, fetcher: dict | None = None) -> dict:
 
 
 def _scopes(payload: dict) -> list[dict]:
-    result = []
+    result = [{"id": "all", "name": "全部公开套餐"}]
     for location in payload["locations"]:
         if not isinstance(location, dict):
             continue
@@ -151,27 +151,29 @@ def _product(offer: dict):
 def directory(session, scope: str = "", fetcher: dict | None = None) -> tuple[list, str, list]:
     payload = read_payload(session, fetcher)
     scopes = _scopes(payload)
-    if not scopes:
+    if len(scopes) <= 1:
         raise ValueError("搬瓦工暂未提供可浏览的套餐分类")
     requested = scope
     if not requested:
         requested = "ecommerce:USCA_9" if any(row["id"] == "ecommerce:USCA_9" for row in scopes) else scopes[0]["id"]
     if requested not in {row["id"] for row in scopes}:
         raise ValueError("搬瓦工地区或套餐类型已不存在，请重新刷新目录")
-    tier_id, dc_id = requested.split(":", 1)
+    tier_id, dc_id = requested.split(":", 1) if requested != "all" else ("", "")
     rows = []
     for offer in payload["offers"]:
         if not isinstance(offer, dict):
             continue
         location = offer.get("location") or {}
-        if str(location.get("datacenter_id")) != dc_id or tier_id not in [str(value) for value in offer.get("tier_ids", [])]:
+        if requested != "all" and (str(location.get("datacenter_id")) != dc_id or tier_id not in [str(value) for value in offer.get("tier_ids", [])]):
             continue
         try:
             product = _product(offer)
         except ValueError as exc:
             from monitor import MonitorError
             raise MonitorError(str(exc)) from None
-        watch = {"adapter": "bwh", "provider": "搬瓦工", "name": product.name, "category_url": location_url(tier_id, location, dc_id), "selector": product.key, "bwh_offer_key": product.key, "bwh_tier_id": tier_id, "bwh_datacenter_id": dc_id, "pid": str(offer["product_id"]), "purchase_url": product.url}
+        offer_tiers = [str(value) for value in offer.get("tier_ids", [])]
+        offer_tier = tier_id or (offer_tiers[0] if offer_tiers else "")
+        watch = {"adapter": "bwh", "provider": "搬瓦工", "name": product.name, "category_url": location_url(offer_tier, location, str(location.get("datacenter_id", ""))), "catalog_scope": f"{offer_tier}:{location.get('datacenter_id', '')}", "selector": product.key, "bwh_offer_key": product.key, "bwh_tier_id": offer_tier, "bwh_datacenter_id": str(location.get("datacenter_id", "")), "pid": str(offer["product_id"]), "purchase_url": product.url}
         rows.append({"key": f"bwh:{product.key}", "name": product.name, "provider": "搬瓦工", "region": product.region, "line": clean(location.get("datacenter_name"), 100), "specs": product.specs, "traffic": product.traffic, "price": product.price, "available": product.available, "stock_mode": product.stock_mode, "purchase_url": product.url, "error": "", "watch": watch})
     return scopes, requested, rows
 

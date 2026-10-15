@@ -79,6 +79,14 @@ class BandwagonHostTests(unittest.TestCase):
         self.assertEqual(available["watch"]["category_url"], "https://bwh81.net/order/ecommerce/Los%20Angeles/USCA_9")
         self.assertNotEqual(available["key"], sold["key"])
 
+    def test_directory_all_scope_reads_every_public_offer(self):
+        with patch("monitor.fetch_page", side_effect=self.fetch_page):
+            data = catalog.load_catalog("bwh", "all", {"mode": "requests"})
+        self.assertEqual(data["scope"], "all")
+        self.assertEqual([scope["id"] for scope in data["scopes"]], ["all", "ecommerce:USCA_9", "basic:JPOS_1"])
+        self.assertEqual(len(data["rows"]), 2)
+        self.assertEqual({row["watch"]["catalog_scope"] for row in data["rows"]}, {"ecommerce:USCA_9"})
+
     def test_inspect_requires_exact_offer_key(self):
         item = {"bwh_offer_key": "87:USCA_9:quarterly:4999"}
         with patch("monitor.fetch_page", side_effect=self.fetch_page):
