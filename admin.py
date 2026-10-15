@@ -29,6 +29,9 @@ MANAGER = Path("/opt/vmiss-monitor/manage.py")
 MUTATION_LOCK = threading.Lock()
 TEST_LOCK = threading.Lock()
 TEST_TASKS = {}
+STOPPED_TEST_IDS = {}
+BROWSER_CLEANUP_SECONDS = 8
+BROWSER_CLEANUP_WARNING = "本地测试进程已结束，但未能确认 FlareSolverr 浏览器释放；请检查服务日志，必要时重启 FlareSolverr，避免继续启动浏览器测试"
 
 
 def destroy_test_browser(endpoint: str, session_id: str, creation_uncertain: bool = False) -> str:
@@ -43,7 +46,34 @@ def destroy_test_browser(endpoint: str, session_id: str, creation_uncertain: boo
             pass
         if attempt < 2:
             time.sleep(1)
-    return "本地测试已结束，但未能确认 FlareSolverr 浏览器释放；请检查服务日志，必要时重启 FlareSolverr"
+    return BROWSER_CLEANUP_WARNING
+
+
+def browser_session_worker() -> None:
+    """Keep all potentially blocking browser I/O outside the admin process."""
+    value = json.loads(sys.stdin.read(MAX_BODY + 1))
+    if value["command"] == "destroy":
+        warning = destroy_test_browser(value["endpoint"], value["session"], value["creation_uncertain"])
+        # A cancelled creation can still finish remotely after a destroy request.
+        if value["creation_uncertain"]:
+            warning = BROWSER_CLEANUP_WARNING
+        output = {"ok": not warning, "warning": warning}
+    else:
+        try:
+            response = requests.post(value["endpoint"], json={"cmd": "sessions.create", "session": value["session"]}, timeout=(3, 30))
+            payload = response.json()
+            output = {"ok": bool(response.ok and isinstance(payload, dict) and payload.get("status") == "ok")}
+        except (requests.RequestException, ValueError):
+            output = {"ok": False}
+    print(json.dumps(output))
+
+
+def kill_test_process(process) -> None:
+    if process is not None:
+        try:
+            process.kill()
+        except OSError:
+            pass  # It may have exited between publication and cancellation.
 
 
 def stock_test_worker() -> None:
@@ -75,15 +105,47 @@ class StockTestTask:
 
     def snapshot(self) -> dict:
         with self.lock:
-            return {"task_id": self.id, "product_id": self.product["id"], **self.output}
+            return {"task_id": self.id, "product_id": self.product["id"], **self.output, "stopping": self.cancelled.is_set() and not self.done.is_set()}
 
     def cancel(self) -> None:
         with self.lock:
             if self.done.is_set() or self.output.get("notifying"):
                 return
             self.cancelled.set()
-            if self.process is not None and self.process.poll() is None:
-                self.process.terminate()
+            process = self.process
+        # SIGTERM can be ignored; kill only this task's child, outside state locks.
+        kill_test_process(process)
+
+    def run_process(self, mode: str, payload: dict, timeout: float, cancellable: bool = True) -> dict:
+        if cancellable and self.cancelled.is_set():
+            return {"ok": False}
+        # Popen can stall under memory pressure. Never hold a state/registry lock
+        # while spawning, signalling, waiting or doing network I/O.
+        process = subprocess.Popen([sys.executable, str(ROOT / "admin.py"), mode], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
+        if cancellable:
+            with self.lock:
+                self.process = process
+            if self.cancelled.is_set():
+                kill_test_process(process)
+        try:
+            stdout, _ = process.communicate(json.dumps(payload), timeout=timeout)
+            if cancellable and self.cancelled.is_set():
+                return {"ok": False}
+            result = json.loads(stdout)
+            if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
+                raise ValueError("invalid worker result")
+            return result
+        finally:
+            if cancellable:
+                with self.lock:
+                    if self.process is process:
+                        self.process = None
+            if process.poll() is None:
+                kill_test_process(process)
+                try:
+                    process.communicate(timeout=2)
+                except (subprocess.TimeoutExpired, OSError):
+                    pass  # Never block the control API on a stuck child.
 
     def run(self) -> None:
         from contextlib import nullcontext
@@ -99,37 +161,35 @@ class StockTestTask:
                 try:
                     if self.browser and not self.cancelled.is_set():
                         browser_attempted = True
+                        with self.lock:
+                            self.output["phase"] = "starting"
                         try:
-                            response = requests.post(self.fetcher["flaresolverr_url"], json={"cmd": "sessions.create", "session": self.session_id}, timeout=(3, 35))
-                            payload = response.json()
-                            if not response.ok or not isinstance(payload, dict) or payload.get("status") != "ok":
+                            payload = self.run_process("--browser-session-worker", {"command": "create", "endpoint": self.fetcher["flaresolverr_url"], "session": self.session_id}, 35)
+                            if not payload["ok"]:
                                 raise ValueError("browser creation failed")
                             browser_created = True
-                        except (requests.RequestException, ValueError):
+                        except (subprocess.TimeoutExpired, ValueError):
                             raise MonitorError("FlareSolverr 浏览器启动失败或超时，请检查服务内存及日志") from None
                     with self.lock:
                         if self.cancelled.is_set():
                             return
-                        fetcher = dict(self.fetcher)
-                        if self.browser:
-                            fetcher.update({"_test_browser_session": self.session_id, "_browser_slot_held": True})
-                        self.process = subprocess.Popen([sys.executable, str(ROOT / "admin.py"), "--stock-test-worker"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
+                        self.output["phase"] = "checking"
+                    fetcher = dict(self.fetcher)
+                    if self.browser:
+                        fetcher.update({"_test_browser_session": self.session_id, "_browser_slot_held": True})
                     try:
-                        stdout, _ = self.process.communicate(json.dumps({"product": self.product, "fetcher": fetcher}), timeout=self.fetcher["timeout_seconds"] + self.fetcher["wait_seconds"] + 40)
-                        if not self.cancelled.is_set():
-                            result = json.loads(stdout)
-                            if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
-                                raise ValueError("invalid result")
+                        result = self.run_process("--stock-test-worker", {"product": self.product, "fetcher": fetcher}, self.fetcher["timeout_seconds"] + self.fetcher["wait_seconds"] + 40)
                     except subprocess.TimeoutExpired:
-                        self.process.kill()
-                        self.process.communicate()
                         result = {"ok": False, "error": "测试超时，已终止本地任务"}
                 finally:
-                    if self.process is not None and self.process.poll() is None:
-                        self.process.kill()
-                        self.process.communicate()
                     if browser_attempted:
-                        cleanup_warning = destroy_test_browser(self.fetcher["flaresolverr_url"], self.session_id, not browser_created)
+                        with self.lock:
+                            self.output["phase"] = "cleaning"
+                        try:
+                            cleanup = self.run_process("--browser-session-worker", {"command": "destroy", "endpoint": self.fetcher["flaresolverr_url"], "session": self.session_id, "creation_uncertain": not browser_created}, BROWSER_CLEANUP_SECONDS, cancellable=False)
+                            cleanup_warning = cleanup.get("warning", "") if cleanup["ok"] else cleanup.get("warning") or BROWSER_CLEANUP_WARNING
+                        except (subprocess.TimeoutExpired, OSError, ValueError):
+                            cleanup_warning = BROWSER_CLEANUP_WARNING
         except MonitorError as exc:
             result = {"ok": False, "error": str(exc)}
         except (OSError, ValueError):
@@ -166,8 +226,28 @@ def start_stock_test(submitted: dict) -> dict:
             del TEST_TASKS[old_id]
         task = StockTestTask(task_id, value["products"][0], value["fetcher"])
         TEST_TASKS[task_id] = task
-        threading.Thread(target=task.run, daemon=True).start()
-        return task.snapshot()
+        stopped_early = task_id in STOPPED_TEST_IDS
+    if stopped_early:
+        task.cancel()
+    threading.Thread(target=task.run, daemon=True).start()
+    return task.snapshot()
+
+
+def stop_stock_test(task_id: str) -> dict:
+    if not re.fullmatch(r"[a-zA-Z0-9-]{16,64}", task_id):
+        raise ValueError("测试任务编号无效")
+    with TEST_LOCK:
+        task = TEST_TASKS.get(task_id)
+        if task is None:
+            # A stop can arrive before a delayed start request. Keep a bounded
+            # tombstone so the late start can never launch a browser.
+            STOPPED_TEST_IDS[task_id] = True
+            for old_id in list(STOPPED_TEST_IDS)[:-20]:
+                del STOPPED_TEST_IDS[old_id]
+    if task is None:
+        return {"task_id": task_id, "pending": False, "ok": False, "cancelled": True, "error": "测试已停止"}
+    task.cancel()
+    return task.snapshot()
 
 
 def default_config() -> dict:
@@ -705,6 +785,10 @@ class Handler(BaseHTTPRequestHandler):
             task_id = self.path.rsplit("/", 1)[-1]
             with TEST_LOCK:
                 task = TEST_TASKS.get(task_id)
+                stopped_early = task_id in STOPPED_TEST_IDS
+            if task is None and stopped_early:
+                self._send(200, "application/json; charset=utf-8", json.dumps({"task_id": task_id, "pending": False, "ok": False, "cancelled": True, "error": "测试已停止"}, ensure_ascii=False).encode("utf-8"))
+                return
             if task is None:
                 self._send(404, "application/json; charset=utf-8", b'{"error":"Test task not found"}')
                 return
@@ -755,12 +839,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             submitted = request_body(self)
             if self.path == "/api/products/test/stop":
-                with TEST_LOCK:
-                    task = TEST_TASKS.get(str(submitted.get("task_id", "")))
-                if task is None:
-                    raise ValueError("测试任务不存在，请刷新状态核对")
-                task.cancel()
-                self._send(200, "application/json; charset=utf-8", json.dumps(task.snapshot(), ensure_ascii=False).encode("utf-8"))
+                output = stop_stock_test(str(submitted.get("task_id", "")))
+                self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/products/test":
                 if not submitted.get("task_id"):
@@ -853,5 +933,7 @@ def main() -> None:
 if __name__ == "__main__":
     if sys.argv[1:] == ["--stock-test-worker"]:
         stock_test_worker()
+    elif sys.argv[1:] == ["--browser-session-worker"]:
+        browser_session_worker()
     else:
         main()

@@ -17,6 +17,7 @@ class AdminAPITests(unittest.TestCase):
         self.config = Path(self.temp.name) / "config.json"
         for setting in (patch.object(admin, "CONFIG_PATH", self.config),
                         patch.object(admin, "authorized", return_value=True),
+                        patch.dict(admin.STOPPED_TEST_IDS, {}, clear=True),
                         patch.object(admin, "telegram_credentials", return_value=("", "")),
                         patch.dict(os.environ, {"ADMIN_ALLOWED_HOSTS": "127.0.0.1"})):
             setting.start()
@@ -165,6 +166,37 @@ class AdminAPITests(unittest.TestCase):
     def test_cross_site_request_cannot_cancel_test(self):
         code, _ = self.request("/api/products/test/stop", {"task_id": "test-1234567890123456"}, {"Sec-Fetch-Site": "cross-site"})
         self.assertEqual(code, 403)
+
+    def test_slow_process_spawn_cannot_block_start_status_or_stop_requests(self):
+        item = {"id": "test", "name": "test", "adapter": "html", "url": "https://shop.example.com/item", "stock_selector": ".stock"}
+        task_id = "slow-spawn-1234567890123456"
+        spawning, release = threading.Event(), threading.Event()
+        import subprocess
+        import sys
+        real_popen = subprocess.Popen
+
+        def spawn(*args, **kwargs):
+            spawning.set()
+            release.wait(5)
+            return real_popen([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
+
+        with patch.dict(admin.TEST_TASKS, {}, clear=True), patch.object(admin.subprocess, "Popen", side_effect=spawn):
+            try:
+                code, _ = self.request("/api/products/test", {"task_id": task_id, "product": item})
+                self.assertEqual(code, 200)
+                self.assertTrue(spawning.wait(3))
+                connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=1)
+                self.addCleanup(connection.close)
+                connection.request("GET", f"/api/products/test/status/{task_id}")
+                response = connection.getresponse()
+                self.assertTrue(json.loads(response.read())["pending"])
+                connection.request("POST", "/api/products/test/stop", json.dumps({"task_id": task_id}), {"Content-Type": "application/json"})
+                response = connection.getresponse()
+                self.assertTrue(json.loads(response.read())["stopping"])
+            finally:
+                release.set()
+                self.assertTrue(admin.TEST_TASKS[task_id].done.wait(3))
+            self.assertTrue(admin.TEST_TASKS[task_id].snapshot()["cancelled"])
 
     def test_save_cannot_change_monitoring_switch(self):
         value = admin.default_config()

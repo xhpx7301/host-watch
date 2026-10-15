@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -31,9 +32,11 @@ class StockTaskTests(unittest.TestCase):
         task = self.task()
         real_popen = subprocess.Popen
         ready = threading.Event()
+        workers = []
 
         def spawn(*args, **kwargs):
             process = real_popen([sys.executable, "-c", "import sys,time; sys.stdin.read(); time.sleep(30)"], **kwargs)
+            workers.append(process)
             ready.set()
             return process
 
@@ -44,9 +47,49 @@ class StockTaskTests(unittest.TestCase):
             task.cancel()
             thread.join(3)
             self.assertFalse(thread.is_alive())
-        self.assertIsNotNone(task.process.poll())
+        self.assertIsNotNone(workers[0].poll())
         self.assertTrue(task.snapshot()["cancelled"])
         self.assertFalse(task.snapshot()["pending"])
+
+    def test_stop_kills_worker_that_ignores_sigterm(self):
+        task = self.task()
+        real_popen = subprocess.Popen
+        workers = []
+        with tempfile.TemporaryDirectory() as directory:
+            ready = Path(directory) / "ready"
+            code = "import signal,time,pathlib; signal.signal(signal.SIGTERM, signal.SIG_IGN); pathlib.Path(" + repr(str(ready)) + ").touch(); time.sleep(30)"
+
+            def spawn(*args, **kwargs):
+                child = real_popen([sys.executable, "-c", code], **kwargs)
+                workers.append(child)
+                return child
+
+            with patch.object(admin.subprocess, "Popen", side_effect=spawn):
+                thread = threading.Thread(target=task.run)
+                thread.start()
+                try:
+                    deadline = time.monotonic() + 5
+                    while not ready.exists() and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                    self.assertTrue(ready.exists())
+                    task.cancel()
+                    thread.join(3)
+                    self.assertFalse(thread.is_alive())
+                    self.assertTrue(task.snapshot()["cancelled"])
+                finally:
+                    for child in workers:
+                        admin.kill_test_process(child)
+                    thread.join(3)
+
+    def test_stop_before_delayed_start_never_launches_child(self):
+        task_id = "early-stop-1234567890123456"
+        with patch.dict(admin.TEST_TASKS, {}, clear=True), patch.dict(admin.STOPPED_TEST_IDS, {}, clear=True), patch.object(admin.subprocess, "Popen") as spawn:
+            self.assertTrue(admin.stop_stock_test(task_id)["cancelled"])
+            admin.start_stock_test({"task_id": task_id, "product": product()})
+            task = admin.TEST_TASKS[task_id]
+            self.assertTrue(task.done.wait(3))
+            self.assertTrue(task.snapshot()["cancelled"])
+        spawn.assert_not_called()
 
     def test_normal_result_and_no_test_history_side_effects(self):
         task = self.task()
@@ -133,31 +176,31 @@ class StockTaskTests(unittest.TestCase):
 
     def test_browser_has_dedicated_session_and_is_destroyed_after_result(self):
         task = self.task(True)
-        process = Mock()
-        process.communicate.return_value = (json.dumps({"ok": True, "available": 0, "stock_mode": "quantity"}), None)
-        process.poll.return_value = 0
-        response = Mock(ok=True)
-        response.json.return_value = {"status": "ok", "session": task.session_id}
-        with patch.object(monitor, "browser_request_slot", return_value=nullcontext()), patch.object(monitor, "check_browser_memory"), patch.object(admin.requests, "post", return_value=response) as post, patch.object(admin.subprocess, "Popen", return_value=process), patch.object(admin, "destroy_test_browser", return_value="") as destroy:
+        with patch.object(monitor, "browser_request_slot", return_value=nullcontext()), patch.object(monitor, "check_browser_memory"), patch.object(task, "run_process", side_effect=[{"ok": True}, {"ok": True, "available": 0, "stock_mode": "quantity"}, {"ok": True}]) as run:
             task.run()
-        self.assertEqual(post.call_args.kwargs["json"], {"cmd": "sessions.create", "session": task.session_id})
-        submitted = json.loads(process.communicate.call_args.args[0])
+        create, check, destroy = run.call_args_list
+        self.assertEqual(create.args[1]["session"], task.session_id)
+        submitted = check.args[1]
         self.assertEqual(submitted["fetcher"]["_test_browser_session"], task.session_id)
         self.assertTrue(submitted["fetcher"]["_browser_slot_held"])
-        destroy.assert_called_once_with(task.fetcher["flaresolverr_url"], task.session_id, False)
+        self.assertEqual(destroy.args[1]["command"], "destroy")
+        self.assertEqual(destroy.args[1]["session"], task.session_id)
+        self.assertFalse(destroy.args[1]["creation_uncertain"])
+        self.assertFalse(destroy.kwargs["cancellable"])
 
     def test_stop_during_browser_creation_prevents_worker_and_cleans_created_session(self):
         task = self.task(True)
         creating, release = threading.Event(), threading.Event()
 
-        def create(*args, **kwargs):
+        def run(mode, payload, timeout, cancellable=True):
+            if payload["command"] == "destroy":
+                self.assertTrue(payload["creation_uncertain"])
+                return {"ok": False, "warning": admin.BROWSER_CLEANUP_WARNING}
             creating.set()
             release.wait(3)
-            response = Mock(ok=True)
-            response.json.return_value = {"status": "ok"}
-            return response
+            return {"ok": not task.cancelled.is_set()}
 
-        with patch.object(monitor, "browser_request_slot", return_value=nullcontext()), patch.object(monitor, "check_browser_memory"), patch.object(admin.requests, "post", side_effect=create), patch.object(admin.subprocess, "Popen") as process, patch.object(admin, "destroy_test_browser", return_value="") as destroy:
+        with patch.object(monitor, "browser_request_slot", return_value=nullcontext()), patch.object(monitor, "check_browser_memory"), patch.object(admin.subprocess, "Popen") as process, patch.object(task, "run_process", side_effect=run) as child:
             thread = threading.Thread(target=task.run)
             thread.start()
             self.assertTrue(creating.wait(3))
@@ -166,8 +209,40 @@ class StockTaskTests(unittest.TestCase):
             thread.join(3)
         self.assertFalse(thread.is_alive())
         process.assert_not_called()
-        destroy.assert_called_once()
+        self.assertEqual(child.call_count, 2)
         self.assertTrue(task.snapshot()["cancelled"])
+        self.assertTrue(task.done.is_set())
+        self.assertIn("未能确认", task.snapshot()["warning"])
+
+    def test_stuck_browser_initialization_is_killed_and_cleanup_is_bounded(self):
+        task = self.task(True)
+        real_popen = subprocess.Popen
+        creating = threading.Event()
+        workers = []
+
+        def spawn(args, **kwargs):
+            child = real_popen([sys.executable, "-c", "import sys,time; sys.stdin.read(); time.sleep(30)"], **kwargs)
+            workers.append(child)
+            creating.set()
+            return child
+
+        with patch.object(monitor, "browser_request_slot", return_value=nullcontext()), patch.object(monitor, "check_browser_memory"), patch.object(admin.subprocess, "Popen", side_effect=spawn), patch.object(admin, "BROWSER_CLEANUP_SECONDS", 0.2):
+            thread = threading.Thread(target=task.run)
+            thread.start()
+            try:
+                self.assertTrue(creating.wait(3))
+                task.cancel()
+                thread.join(3)
+                self.assertFalse(thread.is_alive())
+            finally:
+                for child in workers:
+                    admin.kill_test_process(child)
+                thread.join(3)
+        self.assertTrue(task.done.is_set())
+        self.assertTrue(task.snapshot()["cancelled"])
+        self.assertIn("未能确认", task.snapshot()["warning"])
+        self.assertEqual(len(workers), 2)  # Creation and cleanup, never stock checking.
+        self.assertTrue(all(child.poll() is not None for child in workers))
 
     def test_low_memory_prevents_browser_creation(self):
         task = self.task(True)
@@ -182,7 +257,7 @@ class StockTaskTests(unittest.TestCase):
             task = self.task()
             process = Mock()
             process.communicate.side_effect = [subprocess.TimeoutExpired("worker", 10), ("", None)] if timeout else [("", None)]
-            process.poll.return_value = 1
+            process.poll.return_value = None if timeout else 1
             with self.subTest(timeout=timeout), patch.object(admin.subprocess, "Popen", return_value=process):
                 task.run()
                 self.assertFalse(task.snapshot()["ok"])
@@ -234,11 +309,18 @@ class StockTaskTests(unittest.TestCase):
                 with patch.object(monitor, "browser_request_slot", return_value=nullcontext()), patch.object(monitor, "check_browser_memory"):
                     thread = threading.Thread(target=task.run)
                     thread.start()
-                    self.assertTrue(requested.wait(5))
-                    if cancel:
+                    try:
+                        # WSL reads dependencies from the Windows-mounted disk;
+                        # allow imports to finish before measuring cancellation.
+                        self.assertTrue(requested.wait(15), task.snapshot())
+                        if cancel:
+                            task.cancel()
+                        thread.join(10)
+                        self.assertFalse(thread.is_alive(), task.snapshot())
+                    finally:
                         task.cancel()
-                    thread.join(5)
-                    self.assertFalse(thread.is_alive())
+                        destroyed.set()
+                        thread.join(10)
                 self.assertTrue(destroyed.is_set())
                 self.assertEqual([value["cmd"] for value in commands], ["sessions.create", "request.get", "sessions.destroy"])
                 self.assertTrue(all(value["session"] == task.session_id for value in commands))

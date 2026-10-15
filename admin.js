@@ -43,7 +43,10 @@ document.querySelector("#toast-close").addEventListener("click", () => {
 
 async function requestJSON(url, options = {}) {
   const controller = new AbortController();
-  const { timeoutMs = 40000, ...fetchOptions } = options;
+  const { timeoutMs = 40000, signal, ...fetchOptions } = options;
+  const cancel = () => controller.abort();
+  if (signal?.aborted) cancel();
+  else signal?.addEventListener("abort", cancel, { once: true });
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, { cache: "no-store", ...fetchOptions, signal: controller.signal });
@@ -59,7 +62,7 @@ async function requestJSON(url, options = {}) {
     if (controller.signal.aborted) throw new Error("请求超时，请核对结果及反向代理超时设置后重试。");
     if (error instanceof TypeError) throw new Error("网络连接失败，请检查连接并刷新状态核对结果。");
     throw error;
-  } finally { clearTimeout(timer); }
+  } finally { clearTimeout(timer); signal?.removeEventListener("abort", cancel); }
 }
 
 async function runAction(button, label, message, action, notify = true) {
@@ -441,7 +444,7 @@ function renderProductTest(article, id) {
   node.hidden = !result;
   if (!result) { node.textContent = ""; return; }
   node.className = `product-test-result ${result.pending || result.cancelled ? "pending" : result.ok ? "success" : "error"}`;
-  node.textContent = result.pending ? (result.notifying ? `${result.ok ? `库存检查完成：${stockLabel(result)}` : `测试失败：${result.error}`}。正在发送 Telegram 测试结果…` : result.stopping ? "正在停止测试并释放浏览器资源…" : "正在读取此商品库存，可点击“停止测试”，页面其他功能仍可使用。") : result.cancelled ? "测试已停止，未改动自动监控和库存历史。" : result.ok
+  node.textContent = result.pending ? (result.notifying ? `${result.ok ? `库存检查完成：${stockLabel(result)}` : `测试失败：${result.error}`}。正在发送 Telegram 测试结果…` : result.stopUnconfirmed ? "停止状态尚未确认，可再次点击“停止测试”；不会因页面超时就认为后台已经停止。" : result.phase === "cleaning" ? "本地库存检查已结束，正在清理浏览器会话；清理等待最多约 10 秒，失败会明确提示。" : result.stopping ? "停止请求已提交，正在终止本次测试进程…" : "正在读取此商品库存，可点击“停止测试”，页面其他功能仍可使用。") : result.cancelled ? "测试已停止，未改动自动监控和库存历史。" : result.ok
     ? `测试成功：${stockLabel(result)}。${new Date(result.checked_at).toLocaleString()} · 耗时 ${result.duration_seconds} 秒。自动监控状态保持不变。`
     : `测试失败：${result.error}${result.checked_at ? `（${new Date(result.checked_at).toLocaleString()}）` : ""}`;
   if (result.warning) node.textContent += ` ${result.warning}`;
@@ -453,6 +456,7 @@ function syncTestControls() {
   document.querySelector("#stock-test-status").textContent = activeTest?.notifying ? "库存检查已结束，正在发送 Telegram 结果，页面仍可操作。" : activeTest?.stopping ? "正在停止测试并释放资源…" : "商品测试正在运行，页面仍可操作。";
   const globalStop = document.querySelector("#stock-test-stop");
   globalStop.disabled = Boolean(activeTest?.stopping || activeTest?.notifying);
+  globalStop.textContent = activeTest?.stopUnconfirmed ? "重试停止" : "停止测试";
   editorNode.querySelectorAll(".product-editor").forEach((article) => {
     const running = activeTest?.id === article.dataset.id;
     const test = article.querySelector(".product-test");
@@ -461,7 +465,7 @@ function syncTestControls() {
     const stop = article.querySelector(".product-test-stop");
     stop.hidden = !running || Boolean(activeTest?.notifying);
     stop.disabled = Boolean(activeTest?.stopping);
-    stop.textContent = activeTest?.stopping ? "停止中…" : "停止测试";
+    stop.textContent = activeTest?.stopping ? "停止中…" : activeTest?.stopUnconfirmed ? "重试停止" : "停止测试";
     article.querySelector(".actions > .danger:not(.product-test-stop)").disabled = running || actionRunning;
     renderProductTest(article, article.dataset.id);
   });
@@ -471,18 +475,40 @@ async function stopProductTest() {
   const task = activeTest;
   if (!task || task.stopping || task.notifying) return;
   task.stopping = true;
+  task.stopUnconfirmed = false;
   productTests.set(task.id, { pending: true, stopping: true });
   setMessage("正在停止本次测试并释放资源…", "pending");
   syncTestControls();
   try {
-    try { await task.start; } catch { /* Still stop a task whose start response was lost. */ }
-    await requestJSON("/api/products/test/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: task.taskId }), timeoutMs: 15000 });
+    // Stop immediately, even if the start response or a status request is stuck.
+    const result = await requestJSON("/api/products/test/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: task.taskId }), timeoutMs: 10000 });
+    if (activeTest !== task) return;
+    if (!result.pending) {
+      task.finalResult = result;
+      task.resolveStopped(result);
+      task.pollController?.abort();
+      task.startController?.abort();
+    } else {
+      if (result.notifying) { task.notifying = true; task.stopping = false; }
+      productTests.set(task.id, { ...result, stopping: true });
+      syncTestControls();
+      clearTimeout(task.retryStopTimer);
+      task.retryStopTimer = setTimeout(() => allowStopRetry(task), 10000);
+    }
   } catch (error) {
     if (activeTest !== task) return;
-    task.stopping = false;
+    allowStopRetry(task);
     setMessage(`停止请求失败：${error.message} 可再次点击停止测试。`, "error");
     syncTestControls();
   }
+}
+
+function allowStopRetry(task) {
+  if (activeTest !== task || task.notifying || task.finalResult) return;
+  task.stopping = false;
+  task.stopUnconfirmed = true;
+  productTests.set(task.id, { ...productTests.get(task.id), pending: true, stopping: false, stopUnconfirmed: true });
+  syncTestControls();
 }
 
 async function testProduct(id) {
@@ -496,34 +522,45 @@ async function testProduct(id) {
   productTests.set(id, { pending: true });
   setMessage("正在单次测试商品，可随时点击“停止测试”；页面其他功能仍可使用。", "pending");
   syncTestControls();
-  task.start = requestJSON("/api/products/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: task.taskId, product: item, fetcher }), timeoutMs: 15000 });
+  task.startController = new AbortController();
+  task.start = requestJSON("/api/products/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: task.taskId, product: item, fetcher }), timeoutMs: 15000, signal: task.startController.signal });
   await followProductTest(task, task.start);
 }
 
+function productTestStatus(task) {
+  task.pollController = new AbortController();
+  return requestJSON(`/api/products/test/status/${encodeURIComponent(task.taskId)}`, { timeoutMs: 10000, signal: task.pollController.signal });
+}
+
 async function followProductTest(task, initial) {
+  task.stopCompleted = new Promise((resolve) => { task.resolveStopped = resolve; });
   try {
     let result;
-    try { result = await initial; }
+    try { result = await Promise.race([initial, task.stopCompleted]); }
     catch (startError) {
-      try { result = await requestJSON(`/api/products/test/status/${encodeURIComponent(task.taskId)}`); }
+      try { result = await Promise.race([productTestStatus(task), task.stopCompleted]); }
       catch (statusError) {
         if (statusError.status === 404) throw startError;
         result = { pending: true };
       }
     }
     while (result.pending) {
+      productTests.set(task.id, { ...result, stopping: task.stopping || result.stopping, stopUnconfirmed: task.stopUnconfirmed });
       if (result.notifying) {
         task.notifying = true;
         task.stopping = false;
         productTests.set(task.id, result);
-        syncTestControls();
       }
-      await new Promise((resolve) => setTimeout(resolve, 700));
-      try { result = await requestJSON(`/api/products/test/status/${encodeURIComponent(task.taskId)}`, { timeoutMs: 10000 }); }
+      syncTestControls();
+      await Promise.race([new Promise((resolve) => setTimeout(resolve, 700)), task.stopCompleted]);
+      if (task.finalResult) { result = task.finalResult; break; }
+      try { result = await Promise.race([productTestStatus(task), task.stopCompleted]); }
       catch (error) {
         if (error.status === 404) { result = { ok: false, error: "测试任务已不存在，服务器可能已重启" }; break; }
-        setMessage(`测试状态暂时无法读取：${error.message} 仍可尝试停止测试。`, "error");
-        await new Promise((resolve) => setTimeout(resolve, 2300));
+        if (task.stopping) allowStopRetry(task);
+        setMessage(`测试状态暂时无法读取：${error.message} 尚未确认测试结束，可尝试停止或重试停止。`, "error");
+        await Promise.race([new Promise((resolve) => setTimeout(resolve, 2300)), task.stopCompleted]);
+        if (task.finalResult) { result = task.finalResult; break; }
       }
     }
     if (task.draft && task.draft !== JSON.stringify({ product: config.products.find((product) => product.id === task.id), fetcher: collectConfig().fetcher })) {
@@ -537,6 +574,9 @@ async function followProductTest(task, initial) {
     productTests.set(task.id, { ok: false, error: error.message });
     setMessage(error.message, "error");
   } finally {
+    clearTimeout(task.retryStopTimer);
+    task.pollController?.abort();
+    task.startController?.abort();
     if (activeTest === task) activeTest = null;
     sessionStorage.removeItem("hostwatch-stock-test");
     syncTestControls();
@@ -552,7 +592,7 @@ function restoreProductTest() {
     activeTest = { ...saved, stopping: false, start: Promise.resolve() };
     productTests.set(saved.id, { pending: true });
     syncTestControls();
-    void followProductTest(activeTest, requestJSON(`/api/products/test/status/${encodeURIComponent(saved.taskId)}`));
+    void followProductTest(activeTest, productTestStatus(activeTest));
   } catch { sessionStorage.removeItem("hostwatch-stock-test"); }
 }
 
