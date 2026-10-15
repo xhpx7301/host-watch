@@ -385,7 +385,7 @@ def request_body(handler: BaseHTTPRequestHandler) -> dict:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "StockwatchAdmin/1.0"
+    server_version = "HostWatchAdmin/1.0"
 
     def _secure(self) -> bool:
         try:
@@ -410,7 +410,7 @@ class Handler(BaseHTTPRequestHandler):
         if authorized(self.headers.get("Authorization", "")):
             return True
         self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="Stockwatch admin", charset="UTF-8"')
+        self.send_header("WWW-Authenticate", 'Basic realm="HostWatch admin", charset="UTF-8"')
         self.send_header("Content-Length", "0")
         self.end_headers()
         return False
@@ -475,7 +475,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 if not token or not chat_id:
                     raise ValueError("请填写 Telegram bot token 和 chat ID")
-                telegram_call(token, "sendMessage", chat_id=chat_id, text="✅ Stockwatch Telegram 配置测试成功")
+                telegram_call(token, "sendMessage", chat_id=chat_id, text="✅ HostWatch Telegram 配置测试成功")
                 self._send(200, "application/json; charset=utf-8", b'{"ok":true}')
                 return
 
@@ -526,7 +526,7 @@ def main() -> None:
     if any(item not in {"127.0.0.1", "localhost"} for item in hosts) and not authentication_required():
         raise SystemExit("允许域名访问时必须设置 ADMIN_PASSWORD 或使用 jk add-user 创建管理页账号")
     port = int(os.getenv("ADMIN_PORT", "8765"))
-    print(f"Stockwatch admin listening on http://{host}:{port}")
+    print(f"HostWatch admin listening on http://{host}:{port}")
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 

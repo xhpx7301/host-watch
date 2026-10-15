@@ -1,4 +1,6 @@
-# Stockwatch 库存监控
+# HostWatch 服务器库存监控
+
+[GitHub 仓库](https://github.com/xhpx7301/host-watch)
 
 自托管的多厂商库存监控脚本。支持 VMISS 专用套餐解析和通用公开 HTTPS 商品页；发现库存增加或由缺货转为有货时，可通过 Telegram 发送提醒与人工购买入口。程序不会登录厂商账户、绕过验证或自动下单。
 
@@ -16,10 +18,12 @@ VMISS 曾对自动化访问返回拦截页。请先确认目标厂商允许自�
 适用于 Debian 12/13，要求 systemd 和 root/sudo 权限。脚本会安装依赖、创建 `vmiss-monitor` 系统用户、安装程序和 systemd 单元，并启动仅监听 `127.0.0.1:8765` 的管理页。库存监控默认关闭，安装脚本不会启用或启动它。
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/xhpx7301/jiankong/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/xhpx7301/host-watch/main/install.sh | sudo bash
 ```
 
 脚本可重复执行用于升级，已有的 `/var/lib/vmiss-monitor/config.json`、`/etc/vmiss-monitor.env` 和 `/etc/vmiss-monitor-admin.env` 会保留。
+
+项目已更名为 HostWatch，仓库名为 `host-watch`。为兼容已部署版本，继续沿用 `vmiss-monitor` 安装目录、系统用户和 systemd 服务名，以及 `/etc/stockwatch-users.json`、`/var/backups/stockwatch/` 等数据路径；`jk` 快捷命令保持不变。
 
 ## Debian 管理菜单
 
@@ -29,7 +33,7 @@ curl -fsSL https://raw.githubusercontent.com/xhpx7301/jiankong/main/install.sh |
 jk
 ```
 
-直接输入 `jk` 即可调出菜单；普通用户会自动通过 sudo 请求权限，root 无需 sudo。原 `stockwatch` 命令继续可用。菜单支持查看状态、更新脚本、启动/停止/重启库存监控、重启管理页、查看最近 100 条日志、管理管理页用户和备份。也可以直接执行：
+直接输入 `jk` 即可调出菜单；普通用户会自动通过 sudo 请求权限，root 无需 sudo。`host-watch` 命令也可调用同一菜单，原 `stockwatch` 命令继续兼容。菜单支持查看状态、更新脚本、启动/停止/重启库存监控、重启管理页、查看最近 100 条日志、管理管理页用户和备份。也可以直接执行：
 
 ```sh
 jk update       # 下载更新，先备份，再安装
@@ -63,7 +67,7 @@ ssh -N -L 8765:127.0.0.1:8765 your-user@your-server
 
 ### 反向代理域名
 
-如果使用 Nginx、Caddy 或面板把 `jiankong.example.com` 转发到 `http://127.0.0.1:8765`，管理服务会因为 Host 校验返回 403。需要为管理服务设置允许的域名和 Basic Auth 密码：
+如果使用 Nginx、Caddy 或面板把 `host-watch.example.com` 转发到 `http://127.0.0.1:8765`，管理服务会因为 Host 校验返回 403。需要为管理服务设置允许的域名和 Basic Auth 密码：
 
 ```sh
 sudoedit /etc/vmiss-monitor-admin.env
@@ -72,7 +76,7 @@ sudoedit /etc/vmiss-monitor-admin.env
 可以先执行 `jk add-user` 创建账号，再只设置允许的域名；如果继续使用旧单账号方式，至少填写：
 
 ```env
-ADMIN_ALLOWED_HOSTS=127.0.0.1,localhost,jiankong.example.com
+ADMIN_ALLOWED_HOSTS=127.0.0.1,localhost,host-watch.example.com
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=替换为足够长的随机密码
 ```

@@ -480,7 +480,7 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     session = requests.Session()
     session.headers.update({
-        "User-Agent": "SelfHosted-Stock-Monitor/1.0 (polite periodic stock check)",
+        "User-Agent": "HostWatch/1.0 (polite periodic stock check)",
         "Accept": "text/html,application/xhtml+xml",
     })
 

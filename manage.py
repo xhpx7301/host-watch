@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Debian terminal menu for Stockwatch; never operates on Linux login users."""
+"""Debian terminal menu for HostWatch; never operates on Linux login users."""
 from __future__ import annotations
 
 import argparse
@@ -25,7 +25,7 @@ ADMIN_ENV = Path("/etc/vmiss-monitor-admin.env")
 BACKUP_DIR = Path("/var/backups/stockwatch")
 MONITOR = "vmiss-monitor.service"
 ADMIN = "vmiss-monitor-admin.service"
-INSTALLER_URL = "https://raw.githubusercontent.com/xhpx7301/jiankong/main/install.sh"
+INSTALLER_URL = "https://raw.githubusercontent.com/xhpx7301/host-watch/main/install.sh"
 
 
 def run(*args: str) -> None:
@@ -141,12 +141,12 @@ def backup() -> Path:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(BACKUP_DIR, 0o700)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    fd, name = tempfile.mkstemp(prefix=f"stockwatch-{timestamp}-", suffix=".tar.gz", dir=BACKUP_DIR)
+    fd, name = tempfile.mkstemp(prefix=f"host-watch-{timestamp}-", suffix=".tar.gz", dir=BACKUP_DIR)
     os.close(fd)
     target = Path(name)
     paths = [DATA_DIR, Path("/etc/vmiss-monitor.env"), ADMIN_ENV, DEFAULT_USERS_PATH,
              Path("/etc/systemd/system") / MONITOR, Path("/etc/systemd/system") / ADMIN,
-             Path("/usr/local/bin/stockwatch"), Path("/usr/local/bin/jk")]
+             Path("/usr/local/bin/host-watch"), Path("/usr/local/bin/stockwatch"), Path("/usr/local/bin/jk")]
     if INSTALL_DIR.exists():
         paths.extend(path for path in INSTALL_DIR.iterdir() if path.name not in {".venv", "__pycache__"})
     try:
@@ -170,7 +170,7 @@ def update() -> None:
         raise ValueError("更新脚本格式异常，已取消")
     was_active = subprocess.run(["systemctl", "is-active", "--quiet", MONITOR], check=False).returncode == 0
     snapshot = backup()
-    with tempfile.TemporaryDirectory(prefix="stockwatch-update-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="host-watch-update-") as temporary:
         installer = Path(temporary) / "install.sh"
         installer.write_bytes(script)
         run("bash", "-n", str(installer))
@@ -227,7 +227,7 @@ def menu() -> None:
         "12": restart_monitor,
     }
     while True:
-        print("\n──────── Stockwatch Debian 管理菜单 ────────")
+        print("\n──────── HostWatch Debian 管理菜单 ────────")
         print(" 1. 查看服务状态       2. 更新脚本（先备份）")
         print(" 3. 启动库存监控       4. 停止库存监控")
         print(" 5. 重启管理页         6. 查看最近日志")
@@ -249,7 +249,7 @@ def menu() -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Stockwatch Debian 管理菜单；用户指管理页账号。")
+    parser = argparse.ArgumentParser(description="HostWatch Debian 管理菜单；用户指管理页账号。")
     parser.add_argument("command", nargs="?", default="menu", choices=["menu", "status", "update", "backup", "users", "add-user", "passwd", "delete-user"])
     args = parser.parse_args()
     if os.geteuid() != 0:
@@ -262,7 +262,7 @@ def main() -> int:
     if release.get("ID") != "debian" or release.get("VERSION_ID") not in {"12", "13"}:
         parser.error("此菜单仅用于 Debian 12/13 系统")
     if not (INSTALL_DIR / "admin.py").is_file():
-        parser.error("尚未安装 Stockwatch，请先执行 README 中的一键安装")
+        parser.error("尚未安装 HostWatch，请先执行 README 中的一键安装")
     # Avoid two terminals racing an update/account mutation or overwriting users.
     lock_fd = os.open("/run/stockwatch-manager.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(lock_fd, "w", encoding="utf-8") as lock:

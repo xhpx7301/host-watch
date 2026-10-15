@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ARCHIVE_URL="https://codeload.github.com/xhpx7301/jiankong/tar.gz/refs/heads/main"
+ARCHIVE_URL="https://codeload.github.com/xhpx7301/host-watch/tar.gz/refs/heads/main"
 INSTALL_DIR="/opt/vmiss-monitor"
 DATA_DIR="/var/lib/vmiss-monitor"
 ENV_FILE="/etc/vmiss-monitor.env"
@@ -9,10 +9,10 @@ ADMIN_ENV_FILE="/etc/vmiss-monitor-admin.env"
 SERVICE_USER="vmiss-monitor"
 SERVICE_GROUP="vmiss-monitor"
 
-log() { printf '[stockwatch] %s\n' "$*"; }
-fail() { printf '[stockwatch] ERROR: %s\n' "$*" >&2; exit 1; }
+log() { printf '[host-watch] %s\n' "$*"; }
+fail() { printf '[host-watch] ERROR: %s\n' "$*" >&2; exit 1; }
 
-[[ "${EUID}" -eq 0 ]] || fail "请使用 root 运行，例如：curl -fsSL https://raw.githubusercontent.com/xhpx7301/jiankong/main/install.sh | sudo bash"
+[[ "${EUID}" -eq 0 ]] || fail "请使用 root 运行，例如：curl -fsSL https://raw.githubusercontent.com/xhpx7301/host-watch/main/install.sh | sudo bash"
 [[ -f /etc/debian_version && -f /etc/os-release ]] || fail "此安装脚本仅支持 Debian 12/13。"
 # shellcheck disable=SC1091
 . /etc/os-release
@@ -39,7 +39,7 @@ trap cleanup EXIT
 log "正在下载 GitHub main 分支源码。"
 curl --fail --location --silent --show-error "$ARCHIVE_URL" --output "$TEMP_DIR/source.tar.gz"
 tar -xzf "$TEMP_DIR/source.tar.gz" -C "$TEMP_DIR"
-SOURCE_DIR="$(find "$TEMP_DIR" -mindepth 1 -maxdepth 1 -type d -name 'jiankong-*' -print -quit)"
+SOURCE_DIR="$(find "$TEMP_DIR" -mindepth 1 -maxdepth 1 -type d -name 'host-watch-*' -print -quit)"
 [[ -n "$SOURCE_DIR" ]] || fail "源码压缩包格式不正确。"
 
 for file in monitor.py admin.py auth.py manage.py stockwatch.sh admin.html admin.js requirements.txt config.example.json .env.example admin.env.example vmiss-monitor.service vmiss-monitor-admin.service; do
@@ -57,6 +57,7 @@ install -o root -g root -m 0644 \
   "$SOURCE_DIR/.env.example" "$SOURCE_DIR/vmiss-monitor.service" \
   "$SOURCE_DIR/vmiss-monitor-admin.service" "$SOURCE_DIR/admin.env.example" "$INSTALL_DIR/"
 install -d -o root -g root -m 0755 /usr/local/bin
+install -o root -g root -m 0755 "$SOURCE_DIR/stockwatch.sh" /usr/local/bin/host-watch
 install -o root -g root -m 0755 "$SOURCE_DIR/stockwatch.sh" /usr/local/bin/stockwatch
 install -o root -g root -m 0755 "$SOURCE_DIR/stockwatch.sh" /usr/local/bin/jk
 
