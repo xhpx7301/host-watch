@@ -293,6 +293,60 @@ function checkField(labelText, checked, key) {
 
 const soyGroups = [["8", "深港 · CNIX"], ["5", "香港 · 三网直连"], ["6", "香港 · Global"], ["4", "新加坡 · Global"], ["2", "日本 · SoftBank"], ["3", "日本 · IIJ"], ["7", "英国 · Global"]];
 const akileAreas = [["14", "中国澳门"], ["5", "日本"], ["13", "意大利"], ["15", "荷兰"], ["8", "韩国"], ["6", "中国台湾"], ["7", "新加坡"], ["3", "中国香港"], ["2", "美国"], ["11", "英国"], ["1", "德国"], ["16", "越南"]];
+// Public directory identities observed on 2026-10-15; never cache stock here.
+let isvoroTypes = [{"id":62,"name":"中国澳门","slug":"MO","children":[{"id":63,"name":"Mo Lite","slug":"molite"}]},{"id":24,"name":"中国香港","slug":"cnhk","children":[{"id":56,"name":"HK Lite","slug":"hklite"},{"id":27,"name":"HK PROD","slug":"HK-prod"},{"id":46,"name":"HK CN2","slug":"HKCN2"},{"id":47,"name":"HK BGP","slug":"hkbgp"},{"id":57,"name":"HKT","slug":"hkt"}]},{"id":35,"name":"美国","slug":"us","children":[{"id":38,"name":"USLAPro","slug":"USLAPro"},{"id":53,"name":"US9929","slug":"us9929"},{"id":45,"name":"USLAPR","slug":"uslapr"},{"id":36,"name":"USLACA","slug":"USLACA"},{"id":61,"name":"USLACA2","slug":"uslaca2"}]},{"id":54,"name":"德国","slug":"DE","children":[{"id":55,"name":"DE-9929","slug":"de9929"}]},{"id":58,"name":"英国","slug":"GB","children":[{"id":59,"name":"GB ISP","slug":"gbisp"}]},{"id":48,"name":"物理机","slug":"Dedicated","children":[]}];
+const isvoroLines = new Map([["27",{"id":27,"name":"HK PROD","slug":"HK-prod","products":[{"id":188,"name":"HK PROD MiNi","slug":"hkpordmini"},{"id":189,"name":"HK PROD Lite","slug":"hkprodlite"},{"id":190,"name":"HK PROD Starter","slug":"hkprodstarter"},{"id":191,"name":"HK PROD Standard","slug":"hkprodstandard"},{"id":192,"name":"HK PROD Pro","slug":"hkprodpro"},{"id":193,"name":"HK PROD Max","slug":"hkprodmax"},{"id":194,"name":"HK PROD Ultra","slug":"hkprodultra"},{"id":195,"name":"HK PROD Pro Max","slug":"hkprodpromax"},{"id":196,"name":"HK PROD UltraPlus","slug":"hkprodultraplus"}]}]]);
+
+function isvoroOptions(control, rows, value, savedName, placeholder) {
+  control.replaceChildren(new Option(placeholder, ""), ...rows.map((row) => new Option(`${row.name}（${row.id}）`, String(row.id))));
+  if (value && !rows.some((row) => String(row.id) === value)) control.add(new Option(`${savedName || "已保存条目"}（${value}，请刷新核对）`, value));
+  control.value = value || "";
+}
+
+function renderIsvoroFields(article, reset = "") {
+  const get = (key) => article.querySelector(`[data-key="isvoro_${key}"]`);
+  const item = config.products.find((product) => product.id === article.dataset.id) || {};
+  isvoroOptions(get("type"), isvoroTypes, get("type").value, item.type_name, "请选择类型");
+  const kind = isvoroTypes.find((row) => String(row.id) === get("type").value);
+  const lines = kind ? kind.children.length ? kind.children : [kind] : [];
+  isvoroOptions(get("line"), lines, reset === "type" ? "" : get("line").value, item.category_name, "请选择地区 / 线路");
+  const products = isvoroLines.get(get("line").value)?.products || [];
+  isvoroOptions(get("product"), products, reset ? "" : get("product").value, item.product_name, "请选择套餐");
+}
+
+async function loadIsvoroDirectory(article, refresh = false) {
+  article.isvoroController?.abort();
+  const controller = new AbortController();
+  article.isvoroController = controller;
+  const get = (key) => article.querySelector(`[data-key="isvoro_${key}"]`);
+  const note = article.querySelector(".isvoro-status");
+  note.textContent = "正在读取 Isvoro 商品目录…";
+  try {
+    if (refresh) {
+      const result = await requestJSON("/api/isvoro/categories", { signal: controller.signal });
+      if (controller.signal.aborted || !article.isConnected) return;
+      isvoroTypes = result.categories;
+      renderIsvoroFields(article);
+    }
+    const kind = isvoroTypes.find((row) => String(row.id) === get("type").value);
+    const line = (kind?.children.length ? kind.children : kind ? [kind] : []).find((row) => String(row.id) === get("line").value);
+    if (line && (refresh || !isvoroLines.has(String(line.id)))) {
+      const result = await requestJSON(`/api/isvoro/category/${encodeURIComponent(line.slug)}`, { signal: controller.signal });
+      if (controller.signal.aborted || !article.isConnected || get("line").value !== String(line.id)) return;
+      isvoroLines.set(String(line.id), result.category);
+      renderIsvoroFields(article);
+    }
+    if (controller.signal.aborted || !article.isConnected) return;
+    syncEditor(article);
+    updateDraftState();
+    note.textContent = line ? `目录已载入：${line.name}，请选择需要监控的套餐。目录列表不代表实时库存，请点击“测试此商品”。` : "类型目录已载入，请选择地区 / 线路。";
+  } catch (error) {
+    if (!controller.signal.aborted && article.isConnected) {
+      note.textContent = `目录读取失败：${error.message}。已保留当前选择，可点击刷新重试；目录读取使用普通 HTTPS。`;
+      setMessage(note.textContent, "error");
+    }
+  }
+}
 
 function soyCategory(url) {
   try {
@@ -370,7 +424,7 @@ function productEditor(item, index) {
 
   const grid = text("div", "", "form-grid");
   grid.append(
-    selectField("监控适配器", item.adapter || (item.category_url ? "vmiss" : "html"), "adapter", [["html", "通用 HTTPS 网页"], ["vmiss", "VMISS WHMCS"], ["vps_soy", "VPS.SOY 商品页"], ["akile", "Akile 商品库存"]]),
+    selectField("监控适配器", item.adapter || (item.category_url ? "vmiss" : "html"), "adapter", [["html", "通用 HTTPS 网页"], ["vmiss", "VMISS WHMCS"], ["vps_soy", "VPS.SOY 商品页"], ["akile", "Akile 商品库存"], ["isvoro", "Isvoro 商品库存"]]),
     inputField("厂商名称", item.provider || (item.adapter === "vmiss" || item.category_url ? "VMISS" : "自定义网站"), "provider", "text", "例如 ExampleHost"),
     inputField("商品名称", item.name, "name", "text", "例如 US VPS 2 GB"),
     selectField("此商品的请求方式", item.request_mode || "inherit", "request_mode", [["inherit", "跟随全局设置"], ["requests", "普通 HTTPS 请求"], ["flaresolverr", "FlareSolverr 浏览器请求"]]),
@@ -422,7 +476,17 @@ function productEditor(item, index) {
     inputField("套餐完整名称（精确匹配）", item.adapter === "akile" ? item.selector : "HKL-TW-Mini", "akile_selector", "text", "HKL-TW-Mini"),
     text("p", "默认按线路＋套餐完整名称在实际商品目录中自动识别地区；官网切换地区后地址栏可能仍保留旧 areaId，请勿据此判断。HKL-TW 属于台湾（6），MOLite 属于澳门（14）。自动模式忽略旧地区 ID，重名时需指定地区；推荐普通 HTTPS 请求。", "hint span-2"),
   );
-  modeWrap.append(vmissFields, htmlFields, soyFields, akileFields);
+  const isvoroFields = text("div", "", "form-grid span-2");
+  isvoroFields.dataset.adapterFields = "isvoro";
+  const selectedType = String(item.type_id || "24"), selectedLine = String(item.category_id || "27"), selectedProduct = String(item.product_id || "188");
+  for (const [label, key, value] of [["类型", "type", selectedType], ["地区 / 线路", "line", selectedLine], ["套餐", "product", selectedProduct]]) {
+    isvoroFields.append(selectField(label, value, `isvoro_${key}`, [[value, value]]));
+  }
+  const refreshIsvoro = text("button", "刷新 Isvoro 目录", "");
+  refreshIsvoro.type = "button";
+  refreshIsvoro.addEventListener("click", () => loadIsvoroDirectory(article, true));
+  isvoroFields.append(refreshIsvoro, text("p", "请按类型 → 地区/线路 → 套餐选择。切换上一级后需重新选择下一级；物理机等无子分类的类型使用自身分类。月付/年付属于购买周期，共享套餐库存，提醒入口定位到套餐。", "hint span-2"), text("p", "可点击刷新获取官网最新目录。测试按所选三个 ID 校验归属并读取实时库存，不会开启自动监控。", "hint span-2 isvoro-status"));
+  modeWrap.append(vmissFields, htmlFields, soyFields, akileFields, isvoroFields);
   const result = text("div", "", "product-test-result");
   result.setAttribute("role", "status");
   result.setAttribute("aria-live", "polite");
@@ -433,10 +497,17 @@ function productEditor(item, index) {
 
   article.addEventListener("input", (event) => { syncSoyCategory(article, event.target.dataset.key); syncEditor(article); });
   article.addEventListener("change", (event) => {
+    if (event.target.dataset.key === "adapter") article.isvoroController?.abort();
     syncSoyCategory(article, event.target.dataset.key);
+    if (["isvoro_type", "isvoro_line"].includes(event.target.dataset.key)) {
+      article.isvoroController?.abort();
+      renderIsvoroFields(article, event.target.dataset.key === "isvoro_type" ? "type" : "line");
+      void loadIsvoroDirectory(article);
+    }
     syncEditor(article);
     updateAdapterFields(article);
   });
+  renderIsvoroFields(article);
   updateAdapterFields(article);
   return article;
 }
@@ -459,6 +530,11 @@ function syncEditor(article) {
   } else if (item.adapter === "vps_soy") {
     item.url = get("soy_url").value.trim();
     item.selector = get("soy_selector").value.trim();
+  } else if (item.adapter === "isvoro") {
+    for (const [field, key] of [["type", "type"], ["line", "category"], ["product", "product"]]) {
+      item[`${key}_id`] = get(`isvoro_${field}`).value;
+      item[`${key}_name`] = get(`isvoro_${field}`).selectedOptions[0]?.textContent.replace(/（[^）]*）$/, "") || "";
+    }
   } else if (item.adapter === "akile") {
     item.area_mode = get("akile_area_mode").value;
     item.area_id = get("akile_area_id").value === "custom" ? get("akile_custom_area_id").value.trim() : get("akile_area_id").value;
@@ -498,7 +574,9 @@ function renderProductTest(article, id) {
   if (result.warning) node.textContent += ` ${result.warning}`;
   if (result.matched_product) {
     const matched = result.matched_product;
-    node.append(text("span", `实际匹配：${matched.area_name}（地区 ID=${matched.area_id}） · ${matched.node_name} · ${matched.plan_name}`, "test-notification"));
+    node.append(text("span", matched.type_name
+      ? `实际匹配：${matched.type_name}（${matched.type_id}） → ${matched.category_name}（${matched.category_id}） → ${matched.plan_name}（${matched.product_id}）`
+      : `实际匹配：${matched.area_name}（地区 ID=${matched.area_id}） · ${matched.node_name} · ${matched.plan_name}`, "test-notification"));
   }
   if (result.catalog_url) node.append(text("span", `检查分类：${result.catalog_url}`, "test-notification"));
   if (result.notification) node.append(text("span", result.notification.message, `test-notification ${result.notification.status === "sent" ? "success" : "error"}`));
@@ -883,6 +961,7 @@ const merchantPresets = {
   vmiss: { label: "VMISS", hint: "填写分类页、商品选择器和分组 ID，使用 VMISS 专用解析。", product: { adapter: "vmiss", provider: "VMISS", name: "", category_url: "", selector: "", gid: "" } },
   vps_soy: { label: "VPS.SOY", hint: "默认深港IX-MINI（FID=1、GID=8），支持切换地区/线路分组。", product: { adapter: "vps_soy", provider: "VPS.SOY", name: "深港IX-MINI", url: "https://www.vps.soy/cart?fid=1&gid=8", selector: "深港IX-MINI", request_mode: "requests" } },
   akile: { label: "Akile", hint: "默认仅添加 HKL-TW-Mini，自动识别地区，使用普通 HTTPS 请求。", product: { adapter: "akile", provider: "Akile", name: "HKL-TW-Mini", area_mode: "auto", area_id: "6", node_name: "HKL-TW", selector: "HKL-TW-Mini", request_mode: "requests" } },
+  isvoro: { label: "Isvoro", hint: "按类型、地区/线路、套餐分别选择，默认中国香港 → HK PROD → HK PROD MiNi。", product: { adapter: "isvoro", provider: "Isvoro", name: "HK PROD MiNi", type_id: "24", type_name: "中国香港", category_id: "27", category_name: "HK PROD", product_id: "188", product_name: "HK PROD MiNi", request_mode: "requests" } },
 };
 const merchantSelect = document.querySelector("#add-merchant");
 for (const [key, preset] of Object.entries(merchantPresets)) {

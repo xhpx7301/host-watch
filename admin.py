@@ -88,6 +88,8 @@ def stock_test_worker() -> None:
             output["matched_product"] = {"area_id": result.area_id, "area_name": result.area_name, "node_name": result.node_name, "plan_name": result.name}
         if result.vendor == "VPS.SOY":
             output["catalog_url"] = result.catalog_url
+        if result.vendor == "Isvoro":
+            output["matched_product"] = result.match_details
     except MonitorError as exc:
         output = {"ok": False, "error": str(exc)}
     print(json.dumps(output))
@@ -431,15 +433,15 @@ def validate_config(value: object) -> dict:
         product_id = str(item.get("id", "")).strip()
         name = str(item.get("name", "")).strip()
         adapter = str(item.get("adapter", "vmiss" if any(key in item for key in ("category_url", "selector", "gid", "pid")) else "html")).strip().casefold()
-        provider = str(item.get("provider", {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile"}.get(adapter, "自定义网站"))).strip()
+        provider = str(item.get("provider", {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "isvoro": "Isvoro"}.get(adapter, "自定义网站"))).strip()
         gid = str(item.get("gid", "")).strip()
         pid = str(item.get("pid", "")).strip()
         if "enabled" in item and not isinstance(item["enabled"], bool):
             raise ValueError(f"产品 {name or product_id} 的启用状态必须是布尔值")
         if not product_id or product_id in seen_ids:
             raise ValueError("每个产品都需要唯一 ID")
-        if adapter not in {"vmiss", "html", "vps_soy", "akile"}:
-            raise ValueError(f"产品 {name or product_id} 的适配器必须是 vmiss、vps_soy、akile 或 html")
+        if adapter not in {"vmiss", "html", "vps_soy", "akile", "isvoro"}:
+            raise ValueError(f"产品 {name or product_id} 的适配器必须是 vmiss、vps_soy、akile、isvoro 或 html")
         if not name:
             raise ValueError(f"产品 {product_id} 需要填写商品名称")
         if not provider or len(provider) > 80:
@@ -478,6 +480,15 @@ def validate_config(value: object) -> dict:
             if not selector or len(selector) > 200:
                 raise ValueError(f"产品 {name} 需要填写 VPS.SOY 套餐完整名称（最多 200 个字符）")
             normalized_item = {"id": product_id, "name": name, "provider": provider, "adapter": adapter, "url": catalog_url, "selector": selector, "enabled": item.get("enabled", False)}
+        elif adapter == "isvoro":
+            normalized_item = {"id": product_id, "name": name, "provider": provider, "adapter": adapter, "enabled": item.get("enabled", False)}
+            for key in ("type_id", "category_id", "product_id"):
+                identifier = str(item.get(key, "")).strip()
+                if not re.fullmatch(r"[1-9][0-9]{0,9}", identifier):
+                    raise ValueError(f"产品 {name} 需要选择 Isvoro 类型、地区/线路和套餐（{key} 必须是正整数）")
+                normalized_item[key] = identifier
+            for key in ("type_name", "category_name", "product_name"):
+                normalized_item[key] = str(item.get(key, ""))[:200]
         elif adapter == "akile":
             area_mode = str(item.get("area_mode", "auto")).strip().casefold()
             if area_mode not in {"auto", "manual"}:
@@ -678,7 +689,9 @@ def send_stock_test_result(product: dict, result: dict) -> dict:
         if result.get("warning"):
             message += f"\n提示：{str(result['warning'])[:400]}"
         matched = result.get("matched_product")
-        if isinstance(matched, dict):
+        if isinstance(matched, dict) and "type_name" in matched:
+            message += f"\n类型：{str(matched['type_name'])[:200]}（ID={str(matched.get('type_id', ''))[:10]}）\n地区/线路：{str(matched.get('category_name', ''))[:200]}（ID={str(matched.get('category_id', ''))[:10]}）\n套餐：{str(matched.get('plan_name', ''))[:200]}（ID={str(matched.get('product_id', ''))[:10]}）"
+        elif isinstance(matched, dict):
             message += f"\n实际地区：{str(matched.get('area_name', ''))[:80]}（ID={str(matched.get('area_id', ''))[:10]}）\n线路：{str(matched.get('node_name', ''))[:200]}\n套餐：{str(matched.get('plan_name', ''))[:200]}"
         if result.get("catalog_url"):
             message += f"\n检查分类：{str(result['catalog_url'])[:2048]}"
@@ -791,6 +804,19 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/status":
             data = json.dumps(read_json(STATUS_PATH, {"state": "unknown", "products": []}), ensure_ascii=False).encode("utf-8")
             self._send(200, "application/json; charset=utf-8", data)
+        elif self.path == "/api/isvoro/categories" or self.path.startswith("/api/isvoro/category/"):
+            from monitor import MonitorError, fetch_isvoro_json, isvoro_categories, isvoro_category
+            try:
+                slug = self.path.rsplit("/", 1)[-1]
+                if self.path != "/api/isvoro/categories" and not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", slug):
+                    raise MonitorError("Isvoro 分类标识无效")
+                with requests.Session() as session:
+                    path = "categories" if self.path == "/api/isvoro/categories" else f"categories/{slug}"
+                    raw = fetch_isvoro_json(session, path, {"mode": "requests"})
+                output = {"categories": isvoro_categories(raw)} if path == "categories" else {"category": isvoro_category(raw)}
+                self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
+            except (MonitorError, ValueError, requests.RequestException) as exc:
+                self._send(502, "application/json; charset=utf-8", json.dumps({"error": f"Isvoro 目录读取失败：{exc}"}, ensure_ascii=False).encode("utf-8"))
         elif self.path == "/api/manage":
             try:
                 data = json.dumps(manager_action({"action": "status"}), ensure_ascii=False).encode("utf-8")

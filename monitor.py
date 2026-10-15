@@ -50,6 +50,7 @@ class Product:
     area_name: str = ""
     node_name: str = ""
     catalog_url: str = ""
+    match_details: dict | None = None
 
 
 def parse_products(html: str, page_url: str, selectors: list[str]) -> list[Product]:
@@ -421,6 +422,106 @@ def parse_akile(payload: object, item: dict) -> Product:
     return Product(str(plan["id"]), plan["plan_name"], stock, purchase_url, vendor="Akile", area_id=str(area["id"]), area_name=str(area.get("area_name") or f"地区 {area['id']}")[:80], node_name=str(node["group_name"]))
 
 
+def fetch_isvoro_json(session: requests.Session, path: str, fetcher: dict) -> object:
+    if not re.fullmatch(r"(?:categories|products)(?:/[A-Za-z0-9_-]{1,100})?", path):
+        raise MonitorError("Isvoro 目录路径无效")
+    body, _ = fetch_page(session, "https://isvoro.com/api/v1/" + path, fetcher, "isvoro.com")
+    if fetcher.get("mode") == "flaresolverr":
+        nodes = BeautifulSoup(body, "html.parser").select("pre")
+        if len(nodes) == 1:
+            body = nodes[0].get_text()
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        raise MonitorError("Isvoro 接口未返回有效 JSON，未更新库存") from None
+    if not isinstance(payload, dict) or type(payload.get("code")) is not int or payload["code"] != 0 or "data" not in payload:
+        raise MonitorError("Isvoro 接口返回失败状态，未更新库存")
+    return payload["data"]
+
+
+def isvoro_entry(value: object) -> dict:
+    if not isinstance(value, dict) or type(value.get("id")) is not int or value["id"] <= 0 or not isinstance(value.get("name"), str) or not value["name"].strip() or not isinstance(value.get("slug"), str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", value["slug"]):
+        raise MonitorError("Isvoro 目录条目标识无效，未更新库存")
+    return {key: value[key] for key in ("id", "name", "slug")}
+
+
+def isvoro_list(value: object) -> list[dict]:
+    if not isinstance(value, list) or any(not isinstance(entry, dict) for entry in value):
+        raise MonitorError("Isvoro 目录列表结构异常，未更新库存")
+    return value
+
+
+def isvoro_categories(value: object) -> list[dict]:
+    result = []
+    for entry in isvoro_list(value):
+        if entry.get("hidden") is True:
+            continue
+        row = isvoro_entry(entry)
+        row["children"] = [isvoro_entry(child) for child in isvoro_list(entry.get("children", [])) if child.get("hidden") is not True]
+        result.append(row)
+    return result
+
+
+def isvoro_category(value: object) -> dict:
+    row = isvoro_entry(value)
+    if value.get("hidden") is True:
+        raise MonitorError("Isvoro 地区/线路已隐藏，未更新库存")
+    row["products"] = []
+    for product in isvoro_list(value.get("products")):
+        if product.get("hidden") is True:
+            continue
+        if product.get("category_id") != row["id"]:
+            raise MonitorError("Isvoro 套餐归属的地区/线路不一致，未更新库存")
+        row["products"].append(isvoro_entry(product))
+    return row
+
+
+def inspect_isvoro(session: requests.Session, item: dict, fetcher: dict, cache: dict | None = None) -> Product:
+    cache = {} if cache is None else cache
+    def get(path):
+        key = (path, fetcher.get("mode", "requests"))
+        if key not in cache:
+            cache[key] = fetch_isvoro_json(session, path, fetcher)
+        return cache[key]
+    def unique(rows, identifier, label):
+        matches = [row for row in rows if str(row["id"]) == str(identifier)]
+        if len(matches) != 1:
+            raise MonitorError(f"Isvoro {label} ID={identifier} 无法唯一匹配（找到 {len(matches)} 项）；请刷新目录重新选择")
+        return matches[0]
+    kind = unique(isvoro_categories(get("categories")), item["type_id"], "类型")
+    # Types without subcategories (e.g. dedicated servers) are their own line.
+    line = unique(kind["children"] or [kind], item["category_id"], "地区/线路")
+    raw_category = get("categories/" + line["slug"])
+    category = isvoro_category(raw_category)
+    if category["id"] != line["id"]:
+        raise MonitorError("Isvoro 地区/线路目录 ID 不一致，未更新库存")
+    selected = unique(category["products"], item["product_id"], "套餐")
+    raw_product = get("products/" + selected["slug"])
+    detail = isvoro_entry(raw_product)
+    if detail["id"] != selected["id"] or raw_product.get("hidden") is True:
+        raise MonitorError("Isvoro 套餐详情 ID 不一致或商品已隐藏，未更新库存")
+    if not any(plan.get("hidden") is not True for plan in isvoro_list(raw_product.get("plans"))):
+        raise MonitorError("Isvoro 套餐没有可用购买周期，未更新库存")
+    if "stock" not in raw_product or (raw_product["stock"] is not None and (type(raw_product["stock"]) is not int or raw_product["stock"] < 0)):
+        raise MonitorError("Isvoro 套餐库存不是非负整数或明确的不限量状态，未更新库存")
+    if "ip_available" in raw_product and type(raw_product["ip_available"]) is not bool:
+        raise MonitorError("Isvoro IP 可用状态无效，未更新库存")
+    settings = raw_product.get("settings", {})
+    if isinstance(settings, list):
+        settings = {str(setting.get("key")): setting.get("value") for setting in isvoro_list(settings)}
+    if not isinstance(settings, dict):
+        raise MonitorError("Isvoro 套餐设置结构异常，未更新库存")
+    if str(settings.get("presale_enabled", "")).casefold() in {"1", "true"}:
+        raise MonitorError("Isvoro 当前套餐为预售，不能将预售名额当作现货库存")
+    count = raw_product["stock"]
+    mode = "availability" if count is None else "quantity"
+    available = 1 if count is None else count
+    if raw_product.get("ip_available") is False:
+        available = 0
+    purchase_url = "https://isvoro.com/buy/" + line["slug"] + "?" + urlencode({"product": selected["id"]})
+    return Product(str(selected["id"]), detail["name"], available, purchase_url, vendor="Isvoro", stock_mode=mode, match_details={"type_id": str(kind["id"]), "type_name": kind["name"], "category_id": str(line["id"]), "category_name": line["name"], "product_id": str(selected["id"]), "plan_name": detail["name"]})
+
+
 def inspect_product(session: requests.Session, item: dict, fetcher: dict) -> Product:
     """Read one product without saving history, changing services or notifying."""
     if item["adapter"] == "html":
@@ -430,6 +531,8 @@ def inspect_product(session: requests.Session, item: dict, fetcher: dict) -> Pro
         return parse_vps_soy(body, final_url, item["selector"])
     if item["adapter"] == "akile":
         return parse_akile(fetch_akile_catalog(session, product_fetcher(fetcher, item)), item)
+    if item["adapter"] == "isvoro":
+        return inspect_isvoro(session, item, product_fetcher(fetcher, item))
     products = fetch_products(session, item["category_url"], [item["selector"]], product_fetcher(fetcher, item))
     if len(products) != 1:
         raise MonitorError("商品无法唯一匹配页面套餐；请检查商品选择标识")
@@ -488,6 +591,9 @@ def selected_products(config: dict) -> list[dict]:
         elif item.get("adapter") == "vps_soy":
             if urlsplit(str(item.get("url", ""))).hostname != "www.vps.soy" or not item.get("selector"):
                 raise MonitorError(f"商品 {name} 的 VPS.SOY 配置不完整")
+        elif item.get("adapter") == "isvoro":
+            if any(not re.fullmatch(r"[1-9][0-9]{0,9}", str(item.get(key, ""))) for key in ("type_id", "category_id", "product_id")):
+                raise MonitorError(f"商品 {name} 的 Isvoro 类型、地区/线路和套餐配置不完整")
         elif item.get("adapter") == "akile":
             area_mode = item.get("area_mode", "auto")
             area_id = str(item.get("area_id", ""))
@@ -562,8 +668,10 @@ def notification_text(product: Product, old_count: int | None, purchase_url: str
         increase = f"（增加 {product.available - old_count} 台）" if old_count is not None else "（首次运行时已有库存）"
         stock = f"{product.available} 台"
     now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    context = f"类型：{product.match_details['type_name']}\n地区/线路：{product.match_details['category_name']}\n" if product.match_details else ""
     return (
         f"🟢 {product.vendor} 检测到库存变化\n"
+        f"{context}"
         f"套餐：{product.name}\n"
         f"库存：{stock} {increase}\n"
         f"手动购买：{purchase_url}\n"
@@ -614,6 +722,7 @@ def check_once(
             )
     soy_pages = {}
     akile_catalogs = {}
+    isvoro_catalogs = {}
     for item in selected:
         if item["adapter"] == "html":
             found[item["id"]] = fetch_html_stock(session, item, config.get("fetcher"))
@@ -630,6 +739,8 @@ def check_once(
             if mode not in akile_catalogs:
                 akile_catalogs[mode] = fetch_akile_catalog(session, fetcher)
             found[item["id"]] = parse_akile(akile_catalogs[mode], item)
+        elif item["adapter"] == "isvoro":
+            found[item["id"]] = inspect_isvoro(session, item, product_fetcher(config.get("fetcher"), item), isvoro_catalogs)
 
     previous = read_state(state_path)
     current = dict(previous)
@@ -685,7 +796,7 @@ def check_once(
                 "name": found[item["id"]].name,
                 "vendor": item["provider"],
                 "available": found[item["id"]].available,
-                "stock_mode": item.get("stock_mode", "quantity"),
+                "stock_mode": found[item["id"]].stock_mode,
                 "url": found[item["id"]].url,
                 "purchase_url": (
                     affiliate_url(found[item["id"]].url, str(config.get("affiliate_id", "")), str(item.get("gid", "")), str(item.get("pid", "")))
