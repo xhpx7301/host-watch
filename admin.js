@@ -1751,6 +1751,7 @@ document.querySelector("#open-products").addEventListener("click", () => {
 });
 document.querySelector("#overview-open-catalog").addEventListener("click", () => navigatePage("catalog"));
 document.querySelector("#overview-open-monitor").addEventListener("click", () => navigatePage("monitor"));
+document.querySelector("#overview-open-notifications").addEventListener("click", () => navigatePage("notifications"));
 document.querySelector("#notification-browse").addEventListener("click", () => navigatePage("catalog"));
 document.querySelector("#watchlist-browse").addEventListener("click", () => navigatePage("catalog"));
 for (const id of ["watchlist-search", "watchlist-provider", "watchlist-stock"]) document.getElementById(id).addEventListener(id === "watchlist-search" ? "input" : "change", () => {
