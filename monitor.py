@@ -247,10 +247,52 @@ def fetch_html_stock(session: requests.Session, item: dict, fetcher: dict | None
     )
 
 
+def parse_vps_soy(html: str, page_url: str, selector: str) -> Product:
+    """Match Yunyoo cart cards by full title; negative inventory means sold out."""
+    soup = BeautifulSoup(html, "html.parser")
+    target = " ".join(selector.split()).casefold()
+    matches = []
+    for card in soup.select(".cartitem"):
+        titles = card.select(".card-body h4")
+        if len(titles) == 1 and " ".join(titles[0].get_text(" ", strip=True).split()).casefold() == target:
+            matches.append((card, titles[0]))
+    if len(matches) != 1:
+        raise MonitorError(f"VPS.SOY 套餐 {selector} 无法唯一匹配（找到 {len(matches)} 项）；请核对分类页和完整名称")
+    card, title = matches[0]
+    stocks = [node.get_text(" ", strip=True) for node in card.select("p.card-text") if re.match(r"^库存\s*[:：]", node.get_text(" ", strip=True))]
+    if len(stocks) != 1:
+        raise MonitorError("VPS.SOY 套餐缺少唯一库存字段，页面结构可能已变化")
+    quantity = re.fullmatch(r"库存\s*[:：]\s*(-?(?:\d{1,3}(?:,\d{3})+|\d+))", stocks[0])
+    if not quantity:
+        raise MonitorError("VPS.SOY 套餐库存不是可识别的整数，未更新库存")
+    count = int(quantity.group(1).replace(",", ""))
+    sold_out = any(urlsplit(img.get("src", "")).path.endswith("/saleout.svg") for img in card.select("img[src]"))
+    if count > 0 and sold_out:
+        raise MonitorError("VPS.SOY 库存数量与售罄标记冲突，未更新库存")
+    links = card.select(".card-footer a[href]")
+    if len(links) != 1:
+        raise MonitorError("VPS.SOY 套餐缺少唯一购买入口，页面结构可能已变化")
+    href = links[0]["href"].strip()
+    if count > 0 and (links[0].has_attr("disabled") or "disabled" in links[0].get("class", []) or re.search(r"cursor\s*:\s*not-allowed", links[0].get("style", ""), re.IGNORECASE)):
+        raise MonitorError("VPS.SOY 库存与禁用购买按钮冲突，未更新库存")
+    purchase_url = page_url
+    if href and not href.casefold().startswith("javascript:") and href != "#":
+        purchase_url = urljoin(page_url, href)
+        parsed = urlsplit(purchase_url)
+        if parsed.scheme != "https" or parsed.hostname != "www.vps.soy" or parsed.username or parsed.password or parsed.port not in {None, 443}:
+            raise MonitorError("VPS.SOY 购买入口离开本站，已停止处理")
+    elif count > 0:
+        raise MonitorError("VPS.SOY 显示有库存但购买按钮不可用，未更新库存")
+    return Product(selector, title.get_text(" ", strip=True), max(0, count), purchase_url, vendor="VPS.SOY")
+
+
 def inspect_product(session: requests.Session, item: dict, fetcher: dict) -> Product:
     """Read one product without saving history, changing services or notifying."""
     if item["adapter"] == "html":
         return fetch_html_stock(session, item, fetcher)
+    if item["adapter"] == "vps_soy":
+        body, final_url = fetch_page(session, item["url"], product_fetcher(fetcher, item), "www.vps.soy")
+        return parse_vps_soy(body, final_url, item["selector"])
     products = fetch_products(session, item["category_url"], [item["selector"]], product_fetcher(fetcher, item))
     if len(products) != 1:
         raise MonitorError("商品无法唯一匹配页面套餐；请检查商品选择标识")
@@ -306,6 +348,9 @@ def selected_products(config: dict) -> list[dict]:
                 raise MonitorError(f"商品 {name} 必须且只能填写 gid 或 pid 其中一个")
             if not str(item.get("selector", "")).strip():
                 raise MonitorError(f"商品 {name} 缺少商品选择标识")
+        elif item.get("adapter") == "vps_soy":
+            if urlsplit(str(item.get("url", ""))).hostname != "www.vps.soy" or not item.get("selector"):
+                raise MonitorError(f"商品 {name} 的 VPS.SOY 配置不完整")
         elif item.get("adapter") == "html":
             url = str(item.get("url", ""))
             if urlsplit(url).scheme != "https" or not str(item.get("stock_selector", "")).strip():
@@ -425,9 +470,17 @@ def check_once(
                 vendor=item["provider"],
                 stock_mode="quantity",
             )
+    soy_pages = {}
     for item in selected:
         if item["adapter"] == "html":
             found[item["id"]] = fetch_html_stock(session, item, config.get("fetcher"))
+        elif item["adapter"] == "vps_soy":
+            fetcher = product_fetcher(config.get("fetcher"), item)
+            key = (item["url"], fetcher.get("mode", "requests"))
+            if key not in soy_pages:
+                soy_pages[key] = fetch_page(session, item["url"], fetcher, "www.vps.soy")
+            body, final_url = soy_pages[key]
+            found[item["id"]] = parse_vps_soy(body, final_url, item["selector"])
 
     previous = read_state(state_path)
     current = dict(previous)
@@ -455,7 +508,7 @@ def check_once(
                 if item["adapter"] == "vmiss"
                 else (item.get("purchase_url") or product.url)
             )
-            button_text = "🛒 打开购买页面" if item["adapter"] == "html" else "🛒 打开 VMISS 购买页"
+            button_text = "🛒 打开 VMISS 购买页" if item["adapter"] == "vmiss" else "🛒 打开购买页面"
             reply_markup = {"inline_keyboard": [[{"text": button_text, "url": purchase_url}]]}
             telegram_request(
                 session,

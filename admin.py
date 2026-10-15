@@ -190,15 +190,15 @@ def validate_config(value: object) -> dict:
         product_id = str(item.get("id", "")).strip()
         name = str(item.get("name", "")).strip()
         adapter = str(item.get("adapter", "vmiss" if any(key in item for key in ("category_url", "selector", "gid", "pid")) else "html")).strip().casefold()
-        provider = str(item.get("provider", "VMISS" if adapter == "vmiss" else "自定义网站")).strip()
+        provider = str(item.get("provider", {"vmiss": "VMISS", "vps_soy": "VPS.SOY"}.get(adapter, "自定义网站"))).strip()
         gid = str(item.get("gid", "")).strip()
         pid = str(item.get("pid", "")).strip()
         if "enabled" in item and not isinstance(item["enabled"], bool):
             raise ValueError(f"产品 {name or product_id} 的启用状态必须是布尔值")
         if not product_id or product_id in seen_ids:
             raise ValueError("每个产品都需要唯一 ID")
-        if adapter not in {"vmiss", "html"}:
-            raise ValueError(f"产品 {name or product_id} 的适配器必须是 vmiss 或 html")
+        if adapter not in {"vmiss", "html", "vps_soy"}:
+            raise ValueError(f"产品 {name or product_id} 的适配器必须是 vmiss、vps_soy 或 html")
         if not name:
             raise ValueError(f"产品 {product_id} 需要填写商品名称")
         if not provider or len(provider) > 80:
@@ -231,6 +231,15 @@ def validate_config(value: object) -> dict:
                 "pid": pid,
                 "enabled": item.get("enabled", False),
             }
+        elif adapter == "vps_soy":
+            catalog_url = str(item.get("url", "https://www.vps.soy/cart")).strip()
+            parsed = urlsplit(catalog_url)
+            if parsed.scheme != "https" or parsed.hostname != "www.vps.soy" or parsed.path.rstrip("/") != "/cart" or parsed.username or parsed.password or parsed.fragment or parsed.port not in {None, 443} or len(catalog_url) > 2048:
+                raise ValueError(f"产品 {name} 的 VPS.SOY 商品页必须是 https://www.vps.soy/cart，可带分类查询参数")
+            selector = str(item.get("selector", name)).strip()
+            if not selector or len(selector) > 200:
+                raise ValueError(f"产品 {name} 需要填写 VPS.SOY 套餐完整名称（最多 200 个字符）")
+            normalized_item = {"id": product_id, "name": name, "provider": provider, "adapter": adapter, "url": catalog_url, "selector": selector, "enabled": item.get("enabled", False)}
         else:
             check_url = str(item.get("url", item.get("category_url", ""))).strip()
             parsed = urlsplit(check_url)

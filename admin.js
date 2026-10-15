@@ -323,7 +323,7 @@ function productEditor(item, index) {
 
   const grid = text("div", "", "form-grid");
   grid.append(
-    selectField("监控适配器", item.adapter || (item.category_url ? "vmiss" : "html"), "adapter", [["html", "通用 HTTPS 网页"], ["vmiss", "VMISS WHMCS"]]),
+    selectField("监控适配器", item.adapter || (item.category_url ? "vmiss" : "html"), "adapter", [["html", "通用 HTTPS 网页"], ["vmiss", "VMISS WHMCS"], ["vps_soy", "VPS.SOY 商品页"]]),
     inputField("厂商名称", item.provider || (item.adapter === "vmiss" || item.category_url ? "VMISS" : "自定义网站"), "provider", "text", "例如 ExampleHost"),
     inputField("商品名称", item.name, "name", "text", "例如 US VPS 2 GB"),
     selectField("此商品的请求方式", item.request_mode || "inherit", "request_mode", [["inherit", "跟随全局设置"], ["requests", "普通 HTTPS 请求"], ["flaresolverr", "FlareSolverr 浏览器请求"]]),
@@ -352,7 +352,14 @@ function productEditor(item, index) {
   const unavailable = inputField("缺货文本正则", item.unavailable_pattern || "(?i)out of stock|sold out|缺货|售罄", "unavailable_pattern", "text");
   unavailable.dataset.stockMode = "availability";
   htmlFields.append(quantity, available, unavailable);
-  modeWrap.append(vmissFields, htmlFields);
+  const soyFields = text("div", "", "form-grid span-2");
+  soyFields.dataset.adapterFields = "vps_soy";
+  soyFields.append(
+    inputField("VPS.SOY 商品分类页", item.adapter === "vps_soy" ? item.url : "https://www.vps.soy/cart", "soy_url", "url", "https://www.vps.soy/cart"),
+    inputField("套餐完整名称（精确匹配）", item.adapter === "vps_soy" ? item.selector : "深港IX-MINI", "soy_selector", "text", "深港IX-MINI"),
+    text("p", "自动识别套餐卡片、库存和购买入口。负库存按缺货处理；名称或库存无法识别时会报错，避免误报。无需填写 CSS 选择器或 VMISS 推广 ID。", "hint span-2"),
+  );
+  modeWrap.append(vmissFields, htmlFields, soyFields);
   const result = text("div", "", "product-test-result");
   result.setAttribute("role", "status");
   result.setAttribute("aria-live", "polite");
@@ -385,6 +392,9 @@ function syncEditor(article) {
     const target = get("target").value;
     item.gid = target === "gid" ? get("target_id").value.trim() : "";
     item.pid = target === "pid" ? get("target_id").value.trim() : "";
+  } else if (item.adapter === "vps_soy") {
+    item.url = get("soy_url").value.trim();
+    item.selector = get("soy_selector").value.trim();
   } else {
     item.url = get("url").value.trim();
     item.stock_selector = get("stock_selector").value.trim();
@@ -582,7 +592,7 @@ function updateDraftState() {
 function updateFetcherStatus() {
   const enabled = document.querySelector("#fetcher-mode").value === "flaresolverr";
   document.querySelector("#fetcher-status").textContent = enabled
-    ? "全局使用 FlareSolverr 浏览器请求，支持 VMISS 和通用网页；商品可单独覆盖。浏览器验证仍可能失败，请查看具体错误。"
+    ? "全局使用 FlareSolverr 浏览器请求，支持所有适配器；商品可单独覆盖。浏览器验证仍可能失败，请查看具体错误。"
     : "全局使用普通 HTTPS 请求；需要浏览器的商品可单独选择 FlareSolverr。保存后自动应用。";
 }
 
@@ -637,8 +647,7 @@ async function reloadConfig(notify = true) {
   setMessage("配置和监控状态已载入。", "success", notify);
 }
 
-document.querySelector("#add").addEventListener("click", () => {
-  const item = { id: crypto.randomUUID(), adapter: "html", provider: "自定义网站", name: "", url: "", stock_selector: "", stock_mode: "quantity", stock_pattern: "([\\d,]+)", available_pattern: "(?i)in stock|available|有货|现货", unavailable_pattern: "(?i)out of stock|sold out|缺货|售罄", purchase_url: "", enabled: false };
+function addProduct(item) {
   config.products.push(item);
   openProducts.add(item.id);
   renderProducts();
@@ -646,7 +655,9 @@ document.querySelector("#add").addEventListener("click", () => {
   editorNode.lastElementChild?.scrollIntoView({ behavior: "smooth", block: "center" });
   setMessage("商品已添加，请填写商品信息后保存。", "pending");
   updateDraftState();
-});
+}
+document.querySelector("#add").addEventListener("click", () => addProduct({ id: crypto.randomUUID(), adapter: "html", provider: "自定义网站", name: "", url: "", stock_selector: "", stock_mode: "quantity", stock_pattern: "([\\d,]+)", available_pattern: "(?i)in stock|available|有货|现货", unavailable_pattern: "(?i)out of stock|sold out|缺货|售罄", purchase_url: "", enabled: false }));
+document.querySelector("#add-vps-soy").addEventListener("click", () => addProduct({ id: crypto.randomUUID(), adapter: "vps_soy", provider: "VPS.SOY", name: "深港IX-MINI", url: "https://www.vps.soy/cart", selector: "深港IX-MINI", request_mode: "requests", enabled: false }));
 document.querySelector("#refresh-status").addEventListener("click", (event) => runAction(event.currentTarget, "刷新中…", "正在刷新监控状态…", async () => {
   await Promise.all([loadStatus(), refreshManagement()]);
   setMessage("监控状态已刷新；此次操作不会触发库存检查。", "success");
