@@ -353,16 +353,6 @@ function selectField(labelText, value, key, options) {
   return label;
 }
 
-function checkField(labelText, checked, key) {
-  const label = text("label", labelText, "check");
-  const input = document.createElement("input");
-  input.type = "checkbox";
-  input.checked = Boolean(checked);
-  input.dataset.key = key;
-  label.prepend(input);
-  return label;
-}
-
 const soyGroups = [["8", "深港 · CNIX"], ["5", "香港 · 三网直连"], ["6", "香港 · Global"], ["4", "新加坡 · Global"], ["2", "日本 · SoftBank"], ["3", "日本 · IIJ"], ["7", "英国 · Global"]];
 const akileAreas = [["14", "中国澳门"], ["5", "日本"], ["13", "意大利"], ["15", "荷兰"], ["8", "韩国"], ["6", "中国台湾"], ["7", "新加坡"], ["3", "中国香港"], ["2", "美国"], ["11", "英国"], ["1", "德国"], ["16", "越南"]];
 // Public directory identities observed on 2026-10-15; never cache stock here.
@@ -472,7 +462,23 @@ function productEditor(item, index) {
   head.lastElementChild.setAttribute("aria-hidden", "true");
   const body = text("div", "", "section-body");
   const actions = text("div", "", "actions");
-  actions.append(checkField("加入库存监控", membership(item, "watch"), "watch_enabled"), checkField("加入库存通知", membership(item, "notify"), "notify_enabled"));
+  for (const [type, label] of [["watch", "库存监控"], ["notify", "库存通知"]]) {
+    const button = text("button", "", `membership-toggle membership-${type}`); button.type = "button"; button.dataset.membership = type;
+    const syncButton = () => {
+      const selected = membership(item, type);
+      button.textContent = selected ? `✓ 已加入${label}` : `＋ 加入${label}`;
+      button.setAttribute("aria-pressed", String(selected));
+      button.title = selected ? `点击移出${label}，保存配置后生效` : `点击加入${label}，保存配置后生效`;
+    };
+    syncButton(); button.disabled = actionRunning;
+    button.addEventListener("click", () => {
+      if (actionRunning) return;
+      setMembership(item, type, !membership(item, type)); syncButton();
+      updateProductEditorTitle(article, item); renderOverview(); updateDraftState();
+      setMessage(`已${membership(item, type) ? "加入" : "移出"}${label}，保存配置后生效。`, "pending");
+    });
+    actions.append(button);
+  }
   const test = text("button", "测试此商品", "product-test");
   test.type = "button";
   test.addEventListener("click", () => testProduct(item.id, test));
@@ -590,9 +596,6 @@ function syncEditor(article) {
   item.adapter = get("adapter").value;
   item.provider = get("provider").value.trim();
   item.name = get("name").value.trim();
-  item.watch_enabled = get("watch_enabled").checked;
-  item.notify_enabled = get("notify_enabled").checked;
-  item.enabled = item.watch_enabled || item.notify_enabled;
   if (item.adapter === "vmiss") {
     item.category_url = get("category_url").value.trim();
     item.selector = get("selector").value.trim();
@@ -664,6 +667,7 @@ function syncTestControls() {
   globalStop.disabled = Boolean(activeTest?.stopping || activeTest?.notifying);
   globalStop.textContent = activeTest?.stopUnconfirmed ? "重试停止" : "停止测试";
   document.querySelectorAll(".product-editor, .watchlist-item").forEach((article) => {
+    article.querySelectorAll(".membership-toggle").forEach(button => { button.disabled = actionRunning; });
     const running = activeTest?.id === article.dataset.id;
     const test = article.querySelector(".product-test");
     test.disabled = Boolean(activeTest) || actionRunning;
@@ -829,8 +833,21 @@ function updateAdapterFields(article) {
   }
 }
 
+function editorProducts() {
+  const notified = orderedProducts("notify"), ids = new Set(notified.map(item => item.id));
+  return [...notified, ...config.products.filter(item => !ids.has(item.id))];
+}
+function syncProductEditorOrder() {
+  const nodes = new Map([...editorNode.children].map(node => [node.dataset.id, node]));
+  const focused = editorNode.contains(document.activeElement) ? document.activeElement : null;
+  editorProducts().forEach((item, index) => {
+    const node = nodes.get(item.id);
+    if (node && editorNode.children[index] !== node) editorNode.insertBefore(node, editorNode.children[index] || null);
+  });
+  if (focused && document.activeElement !== focused) focused.focus({ preventScroll: true });
+}
 function renderProducts() {
-  editorNode.replaceChildren(...config.products.map(productEditor));
+  editorNode.replaceChildren(...editorProducts().map(productEditor));
   renderProductList();
   renderOverview();
   syncTestControls();
@@ -1169,6 +1186,7 @@ function renderProductList() {
 
 function renderNotificationList() {
   if (productDrag) return;
+  syncProductEditorOrder();
   if (document.querySelector("#notification-list .action-popover:popover-open")) return;
   const focusedSortId = document.querySelector("#notification-list .sort-handle:focus")?.dataset.sortId;
   const expanded = expandedPrices(document.querySelector("#notification-list"));
