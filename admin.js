@@ -1270,6 +1270,49 @@ function priceConversion(raw) {
   const cycle = formatBillingCycle(value).match(/(?:\/|per\s+)\s*(月|季|半年|年|周|日)/i)?.[1] || "";
   return `折合 ¥${cny.toFixed(1)}${cycle ? `/${cycle}` : ""}`;
 }
+function billingMonths(raw) {
+  const value = String(raw || "").toLowerCase();
+  if (/semi[- ]?annual|half[- ]?year|半年/.test(value)) return 6;
+  if (/annual|year|年/.test(value)) return 12;
+  if (/quarter|季/.test(value)) return 3;
+  const months = value.match(/(\d+(?:\.\d+)?)\s*(?:month|个月)/);
+  if (months) return Number(months[1]);
+  if (/weekly|week|周/.test(value)) return 1 / 4;
+  if (/daily|day|日/.test(value)) return 1 / 30;
+  return /monthly|month|月/.test(value) ? 1 : null;
+}
+function monthlyCnyPrice(raw) {
+  const amount = "([+-]?\\d[\\d,]*(?:\\.\\d+)?)", codes = Object.keys(cnyRates).join("|");
+  const values = String(raw || "").split(/[；;]/).map(value => value.trim()).filter(Boolean).map(value => {
+    let currency = "", number = "";
+    let match = value.match(new RegExp(`\\b(${codes})\\s*[$¥￥]?\\s*${amount}`, "i"));
+    if (match) { currency = match[1].toUpperCase(); number = match[2]; }
+    if (!match) {
+      match = value.match(new RegExp(`${amount}\\s*(${codes})\\b`, "i"));
+      if (match) { number = match[1]; currency = match[2].toUpperCase(); }
+    }
+    if (!match) {
+      match = value.match(new RegExp(`(CA\\$|A\\$|NZ\\$|HK\\$|S\\$|NT\\$|JP¥|R\\$|RM|Fr\\.|[$€£₩₽₹₺฿₫₱¥￥])\\s*${amount}`, "i"));
+      const symbols = { "CA$": "CAD", "A$": "AUD", "NZ$": "NZD", "HK$": "HKD", "S$": "SGD", "NT$": "TWD", "JP¥": "JPY", "R$": "BRL", RM: "MYR", "FR.": "CHF", $: "USD", "€": "EUR", "£": "GBP", "₩": "KRW", "₽": "RUB", "₹": "INR", "₺": "TRY", "฿": "THB", "₫": "VND", "₱": "PHP", "¥": "CNY", "￥": "CNY" };
+      if (match) { currency = symbols[match[1].toUpperCase()] || ""; number = match[2]; }
+    }
+    const months = billingMonths(value), rate = currency === "CNY" ? 1 : cnyRates[currency];
+    const parsed = Number(String(number).replace(/,/g, ""));
+    return currency && Number.isFinite(rate) && Number.isFinite(parsed) && parsed >= 0 && months > 0 ? parsed * rate / months : null;
+  }).filter(value => Number.isFinite(value));
+  return values.length ? Math.min(...values) : null;
+}
+function sortByMonthlyPrice(items, mode, getPrice) {
+  if (!mode || mode === "default") return items;
+  const direction = mode === "desc" ? -1 : 1;
+  return items.map((item, index) => ({ item, index, price: monthlyCnyPrice(getPrice(item)) })).sort((left, right) => {
+    if (left.price === null && right.price === null) return left.index - right.index;
+    if (left.price === null) return 1;
+    if (right.price === null) return -1;
+    const result = left.price - right.price;
+    return result ? result * direction : left.index - right.index;
+  }).map(entry => entry.item);
+}
 function priceTextWithConversion(raw) {
   return String(raw || "—").split(/[；;]/).map(value => value.trim()).filter(Boolean).map(value => {
     const original = formatBillingCycle(formatPrice(value));
@@ -1548,12 +1591,12 @@ function renderProductList() {
   for (const id of compareSelection) if (!watchedIds.has(id)) compareSelection.delete(id);
   const search = document.querySelector("#watchlist-search").value.trim().toLowerCase();
   const provider = document.querySelector("#watchlist-provider").value, stock = document.querySelector("#watchlist-stock").value;
-  const visible = watched.filter(item => {
+  const visible = sortByMonthlyPrice(watched.filter(item => {
     const p = productSnapshot(item, latest.get(item.id));
     return (!search || [item.name, item.provider, p.region, item.remarks, item.line_label, item.line_telecom, item.line_unicom, item.line_mobile].join(" ").toLowerCase().includes(search)) &&
       (provider === "all" || provider === item.adapter || provider === "other" && !merchantNames[item.adapter]) &&
       (stock === "all" || stock === "in" && p.available > 0 || stock === "out" && p.available === 0 || stock === "unknown" && !Number.isInteger(p.available));
-  });
+  }), document.querySelector("#watchlist-price-sort").value, item => productSnapshot(item, latest.get(item.id)).price);
   document.querySelector("#watchlist-count").textContent = `共 ${watched.length} 个 · 显示 ${visible.length} 个`;
   document.querySelector("#watchlist-note").textContent = "此列表仅检查和展示库存，不发送消息。加入库存通知后才会推送。后台检查更新商品数据，暂停后保留历史快照。";
   renderCompareBar();
@@ -1605,7 +1648,11 @@ function renderNotificationList() {
   const expanded = expandedPrices(document.querySelector("#notification-list"));
   const statusProducts = new Map((lastStatus?.products || []).map(p => [p.id, p]));
   const savedProducts = new Map((savedConfig ? JSON.parse(savedConfig).products : []).map(p => [p.id, p]));
-  const selected = orderedProducts("notify");
+  const selected = sortByMonthlyPrice(orderedProducts("notify"), document.querySelector("#notification-price-sort").value, item => {
+    const runtime = statusProducts.get(item.id), testResult = productTests.get(item.id);
+    const source = testResult?.ok && !testResult.pending && !testResult.cancelled && !testResult.warning && (!runtime || Date.parse(testResult.checked_at) > Date.parse(runtime.checked_at || lastStatus?.last_checked || 0)) ? { ...runtime, ...testResult, error: "", url: testResult.url || testResult.purchase_url } : runtime;
+    return productSnapshot(item, source).price;
+  });
   document.querySelector("#notification-count").textContent = `共 ${selected.length} 个`;
   document.querySelector("#notification-note").textContent = "商品信息来自商家快照、后台检查或最近一次成功测试。测试通知可在暂停时执行；下架或未匹配商品保留配置并显示未知，可在高级中手动添加及修改。";
   const target = document.querySelector("#notification-list");
@@ -1902,6 +1949,15 @@ for (const id of ["watchlist-search", "watchlist-provider", "watchlist-stock"]) 
   renderProductList();
   animateFilterResult(listNode);
 });
+for (const [id, key] of [["watchlist-price-sort", "hostwatch-watch-price-sort"], ["notification-price-sort", "hostwatch-notification-price-sort"]]) {
+  const select = document.getElementById(id), saved = sessionStorage.getItem(key);
+  if (saved && ["default", "asc", "desc"].includes(saved)) select.value = saved;
+  select.addEventListener("change", () => {
+    sessionStorage.setItem(key, select.value);
+    if (id === "watchlist-price-sort") { renderProductList(); animateFilterResult(listNode); }
+    else { renderNotificationList(); animateFilterResult(document.querySelector("#notification-list")); }
+  });
+}
 document.querySelector("#watch-compare-start").addEventListener("click", openCompareDialog);
 document.querySelector("#watch-compare-clear").addEventListener("click", () => {
   compareSelection.clear();

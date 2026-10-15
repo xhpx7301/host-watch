@@ -13,6 +13,9 @@
   const pageSize = 30;
   const autoValue = sessionStorage.getItem("hostwatch-catalog-auto") || "300";
   get("catalog-auto").value = ["0", "60", "300", "600"].includes(autoValue) ? autoValue : "300";
+  const priceSortKey = "hostwatch-catalog-price-sort";
+  const savedPriceSort = sessionStorage.getItem(priceSortKey);
+  get("catalog-price-sort").value = ["default", "asc", "desc"].includes(savedPriceSort) ? savedPriceSort : "default";
 
   function matches(row, item) {
     const watch = row.watch;
@@ -38,8 +41,9 @@
   function existing(row) { return config.products.find((item) => matches(row, item)); }
   function filtered() {
     const search = get("catalog-search").value.trim().toLowerCase(), stock = get("catalog-stock").value;
-    return (data?.rows || []).filter((row) => (!search || [row.name, row.region, row.line, row.specs, row.traffic, row.price].join(" ").toLowerCase().includes(search)) &&
+    const rows = (data?.rows || []).filter((row) => (!search || [row.name, row.region, row.line, row.specs, row.traffic, row.price].join(" ").toLowerCase().includes(search)) &&
       (stock === "all" || stock === "in" && row.available > 0 || stock === "out" && row.available === 0 || stock === "unknown" && row.available === null || stock === "watched" && existing(row) && membership(existing(row), "watch") || stock === "notified" && existing(row) && membership(existing(row), "notify")));
+    return sortByMonthlyPrice(rows, get("catalog-price-sort").value, row => row.price);
   }
 
   function reminderLabel(row) {
@@ -248,6 +252,7 @@
     animateFilterResult(get("catalog-results"));
   });
   for (const id of ["catalog-search", "catalog-stock"]) get(id).addEventListener(id === "catalog-search" ? "input" : "change", () => { page = 0; renderTable(true); });
+  get("catalog-price-sort").addEventListener("change", () => { sessionStorage.setItem(priceSortKey, get("catalog-price-sort").value); page = 0; renderTable(true); });
   get("catalog-auto").addEventListener("change", () => { sessionStorage.setItem("hostwatch-catalog-auto", get("catalog-auto").value); schedule(); });
   get("catalog-refresh").addEventListener("click", () => { task = task?.pending ? task : null; void refresh(); });
   get("catalog-stop").addEventListener("click", async () => {
