@@ -26,6 +26,9 @@ let monitorService = null;
 let savedConfig = null;
 let serviceRefreshTimer, serviceRefreshPending = false;
 let serviceTransitionStartedAt = 0;
+let exchangeRateData = null;
+let exchangeClockTimer;
+let exchangeRateRefreshTimer;
 const SERVICE_TRANSITION_TIMEOUT_MS = 60_000;
 const compareSelection = new Set();
 const openProducts = new Set();
@@ -1176,6 +1179,57 @@ const cnyRates = {
   JPY: 0.048, EUR: 7.8, GBP: 9.05, KRW: 0.0052, RUB: 0.08, INR: 0.086, TRY: 0.2,
   THB: 0.2, VND: 0.00029, IDR: 0.00045, MYR: 1.62, BRL: 1.35, PHP: 0.126, CHF: 8.1,
 };
+function currencyFromPrice(raw) {
+  const value = String(raw || "");
+  const codes = Object.keys(cnyRates).join("|");
+  let match = value.match(new RegExp(`\\b(${codes})\\s*[$¥￥]?\\s*[+-]?\\d`, "i"));
+  if (match) return match[1].toUpperCase();
+  match = value.match(new RegExp(`[+-]?\\d[\\d,]*(?:\\.\\d+)?\\s*(${codes})\\b`, "i"));
+  if (match) return match[1].toUpperCase();
+  match = value.match(/(?:CA\$|A\$|NZ\$|HK\$|S\$|NT\$|JP¥|R\$|RM|Rp|Fr\.|[$€£₩₽₹₺฿₫₱])\s*[+-]?\d/i);
+  if (!match) return "";
+  const currency = ({ "CA$": "CAD", "A$": "AUD", "NZ$": "NZD", "HK$": "HKD", "S$": "SGD", "NT$": "TWD", "JP¥": "JPY", "R$": "BRL", RM: "MYR", "FR.": "CHF", "$": "USD", "€": "EUR", "£": "GBP", "₩": "KRW", "₽": "RUB", "₹": "INR", "₺": "TRY", "฿": "THB", "₫": "VND", "₱": "PHP" })[match[0].match(/^(CA\$|A\$|NZ\$|HK\$|S\$|NT\$|JP¥|R\$|RM|Fr\.|[$€£₩₽₹₺฿₫₱])/i)?.[1]?.toUpperCase()] || "";
+  return currency === "CNY" ? "" : currency;
+}
+function usedCurrencies() {
+  const values = [...(config.products || []), ...(lastStatus?.products || [])].flatMap(item => {
+    const snapshot = lastStatus?.products?.find(product => product.id === item.id) || item.snapshot || item;
+    return [snapshot.price, item.price];
+  });
+  return [...new Set(values.flatMap(value => String(value || "").split(/[；;]/).map(currencyFromPrice).filter(Boolean)))].sort();
+}
+function renderExchangeRates() {
+  const timeNode = document.querySelector("#exchange-time"), noteNode = document.querySelector("#exchange-rate-note"), listNode = document.querySelector("#exchange-rate-list");
+  if (!timeNode || !noteNode || !listNode) return;
+  timeNode.textContent = `当前时间 ${new Date().toLocaleString("zh-CN", { hour12: false })}`;
+  const currencies = usedCurrencies();
+  listNode.replaceChildren(...currencies.map(currency => {
+    const rate = cnyRates[currency];
+    return rate ? text("span", `1 ${currency} ≈ ¥${Number(rate).toFixed(rate < 0.1 ? 4 : 2)}`, "exchange-rate-item") : null;
+  }).filter(Boolean));
+  if (!currencies.length) noteNode.textContent = "当前商品未使用外币价格";
+  else if (exchangeRateData?.error) noteNode.textContent = exchangeRateData.error;
+  else {
+    const updated = exchangeRateData?.fetched_at ? new Date(Number(exchangeRateData.fetched_at) * 1000).toLocaleString("zh-CN", { hour12: false }) : "内置参考值";
+    noteNode.textContent = `汇率更新 ${updated}${exchangeRateData?.stale ? " · 使用缓存" : ""}`;
+  }
+}
+async function loadExchangeRates() {
+  try {
+    exchangeRateData = await requestJSON("/api/rates", { timeoutMs: 12000 });
+    Object.entries(exchangeRateData.rates || {}).forEach(([code, foreignPerCny]) => {
+      const value = Number(foreignPerCny);
+      if (code !== "CNY" && Number.isFinite(value) && value > 0) cnyRates[code] = 1 / value;
+    });
+  }
+  catch (error) { exchangeRateData = { rates: {}, error: `实时汇率读取失败：${error.message}` }; }
+  renderExchangeRates();
+  if (savedConfig !== null) {
+    renderProductList();
+    renderOverview();
+    renderSeckill();
+  }
+}
 const billingCycles = [
   [/(?:per\s+)?semi[- ]?annual(?:ly)?|semiannually|half[- ]?year(?:ly)?/gi, "半年"],
   [/(?:per\s+)?quarter(?:ly)?/gi, "季"],
@@ -1777,6 +1831,7 @@ function applyConfig(value) {
   savedConfig = JSON.stringify(collectConfig());
   updateDraftState();
   renderMonitorState();
+  renderExchangeRates();
 }
 
 async function loadStatus() {
@@ -1793,12 +1848,13 @@ async function loadStatus() {
   renderProductList();
   renderOverview();
   renderSeckill();
+  renderExchangeRates();
 }
 
 async function reloadConfig(notify = true) {
-  const results = await Promise.allSettled([loadConfig(), loadStatus(), refreshManagement()]);
+  const results = await Promise.allSettled([loadConfig(), loadStatus(), refreshManagement(), loadExchangeRates()]);
   const failures = results.map((result, index) => result.status === "rejected"
-    ? `${["配置", "检查结果", "服务状态"][index]}载入失败：${result.reason.message}` : "").filter(Boolean);
+    ? `${["配置", "检查结果", "服务状态", "汇率"][index]}载入失败：${result.reason.message}` : "").filter(Boolean);
   if (failures.length) throw new Error(failures.join("；"));
   setMessage("配置和监控状态已载入。", "success", notify);
   restoreProductTest();
@@ -1948,6 +2004,9 @@ async function saveConfig() {
 }
 document.querySelector("#discard-changes").addEventListener("click", (event) => { if (!activeTest) runAction(event.currentTarget, "恢复中…", "正在恢复已保存配置…", discardChanges); });
 document.querySelector("#save").addEventListener("click", (event) => runAction(event.currentTarget, "保存中…", "正在保存配置…", () => saveConfig()));
+renderExchangeRates();
+exchangeClockTimer = setInterval(renderExchangeRates, 30_000);
+exchangeRateRefreshTimer = setInterval(() => { if (!document.hidden) void loadExchangeRates(); }, 60 * 60 * 1000);
 runAction(null, "", "正在载入配置和监控状态…", () => reloadConfig(false), false);
 bindManagementActions();
 if (updateUnit) pollUpdateStatus();

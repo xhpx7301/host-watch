@@ -27,10 +27,12 @@ from notifications import purchase_button, stock_message
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = Path(os.getenv("VMISS_CONFIG", str(ROOT / "config.json")))
 STATUS_PATH = Path(os.getenv("VMISS_STATUS", str(CONFIG_PATH.parent / "status.json")))
+RATES_PATH = Path(os.getenv("VMISS_RATES", str(CONFIG_PATH.parent / "exchange-rates.json")))
 PAGE_PATH = ROOT / "admin.html"
 MAX_BODY = 64 * 1024
 MANAGER = Path("/opt/vmiss-monitor/manage.py")
 MUTATION_LOCK = threading.Lock()
+RATES_LOCK = threading.Lock()
 TEST_LOCK = threading.Lock()
 TEST_TASKS = {}
 STOPPED_TEST_IDS = {}
@@ -47,6 +49,70 @@ CLOUDSCRAPER_TEST_TARGETS = {
     "bwh": ("搬瓦工", "https://bwh81.net/order/ecommerce/Los%20Angeles/USCA_9"),
     "baseline": ("公共 HTTPS 基准", "https://example.com/"),
 }
+EXCHANGE_RATES_URL = "https://api.frankfurter.app/latest?base=CNY"
+EXCHANGE_RATE_MAX_AGE = 24 * 60 * 60
+
+
+def _read_rates_cache() -> dict:
+    try:
+        value = json.loads(RATES_PATH.read_text(encoding="utf-8"))
+        if not isinstance(value, dict) or not isinstance(value.get("rates"), dict):
+            return {}
+        rates = {str(code).upper(): float(rate) for code, rate in value["rates"].items()
+                 if re.fullmatch(r"[A-Z]{3}", str(code).upper()) and isinstance(rate, (int, float)) and float(rate) > 0}
+        value["rates"] = rates
+        return value
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return {}
+
+
+def _write_rates_cache(value: dict) -> None:
+    RATES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix="exchange-rates-", suffix=".tmp", dir=RATES_PATH.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(value, stream, ensure_ascii=False)
+        os.replace(temporary, RATES_PATH)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def exchange_rates() -> dict:
+    """Return cached CNY rates, refreshing at most once per day."""
+    cached = _read_rates_cache()
+    fetched_at = cached.get("fetched_at", 0)
+    try:
+        fresh = time.time() - float(fetched_at) < EXCHANGE_RATE_MAX_AGE
+    except (TypeError, ValueError):
+        fresh = False
+    if fresh:
+        return {"base": "CNY", **cached, "stale": False}
+    with RATES_LOCK:
+        cached = _read_rates_cache()
+        try:
+            fresh = time.time() - float(cached.get("fetched_at", 0)) < EXCHANGE_RATE_MAX_AGE
+        except (TypeError, ValueError):
+            fresh = False
+        if fresh:
+            return {"base": "CNY", **cached, "stale": False}
+        try:
+            response = requests.get(EXCHANGE_RATES_URL, timeout=(3, 8))
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict) or payload.get("base") != "CNY" or not isinstance(payload.get("rates"), dict):
+                raise ValueError("汇率接口返回格式无效")
+            rates = {str(code).upper(): float(rate) for code, rate in payload["rates"].items()
+                     if re.fullmatch(r"[A-Z]{3}", str(code).upper()) and isinstance(rate, (int, float)) and float(rate) > 0}
+            if not rates:
+                raise ValueError("汇率接口未返回有效数据")
+            updated = {"base": "CNY", "rates": rates, "date": str(payload.get("date", "")), "fetched_at": time.time()}
+            _write_rates_cache(updated)
+            return {**updated, "stale": False}
+        except (OSError, ValueError, TypeError, requests.RequestException):
+            if cached.get("rates"):
+                return {"base": "CNY", **cached, "stale": True, "error": "实时汇率暂时不可用，继续使用上次成功更新的汇率"}
+            return {"base": "CNY", "rates": {}, "stale": True, "error": "实时汇率暂时不可用"}
 
 
 def destroy_test_browser(endpoint: str, session_id: str, creation_uncertain: bool = False) -> str:
@@ -956,6 +1022,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, "application/json; charset=utf-8", json.dumps({"error": f"配置文件无法读取：{exc}"}, ensure_ascii=False).encode("utf-8"))
                 return
             self._send(200, "application/json; charset=utf-8", data)
+        elif self.path == "/api/rates":
+            self._send(200, "application/json; charset=utf-8", json.dumps(exchange_rates(), ensure_ascii=False).encode("utf-8"))
         elif self.path == "/api/status":
             data = json.dumps(read_json(STATUS_PATH, {"state": "unknown", "products": []}), ensure_ascii=False).encode("utf-8")
             self._send(200, "application/json; charset=utf-8", data)

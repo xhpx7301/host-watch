@@ -35,6 +35,13 @@ class AdminAPITests(unittest.TestCase):
         response = connection.getresponse()
         return response.status, response.read()
 
+    def get_request(self, path):
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port)
+        self.addCleanup(connection.close)
+        connection.request("GET", path)
+        response = connection.getresponse()
+        return response.status, response.read()
+
     def test_save_applies_service_and_returns_redacted_config(self):
         value = admin.default_config()
         value["telegram"] = {"bot_token": "private-token", "chat_id": "123"}
@@ -103,6 +110,33 @@ class AdminAPITests(unittest.TestCase):
         for wait in [-1, 31, True, 1.5]:
             with self.subTest(wait=wait), self.assertRaises(ValueError):
                 admin.normalize_fetcher({"wait_seconds": wait})
+
+    def test_exchange_rates_refresh_daily_and_reuse_cache(self):
+        response = Mock(ok=True)
+        response.json.return_value = {"base": "CNY", "date": "2026-10-16", "rates": {"USD": 0.14, "HKD": 1.17}}
+        rates_path = Path(self.temp.name) / "exchange-rates.json"
+        with patch.object(admin, "RATES_PATH", rates_path), patch.object(admin.requests, "get", return_value=response) as get:
+            first = admin.exchange_rates()
+            second = admin.exchange_rates()
+        self.assertEqual(first["rates"]["USD"], 0.14)
+        self.assertFalse(first["stale"])
+        self.assertEqual(second["rates"]["HKD"], 1.17)
+        get.assert_called_once_with(admin.EXCHANGE_RATES_URL, timeout=(3, 8))
+
+    def test_exchange_rate_failure_keeps_last_successful_rates(self):
+        rates_path = Path(self.temp.name) / "exchange-rates.json"
+        rates_path.write_text(json.dumps({"base": "CNY", "rates": {"USD": 0.14}, "date": "2026-10-15", "fetched_at": 1}), encoding="utf-8")
+        with patch.object(admin, "RATES_PATH", rates_path), patch.object(admin.requests, "get", side_effect=admin.requests.Timeout):
+            result = admin.exchange_rates()
+        self.assertTrue(result["stale"])
+        self.assertEqual(result["rates"]["USD"], 0.14)
+
+    def test_exchange_rate_endpoint_returns_live_rate_payload(self):
+        payload = {"base": "CNY", "rates": {"USD": 0.14}, "date": "2026-10-16", "fetched_at": 1, "stale": False}
+        with patch.object(admin, "exchange_rates", return_value=payload):
+            status, body = self.get_request("/api/rates")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), payload)
 
     def test_product_request_mode_defaults_and_rejects_unknown_mode(self):
         item = {"id": "vps", "name": "test", "adapter": "html", "url": "https://shop.example.com/item", "stock_selector": ".stock"}
