@@ -167,6 +167,9 @@ def _blocked_body(body: str) -> bool:
         "attention required! | cloudflare",
         "sorry, you have been blocked",
         "enable javascript and cookies to continue",
+        "performing security verification",
+        "verify you are human",
+        "turnstile",
         '<title>just a moment',
     )
     lowered = body.casefold()
@@ -207,15 +210,23 @@ def fetch_with_cloudscraper(url: str, expected_host: str, fetcher: dict | None =
         from cloudscraper.exceptions import CloudflareException
     except ImportError:
         raise RequestServiceError("cloudscraper 依赖未安装或不完整，请通过“更新 HostWatch”安装依赖后重试") from None
+    def request(scraper):
+        response = scraper.get(url, timeout=(options["connect_timeout_seconds"], options["read_timeout_seconds"]), allow_redirects=True)
+        result = _validate_page_response(response.status_code, response.text, response.url, expected_host, getattr(response, "headers", {}))
+        if diagnostics is not None:
+            diagnostics.update(status_code=response.status_code, response_bytes=len(response.content))
+        return result
+
     try:
         # The published release's native interpreter needs no browser or Node.
         # Bound challenge submissions; never opt into external CAPTCHA services.
+        # A catalogue worker may provide one short-lived scraper so a clearance
+        # cookie survives the discovery page -> selected category request.
+        shared = (fetcher or {}).get("_cloudscraper_session")
+        if shared is not None:
+            return request(shared)
         with cloudscraper.create_scraper(interpreter="native", delay=options["challenge_delay_seconds"], solveDepth=1, doubleDown=False, debug=False) as scraper:
-            response = scraper.get(url, timeout=(options["connect_timeout_seconds"], options["read_timeout_seconds"]), allow_redirects=True)
-            result = _validate_page_response(response.status_code, response.text, response.url, expected_host, getattr(response, "headers", {}))
-            if diagnostics is not None:
-                diagnostics.update(status_code=response.status_code, response_bytes=len(response.content))
-            return result
+            return request(scraper)
     except CloudflareException:
         raise SiteBlocked(f"{expected_host} 的 Cloudflare 验证未通过或不受 cloudscraper 支持；请检查站点访问规则或调整请求方式") from None
     except requests.Timeout:
@@ -226,6 +237,29 @@ def fetch_with_cloudscraper(url: str, expected_host: str, fetcher: dict | None =
         raise
     except (ImportError, RuntimeError):
         raise RequestServiceError("cloudscraper 初始化或解释器运行失败，请更新依赖并检查服务日志") from None
+
+
+@contextmanager
+def cloudscraper_request_session(fetcher: dict | None = None):
+    """Reuse one bounded cloudscraper session for a multi-page catalogue read."""
+    value = dict(fetcher or {})
+    if value.get("mode") != "cloudscraper":
+        yield value
+        return
+    try:
+        options = normalize_cloudscraper(value.get("cloudscraper"))
+        import cloudscraper
+    except ImportError:
+        raise RequestServiceError("cloudscraper 依赖未安装或不完整，请通过“更新 HostWatch”安装依赖后重试") from None
+    try:
+        scraper = cloudscraper.create_scraper(interpreter="native", delay=options["challenge_delay_seconds"], solveDepth=1, doubleDown=False, debug=False)
+    except (ImportError, RuntimeError):
+        raise RequestServiceError("cloudscraper 初始化失败，请更新依赖并检查服务日志") from None
+    value["_cloudscraper_session"] = scraper
+    try:
+        yield value
+    finally:
+        scraper.close()
 
 
 @contextmanager

@@ -66,6 +66,7 @@ class CloudscraperTransportTests(unittest.TestCase):
             (response(status=403), monitor.SiteBlocked, "403"),
             (response(status=429), monitor.SiteBlocked, "429"),
             (response(headers={"CF-Mitigated": "challenge"}), monitor.SiteBlocked, "安全验证"),
+            (response("<html>Performing security verification</html>", 403), monitor.SiteBlocked, "安全验证"),
             (response(status=500), monitor.MonitorError, "500"),
             (response(url="https://elsewhere.example/secret"), monitor.MonitorError, "重定向离开"),
         ]:
@@ -73,7 +74,7 @@ class CloudscraperTransportTests(unittest.TestCase):
                 self.scraper.get.return_value = result
                 with self.assertRaisesRegex(kind, label):
                     monitor.fetch_with_cloudscraper("https://shop.example.com/item", "shop.example.com")
-        self.assertEqual(self.scraper.__exit__.call_count, 6)
+        self.assertEqual(self.scraper.__exit__.call_count, 7)
 
     def test_solver_exceptions_stop_without_exposing_urls_or_cookies(self):
         for error in [CloudflareChallengeError, CloudflareCode1020, CloudflareLoopProtection]:
@@ -115,6 +116,16 @@ class CloudscraperTransportTests(unittest.TestCase):
         monitor.fetch_page(self.session, "https://shop.example.com/item", fetcher, "shop.example.com")
         self.create.assert_called_once_with(interpreter="native", delay=0, solveDepth=1, doubleDown=False, debug=False)
         self.scraper.get.assert_called_once_with("https://shop.example.com/item", timeout=(4, 42), allow_redirects=True)
+
+    def test_catalog_session_reuses_clearance_and_closes_after_scope(self):
+        fetcher = admin.normalize_fetcher({"mode": "cloudscraper"})
+        with monitor.cloudscraper_request_session(fetcher) as shared:
+            self.assertIs(shared["_cloudscraper_session"], self.scraper)
+            monitor.fetch_with_cloudscraper("https://shop.example.com/store", "shop.example.com", shared)
+            monitor.fetch_with_cloudscraper("https://shop.example.com/store/mini", "shop.example.com", shared)
+        self.create.assert_called_once_with(interpreter="native", delay=5, solveDepth=1, doubleDown=False, debug=False)
+        self.assertEqual(self.scraper.get.call_count, 2)
+        self.scraper.close.assert_called_once_with()
 
     def test_probe_reports_real_status_and_byte_size_after_validation(self):
         self.scraper.get.return_value = response("<title>Example</title>", status=201, url="https://example.com/")

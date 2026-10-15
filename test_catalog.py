@@ -109,6 +109,22 @@ class CatalogParsingTests(unittest.TestCase):
         with patch("monitor.fetch_page", side_effect=[(navigation, "https://app.vmiss.com/store"), (card, "https://app.vmiss.com/store/other")]), self.assertRaisesRegex(monitor.MonitorError, "不一致"):
             catalog.vmiss_catalog(Mock(), "")
 
+    def test_vmiss_load_catalog_reuses_cloudscraper_session_for_discovery_and_scope(self):
+        navigation = '<a href="/store/test">Hong Kong</a>'
+        card = '<div class="section products"><div class="package" id="product44"><h3 class="package-title">Mini</h3><div class="package-qty">3 Available</div><a class="btn-order-now" href="/store/test/mini">Buy</a></div></div>'
+        fetchers = []
+
+        def fetch_page(_session, _url, fetcher, _host):
+            fetchers.append(fetcher)
+            return (navigation, "https://app.vmiss.com/store") if len(fetchers) == 1 else (card, "https://app.vmiss.com/store/test")
+
+        scraper = Mock()
+        with patch("cloudscraper.create_scraper", return_value=scraper), patch("monitor.fetch_page", side_effect=fetch_page):
+            catalog.load_catalog("vmiss", fetcher={"mode": "cloudscraper"})
+        self.assertEqual(len(fetchers), 2)
+        self.assertIs(fetchers[0]["_cloudscraper_session"], fetchers[1]["_cloudscraper_session"])
+        scraper.close.assert_called_once_with()
+
     def test_soy_discovery_does_not_accept_arbitrary_onclick(self):
         navigation = '<div class="secondgroup_item" onclick="window.location.href=\'/cart?fid=1&amp;gid=8\'">深港 CNIX</div><div class="secondgroup_item" onclick="fetch(\'https://bad.example/\')">Ignore</div>'
         card = '<div class="cartitem"><div class="card-body"><h4>Mini</h4><div class="card-text">CPU 1</div></div><p class="card-text">库存：-3</p><div class="card-footer"><a href="javascript:void(0)">Buy</a></div></div>'

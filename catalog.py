@@ -208,9 +208,9 @@ def isvoro_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[li
 
 def load_catalog(provider: str, scope: str = "", fetcher: dict | None = None) -> dict:
     provider, scope = validate_source(provider, scope)
-    from monitor import product_fetcher
+    from monitor import cloudscraper_request_session, product_fetcher
     fetcher = product_fetcher(fetcher, {"adapter": provider})
-    with requests.Session() as session:
+    with cloudscraper_request_session(fetcher) as fetcher, requests.Session() as session:
         session.headers["User-Agent"] = "HostWatch/1.0 (read-only VPS catalogue)"
         if provider == "dmit":
             from dmit import directory
