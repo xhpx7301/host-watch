@@ -619,8 +619,8 @@ def fetch_isvoro_json(session: requests.Session, path: str, fetcher: dict) -> ob
 
 
 def isvoro_slug(value: object) -> bool:
-    """Accept vendor slugs with Unicode punctuation while blocking path escapes."""
-    return isinstance(value, str) and value not in {".", ".."} and bool(re.fullmatch(r"[^\x00-\x20/\\?#]{1,100}", value))
+    """Accept vendor slugs with spaces and Unicode punctuation while blocking path escapes."""
+    return isinstance(value, str) and value not in {".", ".."} and bool(re.fullmatch(r"[^\x00-\x1f/\\?#]{1,100}", value))
 
 
 def isvoro_entry(value: object) -> dict:

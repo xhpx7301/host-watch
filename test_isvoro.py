@@ -156,7 +156,9 @@ class IsvoroTests(unittest.TestCase):
     def test_unicode_slug_from_public_catalog_is_accepted_without_path_escape(self):
         entry = {"id": 60, "name": "HK-Apex", "slug": "HK‑Apex"}
         self.assertEqual(monitor.isvoro_categories([entry])[0]["slug"], "HK‑Apex")
-        for path in ["categories/HK‑Apex", "products/HK‑Apex"]:
+        spaced = {"id": 214, "name": "HK apex lite", "slug": "HK apex lite"}
+        self.assertEqual(monitor.isvoro_categories([spaced])[0]["slug"], "HK apex lite")
+        for path in ["categories/HK‑Apex", "products/HK‑Apex", "products/HK apex lite"]:
             with patch.object(monitor, "fetch_page", return_value=(('{"code":0,"data":[]}', ""))) as fetch:
                 monitor.fetch_isvoro_json(Mock(), path, {})
             self.assertIn(path, fetch.call_args.args[1])
