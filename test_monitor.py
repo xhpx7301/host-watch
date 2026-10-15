@@ -179,5 +179,25 @@ class BrowserRequestTests(unittest.TestCase):
         self.assertEqual(fetch.call_args.args[3]["mode"], "requests")
 
 
+class IntervalTests(unittest.TestCase):
+    def test_accepts_zero_and_intervals_below_five_minutes(self):
+        for seconds in [0, 1, 5, 10, 30, 60, 299, 86400]:
+            with self.subTest(seconds=seconds):
+                self.assertEqual(validate_config({"interval_seconds": seconds})["interval_seconds"], seconds)
+
+    def test_rejects_negative_fractional_and_invalid_intervals(self):
+        for value in [-1, 0.5, True, None, "", 86401]:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                validate_config({"interval_seconds": value})
+
+    def test_monitor_waits_exact_configured_interval_including_zero(self):
+        from monitor import main
+        for seconds in [0, 1, 5]:
+            with self.subTest(seconds=seconds), patch("sys.argv", ["monitor.py"]), patch("monitor.load_dotenv"), patch("monitor.read_config", side_effect=[{"enabled": True, "interval_seconds": seconds, "telegram": {"disabled": True}}, {"enabled": False}]), patch("monitor.effective_telegram", return_value=("", "")), patch("monitor.check_once") as check, patch("monitor.time.sleep") as sleep:
+                self.assertEqual(main(), 0)
+                check.assert_called_once()
+                sleep.assert_called_once_with(seconds)
+
+
 if __name__ == "__main__":
     unittest.main()

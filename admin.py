@@ -167,8 +167,8 @@ def validate_config(value: object) -> dict:
         raise ValueError("检查间隔必须是整数") from None
     if str(interval) != str(interval_value).strip():
         raise ValueError("检查间隔必须是整数")
-    if interval < 300 or interval > 86400:
-        raise ValueError("检查间隔范围是 300 到 86400 秒")
+    if interval < 0 or interval > 86400:
+        raise ValueError("检查间隔必须是 0 到 86400 秒的整数；0 表示本轮完成后立即检查下一轮")
 
     affiliate_id = str(value.get("affiliate_id", "")).strip()
     if affiliate_id and not re.fullmatch(r"\d{1,20}", affiliate_id):

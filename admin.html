@@ -138,7 +138,7 @@
     <div class="overview-item"><span class="eyebrow">监控服务</span><strong id="overview-state" class="overview-value">读取中</strong><span id="overview-state-note" class="overview-note">等待状态数据</span></div>
     <div class="overview-item"><span class="eyebrow">商品总数</span><strong id="overview-total" class="overview-value">0</strong><span id="overview-total-note" class="overview-note">0 个厂商</span></div>
     <div class="overview-item"><span class="eyebrow">上次记录有货</span><strong id="overview-stock" class="overview-value">0</strong><span class="overview-note">历史结果，暂停后不会更新</span></div>
-    <div class="overview-item"><span class="eyebrow">检查间隔</span><strong id="overview-interval" class="overview-value">10 分钟</strong><span class="overview-note">最短 5 分钟</span></div>
+    <div class="overview-item"><span class="eyebrow">检查间隔</span><strong id="overview-interval" class="overview-value">10 分钟</strong><span class="overview-note">每轮完成后的等待时间</span></div>
   </section>
 
   <section class="section">
@@ -160,8 +160,8 @@
       <p class="hint">开始后立即检查一次，再按间隔自动检查；暂停后停止检查和库存提醒。刷新状态只读取记录，不会检查商品。</p>
     </div>
     <div class="form-grid">
-      <label>检查间隔（秒）<input id="interval" type="number" min="300" max="86400" step="1"></label>
-      <label>常用检查间隔<select id="interval-preset"><option value="">自定义间隔</option><option value="300">每 5 分钟</option><option value="600">每 10 分钟</option><option value="1800">每 30 分钟</option><option value="3600">每 1 小时</option></select></label>
+      <label>检查间隔（秒）<input id="interval" type="number" min="0" max="86400" step="1"></label>
+      <label>常用检查间隔<select id="interval-preset"><option value="">自定义间隔</option><option value="0">0 秒（连续检查）</option><option value="1">1 秒</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option><option value="60">1 分钟</option><option value="300">5 分钟</option><option value="600">10 分钟</option><option value="1800">30 分钟</option><option value="3600">1 小时</option></select></label>
       <p id="interval-description" class="hint span-2"></p>
       <label class="check span-2"><input id="notify-current" type="checkbox">首次记录该商品时，有货也发送提醒</label>
     </div>

@@ -522,7 +522,7 @@ function renderOverview() {
   document.querySelector("#overview-total").textContent = String(config.products.length);
   document.querySelector("#overview-total-note").textContent = `页面配置：${vendors.size} 个厂商 · ${enabled.length} 个商品参与检查`;
   document.querySelector("#overview-stock").textContent = String(inStock);
-  document.querySelector("#overview-interval").textContent = `${Math.round((config.interval_seconds || 600) / 60)} 分钟`;
+  document.querySelector("#overview-interval").textContent = intervalLabel(config.interval_seconds ?? 600);
   renderMonitorState();
 }
 
@@ -548,7 +548,7 @@ function renderMonitorState() {
 function collectConfig(enabled = config.enabled) {
   return {
     enabled,
-    interval_seconds: Number(document.querySelector("#interval").value),
+    interval_seconds: Number(document.querySelector("#interval").value || NaN),
     affiliate_id: document.querySelector("#affiliate").value.trim(),
     notify_current_stock_on_start: document.querySelector("#notify-current").checked,
     fetcher: { mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value), wait_seconds: Number(document.querySelector("#fetcher-wait").value) },
@@ -561,16 +561,22 @@ function hasUnsavedChanges() {
   return savedConfig !== null && JSON.stringify(collectConfig()) !== savedConfig;
 }
 
+function intervalLabel(seconds) {
+  if (!Number.isInteger(seconds) || seconds < 0) return "未设置";
+  if (seconds === 0) return "连续检查";
+  return seconds % 60 === 0 ? `${seconds / 60} 分钟` : `${seconds} 秒`;
+}
+
 function updateDraftState() {
   if (savedConfig === null) return;
   const dirty = hasUnsavedChanges();
   const node = document.querySelector("#monitor-draft");
   node.textContent = dirty ? "有未保存的修改，请点击底部“保存配置”；单次测试可直接使用当前填写的商品配置。" : "页面配置已保存。";
   node.className = dirty ? "hint draft-note" : "hint";
-  const seconds = Number(document.querySelector("#interval").value);
-  const valid = Number.isInteger(seconds) && seconds >= 300 && seconds <= 86400;
-  document.querySelector("#interval-description").textContent = valid ? `每 ${seconds % 60 === 0 ? `${seconds / 60} 分钟` : `${seconds} 秒`}检查一次；开始监控后立即进行第一次检查。` : "检查间隔必须是 300–86400 秒的整数。";
-  document.querySelector("#interval-preset").value = [300, 600, 1800, 3600].includes(seconds) ? String(seconds) : "";
+  const seconds = Number(document.querySelector("#interval").value || NaN);
+  const valid = Number.isInteger(seconds) && seconds >= 0 && seconds <= 86400;
+  document.querySelector("#interval-description").textContent = valid ? (seconds === 0 ? "本轮检查完成后立即检查下一轮，不额外等待；各轮顺序执行。" : `每轮检查完成后等待 ${intervalLabel(seconds)}，再检查下一轮；开始监控后立即进行第一次检查。`) : "检查间隔必须是 0–86400 秒的整数。";
+  document.querySelector("#interval-preset").value = [0, 1, 5, 10, 30, 60, 300, 600, 1800, 3600].includes(seconds) ? String(seconds) : "";
 }
 
 function updateFetcherStatus() {
@@ -586,7 +592,7 @@ async function loadConfig() {
 
 function applyConfig(value) {
   config = value;
-  document.querySelector("#interval").value = config.interval_seconds || 600;
+  document.querySelector("#interval").value = config.interval_seconds ?? 600;
   document.querySelector("#affiliate").value = config.affiliate_id || "";
   document.querySelector("#notify-current").checked = Boolean(config.notify_current_stock_on_start);
   const fetcher = config.fetcher || {};
@@ -651,7 +657,7 @@ document.querySelector("#fetcher-test").addEventListener("click", (event) => run
   document.querySelector("#fetcher-health").textContent = `版本 ${result.version}：${result.message}`;
   setMessage(`FlareSolverr ${result.version} 服务连接成功；实际库存请在商品配置中点击“测试此商品”，无需开启监控。`, "success");
 }));
-document.querySelector("#interval").addEventListener("input", () => { config.interval_seconds = Number(document.querySelector("#interval").value); renderOverview(); });
+document.querySelector("#interval").addEventListener("input", () => { config.interval_seconds = Number(document.querySelector("#interval").value || NaN); renderOverview(); });
 document.querySelector("#interval-preset").addEventListener("change", (event) => {
   if (event.target.value) {
     document.querySelector("#interval").value = event.target.value;

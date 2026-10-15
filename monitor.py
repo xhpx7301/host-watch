@@ -22,7 +22,6 @@ ROOT = Path(__file__).resolve().parent
 STATE_PATH = ROOT / "state.json"
 CONFIG_PATH = ROOT / "config.json"
 STATUS_PATH = ROOT / "status.json"
-MIN_INTERVAL_SECONDS = 300
 
 
 class MonitorError(RuntimeError):
@@ -546,8 +545,8 @@ def main() -> int:
             if not telegram_config.get("disabled", False) and (not bot_token or not chat_id):
                 raise MonitorError("Telegram bot token 和 chat_id 必须同时填写，或在管理页停用 Telegram")
             interval = int(config.get("interval_seconds", 600))
-            if interval < MIN_INTERVAL_SECONDS:
-                raise MonitorError(f"检查间隔不能低于 {MIN_INTERVAL_SECONDS} 秒")
+            if interval < 0:
+                raise MonitorError("检查间隔不能为负数")
             check_once(session, config, state_path, status_path, bot_token, chat_id)
         except (SiteBlocked, RequestServiceError) as exc:
             logging.error("%s", exc)
