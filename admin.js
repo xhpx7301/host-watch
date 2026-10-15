@@ -5,7 +5,7 @@ let config = {
   isvoro_seckill: false,
   affiliate_id: "",
   affiliates: {},
-  merchant_order: ["vmiss", "vps_soy", "akile", "isvoro", "dmit"],
+  merchant_order: ["vmiss", "vps_soy", "akile", "isvoro", "dmit", "bwh"],
   watch_order: [],
   notify_order: [],
   fetcher: { mode: "requests", flaresolverr_url: "http://127.0.0.1:8191/v1", timeout_seconds: 60 },
@@ -558,7 +558,7 @@ function productEditor(item, index) {
 
   const grid = text("div", "", "form-grid");
   grid.append(
-    selectField("监控适配器", item.adapter || (item.category_url ? "vmiss" : "html"), "adapter", [["html", "通用 HTTPS 网页"], ["vmiss", "VMISS WHMCS"], ["vps_soy", "VPS.SOY 商品页"], ["akile", "Akile 商品库存"], ["isvoro", "Isvoro 商品库存"], ["dmit", "DMIT 商品库存"]]),
+    selectField("监控适配器", item.adapter || (item.category_url ? "vmiss" : "html"), "adapter", [["html", "通用 HTTPS 网页"], ["vmiss", "VMISS WHMCS"], ["vps_soy", "VPS.SOY 商品页"], ["akile", "Akile 商品库存"], ["isvoro", "Isvoro 商品库存"], ["dmit", "DMIT 商品库存"], ["bwh", "搬瓦工商品库存"]]),
     inputField("厂商名称", item.provider || (item.adapter === "vmiss" || item.category_url ? "VMISS" : "自定义网站"), "provider", "text", "例如 ExampleHost"),
     inputField("商品名称", item.name, "name", "text", "例如 US VPS 2 GB"),
   );
@@ -627,7 +627,15 @@ function productEditor(item, index) {
     inputField("价格页套餐标识（大盘自动填写，缺货无 PID 时使用）", item.adapter === "dmit" ? item.plan_key : "", "dmit_plan_key", "text", "例如 LAX:AS3:PREMIUM:TINY"),
     text("p", "按 PID 或完整套餐标识区分地区、硬件平台和线路。缺货套餐没有 PID 时保留套餐标识，补货后自动读取购买 PID。分类页必须包含此商品；不要粘贴加购物车地址。缺少明确库存标记时显示未知。网页请求方式在“网页请求”中设置，DMIT 大盘刷新也使用已保存的商家设置。", "hint span-2"),
   );
-  modeWrap.append(vmissFields, htmlFields, soyFields, akileFields, isvoroFields, dmitFields);
+  const bwhFields = text("div", "", "form-grid span-2");
+  bwhFields.dataset.adapterFields = "bwh";
+  bwhFields.append(
+    inputField("搬瓦工商品页 URL", item.adapter === "bwh" ? item.category_url : "https://bwh81.net/order/ecommerce/Los%20Angeles/USCA_9", "bwh_category_url", "url", "https://bwh81.net/order/ecommerce/Los%20Angeles/USCA_9"),
+    inputField("套餐标识（大盘自动填写）", item.adapter === "bwh" ? (item.bwh_offer_key || item.selector) : "", "bwh_offer_key", "text", "例如 87:USCA_9:quarterly:4999"),
+    inputField("商品 PID（购买入口）", item.adapter === "bwh" ? item.pid : "", "bwh_pid", "text", "例如 87"),
+    text("p", "搬瓦工使用公开 catalog.json 精确匹配商品、机房和计费周期；地区会自动显示中文。建议从 VPS 库存大盘添加，缺货商品也会保留套餐标识等待恢复。AFF 管理中的推广码会应用到带机房配置的购买入口。", "hint span-2"),
+  );
+  modeWrap.append(vmissFields, htmlFields, soyFields, akileFields, isvoroFields, dmitFields, bwhFields);
   const result = text("div", "", "product-test-result");
   result.setAttribute("role", "status");
   result.setAttribute("aria-live", "polite");
@@ -673,6 +681,11 @@ function syncEditor(article) {
     item.category_url = get("dmit_category_url").value.trim();
     item.pid = get("dmit_pid").value.trim();
     item.plan_key = get("dmit_plan_key").value.trim().toUpperCase();
+  } else if (item.adapter === "bwh") {
+    item.category_url = get("bwh_category_url").value.trim();
+    item.bwh_offer_key = get("bwh_offer_key").value.trim();
+    item.selector = item.bwh_offer_key;
+    item.pid = get("bwh_pid").value.trim();
   } else if (item.adapter === "vps_soy") {
     item.url = get("soy_url").value.trim();
     item.selector = get("soy_selector").value.trim();
@@ -1005,19 +1018,25 @@ function productMonitorLabel(item, saved) {
   return ({ failed: "监控服务运行失败", activating: "监控服务启动中", deactivating: "监控服务停止中" })[active] || "监控服务状态未知";
 }
 
-const merchantNames = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", isvoro: "Isvoro", dmit: "DMIT" };
-const merchantHosts = { vmiss: "app.vmiss.com", vps_soy: "www.vps.soy", akile: "akile.ai", isvoro: "isvoro.com", dmit: "www.dmit.io" };
+const merchantNames = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", isvoro: "Isvoro", dmit: "DMIT", bwh: "搬瓦工" };
+const merchantHosts = { vmiss: "app.vmiss.com", vps_soy: "www.vps.soy", akile: "akile.ai", isvoro: "isvoro.com", dmit: "www.dmit.io", bwh: "bwh81.net" };
 function merchantOrder() {
   return [...new Set([...(config.merchant_order || []), ...Object.keys(merchantNames)])].filter((key) => Object.hasOwn(merchantNames, key));
 }
 function affiliatePurchaseURL(raw, provider, item = {}, affiliates = config.affiliates || {}) {
   try {
     const url = new URL(raw);
-    if (url.protocol !== "https:" || url.hostname !== merchantHosts[provider] || url.username || url.password || url.port && url.port !== "443") return raw;
+    const acceptedHosts = provider === "bwh" ? ["bwh81.net", "www.bwh81.net", "bandwagonhost.com", "www.bandwagonhost.com"] : [merchantHosts[provider]];
+    if (url.protocol !== "https:" || !acceptedHosts.includes(url.hostname) || url.username || url.password || url.port && url.port !== "443") return raw;
     const code = affiliates[provider] ?? (provider === "vmiss" ? config.affiliate_id || "" : "");
     url.searchParams.delete("aff"); url.searchParams.delete("aff_code");
     if (provider === "vmiss" && code && (item.pid || item.gid)) return `https://${merchantHosts.vmiss}/aff.php?${new URLSearchParams({ aff: code, [item.pid ? "pid" : "gid"]: item.pid || item.gid })}`;
     if (provider === "dmit" && code && (item.pid || url.searchParams.get("pid"))) return `https://${merchantHosts.dmit}/aff.php?${new URLSearchParams({ aff: code, pid: item.pid || url.searchParams.get("pid") })}`;
+    if (provider === "bwh" && code) {
+      const target = new URL("https://bwh81.net/aff.php"); target.searchParams.set("aff", code);
+      for (const [key, value] of url.searchParams) if (key !== "a") target.searchParams.append(key, value);
+      return target.href;
+    }
     if (code) url.searchParams.set(provider === "akile" ? "aff_code" : "aff", code);
     return url.href;
   } catch { return raw; }
@@ -1031,17 +1050,18 @@ function renderAffiliatePreviews() {
     if (code.includes("://")) {
       try {
         const url = new URL(code), parameter = key === "akile" ? "aff_code" : "aff";
-        valid = url.protocol === "https:" && url.hostname === merchantHosts[key] && !url.username && !url.password && (!url.port || url.port === "443") && url.searchParams.getAll(parameter).length === 1;
+        const acceptedHosts = key === "bwh" ? ["bwh81.net", "www.bwh81.net", "bandwagonhost.com", "www.bandwagonhost.com"] : [merchantHosts[key]];
+        valid = url.protocol === "https:" && acceptedHosts.includes(url.hostname) && !url.username && !url.password && (!url.port || url.port === "443") && url.searchParams.getAll(parameter).length === 1;
         code = url.searchParams.get(parameter) || "";
       } catch { valid = false; }
     }
-    valid = valid && (!code || (["vmiss", "dmit"].includes(key) ? /^\d{1,20}$/ : /^[A-Za-z0-9_-]{1,128}$/).test(code));
+    valid = valid && (!code || (["vmiss", "dmit", "bwh"].includes(key) ? /^\d{1,20}$/ : /^[A-Za-z0-9_-]{1,128}$/).test(code));
     const state = document.querySelector(`[data-affiliate-state="${key}"]`), link = document.querySelector(`[data-affiliate-preview="${key}"]`);
     state.textContent = !valid ? "推广码或商家链接格式无效，请修改后保存。" : code ? "已填写，保存后在购买入口添加推广参数。" : "未设置，使用普通商品入口。";
     state.className = valid ? "hint" : "hint error";
     link.hidden = !valid || !code;
     if (valid && code) {
-      const entry = ["vmiss", "dmit"].includes(key) ? `https://${merchantHosts[key]}/aff.php` : key === "akile" ? "https://akile.ai/register" : `https://${merchantHosts[key]}/`;
+      const entry = ["vmiss", "dmit", "bwh"].includes(key) ? `https://${merchantHosts[key]}/aff.php` : key === "akile" ? "https://akile.ai/register" : `https://${merchantHosts[key]}/`;
       link.href = affiliatePurchaseURL(entry, key, {}, { [key]: code });
       link.textContent = link.href;
     } else link.removeAttribute("href");
@@ -1737,6 +1757,7 @@ const merchantPresets = {
   akile: { label: "Akile", hint: "默认仅添加 HKL-TW-Mini，自动识别地区，请求方式在“网页请求”中设置。", product: { adapter: "akile", provider: "Akile", name: "HKL-TW-Mini", area_mode: "auto", area_id: "6", node_name: "HKL-TW", selector: "HKL-TW-Mini", request_mode: "inherit" } },
   isvoro: { label: "Isvoro", hint: "按类型、地区/线路、套餐分别选择，默认中国香港 → HK PROD → HK PROD MiNi。", product: { adapter: "isvoro", provider: "Isvoro", name: "HK PROD MiNi", type_id: "24", type_name: "中国香港", category_id: "27", category_name: "HK PROD", product_id: "188", product_name: "HK PROD MiNi", request_mode: "inherit" } },
   dmit: { label: "DMIT", hint: "优先从库存大盘选择套餐；也可填写官网分类页与购买链接中的 PID。AFF 默认 22544，可在 AFF 管理中修改。", product: { adapter: "dmit", provider: "DMIT", name: "", category_url: "https://www.dmit.io/pages/pricing", pid: "", request_mode: "inherit" } },
+  bwh: { label: "搬瓦工", hint: "读取公开 catalog.json，默认洛杉矶 USCA_9 电商 VPS；地区和套餐会自动显示中文。AFF 默认 84938，可在 AFF 管理中修改。", product: { adapter: "bwh", provider: "搬瓦工", name: "", category_url: "https://bwh81.net/order/ecommerce/Los%20Angeles/USCA_9", bwh_offer_key: "", selector: "", pid: "", request_mode: "inherit" } },
 };
 const merchantSelect = document.querySelector("#add-merchant");
 for (const [key, preset] of Object.entries(merchantPresets)) {

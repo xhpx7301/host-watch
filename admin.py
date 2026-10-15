@@ -44,6 +44,7 @@ CLOUDSCRAPER_TEST_TARGETS = {
     "akile": ("Akile", "https://akile.ai/shop/server?areaId=3"),
     "isvoro": ("Isvoro", "https://isvoro.com/buy"),
     "dmit": ("DMIT", "https://www.dmit.io/pages/pricing"),
+    "bwh": ("搬瓦工", "https://bwh81.net/order/ecommerce/Los%20Angeles/USCA_9"),
     "baseline": ("公共 HTTPS 基准", "https://example.com/"),
 }
 
@@ -526,7 +527,7 @@ def validate_config(value: object) -> dict:
         product_id = str(item.get("id", "")).strip()
         name = str(item.get("name", "")).strip()
         adapter = str(item.get("adapter", "vmiss" if any(key in item for key in ("category_url", "selector", "gid", "pid")) else "html")).strip().casefold()
-        provider = str(item.get("provider", {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "isvoro": "Isvoro", "dmit": "DMIT"}.get(adapter, "自定义网站"))).strip()
+        provider = str(item.get("provider", {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "isvoro": "Isvoro", "dmit": "DMIT", "bwh": "搬瓦工"}.get(adapter, "自定义网站"))).strip()
         gid = str(item.get("gid", "")).strip()
         pid = str(item.get("pid", "")).strip()
         if "enabled" in item and not isinstance(item["enabled"], bool):
@@ -534,7 +535,7 @@ def validate_config(value: object) -> dict:
         if not product_id or product_id in seen_ids:
             raise ValueError("每个产品都需要唯一 ID")
         if adapter not in {*PROVIDERS, "html"}:
-            raise ValueError(f"产品 {name or product_id} 的适配器必须是 vmiss、vps_soy、akile、isvoro、dmit 或 html")
+            raise ValueError(f"产品 {name or product_id} 的适配器必须是 vmiss、vps_soy、akile、isvoro、dmit、bwh 或 html")
         if not name:
             raise ValueError(f"产品 {product_id} 需要填写商品名称")
         if not provider or len(provider) > 80:
@@ -577,6 +578,13 @@ def validate_config(value: object) -> dict:
             normalized_item = {"id": product_id, "name": name, "provider": provider, "adapter": adapter, "category_url": category_url, "pid": pid, "enabled": item.get("enabled", False)}
             if plan_key:
                 normalized_item["plan_key"] = plan_key
+        elif adapter == "bwh":
+            from bwh import PRODUCT_URL, normalize_catalog_url
+            category_url = normalize_catalog_url(item.get("category_url", PRODUCT_URL))
+            offer_key = str(item.get("bwh_offer_key", item.get("selector", ""))).strip()
+            if not re.fullmatch(r"[0-9]+:[A-Za-z0-9_-]{1,40}:[A-Za-z0-9_-]{1,40}:[0-9]+", offer_key) or pid and not re.fullmatch(r"[1-9][0-9]{0,9}", pid):
+                raise ValueError(f"产品 {name} 的搬瓦工套餐标识无效，请从库存大盘重新添加")
+            normalized_item = {"id": product_id, "name": name, "provider": provider, "adapter": adapter, "category_url": category_url, "selector": offer_key, "bwh_offer_key": offer_key, "pid": pid, "enabled": item.get("enabled", False)}
         elif adapter == "vps_soy":
             catalog_url = normalize_vps_soy_url(item.get("url", "https://www.vps.soy/cart"))
             selector = str(item.get("selector", name)).strip()

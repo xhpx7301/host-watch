@@ -2,14 +2,14 @@
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import re
 
-PROVIDERS = ("vmiss", "vps_soy", "akile", "isvoro", "dmit")
+PROVIDERS = ("vmiss", "vps_soy", "akile", "isvoro", "dmit", "bwh")
 DEFAULT_AFFILIATES = {
     "vmiss": "5340", "vps_soy": "",
     "akile": "eb2ff10d-f57f-485f-9621-ed873b36c2c0",
     "isvoro": "c57baee34737",
-    "dmit": "22544",
+    "dmit": "22544", "bwh": "84938",
 }
-HOSTS = {"vmiss": "app.vmiss.com", "vps_soy": "www.vps.soy", "akile": "akile.ai", "isvoro": "isvoro.com", "dmit": "www.dmit.io"}
+HOSTS = {"vmiss": "app.vmiss.com", "vps_soy": "www.vps.soy", "akile": "akile.ai", "isvoro": "isvoro.com", "dmit": "www.dmit.io", "bwh": "bwh81.net"}
 
 
 def normalize_affiliates(value: dict) -> dict:
@@ -25,7 +25,10 @@ def normalize_affiliates(value: dict) -> dict:
         code = raw.strip()
         if "://" in code:
             url = urlsplit(code)
-            if url.scheme != "https" or url.hostname != HOSTS[provider] or url.username or url.password or url.port not in (None, 443):
+            accepted_hosts = {HOSTS[provider]}
+            if provider == "bwh":
+                accepted_hosts.update({"www.bwh81.net", "bandwagonhost.com", "www.bandwagonhost.com"})
+            if url.scheme != "https" or url.hostname not in accepted_hosts or url.username or url.password or url.port not in (None, 443):
                 raise ValueError(f"{provider} 推广链接域名无效")
             parameter = "aff_code" if provider == "akile" else "aff"
             codes = [v for k, v in parse_qsl(url.query) if k == parameter]
@@ -42,7 +45,11 @@ def normalize_affiliates(value: dict) -> dict:
 def normalize_merchant_order(value: object) -> list:
     if not isinstance(value, list) or any(not isinstance(key, str) or key not in PROVIDERS for key in value) or len(set(value)) != len(value):
         raise ValueError("商家顺序必须是无重复的支持商家列表")
-    return value + [key for key in PROVIDERS if key not in value]
+    # Keep the order written by pre-BandwagonHost configurations stable until
+    # the admin page saves its expanded provider list. New/default configs
+    # include ``bwh`` explicitly and therefore receive it here as well.
+    providers = PROVIDERS if "bwh" in value else PROVIDERS[:-1]
+    return value + [key for key in providers if key not in value]
 
 
 def affiliate_purchase_url(raw: str, provider: str, config: dict, item: dict | None = None) -> str:
@@ -50,10 +57,18 @@ def affiliate_purchase_url(raw: str, provider: str, config: dict, item: dict | N
         return raw
     try:
         url = urlsplit(raw)
-        if url.scheme != "https" or url.hostname != HOSTS[provider] or url.username or url.password or url.port not in (None, 443):
+        accepted_hosts = {HOSTS[provider]}
+        if provider == "bwh":
+            accepted_hosts.update({"www.bwh81.net", "bandwagonhost.com", "www.bandwagonhost.com"})
+        if url.scheme != "https" or url.hostname not in accepted_hosts or url.username or url.password or url.port not in (None, 443):
             return raw
         code = config.get("affiliates", {}).get(provider, config.get("affiliate_id", "") if provider == "vmiss" else "")
         query = [(k, v) for k, v in parse_qsl(url.query, keep_blank_values=True) if k not in ("aff", "aff_code")]
+        if provider == "bwh" and code:
+            values = [(key, value) for key, value in query if key != "a"]
+            if (item or {}).get("pid") or dict(values).get("pid"):
+                return "https://bwh81.net/aff.php?" + urlencode({"aff": code, **dict(values)})
+            return urlunsplit(("https", "bwh81.net", url.path, urlencode(values + [("aff", code)]), url.fragment))
         if provider in {"vmiss", "dmit"} and code:
             ids = item or {}
             if provider == "dmit" and not ids.get("pid"):

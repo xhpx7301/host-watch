@@ -737,6 +737,14 @@ def selected_products(config: dict) -> list[dict]:
                     raise ValueError("缺少有效 PID 或套餐标识")
             except ValueError as exc:
                 raise MonitorError(f"商品 {name} 的 DMIT 配置无效：{exc}") from exc
+        elif item.get("adapter") == "bwh":
+            from bwh import PRODUCT_URL, normalize_catalog_url
+            try:
+                normalize_catalog_url(item.get("category_url", PRODUCT_URL))
+            except ValueError as exc:
+                raise MonitorError(f"商品 {name} 的搬瓦工配置无效：{exc}") from exc
+            if not re.fullmatch(r"[0-9]+:[A-Za-z0-9_-]{1,40}:[A-Za-z0-9_-]{1,40}:[0-9]+", str(item.get("bwh_offer_key", item.get("selector", "")))):
+                raise MonitorError(f"商品 {name} 缺少有效的搬瓦工套餐标识")
         elif item.get("adapter") == "vps_soy":
             if urlsplit(str(item.get("url", ""))).hostname != "www.vps.soy" or not item.get("selector"):
                 raise MonitorError(f"商品 {name} 的 VPS.SOY 配置不完整")
@@ -856,6 +864,7 @@ def collect_inventory(session, config, selected, found, unavailable):
     akile_catalogs = {}
     isvoro_catalogs = {}
     dmit_catalogs = {}
+    bwh_catalogs = {}
     for item in selected:
         try:
             if item["adapter"] == "html":
@@ -863,6 +872,9 @@ def collect_inventory(session, config, selected, found, unavailable):
             elif item["adapter"] == "dmit":
                 from dmit import inspect
                 found[item["id"]] = inspect(session, item, product_fetcher(config.get("fetcher"), item), dmit_catalogs)
+            elif item["adapter"] == "bwh":
+                from bwh import inspect
+                found[item["id"]] = inspect(session, item, product_fetcher(config.get("fetcher"), item), bwh_catalogs)
             elif item["adapter"] == "vps_soy":
                 fetcher = product_fetcher(config.get("fetcher"), item)
                 key = (normalize_vps_soy_url(item["url"]), fetcher.get("mode", "requests"))

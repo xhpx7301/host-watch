@@ -18,7 +18,7 @@ import requests
 from bs4 import BeautifulSoup
 
 
-PROVIDERS = {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "isvoro": "Isvoro", "dmit": "DMIT"}
+PROVIDERS = {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "isvoro": "Isvoro", "dmit": "DMIT", "bwh": "搬瓦工"}
 MAX_ROWS = 600
 METADATA_VERSION = 1
 
@@ -214,6 +214,9 @@ def load_catalog(provider: str, scope: str = "", fetcher: dict | None = None) ->
         session.headers["User-Agent"] = "HostWatch/1.0 (read-only VPS catalogue)"
         if provider == "dmit":
             from dmit import directory
+            scopes, actual, rows = directory(session, scope, fetcher)
+        elif provider == "bwh":
+            from bwh import directory
             scopes, actual, rows = directory(session, scope, fetcher)
         else:
             scopes, actual, rows = {"vmiss": vmiss_catalog, "vps_soy": soy_catalog, "akile": akile_catalog, "isvoro": isvoro_catalog}[provider](session, scope, fetcher)
