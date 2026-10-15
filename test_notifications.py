@@ -59,8 +59,8 @@ class NotificationTests(unittest.TestCase):
         for raw, expected in [("300 GB流量 · 100 Mbps", "300GB@100Mbps"), ("无限制 · 500 Mbps", "无限制@500Mbps"),
                               ("带宽：1 Gbps · 流量：1 TB", "1TB@1Gbps")]:
             self.assertEqual(network_text(raw), expected)
-        for raw, expected in [("CNY 25 / 月", "¥25 / 月"), ("$5.00 CAD / Monthly", "CA$5.00 / Monthly"),
-                              ("USD 5", "$5"), ("EUR 6.95 / 月", "€6.95 / 月")]:
+        for raw, expected in [("CNY 25 / 月", "¥25 / 月"), ("$5.00 CAD / Monthly", "CA$5.00 / 月\n折合 ¥25.5/月"),
+                              ("USD 5", "$5\n折合 ¥36.0"), ("EUR 6.95 / 月", "€6.95 / 月\n折合 ¥54.2/月")]:
             self.assertEqual(price_text(raw), expected)
 
     def test_manual_test_uses_live_metadata_and_current_aff_without_sending(self):

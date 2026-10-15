@@ -1170,12 +1170,58 @@ const currencySymbols = {
   JPY: "JP¥", EUR: "€", GBP: "£", KRW: "₩", RUB: "₽", INR: "₹", TRY: "₺", THB: "฿", VND: "₫", IDR: "Rp", MYR: "RM",
   BRL: "R$", PHP: "₱", CHF: "Fr.",
 };
+// Display-only reference rates; merchant checkout remains authoritative.
+const cnyRates = {
+  USD: 7.2, CAD: 5.1, AUD: 4.7, NZD: 4.25, HKD: 0.92, SGD: 5.35, TWD: 0.225,
+  JPY: 0.048, EUR: 7.8, GBP: 9.05, KRW: 0.0052, RUB: 0.08, INR: 0.086, TRY: 0.2,
+  THB: 0.2, VND: 0.00029, IDR: 0.00045, MYR: 1.62, BRL: 1.35, PHP: 0.126, CHF: 8.1,
+};
+const billingCycles = [
+  [/(?:per\s+)?semi[- ]?annual(?:ly)?|semiannually|half[- ]?year(?:ly)?/gi, "半年"],
+  [/(?:per\s+)?quarter(?:ly)?/gi, "季"],
+  [/(?:per\s+)?annual(?:ly)?|year(?:ly)?|year/gi, "年"],
+  [/(?:per\s+)?monthly|month|mo/gi, "月"],
+  [/(?:per\s+)?weekly|week/gi, "周"],
+  [/(?:per\s+)?daily|day/gi, "日"],
+];
+function formatBillingCycle(raw) {
+  return billingCycles.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), String(raw || ""));
+}
 function formatPrice(raw) {
   const codes = Object.keys(currencySymbols).join("|"), amount = "([+-]?\\d[\\d,]*(?:\\.\\d+)?)";
   return String(raw || "—")
     .replace(new RegExp(`(?<![A-Za-z])(?:${codes})\\s*[$¥￥]?\\s*${amount}`, "gi"), (match, value) => currencySymbols[match.match(/[A-Za-z]+/)[0].toUpperCase()] + value)
     .replace(new RegExp(`[$¥￥]?\\s*${amount}\\s*(${codes})(?![A-Za-z])`, "gi"), (_, value, code) => currencySymbols[code.toUpperCase()] + value)
     .replace(/￥/g, "¥").replace(/([¥$€£₩₽₹₺฿₫₱])\s+(?=\d)/g, "$1").replace(/(¥\d[\d,.]*)\s*元/g, "$1");
+}
+function priceConversion(raw) {
+  const value = String(raw || "");
+  const amount = "([+-]?\\d[\\d,]*(?:\\.\\d+)?)";
+  const codes = Object.keys(cnyRates).join("|");
+  let match = value.match(new RegExp(`\\b(${codes})\\s*[$¥￥]?\\s*${amount}`, "i"));
+  let currency = match?.[1]?.toUpperCase(), number = match?.[2];
+  if (!match) {
+    match = value.match(new RegExp(amount + "[ ]*(" + codes + ")", "i"));
+    currency = match?.[2]?.toUpperCase(); number = match?.[1];
+  }
+  if (!match) {
+    match = value.match(new RegExp(`(?:CA\\$|A\\$|NZ\\$|HK\\$|S\\$|NT\\$|JP¥|R\\$|RM|Fr\\.|[$€£₩₽₹₺฿₫₱])\\s*${amount}`, "i"));
+    const symbol = match?.[0]?.match(/^(CA\$|A\$|NZ\$|HK\$|S\$|NT\$|JP¥|R\$|RM|Fr\.|[$€£₽₩₹₺฿₫₱])/i)?.[1]?.toUpperCase();
+    const symbols = { "CA$": "CAD", "A$": "AUD", "NZ$": "NZD", "HK$": "HKD", "S$": "SGD", "NT$": "TWD", "JP¥": "JPY", "R$": "BRL", RM: "MYR", "FR.": "CHF", $: "USD", "€": "EUR", "£": "GBP", "₩": "KRW", "₽": "RUB", "₹": "INR", "₺": "TRY", "฿": "THB", "₫": "VND", "₱": "PHP" };
+    currency = symbols[symbol]; number = match?.[1];
+  }
+  if (!currency || !number) return "";
+  const cny = Number(number.replace(/,/g, "")) * cnyRates[currency];
+  if (!Number.isFinite(cny)) return "";
+  const cycle = formatBillingCycle(value).match(/(?:\/|per\s+)\s*(月|季|半年|年|周|日)/i)?.[1] || "";
+  return `折合 ¥${cny.toFixed(1)}${cycle ? `/${cycle}` : ""}`;
+}
+function priceTextWithConversion(raw) {
+  return String(raw || "—").split(/[；;]/).map(value => value.trim()).filter(Boolean).map(value => {
+    const original = formatBillingCycle(formatPrice(value));
+    const converted = priceConversion(value);
+    return `${original}${converted ? `\n${converted}` : ""}`;
+  }).join("；") || "—";
 }
 function renderLineEditor(cell, item) {
   const lines = text("div", "", "carrier-lines");
@@ -1203,12 +1249,19 @@ function expandedPrices(target) {
   return new Set([...target.querySelectorAll(".price-options[open]")].map(detail => detail.closest("[data-id]")?.dataset.id));
 }
 function renderPrice(cell, raw, expanded = false) {
-  const prices = formatPrice(raw).split(/[；;]/).map(p => p.trim()).filter(Boolean);
-  if (prices.length < 2) { cell.append(text("span", prices[0], "price-main")); return; }
-  const details = text("details", "", "price-options"), summary = text("summary", prices[0], "price-main");
+  const prices = String(raw || "—").split(/[；;]/).map(p => p.trim()).filter(Boolean);
+  const appendPrice = (target, price, className = "price-main") => {
+    const stack = text("span", "", "price-stack");
+    stack.append(text("span", formatBillingCycle(formatPrice(price)), className));
+    const converted = priceConversion(price);
+    if (converted) stack.append(text("span", converted, "price-converted"));
+    target.append(stack);
+  };
+  if (prices.length < 2) { appendPrice(cell, prices[0]); return; }
+  const details = text("details", "", "price-options"), summary = text("summary", "", "price-main");
   details.open = expanded;
-  summary.title = "展开其他计费周期"; details.append(summary);
-  prices.slice(1).forEach(price => details.append(text("div", price))); cell.append(details);
+  summary.title = "展开其他计费周期"; appendPrice(summary, prices[0]); details.append(summary);
+  prices.slice(1).forEach(price => { const row = text("div"); appendPrice(row, price, "price-option-main"); details.append(row); }); cell.append(details);
 }
 function moreActions(id, name, buttons) {
   const wrap = text("div", "", "more-actions"), trigger = text("button", "更多 ⋯"), panel = text("div", "", "action-popover");
@@ -1353,7 +1406,7 @@ function renderCompareContent() {
     ["线路", item => compareLineSummary(item)],
     ["硬件配置", item => formatHardware(productSnapshot(item, latest.get(item.id)).specs)],
     ["流量 / 带宽", item => formatNetwork(productSnapshot(item, latest.get(item.id)).traffic)],
-    ["价格", item => formatPrice(productSnapshot(item, latest.get(item.id)).price)],
+    ["价格", item => priceTextWithConversion(productSnapshot(item, latest.get(item.id)).price)],
     ["状态", item => {
       const p = productSnapshot(item, latest.get(item.id));
       return { value: Number.isInteger(p.available) ? stockLabel(p) : "未知", tone: !Number.isInteger(p.available) ? "pending" : p.available > 0 ? "ok" : "error" };

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from html import escape
+import math
 import re
 from urllib.parse import urlsplit
 
@@ -11,6 +12,12 @@ CURRENCIES = {
     "HKD": "HK$", "SGD": "S$", "TWD": "NT$", "JPY": "JP¥", "EUR": "€", "GBP": "£", "KRW": "₩",
     "RUB": "₽", "INR": "₹", "TRY": "₺", "THB": "฿", "VND": "₫", "IDR": "Rp", "MYR": "RM",
     "BRL": "R$", "PHP": "₱", "CHF": "Fr.",
+}
+# Display-only reference rates; merchant checkout remains authoritative.
+CNY_RATES = {
+    "USD": 7.2, "CAD": 5.1, "AUD": 4.7, "NZD": 4.25, "HKD": 0.92, "SGD": 5.35, "TWD": 0.225,
+    "JPY": 0.048, "EUR": 7.8, "GBP": 9.05, "KRW": 0.0052, "RUB": 0.08, "INR": 0.086, "TRY": 0.2,
+    "THB": 0.2, "VND": 0.00029, "IDR": 0.00045, "MYR": 1.62, "BRL": 1.35, "PHP": 0.126, "CHF": 8.1,
 }
 
 
@@ -47,7 +54,55 @@ def price_text(raw: str) -> str:
     codes, amount = "|".join(CURRENCIES), r"([+-]?\d[\d,]*(?:\.\d+)?)"
     value = re.sub(rf"(?<![A-Za-z])({codes})\s*[$¥￥]?\s*{amount}", lambda m: CURRENCIES[m[1].upper()] + m[2], value, flags=re.I)
     value = re.sub(rf"[$¥￥]?\s*{amount}\s*({codes})(?![A-Za-z])", lambda m: CURRENCIES[m[2].upper()] + m[1], value, flags=re.I)
-    return re.sub(r"([¥$€£₩₽₹₺฿₫₱])\s+(?=\d)", r"\1", value.replace("￥", "¥"))
+    value = re.sub(r"([¥$€£₩₽₹₺฿₫₱])\s+(?=\d)", r"\1", value.replace("￥", "¥"))
+    for pattern, replacement in [
+        (r"(?:per\s+)?semi[- ]?annual(?:ly)?|semiannually|half[- ]?year(?:ly)?", "半年"),
+        (r"(?:per\s+)?quarter(?:ly)?", "季"),
+        (r"(?:per\s+)?annual(?:ly)?|year(?:ly)?|year", "年"),
+        (r"(?:per\s+)?monthly|month|mo", "月"),
+        (r"(?:per\s+)?weekly|week", "周"),
+        (r"(?:per\s+)?daily|day", "日"),
+    ]:
+        value = re.sub(pattern, replacement, value, flags=re.I)
+    converted = price_conversion(raw)
+    return value + (f"\n{converted}" if converted else "")
+
+
+def price_conversion(raw: str) -> str:
+    value = str(raw or "")
+    amount = r"([+-]?\d[\d,]*(?:\.\d+)?)"
+    codes = "|".join(CNY_RATES)
+    match = re.search(rf"\b({codes})\s*[$¥￥]?\s*{amount}", value, re.I)
+    currency, number = (match.group(1).upper(), match.group(2)) if match else ("", "")
+    if not match:
+        match = re.search(rf"{amount}\s*({codes})\b", value, re.I)
+        if match:
+            number, currency = match.group(1), match.group(2).upper()
+    if not match:
+        symbol_match = re.search(rf"(CA\$|A\$|NZ\$|HK\$|S\$|NT\$|JP¥|R\$|RM|Fr\.|[$€£₩₽₹₺฿₫₱])\s*{amount}", value, re.I)
+        symbols = {"CA$": "CAD", "A$": "AUD", "NZ$": "NZD", "HK$": "HKD", "S$": "SGD", "NT$": "TWD", "JP¥": "JPY", "R$": "BRL", "RM": "MYR", "FR.": "CHF", "$": "USD", "€": "EUR", "£": "GBP", "₩": "KRW", "₽": "RUB", "₹": "INR", "₺": "TRY", "฿": "THB", "₫": "VND", "₱": "PHP"}
+        if symbol_match:
+            currency, number = symbols[symbol_match.group(1).upper()], symbol_match.group(2)
+    if not currency or not number:
+        return ""
+    result = float(number.replace(",", "")) * CNY_RATES[currency]
+    if not math.isfinite(result):
+        return ""
+    cycle = re.search(r"(?:/|per\s+)\s*(月|季|半年|年|周|日)", price_text_cycle(value), re.I)
+    return f"折合 ¥{result:.1f}" + (f"/{cycle.group(1)}" if cycle else "")
+
+
+def price_text_cycle(value: str) -> str:
+    for pattern, replacement in [
+        (r"(?:per\s+)?semi[- ]?annual(?:ly)?|semiannually|half[- ]?year(?:ly)?", "半年"),
+        (r"(?:per\s+)?quarter(?:ly)?", "季"),
+        (r"(?:per\s+)?annual(?:ly)?|year(?:ly)?|year", "年"),
+        (r"(?:per\s+)?monthly|month|mo", "月"),
+        (r"(?:per\s+)?weekly|week", "周"),
+        (r"(?:per\s+)?daily|day", "日"),
+    ]:
+        value = re.sub(pattern, replacement, value, flags=re.I)
+    return value
 
 
 def purchase_button(url: str) -> dict:

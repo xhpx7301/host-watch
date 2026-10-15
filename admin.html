@@ -286,7 +286,7 @@
      .watch-compare-table thead th { border-top:0; color:var(--ink); background:#f5f7fc; font-weight:700; }
      .watch-compare-table thead th:first-child { width:112px; color:var(--muted); background:#f8fafc; text-align:left; }
      .watch-compare-table tbody th { width:112px; color:var(--muted); background:#f8fafc; font-weight:650; text-align:left; white-space:nowrap; }
-     .watch-compare-table td { min-width:145px; overflow-wrap:anywhere; }
+    .watch-compare-table td { min-width:145px; overflow-wrap:anywhere; white-space:pre-line; }
      .watch-compare-table thead strong,.watch-compare-table thead small { display:block; }
      .watch-compare-table thead strong { color:var(--blue); font-size:13px; }
      .watch-compare-table thead small { margin-top:3px; color:var(--muted); font-size:11px; font-weight:500; }
@@ -370,6 +370,9 @@
     .spec-chip { display:inline-block; white-space:nowrap; padding:4px 7px; border:1px solid #e7eaf3; border-radius:5px; background:#f3f5fa; color:#526079; font-size:12px; font-weight:600; }
     .network-detail { font-size:12px; font-variant-numeric:tabular-nums; color:#526079; }
     .price-main { color:var(--blue); font-weight:700; font-size:13px; font-variant-numeric:tabular-nums; }
+    .price-stack { display:grid; gap:2px; justify-items:center; }
+    .price-converted { color:var(--muted); font-size:11px; font-weight:600; font-variant-numeric:tabular-nums; }
+    .price-option-main { display:block; color:var(--ink); font-weight:600; }
     .price-options { font-size:12px; }
     .price-options > summary { cursor:pointer; list-style:none; }
     .price-options > summary::after { content:" ▾"; color:var(--muted); }
@@ -511,7 +514,7 @@
       <div class="catalog-pagination"><span id="catalog-page-label" class="subtle"></span><div class="actions"><button id="catalog-prev" type="button" disabled>上一页</button><button id="catalog-next" type="button" disabled>下一页</button></div></div>
     </div>
     <div class="catalog-reminders"><div><h2>已关注 / 通知 <span id="catalog-watch-count">0</span></h2><p id="catalog-reminder-note" class="hint">加入后点击底部“保存配置”，再开始监控。</p></div><button id="catalog-open-products" type="button">查看 VPS 库存监控</button></div>
-    <p class="hint">大盘自动刷新仅在此栏目打开且页面可见时运行，使用已保存的商家请求方式；可随时停止。关闭网页后，已保存的监控和通知商品仍会在服务器检查，只有通知列表会通过 Telegram 提醒。大盘刷新不发送通知，也不改动提醒历史。价格与购买资格以商家下单页为准。</p>
+    <p class="hint">大盘自动刷新仅在此栏目打开且页面可见时运行，使用已保存的商家请求方式；可随时停止。关闭网页后，已保存的监控和通知商品仍会在服务器检查，只有通知列表会通过 Telegram 提醒。大盘刷新不发送通知，也不改动提醒历史。外币价格下方的人民币金额为参考折算值，实际价格与购买资格以商家下单页为准。</p>
   </section>
 
   <section class="page-panel panel-card" id="page-monitor" data-page="monitor" aria-labelledby="page-title" hidden>
