@@ -397,8 +397,19 @@ function stockLabel(product) {
   return product.stock_mode === "availability" ? "有货" : `${product.available} 件`;
 }
 
+function productMonitorLabel(item, saved) {
+  if (!saved) return "新商品待保存";
+  if (JSON.stringify(item) !== JSON.stringify(saved)) return "商品修改待保存";
+  if (!saved.enabled) return "未参与监控";
+  const active = monitorService?.active;
+  if (active === "active") return config.enabled ? "监控运行中" : "暂停尚未生效（服务仍在运行）";
+  if (active === "inactive") return config.enabled ? "监控服务已停止" : "监控已暂停";
+  return ({ failed: "监控服务运行失败", activating: "监控服务启动中", deactivating: "监控服务停止中" })[active] || "监控服务状态未知";
+}
+
 function renderProductList() {
   const statusProducts = new Map((lastStatus?.products || []).map((product) => [product.id, product]));
+  const savedProducts = new Map((savedConfig ? JSON.parse(savedConfig).products : []).map((product) => [product.id, product]));
   if (!config.products.length) {
     listNode.replaceChildren(text("div", "尚未添加商品。添加 VMISS 商品或通用 HTTPS 商品页开始监控。", "empty"));
     return;
@@ -407,7 +418,7 @@ function renderProductList() {
     const status = statusProducts.get(item.id);
     const article = text("article", "", "product");
     const identity = text("div", "", "product-name");
-    identity.append(text("strong", item.name || "未命名商品"), text("span", `${item.provider || "自定义网站"}${item.enabled ? " · 已纳入监控" : " · 未纳入监控"}`));
+    identity.append(text("strong", item.name || "未命名商品"), text("span", `${item.provider || "自定义网站"} · ${productMonitorLabel(item, savedProducts.get(item.id))}`));
     const stock = text("div", "", "metric");
     stock.append(text("span", "最近库存", "metric-label"), text("strong", status ? stockLabel(status) : "暂无数据", `metric-value ${status?.available > 0 ? "in" : "out"}`));
     const checked = text("div", "", "metric");
@@ -444,7 +455,7 @@ function renderOverview() {
   const latest = new Map((lastStatus?.products || []).map((product) => [product.id, product]));
   const inStock = enabled.filter((item) => (latest.get(item.id)?.available || 0) > 0).length;
   document.querySelector("#overview-total").textContent = String(config.products.length);
-  document.querySelector("#overview-total-note").textContent = `${vendors.size} 个厂商 · ${enabled.length} 个启用`;
+  document.querySelector("#overview-total-note").textContent = `页面配置：${vendors.size} 个厂商 · ${enabled.length} 个商品参与检查`;
   document.querySelector("#overview-stock").textContent = String(inStock);
   document.querySelector("#overview-interval").textContent = `${Math.round((config.interval_seconds || 600) / 60)} 分钟`;
   renderMonitorState();
@@ -457,7 +468,7 @@ function renderMonitorState() {
   let note = config.enabled ? "已保存：开启自动监控。" : "已保存：暂停自动监控。";
   if (!savedConfig) note = "正在读取配置。";
   if (!monitorService) note += "请刷新状态核对服务器实际运行情况。";
-  else if (active === "active") note += "服务已启动，库存检查是否成功请查看最近检查结果。";
+  else if (active === "active") note += config.enabled ? "服务已启动，库存检查是否成功请查看最近检查结果。" : "暂停尚未生效，服务仍在运行，请重新保存并暂停。";
   else if (config.enabled) note += "服务尚未运行，可点击“保存并开始监控”恢复。";
   else note += "点击“保存并开始监控”后开始检查。";
   const runtime = document.querySelector("#monitor-runtime");
@@ -466,6 +477,7 @@ function renderMonitorState() {
   document.querySelector("#monitor-runtime-note").textContent = note;
   document.querySelector("#overview-state").textContent = label;
   document.querySelector("#overview-state-note").textContent = note;
+  renderProductList();
 }
 
 function collectConfig(enabled = config.enabled) {
