@@ -14,7 +14,8 @@
       "vps_soy": "inherit",
       "akile": "inherit",
       "isvoro": "inherit",
-      "html": "inherit"
+      "html": "inherit",
+      "dmit": "inherit"
     }
   },
   "telegram": {
@@ -27,12 +28,14 @@
     "vmiss": "5340",
     "vps_soy": "",
     "akile": "eb2ff10d-f57f-485f-9621-ed873b36c2c0",
-    "isvoro": "c57baee34737"
+    "isvoro": "c57baee34737",
+    "dmit": "22544"
   },
   "merchant_order": [
     "vmiss",
     "vps_soy",
     "akile",
-    "isvoro"
+    "isvoro",
+    "dmit"
   ]
 }

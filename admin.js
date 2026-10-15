@@ -5,7 +5,7 @@ let config = {
   isvoro_seckill: false,
   affiliate_id: "",
   affiliates: {},
-  merchant_order: ["vmiss", "vps_soy", "akile", "isvoro"],
+  merchant_order: ["vmiss", "vps_soy", "akile", "isvoro", "dmit"],
   watch_order: [],
   notify_order: [],
   fetcher: { mode: "requests", flaresolverr_url: "http://127.0.0.1:8191/v1", timeout_seconds: 60 },
@@ -544,7 +544,7 @@ function productEditor(item, index) {
 
   const grid = text("div", "", "form-grid");
   grid.append(
-    selectField("监控适配器", item.adapter || (item.category_url ? "vmiss" : "html"), "adapter", [["html", "通用 HTTPS 网页"], ["vmiss", "VMISS WHMCS"], ["vps_soy", "VPS.SOY 商品页"], ["akile", "Akile 商品库存"], ["isvoro", "Isvoro 商品库存"]]),
+    selectField("监控适配器", item.adapter || (item.category_url ? "vmiss" : "html"), "adapter", [["html", "通用 HTTPS 网页"], ["vmiss", "VMISS WHMCS"], ["vps_soy", "VPS.SOY 商品页"], ["akile", "Akile 商品库存"], ["isvoro", "Isvoro 商品库存"], ["dmit", "DMIT 商品库存"]]),
     inputField("厂商名称", item.provider || (item.adapter === "vmiss" || item.category_url ? "VMISS" : "自定义网站"), "provider", "text", "例如 ExampleHost"),
     inputField("商品名称", item.name, "name", "text", "例如 US VPS 2 GB"),
   );
@@ -605,7 +605,14 @@ function productEditor(item, index) {
   refreshIsvoro.type = "button";
   refreshIsvoro.addEventListener("click", () => loadIsvoroDirectory(article, true));
   isvoroFields.append(refreshIsvoro, text("p", "请按类型 → 地区/线路 → 套餐选择。切换上一级后需重新选择下一级；物理机等无子分类的类型使用自身分类。月付/年付属于购买周期，共享套餐库存，提醒入口定位到套餐。", "hint span-2"), text("p", "可点击刷新获取官网最新目录。测试按所选三个 ID 校验归属并读取实时库存，不会开启自动监控。", "hint span-2 isvoro-status"));
-  modeWrap.append(vmissFields, htmlFields, soyFields, akileFields, isvoroFields);
+  const dmitFields = text("div", "", "form-grid span-2");
+  dmitFields.dataset.adapterFields = "dmit";
+  dmitFields.append(
+    inputField("DMIT 价格 / 分类页", item.adapter === "dmit" ? item.category_url : "https://www.dmit.io/pages/pricing", "dmit_category_url", "url", "https://www.dmit.io/cart.php?gid=分类ID"),
+    inputField("商品 PID（购买链接中的 pid）", item.adapter === "dmit" ? item.pid : "", "dmit_pid", "text", "填写实际商品 PID"),
+    text("p", "按 PID 区分同名套餐，分类页必须包含此商品。支持价格页、cart.php?gid=分类ID 和 /store/ 分类页；不要粘贴加购物车地址。缺少明确库存标记时显示未知，读取失败不会当作缺货。网页请求方式在“网页请求”中设置，DMIT 大盘刷新也使用已保存的商家设置。", "hint span-2"),
+  );
+  modeWrap.append(vmissFields, htmlFields, soyFields, akileFields, isvoroFields, dmitFields);
   const result = text("div", "", "product-test-result");
   result.setAttribute("role", "status");
   result.setAttribute("aria-live", "polite");
@@ -647,6 +654,9 @@ function syncEditor(article) {
     const target = get("target").value;
     item.gid = target === "gid" ? get("target_id").value.trim() : "";
     item.pid = target === "pid" ? get("target_id").value.trim() : "";
+  } else if (item.adapter === "dmit") {
+    item.category_url = get("dmit_category_url").value.trim();
+    item.pid = get("dmit_pid").value.trim();
   } else if (item.adapter === "vps_soy") {
     item.url = get("soy_url").value.trim();
     item.selector = get("soy_selector").value.trim();
@@ -952,8 +962,8 @@ function productMonitorLabel(item, saved) {
   return ({ failed: "监控服务运行失败", activating: "监控服务启动中", deactivating: "监控服务停止中" })[active] || "监控服务状态未知";
 }
 
-const merchantNames = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", isvoro: "Isvoro" };
-const merchantHosts = { vmiss: "app.vmiss.com", vps_soy: "www.vps.soy", akile: "akile.ai", isvoro: "isvoro.com" };
+const merchantNames = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", isvoro: "Isvoro", dmit: "DMIT" };
+const merchantHosts = { vmiss: "app.vmiss.com", vps_soy: "www.vps.soy", akile: "akile.ai", isvoro: "isvoro.com", dmit: "www.dmit.io" };
 function merchantOrder() {
   return [...new Set([...(config.merchant_order || []), ...Object.keys(merchantNames)])].filter((key) => Object.hasOwn(merchantNames, key));
 }
@@ -964,6 +974,7 @@ function affiliatePurchaseURL(raw, provider, item = {}, affiliates = config.affi
     const code = affiliates[provider] ?? (provider === "vmiss" ? config.affiliate_id || "" : "");
     url.searchParams.delete("aff"); url.searchParams.delete("aff_code");
     if (provider === "vmiss" && code && (item.pid || item.gid)) return `https://${merchantHosts.vmiss}/aff.php?${new URLSearchParams({ aff: code, [item.pid ? "pid" : "gid"]: item.pid || item.gid })}`;
+    if (provider === "dmit" && code && (item.pid || url.searchParams.get("pid"))) return `https://${merchantHosts.dmit}/aff.php?${new URLSearchParams({ aff: code, pid: item.pid || url.searchParams.get("pid") })}`;
     if (code) url.searchParams.set(provider === "akile" ? "aff_code" : "aff", code);
     return url.href;
   } catch { return raw; }
@@ -981,13 +992,13 @@ function renderAffiliatePreviews() {
         code = url.searchParams.get(parameter) || "";
       } catch { valid = false; }
     }
-    valid = valid && (!code || (key === "vmiss" ? /^\d{1,20}$/ : /^[A-Za-z0-9_-]{1,128}$/).test(code));
+    valid = valid && (!code || (["vmiss", "dmit"].includes(key) ? /^\d{1,20}$/ : /^[A-Za-z0-9_-]{1,128}$/).test(code));
     const state = document.querySelector(`[data-affiliate-state="${key}"]`), link = document.querySelector(`[data-affiliate-preview="${key}"]`);
     state.textContent = !valid ? "推广码或商家链接格式无效，请修改后保存。" : code ? "已填写，保存后在购买入口添加推广参数。" : "未设置，使用普通商品入口。";
     state.className = valid ? "hint" : "hint error";
     link.hidden = !valid || !code;
     if (valid && code) {
-      const entry = key === "vmiss" ? "https://app.vmiss.com/aff.php" : key === "akile" ? "https://akile.ai/register" : `https://${merchantHosts[key]}/`;
+      const entry = ["vmiss", "dmit"].includes(key) ? `https://${merchantHosts[key]}/aff.php` : key === "akile" ? "https://akile.ai/register" : `https://${merchantHosts[key]}/`;
       link.href = affiliatePurchaseURL(entry, key, {}, { [key]: code });
       link.textContent = link.href;
     } else link.removeAttribute("href");
@@ -1039,6 +1050,7 @@ function productSnapshot(item, status) {
       data.traffic = fields.filter(network).join(" · ");
     }
   }
+  if (item.adapter === "dmit" && /^[1-9][0-9]{0,9}$/.test(String(item.pid || ""))) data.url = `https://www.dmit.io/cart.php?a=add&pid=${item.pid}`;
   // Correct older Akile snapshots without changing other vendors' zero allowances.
   if (item.adapter === "akile" && data.traffic) data.traffic = data.traffic.replace(/(^|[·@|]\s*)0(?:\.0+)?\s*GB\s*(?:流量)?(?=\s*(?:[·@|]|$))/gi, "$1无限制");
   if (item.adapter === "vps_soy" && data.specs) data.specs = soyHardware(data.specs);
@@ -1569,6 +1581,7 @@ const merchantPresets = {
   vps_soy: { label: "VPS.SOY", hint: "默认深港IX-MINI（FID=1、GID=8），支持切换地区/线路分组。", product: { adapter: "vps_soy", provider: "VPS.SOY", name: "深港IX-MINI", url: "https://www.vps.soy/cart?fid=1&gid=8", selector: "深港IX-MINI", request_mode: "inherit" } },
   akile: { label: "Akile", hint: "默认仅添加 HKL-TW-Mini，自动识别地区，请求方式在“网页请求”中设置。", product: { adapter: "akile", provider: "Akile", name: "HKL-TW-Mini", area_mode: "auto", area_id: "6", node_name: "HKL-TW", selector: "HKL-TW-Mini", request_mode: "inherit" } },
   isvoro: { label: "Isvoro", hint: "按类型、地区/线路、套餐分别选择，默认中国香港 → HK PROD → HK PROD MiNi。", product: { adapter: "isvoro", provider: "Isvoro", name: "HK PROD MiNi", type_id: "24", type_name: "中国香港", category_id: "27", category_name: "HK PROD", product_id: "188", product_name: "HK PROD MiNi", request_mode: "inherit" } },
+  dmit: { label: "DMIT", hint: "优先从库存大盘选择套餐；也可填写官网分类页与购买链接中的 PID。AFF 默认 22544，可在 AFF 管理中修改。", product: { adapter: "dmit", provider: "DMIT", name: "", category_url: "https://www.dmit.io/pages/pricing", pid: "", request_mode: "inherit" } },
 };
 const merchantSelect = document.querySelector("#add-merchant");
 for (const [key, preset] of Object.entries(merchantPresets)) {

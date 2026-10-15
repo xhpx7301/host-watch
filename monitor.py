@@ -637,6 +637,9 @@ def inspect_product(session: requests.Session, item: dict, fetcher: dict) -> Pro
     """Read one product without saving history, changing services or notifying."""
     if item["adapter"] == "html":
         return fetch_html_stock(session, item, fetcher)
+    if item["adapter"] == "dmit":
+        from dmit import inspect
+        return inspect(session, item, product_fetcher(fetcher, item))
     if item["adapter"] == "vps_soy":
         body, final_url = fetch_vps_soy_page(session, item["url"], product_fetcher(fetcher, item))
         return parse_vps_soy(body, final_url, item["selector"])
@@ -690,6 +693,14 @@ def selected_products(config: dict) -> list[dict]:
                 raise MonitorError(f"商品 {name} 必须且只能填写 gid 或 pid 其中一个")
             if not str(item.get("selector", "")).strip():
                 raise MonitorError(f"商品 {name} 缺少商品选择标识")
+        elif item.get("adapter") == "dmit":
+            from dmit import PRICING_URL, normalize_catalog_url
+            try:
+                normalize_catalog_url(item.get("category_url", PRICING_URL))
+                if not re.fullmatch(r"[1-9][0-9]{0,9}", str(item.get("pid", ""))):
+                    raise ValueError("缺少有效 PID")
+            except ValueError as exc:
+                raise MonitorError(f"商品 {name} 的 DMIT 配置无效：{exc}") from exc
         elif item.get("adapter") == "vps_soy":
             if urlsplit(str(item.get("url", ""))).hostname != "www.vps.soy" or not item.get("selector"):
                 raise MonitorError(f"商品 {name} 的 VPS.SOY 配置不完整")
@@ -826,10 +837,14 @@ def check_once(
     soy_pages = {}
     akile_catalogs = {}
     isvoro_catalogs = {}
+    dmit_catalogs = {}
     for item in selected:
         try:
             if item["adapter"] == "html":
                 found[item["id"]] = fetch_html_stock(session, item, config.get("fetcher"))
+            elif item["adapter"] == "dmit":
+                from dmit import inspect
+                found[item["id"]] = inspect(session, item, product_fetcher(config.get("fetcher"), item), dmit_catalogs)
             elif item["adapter"] == "vps_soy":
                 fetcher = product_fetcher(config.get("fetcher"), item)
                 key = (normalize_vps_soy_url(item["url"]), fetcher.get("mode", "requests"))

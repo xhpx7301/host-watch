@@ -36,7 +36,7 @@ TEST_TASKS = {}
 STOPPED_TEST_IDS = {}
 BROWSER_CLEANUP_SECONDS = 8
 BROWSER_CLEANUP_WARNING = "本地测试进程已结束，但未能确认 FlareSolverr 浏览器释放；请检查服务日志，必要时重启 FlareSolverr，避免继续启动浏览器测试"
-CATALOG = CatalogService(lambda: CONFIG_PATH.parent / "catalog.json")
+CATALOG = CatalogService(lambda: CONFIG_PATH.parent / "catalog.json", lambda: current_config()["fetcher"])
 
 
 def destroy_test_browser(endpoint: str, session_id: str, creation_uncertain: bool = False) -> str:
@@ -95,7 +95,7 @@ def stock_test_worker() -> None:
         output = {"ok": True, "available": result.available, "stock_mode": result.stock_mode, "purchase_url": result.url, "name": result.name, **{field: getattr(result, field) for field in ("region", "specs", "traffic", "price")}}
         if result.vendor == "Akile":
             output["matched_product"] = {"area_id": result.area_id, "area_name": result.area_name, "node_name": result.node_name, "plan_name": result.name}
-        if result.vendor == "VPS.SOY":
+        if result.vendor in {"VPS.SOY", "DMIT"}:
             output["catalog_url"] = result.catalog_url
         if result.vendor == "Isvoro":
             output["matched_product"] = result.match_details
@@ -464,15 +464,15 @@ def validate_config(value: object) -> dict:
         product_id = str(item.get("id", "")).strip()
         name = str(item.get("name", "")).strip()
         adapter = str(item.get("adapter", "vmiss" if any(key in item for key in ("category_url", "selector", "gid", "pid")) else "html")).strip().casefold()
-        provider = str(item.get("provider", {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "isvoro": "Isvoro"}.get(adapter, "自定义网站"))).strip()
+        provider = str(item.get("provider", {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "isvoro": "Isvoro", "dmit": "DMIT"}.get(adapter, "自定义网站"))).strip()
         gid = str(item.get("gid", "")).strip()
         pid = str(item.get("pid", "")).strip()
         if "enabled" in item and not isinstance(item["enabled"], bool):
             raise ValueError(f"产品 {name or product_id} 的启用状态必须是布尔值")
         if not product_id or product_id in seen_ids:
             raise ValueError("每个产品都需要唯一 ID")
-        if adapter not in {"vmiss", "html", "vps_soy", "akile", "isvoro"}:
-            raise ValueError(f"产品 {name or product_id} 的适配器必须是 vmiss、vps_soy、akile、isvoro 或 html")
+        if adapter not in {*PROVIDERS, "html"}:
+            raise ValueError(f"产品 {name or product_id} 的适配器必须是 vmiss、vps_soy、akile、isvoro、dmit 或 html")
         if not name:
             raise ValueError(f"产品 {product_id} 需要填写商品名称")
         if not provider or len(provider) > 80:
@@ -504,6 +504,12 @@ def validate_config(value: object) -> dict:
                 "pid": pid,
                 "enabled": item.get("enabled", False),
             }
+        elif adapter == "dmit":
+            from dmit import PRICING_URL, normalize_catalog_url
+            category_url = normalize_catalog_url(item.get("category_url", PRICING_URL))
+            if not re.fullmatch(r"[1-9][0-9]{0,9}", pid) or len(name) > 120 or len(category_url) > 2048:
+                raise ValueError(f"产品 {name} 的 DMIT PID 必须是正整数（最多 10 位），名称最多 120 字符")
+            normalized_item = {"id": product_id, "name": name, "provider": provider, "adapter": adapter, "category_url": category_url, "pid": pid, "enabled": item.get("enabled", False)}
         elif adapter == "vps_soy":
             catalog_url = normalize_vps_soy_url(item.get("url", "https://www.vps.soy/cart"))
             selector = str(item.get("selector", name)).strip()

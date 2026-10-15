@@ -1,6 +1,6 @@
 /* VPS browsing uses cached read-only snapshots; only explicit selection edits config. */
 (() => {
-  const providers = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", isvoro: "Isvoro" };
+  const providers = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", isvoro: "Isvoro", dmit: "DMIT" };
   const get = (id) => document.getElementById(id);
   let provider = sessionStorage.getItem("hostwatch-catalog-provider") || "akile";
   if (!Object.hasOwn(providers, provider)) provider = "akile";
@@ -18,6 +18,7 @@
     const watch = row.watch;
     if (item.adapter !== watch.adapter) return false;
     const equal = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+    if (watch.adapter === "dmit") return equal(item.pid, watch.pid);
     if (watch.adapter === "akile") return (item.area_mode !== "manual" || equal(item.area_id, watch.area_id)) && equal(item.node_name, watch.node_name) && equal(item.selector, watch.selector);
     if (watch.adapter === "isvoro") return ["type_id", "category_id", "product_id"].every((key) => equal(item[key], watch[key]));
     if (watch.adapter === "vps_soy") {
@@ -106,7 +107,7 @@
       actions.append(text("small", reminderLabel(row)));
       if (row.purchase_url) {
         const url = new URL(row.purchase_url);
-        if (url.protocol === "https:" && ["app.vmiss.com", "www.vps.soy", "akile.ai", "isvoro.com"].includes(url.hostname) && !url.username && !url.password) {
+        if (url.protocol === "https:" && ["app.vmiss.com", "www.vps.soy", "akile.ai", "isvoro.com", "www.dmit.io"].includes(url.hostname) && !url.username && !url.password) {
           const link = text("a", "查看 / 手动购买"); link.href = affiliatePurchaseURL(url.href, row.watch.adapter, row.watch); link.target = "_blank"; link.rel = "noopener noreferrer"; actions.append(link);
         }
       }

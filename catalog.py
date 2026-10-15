@@ -9,6 +9,8 @@ import subprocess
 import sys
 import tempfile
 import threading
+import uuid
+from contextlib import nullcontext
 from datetime import datetime
 from urllib.parse import urljoin, urlsplit
 
@@ -16,7 +18,7 @@ import requests
 from bs4 import BeautifulSoup
 
 
-PROVIDERS = {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "isvoro": "Isvoro"}
+PROVIDERS = {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "isvoro": "Isvoro", "dmit": "DMIT"}
 MAX_ROWS = 600
 METADATA_VERSION = 1
 
@@ -201,11 +203,16 @@ def isvoro_catalog(session, scope: str) -> tuple[list, str, list]:
     return [{"id": row["id"], "name": row["name"]} for row in scopes], selected["id"], rows
 
 
-def load_catalog(provider: str, scope: str = "") -> dict:
+def load_catalog(provider: str, scope: str = "", fetcher: dict | None = None) -> dict:
     provider, scope = validate_source(provider, scope)
     with requests.Session() as session:
         session.headers["User-Agent"] = "HostWatch/1.0 (read-only VPS catalogue)"
-        scopes, actual, rows = {"vmiss": vmiss_catalog, "vps_soy": soy_catalog, "akile": akile_catalog, "isvoro": isvoro_catalog}[provider](session, scope)
+        if provider == "dmit":
+            from dmit import directory
+            from monitor import product_fetcher
+            scopes, actual, rows = directory(session, scope, product_fetcher(fetcher, {"adapter": "dmit"}))
+        else:
+            scopes, actual, rows = {"vmiss": vmiss_catalog, "vps_soy": soy_catalog, "akile": akile_catalog, "isvoro": isvoro_catalog}[provider](session, scope)
     if len(rows) > MAX_ROWS or len({row["key"] for row in rows}) != len(rows):
         raise ValueError("商品目录超过容量或存在重复标识，未更新缓存")
     return {"provider": provider, "scope": actual, "scopes": scopes, "rows": rows, "fetched_at": now(), "metadata_version": METADATA_VERSION, "unknown": sum(row["available"] is None for row in rows)}
@@ -220,8 +227,9 @@ class CatalogFailure(ValueError):
 
 
 class CatalogService:
-    def __init__(self, cache_path):
+    def __init__(self, cache_path, fetcher_settings=None):
         self.cache_path = cache_path
+        self.fetcher_settings = fetcher_settings or (lambda: {"mode": "requests"})
         self.lock = threading.Lock()
         self.task = None
         self.process = None
@@ -274,15 +282,8 @@ class CatalogService:
         return output
 
     def run(self, task: dict) -> None:
-        process = None
         try:
-            process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--worker"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
-            with self.lock:
-                self.process = process
-                cancelled = task["cancelled"]
-            if cancelled:
-                process.kill()
-            stdout, _ = process.communicate(json.dumps({"provider": task["provider"], "scope": task["scope"]}), timeout=240)
+            stdout = self.fetch_result(task)
             with self.lock:
                 if task["cancelled"]:
                     return
@@ -311,23 +312,81 @@ class CatalogService:
                     task["error"] = (str(exc) + "；保留上次快照。") if isinstance(exc, CatalogFailure) else "目录刷新失败或超时，保留上次缓存；请重试或查看商家访问情况。"
             # Do not include subprocess/network exceptions that may contain URLs.
         finally:
-            if process is not None and process.poll() is None:
+            with self.lock:
+                self.process = None
+                task.update(pending=False, finished_at=now())
+
+    def worker(self, path: Path, mode: str, payload: dict, timeout: int, task: dict, cancellable=True) -> str:
+        process = subprocess.Popen([sys.executable, str(path), mode], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
+        if cancellable:
+            with self.lock:
+                self.process = process
+                cancelled = task["cancelled"]
+            if cancelled:
+                process.kill()
+        try:
+            return process.communicate(json.dumps(payload), timeout=timeout)[0]
+        finally:
+            if process.poll() is None:
                 try:
                     process.kill()
                     process.communicate(timeout=2)
                 except (OSError, subprocess.TimeoutExpired):
                     pass
-            with self.lock:
-                self.process = None
-                task.update(pending=False, finished_at=now())
+            if cancellable:
+                with self.lock:
+                    if self.process is process:
+                        self.process = None
+
+    def fetch_result(self, task: dict) -> str:
+        from admin import BROWSER_CLEANUP_SECONDS, BROWSER_CLEANUP_WARNING
+        from monitor import MonitorError, browser_request_slot, check_browser_memory, product_fetcher
+        fetcher = product_fetcher(self.fetcher_settings(), {"adapter": "dmit"}) if task["provider"] == "dmit" else {"mode": "requests"}
+        browser = fetcher["mode"] == "flaresolverr"
+        session_id = "hostwatch-catalog-" + uuid.uuid4().hex
+        attempted = created = False
+        root = Path(__file__).resolve().parent
+        try:
+            with browser_request_slot() if browser else nullcontext():
+                if browser:
+                    check_browser_memory(fetcher)
+                try:
+                    if browser and not task["cancelled"]:
+                        attempted = True
+                        raw = self.worker(root / "admin.py", "--browser-session-worker", {"command": "create", "endpoint": fetcher["flaresolverr_url"], "session": session_id}, 35, task)
+                        if task["cancelled"]:
+                            return "{}"
+                        if not json.loads(raw).get("ok"):
+                            raise CatalogFailure("DMIT 目录浏览器启动失败，请检查 FlareSolverr 服务")
+                        created = True
+                        fetcher.update(_test_browser_session=session_id, _browser_slot_held=True)
+                    if task["cancelled"]:
+                        return "{}"
+                    return self.worker(root / "catalog.py", "--worker", {"provider": task["provider"], "scope": task["scope"], "fetcher": fetcher}, 240, task)
+                finally:
+                    if attempted:
+                        with self.lock:
+                            task["phase"] = "cleaning"
+                        try:
+                            raw = self.worker(root / "admin.py", "--browser-session-worker", {"command": "destroy", "endpoint": fetcher["flaresolverr_url"], "session": session_id, "creation_uncertain": not created}, BROWSER_CLEANUP_SECONDS, task, cancellable=False)
+                            cleanup = json.loads(raw)
+                            warning = cleanup.get("warning", "") if cleanup.get("ok") else cleanup.get("warning") or BROWSER_CLEANUP_WARNING
+                        except (OSError, ValueError, subprocess.TimeoutExpired):
+                            warning = BROWSER_CLEANUP_WARNING
+                        if warning:
+                            # Stopping must also show uncertain browser cleanup.
+                            with self.lock:
+                                task["error"] = warning
+        except MonitorError as exc:
+            raise CatalogFailure(str(exc)) from exc
 
 
 if __name__ == "__main__" and sys.argv[1:] == ["--worker"]:
     sys.stdout.reconfigure(encoding="utf-8")
     from monitor import MonitorError
     try:
-        value = json.loads(sys.stdin.read(1025))
-        output = {"ok": True, "data": load_catalog(value["provider"], value.get("scope", ""))}
+        value = json.loads(sys.stdin.read(16385))
+        output = {"ok": True, "data": load_catalog(value["provider"], value.get("scope", ""), value.get("fetcher"))}
     except (ValueError, KeyError, TypeError, MonitorError, requests.RequestException) as exc:
         output = {"ok": False, "error": str(exc) if isinstance(exc, (MonitorError, ValueError)) else "商家目录响应无效"}
     print(json.dumps(output, ensure_ascii=False))
