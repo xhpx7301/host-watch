@@ -1759,13 +1759,19 @@ function renderOverviewRecent() {
   if (!products.length) { target.replaceChildren(text("div", "还没有关注的商品，从库存大盘加入后将在这里显示。", "empty")); return; }
   const wrap = text("div", "", "catalog-table-wrap"), table = text("table", "", "overview-table"), head = document.createElement("thead"), heading = document.createElement("tr");
   wrap.tabIndex = 0; wrap.setAttribute("role", "region"); wrap.setAttribute("aria-label", "关注商品最近库存");
-  ["商品", "地区", "价格", "库存", "关注方式"].forEach(label => { const th = text("th", label); th.scope = "col"; heading.append(th); }); head.append(heading); table.append(head);
+  ["商品", "地区", "价格 / 周期", "库存", "关注方式"].forEach(label => { const th = text("th", label); th.scope = "col"; heading.append(th); }); head.append(heading); table.append(head);
   const body = document.createElement("tbody");
   products.forEach(item => {
     const p = productSnapshot(item, latest.get(item.id)), row = document.createElement("tr"); row.dataset.id = item.id;
     const cell = (value = "", cls = "") => { const td = text("td", value, cls); row.append(td); return td; };
     const identity = cell(); identity.append(text("strong", p.name || item.name), text("small", item.provider));
-    cell().textContent = p.region || "—"; renderPrice(cell("", "overview-price"), p.price, expanded.has(item.id));
+    cell().textContent = p.region || "—";
+    const priceCell = cell("", "overview-price");
+    if (!String(p.price || "").trim() || p.price === "—") {
+      const pending = text("span", "等待首次读取", "price-pending");
+      pending.title = "监控服务完成首次成功检查后显示价格";
+      priceCell.append(pending);
+    } else renderPrice(priceCell, p.price, expanded.has(item.id));
     cell().append(text("span", Number.isInteger(p.available) ? stockLabel(p) : "未知", `state ${!Number.isInteger(p.available) ? "pending" : p.available > 0 ? "ok" : "error"}`));
     const tags = cell(); if (membership(item, "watch")) tags.append(text("span", "库存监控", "membership-tag")); if (membership(item, "notify")) tags.append(text("span", "TG 通知", "membership-tag notify"));
     body.append(row);
