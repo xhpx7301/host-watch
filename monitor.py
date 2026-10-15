@@ -723,10 +723,15 @@ def inspect_product(session: requests.Session, item: dict, fetcher: dict) -> Pro
         return parse_akile(fetch_akile_catalog(session, product_fetcher(fetcher, item)), item)
     if item["adapter"] == "isvoro":
         return inspect_isvoro(session, item, product_fetcher(fetcher, item))
-    products = fetch_products(session, item["category_url"], [item["selector"]], product_fetcher(fetcher, item))
-    if len(products) != 1:
-        raise MonitorError("商品无法唯一匹配页面套餐；请检查商品选择标识")
-    return products[0]
+    if item["adapter"] == "bwh":
+        from bwh import inspect
+        return inspect(session, item, product_fetcher(fetcher, item))
+    if item["adapter"] == "vmiss":
+        products = fetch_products(session, item["category_url"], [item["selector"]], product_fetcher(fetcher, item))
+        if len(products) != 1:
+            raise MonitorError("商品无法唯一匹配页面套餐；请检查商品选择标识")
+        return products[0]
+    raise MonitorError(f"不支持的监控适配器：{item.get('adapter', '')}")
 
 
 def affiliate_url(product_url: str, affiliate_id: str, gid: str, pid: str) -> str:

@@ -97,6 +97,15 @@ class BandwagonHostTests(unittest.TestCase):
             with self.assertRaises(monitor.ProductUnlisted):
                 bwh.inspect(Mock(), {"bwh_offer_key": "87:USCA_9:monthly:4999"}, {"mode": "requests"})
 
+    def test_manual_test_dispatches_bwh_to_bwh_adapter(self):
+        item = {"adapter": "bwh", "provider": "搬瓦工", "name": "20G", "category_url": bwh.PRODUCT_URL,
+                "bwh_offer_key": "87:USCA_9:quarterly:4999", "selector": "87:USCA_9:quarterly:4999"}
+        with patch("monitor.fetch_page", side_effect=self.fetch_page), patch("monitor.fetch_products") as vmiss_fetch:
+            product = monitor.inspect_product(Mock(), item, {"mode": "requests"})
+        self.assertEqual(product.vendor, "搬瓦工")
+        self.assertEqual(product.available, 1)
+        vmiss_fetch.assert_not_called()
+
     def test_config_and_affiliate_keep_product_parameters(self):
         item = {"id": "bwh-one", "adapter": "bwh", "provider": "搬瓦工", "name": "20G", "category_url": bwh.PRODUCT_URL,
                 "bwh_offer_key": "87:USCA_9:quarterly:4999", "pid": "87", "enabled": True}
