@@ -84,15 +84,60 @@ def html_metadata(card, region="") -> dict:
             (network if re.search(r"流量|带宽|traffic|bandwidth|[GM]bps", field, re.I) else hardware).append(field)
     prices = card.select(".price-amount, .price-cycle")
     soy_price = card.select_one(".cart-num")
-    price = " / ".join(n.get_text(" ", strip=True) for n in prices)
+    price_parts = []
+    seen_prices = set()
+    for node in prices:
+        value = " ".join(node.get_text(" ", strip=True).split())
+        if value and value not in seen_prices:
+            price_parts.append(value)
+            seen_prices.add(value)
+    price = " / ".join(price_parts)
     if not price and soy_price:
         price = soy_price.parent.get_text(" ", strip=True)
     return {"region": region[:500], "specs": " · ".join(hardware)[:500], "traffic": " · ".join(network)[:500], "price": price[:500]}
 
 
+VMISS_COUNTRY_NAMES = {
+    "cn": "中国", "china": "中国", "hk": "中国香港", "mo": "中国澳门",
+    "tw": "中国台湾", "jp": "日本", "kr": "韩国", "sg": "新加坡",
+    "us": "美国", "ca": "加拿大", "gb": "英国", "uk": "英国",
+    "de": "德国", "fr": "法国", "nl": "荷兰", "au": "澳大利亚",
+}
+VMISS_CITY_NAMES = {
+    "hongkong": "香港", "hong kong": "香港", "macau": "澳门", "macao": "澳门",
+    "taipei": "台北", "tokyo": "东京", "osaka": "大阪", "seoul": "首尔",
+    "singapore": "新加坡", "losangeles": "洛杉矶", "los angeles": "洛杉矶",
+    "newyork": "纽约", "new york": "纽约", "vancouver": "温哥华",
+    "toronto": "多伦多", "london": "伦敦", "frankfurt": "法兰克福",
+    "amsterdam": "阿姆斯特丹", "sydney": "悉尼", "melbourne": "墨尔本",
+}
+
+
+def normalize_vmiss_region(value: object) -> str:
+    """Turn VMISS's country-city-line title into a compact Chinese label."""
+    raw = " ".join(str(value or "").split())
+    if not raw:
+        return ""
+    parts = [part.strip() for part in re.split(r"\s*-\s*", raw) if part.strip()]
+    if len(parts) < 2:
+        key = re.sub(r"[\s_-]+", " ", raw).casefold()
+        return VMISS_CITY_NAMES.get(key, raw)
+    country_key = re.sub(r"[\s_-]+", " ", parts[0]).casefold()
+    city_key = re.sub(r"[\s_-]+", " ", parts[1]).casefold()
+    country = VMISS_COUNTRY_NAMES.get(country_key, parts[0])
+    city = VMISS_CITY_NAMES.get(city_key, parts[1])
+    if country in {"中国香港", "中国澳门", "中国台湾"} and city in {"香港", "澳门", "台北"}:
+        label = country
+    elif city == country:
+        label = country
+    else:
+        label = country + city
+    return " · ".join([label, *parts[2:]])
+
+
 def vmiss_metadata(card, region="") -> dict:
     """Separate VMISS's unlabelled inline resources before classifying them."""
-    metadata = html_metadata(card, region)
+    metadata = html_metadata(card, normalize_vmiss_region(region))
     raw = " · ".join(node.get_text(" ", strip=True) for node in card.select(".package-content"))
     fields = re.split(r"\s*·\s*|\s+(?=\d+(?:\.\d+)?\s*(?:v?CPU|cores?|[KMGT]i?B|[KMGT]?bps|IPv[46])\b)", raw, flags=re.I)
     hardware, network = [], []
@@ -410,7 +455,7 @@ def product_fetcher(fetcher: dict | None, item: dict) -> dict:
         result["mode"] = mode
     override = result.get("provider_flaresolverr", {}).get(item.get("adapter", "html"))
     if result.get("mode") == "flaresolverr" and override is not None:
-        result["_flaresolverr_defaults"] = {"mode": base_mode, **{key: result.get(key, default) for key, default in (("timeout_seconds", 60), ("wait_seconds", 0), ("disable_media", False))}}
+        result["_flaresolverr_defaults"] = {"mode": base_mode, **{key: result.get(key, default) for key, default in (("timeout_seconds", 60), ("wait_seconds", 0), ("disable_media", True))}}
         result.update(override)
     if "egress" in result:
         result.pop("egress_proxy_url", None)
@@ -437,7 +482,7 @@ def fetcher_route(fetcher: dict | None, item: dict) -> dict:
     try:
         resolved = product_fetcher(settings, item)
         if resolved.get("mode") == "flaresolverr":
-            route.update({key: resolved.get(key, default) for key, default in (("timeout_seconds", 60), ("wait_seconds", 0), ("disable_media", False))})
+            route.update({key: resolved.get(key, default) for key, default in (("timeout_seconds", 60), ("wait_seconds", 0), ("disable_media", True))})
     except MonitorError as exc:
         route["error"] = str(exc)
     return route

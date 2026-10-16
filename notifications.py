@@ -64,8 +64,22 @@ def price_text(raw: str) -> str:
         (r"(?:per\s+)?daily|day", "日"),
     ]:
         value = re.sub(pattern, replacement, value, flags=re.I)
+    value = _collapse_repeated_price(value)
     converted = price_conversion(raw)
     return value + (f"\n{converted}" if converted else "")
+
+
+def _collapse_repeated_price(value: str) -> str:
+    """Collapse a duplicated amount/cycle sequence from repeated page nodes."""
+    parts = [part.strip() for part in re.split(r"\s*/\s*", value)]
+    if len(parts) < 4 or len(parts) % 2:
+        return value
+    half = len(parts) // 2
+    cycles = {"月", "季", "半年", "年", "周", "日"}
+    if (parts[:half] == parts[half:]
+            and all(parts[index] in cycles for index in range(1, half, 2))):
+        return " / ".join(parts[:half])
+    return value
 
 
 def price_conversion(raw: str) -> str:
@@ -155,7 +169,7 @@ def stock_message(*, vendor: str, name: str, available: int, stock_mode: str, re
     carriers = [f"{label}：{safe(item.get('line_' + key), 100)}" for key, label in (("telecom", "电"), ("unicom", "联"), ("mobile", "移")) if item.get("line_" + key)]
     if carriers or item.get("line_label"):
         lines.append("📡 <b>线路：</b>" + (" | ".join(carriers) if carriers else safe(item["line_label"])))
-    lines.extend([f"🖥 <b>硬件配置：</b><code>{safe(hardware_text(specs), 300)}</code>",
+    lines.extend([f"🖥 <b>硬件配置：</b>{safe(hardware_text(specs), 300)}",
                   f"🌐 <b>流量/带宽：</b>{safe(network_text(traffic), 200)}",
                   f"💰 <b>价格：</b>{safe(price_text(price), 350)}", "",
                   f"{'⚠️' if uncertain else '✅' if available > 0 else '❌'} <b>库存：</b>{status}" + (f"（{change}）" if change else ""),
@@ -167,5 +181,5 @@ def stock_message(*, vendor: str, name: str, available: int, stock_mode: str, re
     if test:
         lines.append("\n单次测试，不改变自动监控状态。")
     if purchase_button(purchase_url):
-        lines.append(f'\n🛒 <a href="{escape(purchase_url, quote=True)}">点击直达购买</a>')
+        lines.append(f'\n🛒 <b>购买链接：</b><a href="{escape(purchase_url, quote=True)}">点击直达购买</a>')
     return "\n".join(lines)

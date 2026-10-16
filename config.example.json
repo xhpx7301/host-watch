@@ -9,7 +9,7 @@
     "flaresolverr_url": "http://127.0.0.1:8191/v1",
     "timeout_seconds": 60,
     "wait_seconds": 0,
-    "disable_media": false,
+    "disable_media": true,
     "cloudscraper": {
       "connect_timeout_seconds": 10,
       "read_timeout_seconds": 25,

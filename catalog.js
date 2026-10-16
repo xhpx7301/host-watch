@@ -12,8 +12,9 @@
   const selected = new Set();
   const knownScopes = new Map();
   const pageSize = 30;
-  const autoValue = sessionStorage.getItem("hostwatch-catalog-auto") || "300";
-  get("catalog-auto").value = ["0", "60", "300", "600"].includes(autoValue) ? autoValue : "300";
+  const catalogAutoKey = "hostwatch-catalog-auto-v2";
+  const autoValue = sessionStorage.getItem(catalogAutoKey) || "0";
+  get("catalog-auto").value = ["0", "60", "300", "600"].includes(autoValue) ? autoValue : "0";
   const priceSortKey = "hostwatch-catalog-price-sort";
 
   function matches(row, item) {
@@ -280,10 +281,10 @@
     animateFilterResult(get("catalog-results"));
   });
   for (const id of ["catalog-search", "catalog-stock"]) get(id).addEventListener(id === "catalog-search" ? "input" : "change", () => { page = 0; renderTable(true); });
-  get("catalog-auto").addEventListener("change", () => { sessionStorage.setItem("hostwatch-catalog-auto", get("catalog-auto").value); schedule(); });
+  get("catalog-auto").addEventListener("change", () => { sessionStorage.setItem(catalogAutoKey, get("catalog-auto").value); schedule(); });
   get("catalog-refresh").addEventListener("click", () => { task = task?.pending ? task : null; void refresh(); });
   get("catalog-stop").addEventListener("click", async () => {
-    get("catalog-auto").value = "0"; sessionStorage.setItem("hostwatch-catalog-auto", "0"); clearTimeout(autoTimer);
+    get("catalog-auto").value = "0"; sessionStorage.setItem(catalogAutoKey, "0"); clearTimeout(autoTimer);
     try { task = await requestJSON("/api/catalog/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", timeoutMs: 10000 }); }
     catch (error) { setMessage(`停止刷新尚未确认：${error.message}，请重试。`, "error"); }
     render(); schedule();

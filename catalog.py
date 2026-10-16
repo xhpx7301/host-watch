@@ -95,7 +95,7 @@ def akile_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[lis
 
 
 def vmiss_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[list, str, list]:
-    from monitor import MonitorError, fetch_page, parse_products, vmiss_metadata
+    from monitor import MonitorError, fetch_page, normalize_vmiss_region, parse_products, vmiss_metadata
     fetcher = fetcher or {"mode": "requests"}
     body, _ = fetch_page(session, "https://app.vmiss.com/store", fetcher, "app.vmiss.com")
     scopes_by_id = {}
@@ -103,7 +103,7 @@ def vmiss_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[lis
         parsed = urlsplit(urljoin("https://app.vmiss.com", link["href"]))
         match = re.fullmatch(r"/store/([A-Za-z0-9_-]+)", parsed.path)
         if parsed.scheme == "https" and parsed.hostname == "app.vmiss.com" and not parsed.query and match:
-            scopes_by_id.setdefault(match[1], {"id": match[1], "name": clean(link.get_text(" ", strip=True))})
+            scopes_by_id.setdefault(match[1], {"id": match[1], "name": normalize_vmiss_region(link.get_text(" ", strip=True))})
     scopes = [{"id": "all", "name": "全部公开套餐（手动）"}] + list(scopes_by_id.values())
     selected = scoped(scopes, scope, "cn-hong-kong-bgp")
     targets = list(scopes_by_id.values()) if selected["id"] == "all" else [selected]

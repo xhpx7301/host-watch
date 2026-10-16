@@ -22,9 +22,15 @@ class NotificationTests(unittest.TestCase):
         for value in ["补货提醒", "Isvoro · HK CN2 Core", "中国香港", "HK CN2", "自用", "电：CN2GT | 联：4837 | 移：CMI",
                       "2C/2G/30GB", "300GB@100Mbps", "¥25 / 月；¥249 / 年", "3 台", "由缺货变为有货"]:
             self.assertIn(value, text)
-        self.assertEqual(soup.code.get_text(), "2C/2G/30GB")
+        self.assertIsNone(soup.code)
+        self.assertIn("🛒 购买链接：点击直达购买", soup.get_text())
         self.assertEqual(soup.a["href"], "https://isvoro.com/buy/HKCN2?product=149&aff=example")
-        self.assertEqual({tag.name for tag in soup.find_all()}, {"b", "code", "a"})
+        self.assertEqual({tag.name for tag in soup.find_all()}, {"b", "a"})
+
+    def test_coupon_remains_copyable_while_hardware_is_plain_text(self):
+        soup = BeautifulSoup(self.message(coupon_code="SAVE-2026"), "html.parser")
+        self.assertEqual([tag.get_text() for tag in soup.find_all("code")], ["SAVE-2026"])
+        self.assertNotIn("2C/2G/30GB", [tag.get_text() for tag in soup.find_all("code")])
 
     def test_unlimited_stock_does_not_invent_quantity_and_tests_are_explicit(self):
         self.assertIn("库存：有货（首次发现有货）", BeautifulSoup(self.message(stock_mode="availability", old_count=None), "html.parser").get_text())
@@ -62,6 +68,7 @@ class NotificationTests(unittest.TestCase):
         for raw, expected in [("CNY 25 / 月", "¥25 / 月"), ("$5.00 CAD / Monthly", "CA$5.00 / 月\n折合 ¥25.5/月"),
                               ("USD 5", "$5\n折合 ¥36.0"), ("EUR 6.95 / 月", "€6.95 / 月\n折合 ¥54.2/月")]:
             self.assertEqual(price_text(raw), expected)
+        self.assertEqual(price_text("CA$12.00 / 月 / CA$12.00 / 月"), "CA$12.00 / 月\n折合 ¥61.2/月")
 
     def test_manual_test_uses_live_metadata_and_current_aff_without_sending(self):
         config = admin.default_config()

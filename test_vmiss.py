@@ -28,6 +28,19 @@ def page(*cards):
 
 
 class VMISSStockTests(unittest.TestCase):
+    def test_region_is_normalized_for_display_and_notifications(self):
+        self.assertEqual(monitor.normalize_vmiss_region("CN - HongKong - BGP"), "中国香港 · BGP")
+        self.assertEqual(monitor.normalize_vmiss_region("JP - Tokyo - Softbank"), "日本东京 · Softbank")
+        self.assertEqual(monitor.normalize_vmiss_region("New custom region"), "New custom region")
+
+    def test_repeated_price_nodes_are_read_once(self):
+        body = page(card()).replace(
+            '<div class="price-amount">$30.00 CAD</div><div class="price-cycle">Monthly</div>',
+            '<div class="price-amount">$30.00 CAD</div><div class="price-cycle">Monthly</div>'
+            '<div class="price-amount">$30.00 CAD</div><div class="price-cycle">Monthly</div>')
+        product = monitor.parse_products(body, URL, ["product55"])[0]
+        self.assertEqual(product.price, "$30.00 CAD / Monthly")
+
     def test_real_page_shape_supports_mixed_exact_and_unpublished_stock(self):
         body = page(card("50", "CN.HK.BGP.Basic", "0 Available", "disabled"),
                     card("53", "CN.HK.BGP.Core", "1,234 Available"),

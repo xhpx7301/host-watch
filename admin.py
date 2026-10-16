@@ -664,7 +664,7 @@ def default_config() -> dict:
             "flaresolverr_url": "http://127.0.0.1:8191/v1",
             "timeout_seconds": 60,
             "wait_seconds": 0,
-            "disable_media": False,
+            "disable_media": True,
             "provider_flaresolverr": {},
             "cloudscraper": normalize_cloudscraper(None),
         },
@@ -736,7 +736,7 @@ def cloudscraper_probe(target: str, fetcher: dict) -> dict:
 
 
 def normalize_flaresolverr_options(value: dict, defaults: dict | None = None) -> dict:
-    defaults = defaults or {"timeout_seconds": 60, "wait_seconds": 0, "disable_media": False}
+    defaults = defaults or {"timeout_seconds": 60, "wait_seconds": 0, "disable_media": True}
     timeout_value = value.get("timeout_seconds", defaults["timeout_seconds"])
     if isinstance(timeout_value, bool):
         raise ValueError("FlareSolverr 超时必须是整数")
@@ -1787,7 +1787,7 @@ class Handler(BaseHTTPRequestHandler):
             elif isinstance(submitted["fetcher"], dict):
                 submitted["fetcher"].setdefault("provider_modes", current["fetcher"].get("provider_modes", {}))
                 submitted["fetcher"].setdefault("cloudscraper", current["fetcher"]["cloudscraper"])
-                submitted["fetcher"].setdefault("disable_media", current["fetcher"].get("disable_media", False))
+                submitted["fetcher"].setdefault("disable_media", current["fetcher"].get("disable_media", True))
                 submitted["fetcher"].setdefault("provider_flaresolverr", current["fetcher"].get("provider_flaresolverr", {}))
             if "affiliates" not in submitted:
                 submitted["affiliates"] = dict(current["affiliates"])

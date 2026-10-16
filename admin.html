@@ -150,6 +150,8 @@
     .option-button[aria-pressed="mixed"] { color:var(--amber); border-color:#e2d0a6; background:var(--amber-soft); }
     .option-button[data-tone="danger"][aria-pressed="true"] { color:var(--red); border-color:#e7c1bc; background:var(--red-soft); }
     .option-button [data-option-state] { flex-shrink:0; font-size:11px; font-weight:700; }
+    .mode-buttons { display:flex; flex-wrap:wrap; gap:8px; }
+    .mode-button { min-width:96px; }
     .form-grid > .option-button { width:max-content; max-width:100%; justify-content:space-between; justify-self:start; text-align:left; padding:8px 11px; }
     .catalog-choice { min-width:52px; padding:4px 7px; font-size:12px; white-space:nowrap; }
     @media(prefers-reduced-motion:reduce) { .option-button { transition:none; } }
@@ -333,11 +335,11 @@
     .affiliate-card { display:grid; gap:8px; min-width:0; padding:20px; border:1px solid var(--line); border-radius:10px; background:var(--canvas); }
     .affiliate-card .hint { margin:0; }
     .affiliate-card a { overflow-wrap:anywhere; }
-    #merchant-order-panel { margin-bottom:18px; }
-    .merchant-order-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid var(--line); cursor:grab; }
-    .merchant-order-row.dragging { opacity:.45; }
-    .merchant-order-row.drag-over { border-top:2px solid var(--accent); }
-    .merchant-drag-handle { min-width:38px; padding:4px 8px; font-size:18px; cursor:grab; }
+    #merchant-order-toggle.merchant-order-editing { color:var(--green); border-color:#b7d7c9; background:var(--green-soft); }
+    .catalog-merchants.merchant-order-editing { padding:6px; border:1px solid #b7d7c9; border-radius:10px; background:var(--green-soft); }
+    .catalog-merchants.merchant-order-editing button { cursor:grab; touch-action:none; }
+    .catalog-merchants.merchant-order-editing button.dragging { opacity:.45; }
+    .catalog-merchants.merchant-order-editing button.drag-over { color:var(--green); border-color:var(--green); box-shadow:0 0 0 2px #b7d7c980; }
     .picker-row { display:flex; align-items:center; gap:10px; padding:10px 22px; border-bottom:1px solid var(--line); }
     .picker-row input { width:18px; height:18px; }
     #seckill-picker-content > .actions { justify-content:flex-end; padding:14px 22px; }
@@ -559,10 +561,10 @@
     <p class="nav-label">控制台</p>
     <nav class="page-nav" aria-label="主要栏目">
       <a href="#overview" data-page-link="overview" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>运行概览</a>
+      <a href="#catalog" data-page-link="catalog"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12M15 9v12"/></svg>VPS 库存大盘</a>
       <a href="#monitor" data-page-link="monitor"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4M6 11h3l2-4 3 7 2-3h2"/></svg>VPS 库存监控</a>
       <a href="#notifications" data-page-link="notifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>VPS 库存通知</a>
-      <a href="#catalog" data-page-link="catalog"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12M15 9v12"/></svg>VPS 库存大盘</a>
-      <a href="#seckill" data-page-link="seckill"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 9-12h-7l1-8Z"/></svg>VPS 秒杀</a>
+      <a href="#seckill" data-page-link="seckill"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 9-12h-7l1-8Z"/></svg>VPS 补货抢购</a>
       <a href="#requests" data-page-link="requests"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></svg>网页请求</a>
       <a href="#affiliates" data-page-link="affiliates"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 13 4-4m-6 7-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 1 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0"/></svg>AFF 管理</a>
       <a href="#telegram" data-page-link="telegram"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-6 18-4-8-8-4 18-6Zm-10 10L21 3"/></svg>Telegram 通知</a>
@@ -591,17 +593,16 @@
   </section>
 
   <section class="section">
-    <div class="section-head overview-recent-head"><div><h2>关注商品 · 最近库存</h2><p>显示最近读取的库存，暂停后保留历史结果。</p></div><div class="actions"><button type="button" id="overview-open-catalog">浏览大盘</button><button type="button" id="overview-open-monitor">我的监控</button><button type="button" id="overview-open-notifications">我的通知</button><button type="button" id="overview-open-seckill">VPS 秒杀</button><button id="open-products" type="button">＋ 自定义商品</button></div></div>
+    <div class="section-head overview-recent-head"><div><h2>关注商品 · 最近库存</h2><p>显示最近读取的库存，暂停后保留历史结果。</p></div><div class="actions"><button type="button" id="overview-open-catalog">浏览大盘</button><button type="button" id="overview-open-monitor">我的监控</button><button type="button" id="overview-open-notifications">我的通知</button><button type="button" id="overview-open-seckill">VPS 补货抢购</button><button id="open-products" type="button">＋ 自定义商品</button></div></div>
     <div id="overview-recent"></div>
   </section>
   </div>
 
   <section class="page-panel" id="page-catalog" data-page="catalog" aria-labelledby="page-title" hidden>
     <div class="catalog-intro"><div><span class="eyebrow">VPS DIRECTORY</span><h2>发现套餐，关注补货</h2><p>商家公开目录直接同步，分别选择库存监控或 Telegram 通知。无需先配置每一款商品。</p></div><span class="catalog-private">个人库存看板</span></div>
-      <div class="section-head"><div class="catalog-merchants" role="group" aria-label="选择商家"><button type="button" data-catalog-provider="vmiss" aria-pressed="false">VMISS</button><button type="button" data-catalog-provider="vps_soy" aria-pressed="false">VPS.SOY</button><button type="button" data-catalog-provider="akile" aria-pressed="true">Akile</button><button type="button" data-catalog-provider="isvoro" aria-pressed="false">Isvoro</button><button type="button" data-catalog-provider="dmit" aria-pressed="false">DMIT</button><button type="button" data-catalog-provider="bwh" aria-pressed="false">搬瓦工</button></div><button id="merchant-order-toggle" type="button" aria-expanded="false" aria-controls="merchant-order-panel">调整商家顺序</button></div>
-    <div id="merchant-order-panel" class="panel-card section-body" hidden><h2>商家显示顺序</h2><p class="hint">拖动右侧手柄调整大盘、监控筛选和添加商品中的顺序，点击底部“保存配置”后保存在服务器。</p><div id="merchant-order-list"></div></div>
+      <div class="section-head"><div class="catalog-merchants" role="group" aria-label="选择商家"><button type="button" data-catalog-provider="vmiss" aria-pressed="false">VMISS</button><button type="button" data-catalog-provider="vps_soy" aria-pressed="false">VPS.SOY</button><button type="button" data-catalog-provider="akile" aria-pressed="true">Akile</button><button type="button" data-catalog-provider="isvoro" aria-pressed="false">Isvoro</button><button type="button" data-catalog-provider="dmit" aria-pressed="false">DMIT</button><button type="button" data-catalog-provider="bwh" aria-pressed="false">搬瓦工</button></div><button id="merchant-order-toggle" type="button" aria-expanded="false">调整商家顺序</button></div>
     <div class="panel-card catalog-browser">
-      <div class="catalog-filters"><label>全部套餐 / 地区 / 线路<select id="catalog-scope" disabled><option value="">等待目录</option></select></label><label>搜索套餐<input id="catalog-search" type="search" placeholder="名称、地区、线路或配置"></label><label>库存状态<select id="catalog-stock"><option value="all">全部库存</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">状态未知</option><option value="watched">已加入监控</option><option value="notified">已加入通知</option></select></label><label>大盘自动刷新<select id="catalog-auto"><option value="0">仅手动</option><option value="60">1 分钟</option><option value="300" selected>5 分钟</option><option value="600">10 分钟</option></select></label></div>
+      <div class="catalog-filters"><label>全部套餐 / 地区 / 线路<select id="catalog-scope" disabled><option value="">等待目录</option></select></label><label>搜索套餐<input id="catalog-search" type="search" placeholder="名称、地区、线路或配置"></label><label>库存状态<select id="catalog-stock"><option value="all">全部库存</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">状态未知</option><option value="watched">已加入监控</option><option value="notified">已加入通知</option></select></label><label>大盘自动刷新<select id="catalog-auto"><option value="0" selected>仅手动</option><option value="60">1 分钟</option><option value="300">5 分钟</option><option value="600">10 分钟</option></select></label></div>
       <div class="catalog-sync"><div><strong id="catalog-summary">尚未载入目录</strong><span id="catalog-updated" class="subtle"></span></div><div class="actions"><button id="catalog-refresh" type="button">刷新目录库存</button><button id="catalog-stop" type="button" class="danger" hidden>停止刷新</button></div></div>
       <p id="catalog-route" class="hint" role="status" aria-live="polite"></p>
       <p id="catalog-status" class="hint" role="status" aria-live="polite">选择商家后获取公开套餐目录；切换分类时优先使用已读取的全量快照。</p>
@@ -612,27 +613,27 @@
       </div>
       <div class="catalog-pagination"><span id="catalog-page-label" class="subtle"></span><div class="actions"><button id="catalog-prev" type="button" disabled>上一页</button><button id="catalog-next" type="button" disabled>下一页</button></div></div>
     </div>
-    <div class="catalog-reminders"><div><h2>已关注 / 通知 <span id="catalog-watch-count">0</span></h2><p id="catalog-reminder-note" class="hint">加入后点击底部“保存配置”，再开始监控。</p></div><div class="actions"><button id="catalog-open-products" type="button">查看 VPS 库存监控</button><button id="catalog-open-seckill" type="button">配置 VPS 秒杀</button></div></div>
+    <div class="catalog-reminders"><div><h2>已关注 / 通知 <span id="catalog-watch-count">0</span></h2><p id="catalog-reminder-note" class="hint">加入后点击底部“保存配置”，再开始监控。</p></div><div class="actions"><button id="catalog-open-products" type="button">查看 VPS 库存监控</button><button id="catalog-open-seckill" type="button">配置 VPS 补货抢购</button></div></div>
     <p class="hint">大盘分类自动刷新仅在此栏目打开且页面可见时运行，使用已保存的商家请求方式；可随时停止。全部公开套餐会读取多个分类，仅支持手动刷新，建议偶尔用于发现新套餐。关闭网页后，已保存的监控和通知商品仍会在服务器检查，只有通知列表会通过 Telegram 提醒。大盘刷新不发送通知，也不改动提醒历史。外币价格下方的人民币金额为参考折算值，实际价格与购买资格以商家下单页为准。</p>
   </section>
 
   <section class="page-panel panel-card" id="page-seckill" data-page="seckill" aria-labelledby="page-title" hidden>
     <div class="section-body">
-      <div class="section-head"><div><h2>VPS 秒杀</h2><p>从 VPS 库存监控或 VPS 库存通知逐个加入商品。下架商品仍可保留目标链接，恢复上架后继续检查。</p></div><span id="seckill-task-state" class="state">未运行</span></div>
+      <div class="section-head"><div><h2>VPS 补货抢购</h2><p>从 VPS 库存监控或 VPS 库存通知逐个加入商品。下架商品仍可保留目标链接，恢复上架后继续检查。</p></div><span id="seckill-task-state" class="state">未运行</span></div>
       <div class="seckill-panel vps-seckill-panel">
-        <div class="section-head"><div><h3>执行模式</h3><p>所有模式均不自动付款。自动模式仅创建待付款订单，付款需要你手动前往商家官网完成。</p></div><div class="actions"><button id="vps-seckill-start" type="button" class="primary">启动秒杀</button><button id="vps-seckill-stop" type="button" class="danger" hidden>暂停秒杀</button></div></div>
-        <div class="form-grid"><label>模式<select id="vps-seckill-mode"><option value="rapid">极速秒杀（自动）</option><option value="precise">精准秒杀（自动）</option><option value="manual">手动秒杀</option></select></label><label>检查间隔（秒）<input id="vps-seckill-interval" type="number" min="1" max="3600" step="1"></label></div>
+        <div class="section-head"><div><h3>执行模式</h3><p>所有模式均不自动付款。自动模式仅创建待付款订单，付款需要你手动前往商家官网完成。</p></div><div class="actions"><button id="vps-seckill-start" type="button" class="primary">启动补货抢购</button><button id="vps-seckill-stop" type="button" class="danger" hidden>暂停补货抢购</button></div></div>
+        <div class="form-grid"><label>模式<select id="vps-seckill-mode"><option value="rapid">极速抢购（自动）</option><option value="precise">精准抢购（自动）</option><option value="manual">手动抢购</option></select></label><label>检查间隔（秒）<input id="vps-seckill-interval" type="number" min="1" max="3600" step="1"></label></div>
         <div class="seckill-mode-guide">
-          <article><strong>极速秒杀（自动）</strong><p>启动时检查账户；发现一次库存满足数量后立即提交。减少重复检查，抢单更快，但提交时库存或登录状态可能已变化。</p></article>
-          <article><strong>精准秒杀（自动）</strong><p>启动时检查账户；发现有货后再次验证账户、重新读取库存，数量仍满足才提交。核验更多、请求更多，可能错过短暂库存；不保证抢单成功。</p></article>
-          <article><strong>手动秒杀</strong><p>只检查一轮，准备购买链接和数量提示。即使已允许自动提交，也不会发送订单；由你到官网完成下单与付款。</p></article>
+          <article><strong>极速抢购（自动）</strong><p>启动时检查账户；发现一次库存满足数量后立即提交。减少重复检查，抢单更快，但提交时库存或登录状态可能已变化。</p></article>
+          <article><strong>精准抢购（自动）</strong><p>启动时检查账户；发现有货后再次验证账户、重新读取库存，数量仍满足才提交。核验更多、请求更多，可能错过短暂库存；不保证抢单成功。</p></article>
+          <article><strong>手动抢购</strong><p>只检查一轮，准备购买链接和数量提示。即使已允许自动提交，也不会发送订单；由你到官网完成下单与付款。</p></article>
         </div>
         <p class="hint">两种自动模式均使用上方检查间隔（每轮结束后的等待时间），每个商品每次任务最多发送一次下单请求。数量库存不足时继续等待；商家只提供有货状态时，由下单接口最终核验数量，不自动减少数量。</p>
         <p class="hint">自动模式只有商品“自动提交”和账户“自动下单”均为“已允许”，账户检查通过，且下单接口明确支持“仅创建待付款订单、禁止自动扣款”时才会发送下单请求；否则提示配置问题或提供手动购买链接。点击状态按钮切换，保存配置后生效。</p>
       </div>
-      <div class="seckill-panel"><div class="section-head"><div><h3>秒杀商品</h3><p>在库存监控 / 通知商品的“更多”中点击“加入 VPS 秒杀”；数量和优惠码按商品保存；每个商品可按所选出口检查绑定账户。删除后点击“保存配置”生效，可用“取消修改”恢复。</p></div><div class="actions"><button id="vps-seckill-open-monitor" type="button">从库存监控添加</button><button id="vps-seckill-open-notifications" type="button">从库存通知添加</button><button id="vps-seckill-delete-all" type="button" class="danger" disabled>删除全部商品</button></div></div><div id="vps-seckill-items" class="seckill-items"></div></div>
+      <div class="seckill-panel"><div class="section-head"><div><h3>补货抢购商品</h3><p>在库存监控 / 通知商品的“更多”中点击“加入 VPS 补货抢购”；数量和优惠码按商品保存；每个商品可按所选出口检查绑定账户。删除后点击“保存配置”生效，可用“取消修改”恢复。</p></div><div class="actions"><button id="vps-seckill-open-monitor" type="button">从库存监控添加</button><button id="vps-seckill-open-notifications" type="button">从库存通知添加</button><button id="vps-seckill-delete-all" type="button" class="danger" disabled>删除全部商品</button></div></div><div id="vps-seckill-items" class="seckill-items"></div></div>
       <div class="seckill-panel"><div class="section-head"><div><h3>网站账户</h3><p>密码保存后不回显。账户检查和自动下单需要商家适配支持；普通网站登录 / 结算页不能直接作为接口使用，未适配网站可用手动模式，验证码、二次验证需到官网处理。删除账户会解除商品绑定，保存后生效。</p></div><div class="actions"><button id="vps-seckill-add-account" type="button">添加账户</button><button id="vps-seckill-delete-all-accounts" type="button" class="danger" disabled>删除全部账户</button></div></div><div id="vps-seckill-accounts" class="seckill-accounts"></div></div>
-      <div class="seckill-panel"><div class="section-head"><div><h3>执行日志</h3><p id="vps-seckill-log-note">尚未启动秒杀任务。</p></div><button id="vps-seckill-clear-log" type="button">清空显示</button></div><div id="vps-seckill-results" aria-live="polite"></div><pre id="vps-seckill-logs" class="seckill-logs" aria-live="polite">暂无日志</pre></div>
+      <div class="seckill-panel"><div class="section-head"><div><h3>执行日志</h3><p id="vps-seckill-log-note">尚未启动补货抢购任务。</p></div><button id="vps-seckill-clear-log" type="button">清空显示</button></div><div id="vps-seckill-results" aria-live="polite"></div><pre id="vps-seckill-logs" class="seckill-logs" aria-live="polite">暂无日志</pre></div>
     </div>
   </section>
 
@@ -719,7 +720,7 @@
 
   <section class="page-panel panel-card" id="page-requests" data-page="requests" aria-labelledby="page-title" hidden>
     <div class="section-body">
-    <div class="section-head"><div><h2>网页请求</h2><p>设置各商家请求方式，配置轻量请求与浏览器请求，测试访问效果。</p></div><button id="requests-open-seckill" type="button">打开 VPS 秒杀</button></div>
+      <div class="section-head"><div><h2>网页请求</h2><p>设置各商家请求方式，配置轻量请求与浏览器请求，测试访问效果。</p></div><button id="requests-open-seckill" type="button">打开 VPS 补货抢购</button></div>
     <div class="form-grid">
       <label>全局请求方式<select id="fetcher-mode"><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label>
     </div>
@@ -750,11 +751,11 @@
         <label>默认超时（秒）<input id="flaresolverr-timeout" type="number" min="10" max="180" step="1"><span class="hint">默认 60 秒，范围 10–180 秒。</span></label>
         <label>默认页面渲染等待（秒）<input id="fetcher-wait" type="number" min="0" max="30" step="1"><span class="hint">默认 0 秒，范围 0–30 秒。</span></label>
       </div>
-      <div class="actions" style="margin-top:10px">
-        <button id="flaresolverr-light" class="option-button" type="button" data-config-option data-on="已开启" data-off="完整加载" aria-pressed="false"><span>轻量加载</span><span data-option-state>完整加载</span></button>
-        <button id="flaresolverr-fast" type="button">默认速度优先：轻量加载 + 零额外等待</button>
+      <div class="actions mode-buttons" style="margin-top:10px" role="group" aria-label="默认加载模式">
+        <button id="flaresolverr-light" class="option-button mode-button" type="button" data-flare-mode="light" aria-pressed="false">轻量加载</button>
+        <button id="flaresolverr-full" class="option-button mode-button" type="button" data-flare-mode="full" aria-pressed="true">完整加载</button>
       </div>
-      <p class="hint">轻量加载减少图片、样式和字体下载，适合只读取库存；需要支持 disableMedia 的 FlareSolverr 版本，旧服务可能忽略此选项。若读取不完整，关闭轻量加载，并将渲染等待设为 2–5 秒。超时是等待上限，调小不会让成功请求更快。首次启动浏览器和网站验证仍需要时间。</p>
+      <p class="hint">默认使用轻量加载和 0 秒额外等待，优先速度；轻量加载减少图片、样式和字体下载，适合只读取库存。需要支持 disableMedia 的 FlareSolverr 版本，旧服务可能忽略此选项。若读取不完整，切换到完整加载，并将渲染等待设为 1–2 秒。渲染等待是页面加载完成后的固定额外等待，不会因未出现 CF 而提前跳过；超时是等待上限，调小不会让成功请求更快。首次启动浏览器和网站验证仍需要时间。</p>
       <p class="hint">提速建议：能正常读取的商家单独使用普通 HTTPS 或 cloudscraper；FlareSolverr 只用于需要浏览器的商家。尽量只刷新所需分类，“全部公开套餐”可能需要访问多页。页面上的连接测试只测服务就绪，速度以商品测试为准。</p>
       <h3>各商家 FlareSolverr 参数</h3>
       <p class="hint">默认跟随上方参数，点击“参数来源”切换为独立设置。仅在该商家使用 FlareSolverr 时生效；普通 HTTPS 和 cloudscraper 使用各自的设置。修改后点击底部“保存配置”，应用到大盘、自动监控、通知和秒杀；商品单次测试可直接使用未保存的参数。</p>
@@ -830,7 +831,7 @@
 </main>
 <aside id="toast" class="toast" hidden aria-label="操作提示"><div><strong id="toast-label" class="toast-label"></strong><div id="toast-message" role="status" aria-live="polite" aria-atomic="true"></div></div><button id="toast-close" type="button" aria-label="关闭操作提示">×</button></aside>
   <dialog id="watch-compare-dialog" class="watch-compare-dialog" aria-labelledby="watch-compare-title"><div class="watch-compare-dialog-head"><div><span class="eyebrow">PRODUCT COMPARE</span><h2 id="watch-compare-title">产品参数对比</h2><p>对比当前库存监控中的商品，直接购买入口会保留 AFF。</p></div><button id="watch-compare-close" type="button" class="icon-button" aria-label="关闭产品参数对比">×</button></div><div id="watch-compare-content"></div></dialog>
-  <dialog id="seckill-picker-dialog" class="watch-compare-dialog" aria-labelledby="seckill-picker-title"><div class="watch-compare-dialog-head"><div><span class="eyebrow">SECKILL PICKER</span><h2 id="seckill-picker-title">选择秒杀商品</h2><p>选择后加入 VPS 秒杀，已加入的商品不会重复添加。</p></div><button id="seckill-picker-close" type="button" class="icon-button" aria-label="关闭商品选择">×</button></div><div id="seckill-picker-content"></div></dialog>
+  <dialog id="seckill-picker-dialog" class="watch-compare-dialog" aria-labelledby="seckill-picker-title"><div class="watch-compare-dialog-head"><div><span class="eyebrow">SECKILL PICKER</span><h2 id="seckill-picker-title">选择补货抢购商品</h2><p>选择后加入 VPS 补货抢购，已加入的商品不会重复添加。</p></div><button id="seckill-picker-close" type="button" class="icon-button" aria-label="关闭商品选择">×</button></div><div id="seckill-picker-content"></div></dialog>
 <script src="/admin.js"></script>
 <script src="/catalog.js"></script>
 </body>

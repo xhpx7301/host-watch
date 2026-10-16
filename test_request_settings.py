@@ -31,8 +31,8 @@ class MerchantRequestTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 admin.normalize_fetcher({"provider_modes": value})
 
-    def test_browser_light_loading_defaults_to_full_and_requires_a_boolean(self):
-        self.assertFalse(admin.normalize_fetcher({})["disable_media"])
+    def test_browser_light_loading_defaults_to_light_and_requires_a_boolean(self):
+        self.assertTrue(admin.normalize_fetcher({})["disable_media"])
         for enabled in (False, True):
             fetcher = admin.normalize_fetcher({"disable_media": enabled, "provider_modes": {"vmiss": "flaresolverr"}})
             self.assertIs(monitor.product_fetcher(fetcher, {"adapter": "vmiss"})["disable_media"], enabled)

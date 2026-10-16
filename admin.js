@@ -41,13 +41,14 @@ const openProducts = new Set();
 const productTests = new Map();
 let activeTest = null;
 let productDrag = null;
+let merchantOrderEditing = false;
 const seckillTestId = "isvoro-seckill";
 const cloudscraperTestId = "cloudscraper-probe";
 
 const pages = {
   overview: { title: "运行概览", description: "查看监控服务、商品库存与最近检查结果。" },
   catalog: { title: "VPS 库存大盘", description: "浏览商家全部公开套餐或地区分类，选择你关心的 VPS 加入补货提醒。" },
-  seckill: { title: "VPS 秒杀", description: "从库存监控或库存通知选择商品，配置优惠码和账户后执行秒杀。" },
+  seckill: { title: "VPS 补货抢购", description: "从库存监控或库存通知选择商品，配置优惠码和账户后执行补货抢购。" },
   monitor: { title: "VPS 库存监控", description: "集中查看你关注的 VPS，查看库存与配置、编辑备注和线路，直接购买，不发送通知。" },
   notifications: { title: "VPS 库存通知", description: "选择需要 Telegram 库存提醒的商品，管理通知和测试。" },
   affiliates: { title: "AFF 管理", description: "统一管理各商家推广码，保存后应用到新的购买入口。" },
@@ -206,6 +207,34 @@ function setOptionPressed(id, pressed) {
   const button = document.getElementById(id);
   button.setAttribute("aria-pressed", String(Boolean(pressed)));
   button.querySelector("[data-option-state]").textContent = pressed ? button.dataset.on : button.dataset.off;
+}
+
+function setFlareModeButtons(buttons, light) {
+  buttons.forEach(button => button.setAttribute("aria-pressed", String(button.dataset.flareMode === (light ? "light" : "full"))));
+}
+
+function createFlareModeButtons(label, light, onChange) {
+  const group = text("div", "", "mode-buttons");
+  group.setAttribute("role", "group");
+  group.setAttribute("aria-label", `${label}加载模式`);
+  const buttons = [
+    ["light", "轻量加载"],
+    ["full", "完整加载"],
+  ].map(([mode, name]) => {
+    const button = text("button", name, "option-button mode-button");
+    button.type = "button";
+    button.dataset.flareMode = mode;
+    button.setAttribute("aria-pressed", String(Boolean(light) === (mode === "light")));
+    button.disabled = actionRunning;
+    button.addEventListener("click", () => {
+      setFlareModeButtons(buttons, mode === "light");
+      onChange(mode === "light");
+      updateDraftState();
+    });
+    group.append(button);
+    return button;
+  });
+  return group;
 }
 
 function settingButton(label, pressed, onChange, states = ["未允许", "已允许"]) {
@@ -1259,38 +1288,68 @@ function renderAffiliatePreviews() {
     } else link.removeAttribute("href");
   }
 }
-function renderMerchantOrder(focusKey = null, direction = null) {
+function renderMerchantOrder() {
   const order = merchantOrder();
-  document.querySelector("#merchant-order-list").replaceChildren(...order.map((key, index) => {
-    const row = text("div", "", "merchant-order-row"), actions = text("div", "", "actions");
-    row.draggable = !actionRunning;
-    row.dataset.orderKey = key;
-    row.addEventListener("dragstart", event => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", key); row.classList.add("dragging"); });
-    row.addEventListener("dragend", () => row.classList.remove("dragging"));
-    row.addEventListener("dragover", event => { event.preventDefault(); row.classList.add("drag-over"); });
-    row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
-    row.addEventListener("drop", event => {
-      event.preventDefault(); row.classList.remove("drag-over");
+  const tabs = document.querySelector(".catalog-merchants");
+  if (!tabs.dataset.orderDragBound) {
+    tabs.dataset.orderDragBound = "true";
+    tabs.addEventListener("dragstart", event => {
+      if (!merchantOrderEditing) return;
+      const button = event.target.closest("[data-catalog-provider]");
+      if (!button?.draggable) return;
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", button.dataset.catalogProvider);
+      button.setAttribute("aria-grabbed", "true");
+      button.classList.add("dragging");
+    });
+    tabs.addEventListener("dragend", event => {
+      const button = event.target.closest("[data-catalog-provider]");
+      button?.classList.remove("dragging");
+      button?.setAttribute("aria-grabbed", "false");
+    });
+    tabs.addEventListener("dragover", event => {
+      if (!merchantOrderEditing || !event.target.closest("[data-catalog-provider]")) return;
+      event.preventDefault();
+      event.target.closest("[data-catalog-provider]").classList.add("drag-over");
+    });
+    tabs.addEventListener("dragleave", event => event.target.closest("[data-catalog-provider]")?.classList.remove("drag-over"));
+    tabs.addEventListener("drop", event => {
+      if (!merchantOrderEditing) return;
+      const button = event.target.closest("[data-catalog-provider]");
+      if (!button) return;
+      event.preventDefault(); button.classList.remove("drag-over");
       const source = event.dataTransfer.getData("text/plain"), next = merchantOrder();
-      const from = next.indexOf(source), to = next.indexOf(key);
+      const from = next.indexOf(source), to = next.indexOf(button.dataset.catalogProvider);
       if (from < 0 || to < 0 || from === to) return;
       next.splice(from, 1); next.splice(to, 0, source); config.merchant_order = next;
-      renderMerchantOrder(source); renderProductList(); updateDraftState();
-      setMessage("商家顺序已调整，点击底部“保存配置”后保存到服务器。", "pending");
+      renderMerchantOrder(); renderProductList(); updateDraftState();
+      setMessage("商家顺序已调整，点击“保存商家顺序”完成编辑，再点击底部“保存配置”保存到服务器。", "pending");
     });
-    row.append(text("strong", `${index + 1}. ${merchantNames[key]}`));
-    const handle = text("button", "⠿", "merchant-drag-handle"); handle.type = "button"; handle.draggable = true; handle.disabled = actionRunning;
-    handle.title = "拖动调整商家顺序"; handle.setAttribute("aria-label", `拖动调整 ${merchantNames[key]} 顺序`);
-    actions.append(handle);
-    row.append(actions); return row;
-  }));
-  const tabs = document.querySelector(".catalog-merchants");
-  for (const key of order) tabs.append(tabs.querySelector(`[data-catalog-provider="${key}"]`));
+    tabs.addEventListener("click", event => {
+      if (merchantOrderEditing && event.target.closest("[data-catalog-provider]")) {
+        event.preventDefault(); event.stopImmediatePropagation();
+      }
+    }, true);
+  }
+  tabs.classList.toggle("merchant-order-editing", merchantOrderEditing);
+  const toggle = document.querySelector("#merchant-order-toggle");
+  toggle.disabled = actionRunning;
+  toggle.classList.toggle("merchant-order-editing", merchantOrderEditing);
+  toggle.textContent = merchantOrderEditing ? "保存商家顺序" : "调整商家顺序";
+  toggle.setAttribute("aria-expanded", String(merchantOrderEditing));
+  for (const key of order) {
+    const button = tabs.querySelector(`[data-catalog-provider="${key}"]`);
+    if (!button) continue;
+    button.draggable = merchantOrderEditing && !actionRunning;
+    if (merchantOrderEditing) button.setAttribute("aria-grabbed", "false");
+    else button.removeAttribute("aria-grabbed");
+    button.title = merchantOrderEditing ? "拖动调整商家顺序" : `切换到${merchantNames[key]}`;
+    tabs.append(button);
+  }
   const filter = document.querySelector("#watchlist-provider"), selected = filter.value || "all";
   filter.replaceChildren(new Option("全部商家", "all"), ...order.map((key) => new Option(merchantNames[key], key)), new Option("其他商家", "other")); filter.value = selected;
   const add = document.querySelector("#add-merchant"), chosen = add.value;
   for (const key of [...order, "html"]) { const option = [...add.options].find((option) => option.value === key); if (option) add.append(option); } add.value = chosen;
-  if (focusKey) document.querySelector(`[data-order-key="${focusKey}"][data-offset="${direction}"]:not(:disabled)`)?.focus({ preventScroll: true });
 }
 
 function membership(item, type) {
@@ -1889,7 +1948,7 @@ function renderProductList() {
     const notifyActive = membership(item, "notify");
     const notify = text("button", notifyActive ? "✓ 已加入库存通知" : "＋ 加入库存通知", "membership-toggle membership-notify"); notify.type = "button"; notify.disabled = actionRunning || notifyActive; notify.setAttribute("aria-pressed", String(notifyActive));
     notify.addEventListener("click", () => { setMembership(item, "notify", true); renderProducts(); updateDraftState(); setMessage("已加入库存通知，保存配置后生效。", "pending"); });
-    const seckill = text("button", "加入 VPS 秒杀", "membership-toggle"); seckill.type = "button"; seckill.disabled = actionRunning; seckill.addEventListener("click", () => addToVpsSeckill(item));
+    const seckill = text("button", "加入 VPS 补货抢购", "membership-toggle"); seckill.type = "button"; seckill.disabled = actionRunning; seckill.addEventListener("click", () => addToVpsSeckill(item));
     const remove = text("button", "移出监控", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.addEventListener("click", () => { setMembership(item, "watch", false); renderProducts(); updateDraftState(); setMessage("已移出库存监控，通知选择保持原样，请保存配置。", "pending"); });
     actions.append(moreActions(`watch-${item.id}`, item.name, [notify, seckill, remove])); cell().append(actions); body.append(row);
@@ -1950,7 +2009,7 @@ function renderNotificationList() {
     const raw = p.url || item.purchase_url;
     if (raw && /^https:\/\//i.test(raw)) { const link = text("a", "直接购买", "buy-link"); link.href = affiliatePurchaseURL(raw, item.adapter, item); link.target = "_blank"; link.rel = "noopener noreferrer"; actions.append(link); }
     const test = text("button", "测试通知", "product-test"); test.type = "button"; test.addEventListener("click", () => testProduct(item.id));
-    const seckill = text("button", "加入 VPS 秒杀", "membership-toggle"); seckill.type = "button"; seckill.addEventListener("click", () => addToVpsSeckill(item));
+    const seckill = text("button", "加入 VPS 补货抢购", "membership-toggle"); seckill.type = "button"; seckill.addEventListener("click", () => addToVpsSeckill(item));
     const stop = text("button", "停止测试", "product-test-stop danger"); stop.type = "button"; stop.addEventListener("click", stopProductTest);
     const edit = text("button", "编辑商品"); edit.type = "button"; edit.disabled = actionRunning;
     edit.addEventListener("click", () => { openProducts.add(item.id); renderProducts(); openAdvancedProducts(); editorNode.querySelector(`[data-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }); });
@@ -2125,7 +2184,7 @@ function renderEgress() {
     select.addEventListener("change", () => { config.egress.routes[id] = select.value; if (!select.value) delete config.egress.routes[id]; updateHint(); updateDraftState(); });
     updateHint(); const node = document.createElement("label"); node.append(text("span", label), select, hint); routes.append(node);
   });
-  document.querySelector("#egress-status").textContent = `${nodes.length} 个出口节点；已绑定 ${Object.keys(config.egress?.routes || {}).length} 个商家。出口按商家生效，未绑定商家使用主服务器直连。修改后请点击底部“保存配置”。大盘、库存监控/通知、分类读取和网页测试沿用对应商家出口；VPS 秒杀可单独指定出口。`;
+  document.querySelector("#egress-status").textContent = `${nodes.length} 个出口节点；已绑定 ${Object.keys(config.egress?.routes || {}).length} 个商家。出口按商家生效，未绑定商家使用主服务器直连。修改后请点击底部“保存配置”。大盘、库存监控/通知、分类读取和网页测试沿用对应商家出口；VPS 补货抢购可单独指定出口。`;
 }
 function collectEgress() { return { nodes: egressNodes().map(node => ({ ...node })), routes: { ...(config.egress?.routes || {}) } }; }
 document.querySelector("#egress-add-node").addEventListener("click", () => { const node = { id: `egress-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name: `出口节点 ${egressNodes().length + 1}`, proxy_url: "", health_url: "", token: "", listen_port: 8787, pending_registration: true, enabled: true }; egressNodes().push(node); expandedEgressNodes.add(node.id); renderEgress(); updateDraftState(); document.querySelector("#egress-nodes").lastElementChild.scrollIntoView({ behavior: "smooth", block: "nearest" }); });
@@ -2147,7 +2206,7 @@ function addToVpsSeckill(product) {
   if (!product || !config.products.some(item => item.id === product.id && (membership(item, "watch") || membership(item, "notify")))) return;
   const items = seckillItems();
   if (!items.some(item => item.product_id === product.id)) items.push({ id: product.id, product_id: product.id, label: product.name, quantity: 1, coupon_code: "", target_url: product.purchase_url || product.snapshot?.url || "", submit_url: "", account_id: "", egress_node_id: "", enabled: true, auto_submit: false });
-  navigatePage("seckill"); renderVpsSeckill(); updateDraftState(); setMessage(`${product.name} 已加入 VPS 秒杀，保存配置后可启动。`, "pending");
+  navigatePage("seckill"); renderVpsSeckill(); updateDraftState(); setMessage(`${product.name} 已加入 VPS 补货抢购，保存配置后可启动。`, "pending");
 }
 function renderVpsSeckill() {
   const value = config.vps_seckill || { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] };
@@ -2157,11 +2216,11 @@ function renderVpsSeckill() {
   seckillAccounts().forEach(account => accountOptions.push(new Option(`${account.name}${account.password_configured ? " · 已保存密码" : ""}`, account.id)));
   const itemTarget = document.querySelector("#vps-seckill-items"); itemTarget.replaceChildren();
   const products = new Map(config.products.map(item => [item.id, item]));
-  if (!seckillItems().length) itemTarget.append(text("p", "还没有秒杀商品，请从 VPS 库存监控或 VPS 库存通知的“更多”中逐个加入。", "empty"));
+  if (!seckillItems().length) itemTarget.append(text("p", "还没有补货抢购商品，请从 VPS 库存监控或 VPS 库存通知的“更多”中逐个加入。", "empty"));
   seckillItems().forEach(item => {
     const product = products.get(item.product_id), card = text("article", "", "seckill-item"); card.dataset.id = item.id;
     const title = text("strong", product?.name || item.label || item.product_id || "已下架商品");
-    const head = text("div", "", "seckill-item-head"); head.append(title, text("small", product ? `${product.provider} · ${item.product_id}` : "商品已下架，保留秒杀配置", "subtle")); card.append(head);
+    const head = text("div", "", "seckill-item-head"); head.append(title, text("small", product ? `${product.provider} · ${item.product_id}` : "商品已下架，保留补货抢购配置", "subtle")); card.append(head);
     const grid = text("div", "", "form-grid");
     const quantity = document.createElement("input"); quantity.type = "number"; quantity.min = "1"; quantity.max = "100"; quantity.step = "1"; quantity.value = item.quantity ?? 1;
     quantity.addEventListener("input", () => { item.quantity = Number(quantity.value); updateDraftState(); });
@@ -2175,7 +2234,7 @@ function renderVpsSeckill() {
     const auto = settingButton("自动提交", item.auto_submit, value => { item.auto_submit = value; });
     const flags = text("div", "", "actions"); flags.append(enabled, auto);
     const check = text("button", "检查账户", "seckill-check-account"); check.type = "button"; check.disabled = actionRunning || !item.account_id;
-    check.setAttribute("aria-label", `检查秒杀账户 ${title.textContent}`);
+    check.setAttribute("aria-label", `检查补货抢购账户 ${title.textContent}`);
     const status = text("p", seckillAccountNote(item), "hint seckill-account-status"); status.setAttribute("role", "status");
     check.addEventListener("click", () => {
       if (hasUnsavedChanges()) { setMessage("请先保存配置，再按该商品的出口检查账户。", "error"); return; }
@@ -2186,11 +2245,11 @@ function renderVpsSeckill() {
     });
     flags.append(check); card.append(status);
     const remove = text("button", "删除商品", "danger"); remove.type = "button"; remove.disabled = actionRunning;
-    remove.setAttribute("aria-label", `删除秒杀商品 ${title.textContent}`);
-    remove.addEventListener("click", () => { const index = seckillItems().indexOf(item); if (index >= 0) seckillItems().splice(index, 1); renderVpsSeckill(); updateDraftState(); setMessage("已删除该秒杀商品，请保存配置。", "pending"); }); flags.append(remove); card.append(grid, flags); itemTarget.append(card);
+    remove.setAttribute("aria-label", `删除补货抢购商品 ${title.textContent}`);
+    remove.addEventListener("click", () => { const index = seckillItems().indexOf(item); if (index >= 0) seckillItems().splice(index, 1); renderVpsSeckill(); updateDraftState(); setMessage("已删除该补货抢购商品，请保存配置。", "pending"); }); flags.append(remove); card.append(grid, flags); itemTarget.append(card);
   });
   const accountTarget = document.querySelector("#vps-seckill-accounts"); accountTarget.replaceChildren();
-  if (!seckillAccounts().length) accountTarget.append(text("p", "尚未配置网站账户。手动秒杀不需要账户。", "empty"));
+  if (!seckillAccounts().length) accountTarget.append(text("p", "尚未配置网站账户。手动抢购不需要账户。", "empty"));
   seckillAccounts().forEach(account => {
     const card = text("article", "", "seckill-account"), grid = text("div", "", "form-grid");
     const fields = [["账户名称", "name", "账户名称"], ["商家", "provider", "商家名称"], ["用户名", "username", "登录用户名"], ["账户检查 / 登录适配接口", "login_url", "https://…（非普通登录网页）"]];
@@ -2198,7 +2257,7 @@ function renderVpsSeckill() {
     const password = document.createElement("input"); password.type = "password"; password.autocomplete = "new-password"; password.placeholder = account.password_configured ? "已保存，留空保持不变" : "登录密码"; password.addEventListener("input", () => { account.password = password.value; account.password_configured = Boolean(password.value) || account.password_configured; updateDraftState(); }); const passwordLabel = document.createElement("label"); passwordLabel.append(text("span", "密码"), password); grid.append(passwordLabel);
     const autoLabel = settingButton("自动下单", account.auto_submit, value => { account.auto_submit = value; });
     const remove = text("button", "删除账户", "danger"); remove.type = "button"; remove.disabled = actionRunning;
-    remove.setAttribute("aria-label", `删除秒杀账户 ${account.name || account.id}`);
+    remove.setAttribute("aria-label", `删除补货抢购账户 ${account.name || account.id}`);
     remove.addEventListener("click", () => deleteSeckillAccounts([account.id]));
     card.append(grid, text("div", "", "actions")); card.lastChild.append(autoLabel, remove); accountTarget.append(card);
   });
@@ -2210,7 +2269,7 @@ function deleteSeckillAccounts(ids) {
   config.vps_seckill.accounts = seckillAccounts().filter(account => !deleted.has(account.id));
   seckillItems().forEach(item => { if (deleted.has(item.account_id)) item.account_id = ""; });
   renderVpsSeckill(); updateDraftState();
-  setMessage("已删除秒杀账户并解除对应商品绑定，请保存配置。", "pending");
+  setMessage("已删除补货抢购账户并解除对应商品绑定，请保存配置。", "pending");
 }
 function collectVpsSeckill() {
   return { enabled: seckillItems().some(item => item.enabled !== false), mode: document.querySelector("#vps-seckill-mode")?.value || "manual", interval_seconds: Number(document.querySelector("#vps-seckill-interval")?.value || 5), items: seckillItems().map(item => ({ ...item })), accounts: seckillAccounts().map(account => ({ ...account })) };
@@ -2233,11 +2292,11 @@ function renderVpsSeckillTask() {
     try { const url = new URL(result.url); if (url.protocol === "https:" && !url.username && !url.password) { const link = text("a", "前往官网核对 / 手动支付"); link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer"; row.append(link); } } catch {}
     results.append(row);
   });
-  const logs = vpsSeckillTask?.logs || []; document.querySelector("#vps-seckill-logs").textContent = logs.length ? logs.map(log => `[${new Date(log.at).toLocaleString()}] ${log.message}`).join("\n") : "暂无日志"; document.querySelector("#vps-seckill-log-note").textContent = vpsSeckillTask ? `${vpsSeckillTask.mode || ""} · ${logs.length} 条日志` : "尚未启动秒杀任务。";
+  const logs = vpsSeckillTask?.logs || []; document.querySelector("#vps-seckill-logs").textContent = logs.length ? logs.map(log => `[${new Date(log.at).toLocaleString()}] ${log.message}`).join("\n") : "暂无日志"; document.querySelector("#vps-seckill-log-note").textContent = vpsSeckillTask ? `${vpsSeckillTask.mode || ""} · ${logs.length} 条日志` : "尚未启动补货抢购任务。";
 }
 window.addEventListener("hostwatch-action-change", renderVpsSeckillTask);
 async function pollVpsSeckill(taskId) { clearInterval(vpsSeckillPoll); vpsSeckillPoll = setInterval(async () => { try { vpsSeckillTask = await requestJSON(`/api/seckill/status/${encodeURIComponent(taskId)}`); renderVpsSeckillTask(); if (!vpsSeckillTask.pending) clearInterval(vpsSeckillPoll); } catch { clearInterval(vpsSeckillPoll); } }, 1000); }
-document.querySelector("#vps-seckill-start").addEventListener("click", async event => { if (hasUnsavedChanges()) { setMessage("请先点击底部“保存配置”，再启动 VPS 秒杀。", "error"); return; } try { const taskId = `seckill-${Date.now()}-${Math.random().toString(36).slice(2, 18)}`; vpsSeckillTask = await requestJSON("/api/seckill/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: taskId, mode: document.querySelector("#vps-seckill-mode").value }) }); renderVpsSeckillTask(); pollVpsSeckill(taskId); setMessage("VPS 秒杀任务已启动。", "success"); } catch (error) { setMessage(error.message, "error"); } });
+document.querySelector("#vps-seckill-start").addEventListener("click", async event => { if (hasUnsavedChanges()) { setMessage("请先点击底部“保存配置”，再启动 VPS 补货抢购。", "error"); return; } try { const taskId = `seckill-${Date.now()}-${Math.random().toString(36).slice(2, 18)}`; vpsSeckillTask = await requestJSON("/api/seckill/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: taskId, mode: document.querySelector("#vps-seckill-mode").value }) }); renderVpsSeckillTask(); pollVpsSeckill(taskId); setMessage("VPS 补货抢购任务已启动。", "success"); } catch (error) { setMessage(error.message, "error"); } });
 document.querySelector("#vps-seckill-stop").addEventListener("click", async () => { if (!vpsSeckillTask?.task_id) return; try { vpsSeckillTask = await requestJSON("/api/seckill/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: vpsSeckillTask.task_id }) }); renderVpsSeckillTask(); } catch (error) { setMessage(error.message, "error"); } });
 function openSeckillPicker(type) {
   const dialog = document.querySelector("#seckill-picker-dialog"), content = document.querySelector("#seckill-picker-content");
@@ -2258,7 +2317,7 @@ function openSeckillPicker(type) {
 document.querySelector("#vps-seckill-open-monitor").addEventListener("click", () => openSeckillPicker("watch"));
 document.querySelector("#vps-seckill-open-notifications").addEventListener("click", () => openSeckillPicker("notify"));
 document.querySelector("#seckill-picker-close").addEventListener("click", () => document.querySelector("#seckill-picker-dialog").close());
-document.querySelector("#vps-seckill-delete-all").addEventListener("click", () => { seckillItems().splice(0); renderVpsSeckill(); updateDraftState(); setMessage("已删除全部秒杀商品，请保存配置。", "pending"); });
+document.querySelector("#vps-seckill-delete-all").addEventListener("click", () => { seckillItems().splice(0); renderVpsSeckill(); updateDraftState(); setMessage("已删除全部补货抢购商品，请保存配置。", "pending"); });
 document.querySelector("#vps-seckill-delete-all-accounts").addEventListener("click", () => deleteSeckillAccounts(seckillAccounts().map(account => account.id)));
 document.querySelector("#vps-seckill-add-account").addEventListener("click", () => { seckillAccounts().push({ id: `account-${Date.now()}`, name: "", provider: "", username: "", password: "", login_url: "", auto_submit: false }); renderVpsSeckill(); updateDraftState(); });
 document.querySelector("#vps-seckill-clear-log").addEventListener("click", () => { if (vpsSeckillTask) { vpsSeckillTask.logs = []; renderVpsSeckillTask(); } });
@@ -2404,8 +2463,8 @@ function renderProviderFlareSettings() {
         input.addEventListener("input", () => { options[key] = input.value === "" ? NaN : Number(input.value); updateDraftState(); });
         const field = text("label", name); field.append(input); grid.append(field);
       }
-      const light = settingButton(`${label} 轻量加载`, options.disable_media, enabled => { options.disable_media = enabled; }, ["完整加载", "已开启"]);
-      light.dataset.flareOption = "disable_media"; grid.append(light); card.append(grid);
+      grid.append(createFlareModeButtons(label, options.disable_media, enabled => { options.disable_media = enabled; }));
+      card.append(grid);
     }
     return card;
   }));
@@ -2443,7 +2502,7 @@ function applyConfig(value) {
   document.querySelector("#flaresolverr-url").value = fetcher.flaresolverr_url || "http://127.0.0.1:8191/v1";
   document.querySelector("#flaresolverr-timeout").value = fetcher.timeout_seconds || 60;
   document.querySelector("#fetcher-wait").value = fetcher.wait_seconds || 0;
-  setOptionPressed("flaresolverr-light", Boolean(fetcher.disable_media));
+  setFlareModeButtons([document.querySelector("#flaresolverr-light"), document.querySelector("#flaresolverr-full")], Boolean(fetcher.disable_media));
   providerFlareDraft.clear();
   Object.entries(fetcher.provider_flaresolverr || {}).forEach(([provider, options]) => providerFlareDraft.set(provider, { ...options }));
   const cloud = fetcher.cloudscraper || {};
@@ -2557,8 +2616,13 @@ document.querySelector("#watch-compare-dialog").addEventListener("cancel", event
 for (const input of document.querySelectorAll("[data-affiliate]")) input.addEventListener("input", renderAffiliatePreviews);
 for (const input of document.querySelectorAll("[data-provider-mode]")) input.addEventListener("change", updateFetcherStatus);
 document.querySelector("#merchant-order-toggle").addEventListener("click", (event) => {
-  const panel = document.querySelector("#merchant-order-panel"); panel.hidden = !panel.hidden;
-  event.currentTarget.setAttribute("aria-expanded", String(!panel.hidden));
+  if (actionRunning) return;
+  merchantOrderEditing = !merchantOrderEditing;
+  event.currentTarget.textContent = merchantOrderEditing ? "保存商家顺序" : "调整商家顺序";
+  event.currentTarget.classList.toggle("merchant-order-editing", merchantOrderEditing);
+  event.currentTarget.setAttribute("aria-expanded", String(merchantOrderEditing));
+  renderMerchantOrder();
+  if (!merchantOrderEditing) setMessage("商家顺序编辑已完成；请点击底部“保存配置”保存到服务器。", "pending");
 });
 document.querySelector("#add").addEventListener("click", () => {
   const item = { ...structuredClone(merchantPresets[merchantSelect.value].product), id: crypto.randomUUID(), enabled: false };
@@ -2579,13 +2643,11 @@ document.querySelector("#refresh-status").addEventListener("click", (event) => r
 }));
 document.querySelector("#fetcher-mode").addEventListener("change", updateFetcherStatus);
 window.addEventListener("hostwatch-action-change", syncProviderFlareSettings);
-document.querySelector("#flaresolverr-fast").addEventListener("click", () => {
+document.querySelectorAll("#flaresolverr-light, #flaresolverr-full").forEach(button => button.addEventListener("click", () => {
   if (actionRunning) return;
-  document.querySelector("#fetcher-wait").value = 0;
-  setOptionPressed("flaresolverr-light", true);
+  setFlareModeButtons([...document.querySelectorAll("#flaresolverr-light, #flaresolverr-full")], button.id === "flaresolverr-light");
   updateDraftState();
-  setMessage("默认参数已设为轻量加载和零额外渲染等待，商家的独立参数继续保留；点击底部保存配置后生效。", "pending");
-});
+}));
 document.querySelector("#fetcher-test").addEventListener("click", (event) => runAction(event.currentTarget, "检测中…", "正在测试 FlareSolverr 服务连接，不访问商品网站…", async () => {
   const result = await requestJSON("/api/fetcher/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(collectConfig().fetcher) });
   document.querySelector("#fetcher-health").textContent = `版本 ${result.version}：${result.message}`;
