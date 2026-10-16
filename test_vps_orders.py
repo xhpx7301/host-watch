@@ -103,6 +103,19 @@ class OrderTaskTests(unittest.TestCase):
                 self.assertFalse(call.kwargs['allow_redirects'])
                 self.assertNotIn('payments.example', call.args[0])
 
+    def test_submitted_unpaid_order_sends_telegram_notification(self):
+        with patch.object(admin, 'effective_telegram', return_value=('test-token', '123')) as credentials, \
+             patch.object(admin, 'telegram_call') as send:
+            result = self.run_task()
+        self.assertEqual(result['items'][0]['telegram_status'], 'sent')
+        credentials.assert_called_once_with(self.config)
+        self.assertEqual(send.call_args.args[:2], ('test-token', 'sendMessage'))
+        payload = send.call_args.kwargs
+        self.assertEqual(payload['chat_id'], '123')
+        self.assertIn('订单号：<code>order-123</code>', payload['text'])
+        self.assertIn('状态：待付款', payload['text'])
+        self.assertEqual(payload['reply_markup']['inline_keyboard'][0][0]['url'], 'https://shop.example.com/buy')
+
     def test_precise_rechecks_account_and_stock_before_submission(self):
         result = self.run_task('precise')
         self.assertEqual(self.stock.call_count, 2)

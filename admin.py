@@ -639,8 +639,34 @@ class SeckillTask:
             self.log("已发送一次下单请求，但无法确认待付款订单；已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
             return {"status": "uncertain", "url": url, "quantity": quantity}
         self.log(f"已创建待付款订单，数量 {quantity}；请手动前往官网核对订单并支付。", "success", item)
+        notification = self._notify_unpaid_order(item, data["order_id"], quantity, url)
         # Do not expose or visit arbitrary response links, and never fetch payment_url.
-        return {"status": "submitted", "order_id": data["order_id"][:128], "url": url, "quantity": quantity, "payment_status": "unpaid"}
+        return {"status": "submitted", "order_id": data["order_id"][:128], "url": url, "quantity": quantity,
+                "payment_status": "unpaid", "telegram_status": notification}
+
+    def _notify_unpaid_order(self, item: dict, order_id: str, quantity: int, url: str) -> str:
+        token, chat_id = effective_telegram(self.config)
+        if not token or not chat_id:
+            self.log("待付款订单已创建，但未发送 Telegram：机器人未配置或通知已关闭。", "warning", item)
+            return "unconfigured"
+        label = item.get("label") or item.get("product_id") or "VPS 商品"
+        message = "\n".join([
+            "✅ <b>HostWatch · VPS 补货抢购成功</b>",
+            f"商品：{escape(str(label)[:160])}",
+            f"订单号：<code>{escape(str(order_id)[:128])}</code>",
+            f"数量：{quantity}",
+            "状态：待付款",
+            f"下单时间：{format_beijing(beijing_iso())}",
+            "请登录商家官网手动付款，系统不会自动付款。",
+        ])
+        try:
+            telegram_call(token, "sendMessage", chat_id=chat_id, text=message, parse_mode="HTML",
+                          disable_web_page_preview=True, reply_markup=purchase_button(url))
+        except TelegramAPIError:
+            self.log("待付款订单已创建，但 Telegram 通知发送失败；请查看服务日志并到官网核对订单。", "error", item)
+            return "failed"
+        self.log("待付款订单已通过 Telegram 通知。", "success", item)
+        return "sent"
 
     @staticmethod
     def enough_stock(result, quantity):
