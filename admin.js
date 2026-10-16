@@ -1905,6 +1905,9 @@ function renderOverviewRecent() {
 
 const egressProviders = [["vmiss", "VMISS"], ["vps_soy", "VPS.SOY"], ["akile", "Akile"], ["isvoro", "Isvoro"], ["dmit", "DMIT"], ["bwh", "搬瓦工"], ["html", "其他商家 / 自定义网页"]];
 const egressInstallCommands = new Map();
+// The command is identical for every node. Prefer the installed offline script;
+// existing installations can download it without requiring a node ID or token.
+const egressUninstallCommand = `sh -c 'set -eu; if [ -f /opt/hostwatch-egress/uninstall.sh ]; then exec sh /opt/hostwatch-egress/uninstall.sh; fi; script=$(mktemp); trap "rm -f \\"$script\\"" EXIT HUP INT TERM; url=https://raw.githubusercontent.com/xhpx7301/host-watch/main/uninstall-egress.sh; if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 20 --max-time 120 "$url" -o "$script"; elif command -v wget >/dev/null 2>&1; then wget -q -T 120 -O "$script" "$url"; else echo "请安装 curl 或 wget 后重试。" >&2; exit 1; fi; sh "$script"'`;
 function egressNodes() { return config.egress?.nodes || (config.egress = { nodes: [], routes: {} }).nodes; }
 function rememberSavedEgressNode(node) {
   if (!savedConfig) return;
@@ -1946,6 +1949,15 @@ async function copyEgressCommand(node) {
   }
   setMessage(result.auto_register ? "安装命令已复制。在子服务器执行后，点击“刷新节点”获取地址。" : "安装命令已复制。当前通过本地地址访问，请执行后回填终端输出的 JSON。", "success");
 }
+async function copyEgressUninstallCommand(input) {
+  input.hidden = false; input.value = egressUninstallCommand;
+  try { await navigator.clipboard.writeText(egressUninstallCommand); }
+  catch {
+    input.focus(); input.select();
+    if (!document.execCommand("copy")) { setMessage("卸载命令已显示，请在命令框中手动复制。", "pending"); return; }
+  }
+  setMessage("卸载命令已复制，请在要卸载的子服务器执行；卸载后在管理页移除节点并保存配置。", "success");
+}
 function renderEgress() {
   const nodes = egressNodes(), target = document.querySelector("#egress-nodes"); target.replaceChildren();
   if (!nodes.length) target.append(text("p", "点击“添加节点”生成默认配置，再一键复制命令到 Debian / Alpine 子服务器安装。", "empty"));
@@ -1953,9 +1965,14 @@ function renderEgress() {
     const card = text("article", "", "egress-node"), head = text("div", "", "egress-node-head"); head.append(text("strong", node.name || node.id || "未命名节点"), text("small", node.pending_registration ? "等待安装回报" : node.public_ip || "公网 IP 未检查", "subtle")); card.append(head);
     const setup = text("div", "", "egress-setup"), install = text("button", "一键复制安装命令", "primary egress-install-copy"); install.type = "button"; install.disabled = actionRunning;
     install.addEventListener("click", () => copyEgressCommand(node));
-    setup.append(install, text("p", "支持 Debian / Alpine，默认端口 8787，节点令牌自动生成。复制命令时仅保存此节点，其他栏目草稿保留；在子服务器以 root 执行。", "hint"));
+    const uninstall = text("button", "一键复制卸载命令", "egress-uninstall-copy"); uninstall.type = "button"; uninstall.disabled = actionRunning;
+    const uninstallCommand = document.createElement("textarea"); uninstallCommand.className = "egress-command"; uninstallCommand.rows = 3; uninstallCommand.readOnly = true; uninstallCommand.hidden = true; uninstallCommand.setAttribute("aria-label", `${node.name} 卸载命令`);
+    uninstall.addEventListener("click", () => copyEgressUninstallCommand(uninstallCommand));
+    const commandActions = text("div", "", "actions"); commandActions.append(install, uninstall);
+    setup.append(commandActions, text("p", "支持 Debian / Alpine，默认端口 8787，节点令牌自动生成。复制安装命令时仅保存此节点，其他栏目草稿保留；在子服务器以 root 执行。", "hint"));
     const command = document.createElement("textarea"); command.className = "egress-command"; command.dataset.egressCommand = node.id; command.rows = 3; command.readOnly = true; command.setAttribute("aria-label", `${node.name} 安装命令`); command.value = egressInstallCommands.get(node.id)?.command || ""; command.placeholder = "点击上方按钮，自动生成并复制安装命令，无需修改下方默认配置。"; setup.append(command);
     const registration = egressInstallCommands.get(node.id);
+    setup.append(text("p", "卸载命令所有节点通用，仅在目标子服务器执行，停止并删除节点程序、配置和专用账户。卸载后需在管理页调整出口路由、移除节点并保存配置。", "hint"), uninstallCommand);
     if (registration) setup.append(text("p", registration.auto_register ? `自动回报至 ${registration.register_url}；安装后点击“刷新节点”。` : "当前主服务地址仅本机可访问。安装后将终端输出的 JSON 粘贴到“回填安装结果”，即可自动填入 IP 和连接地址。", "hint"));
     const fallback = document.createElement("details"); fallback.className = "egress-import"; fallback.append(text("summary", "回填安装结果（SSH 隧道或自动回报不可用时）"));
     const info = document.createElement("textarea"); info.rows = 3; info.placeholder = "粘贴子服务器安装完成后输出的 JSON"; info.setAttribute("aria-label", `${node.name} 安装结果`);
@@ -2069,7 +2086,7 @@ function collectVpsSeckill() {
   return { enabled: seckillItems().some(item => item.enabled !== false), mode: document.querySelector("#vps-seckill-mode")?.value || "manual", interval_seconds: Number(document.querySelector("#vps-seckill-interval")?.value || 5), items: seckillItems().map(item => ({ ...item })), accounts: seckillAccounts().map(account => ({ ...account })) };
 }
 function renderVpsSeckillTask() {
-  document.querySelectorAll("#page-seckill .option-button, .seckill-item .danger, .seckill-account .danger, #egress-nodes .option-button, #egress-nodes .egress-install-copy").forEach(button => { button.disabled = actionRunning; });
+  document.querySelectorAll("#page-seckill .option-button, .seckill-item .danger, .seckill-account .danger, #egress-nodes .option-button, #egress-nodes .egress-install-copy, #egress-nodes .egress-uninstall-copy").forEach(button => { button.disabled = actionRunning; });
   document.querySelectorAll(".seckill-check-account").forEach(button => { const item = seckillItems().find(row => row.id === button.closest(".seckill-item").dataset.id); button.disabled = actionRunning || !item?.account_id; });
   document.querySelectorAll(".seckill-account-status").forEach(node => { const item = seckillItems().find(row => row.id === node.closest(".seckill-item").dataset.id); if (item) node.textContent = seckillAccountNote(item); });
   document.querySelector("#vps-seckill-delete-all").disabled = actionRunning || !seckillItems().length;

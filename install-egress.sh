@@ -29,7 +29,7 @@ curl -fsSL --connect-timeout 20 --max-time 120 --retry 2 \
   https://codeload.github.com/xhpx7301/host-watch/tar.gz/refs/heads/main -o "$task_tmp/source.tar.gz"
 tar -xzf "$task_tmp/source.tar.gz" -C "$task_tmp"
 source_dir="$task_tmp/host-watch-main"
-for file in egress_agent.py hostwatch-egress-agent.service hostwatch-egress-agent.openrc; do
+for file in egress_agent.py hostwatch-egress-agent.service hostwatch-egress-agent.openrc uninstall-egress.sh; do
   [ -f "$source_dir/$file" ] || fail "源码缺少 $file，尚未替换已安装的程序。"
 done
 python3 - "$1" "$task_tmp/config.json" <<'PY'
@@ -77,6 +77,7 @@ for target in /opt/hostwatch-egress /etc/hostwatch-egress.json /etc/hostwatch-eg
 done
 install -d -o root -g root -m 0755 /opt/hostwatch-egress
 install -o root -g root -m 0644 "$source_dir/egress_agent.py" /opt/hostwatch-egress/egress_agent.py
+install -o root -g root -m 0755 "$source_dir/uninstall-egress.sh" /opt/hostwatch-egress/uninstall.sh
 install -o root -g hostwatch-egress -m 0640 "$task_tmp/config.json" /etc/hostwatch-egress.json
 printf 'EGRESS_CONFIG=/etc/hostwatch-egress.json\n' > "$task_tmp/agent.env"
 install -o root -g hostwatch-egress -m 0640 "$task_tmp/agent.env" /etc/hostwatch-egress.env

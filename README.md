@@ -396,6 +396,8 @@ sudo journalctl -u vmiss-monitor.service -n 50 --no-pager
 
 子服务器程序安装在 `/opt/hostwatch-egress/`，配置和令牌保存在 `/etc/hostwatch-egress.json`（仅 root 和节点服务用户可读取）。服务名称为 `hostwatch-egress-agent`：Debian 使用 `systemctl status hostwatch-egress-agent` / `journalctl -u hostwatch-egress-agent`；Alpine 使用 `rc-service hostwatch-egress-agent status`，日志位于 `/var/log/hostwatch-egress.log`。重复执行安装命令会更新并重启同一服务，不会重复创建节点。安装命令和回填 JSON 包含该节点令牌。
 
+每个节点旁还提供“一键复制卸载命令”，所有节点使用同一条命令，无需节点 ID 或令牌；复制不会保存或修改配置。请在需要卸载的子服务器以 root 执行（支持 sudo），自动识别 Debian / Alpine，停止服务、取消开机启动，删除节点程序、配置、Alpine 日志及专用服务账户，不移除共享 Python 依赖或主服务数据。新安装的节点优先运行本地 `/opt/hostwatch-egress/uninstall.sh`，无需联网；旧节点会自动下载卸载脚本。也可直接执行 `sudo sh /opt/hostwatch-egress/uninstall.sh`。卸载后，在主服务管理页调整使用该节点的商家/秒杀出口，点击“移除节点”并保存配置；管理页移除记录不会远程卸载子服务器程序。
+
 ```sh
 sudo systemctl status vmiss-monitor-admin.service vmiss-monitor.service
 sudo journalctl -u vmiss-monitor.service -f

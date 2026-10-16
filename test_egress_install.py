@@ -45,7 +45,7 @@ class EgressInstallerTests(unittest.TestCase):
             installer.write_bytes(text.encode())
             archive = sandbox / "source.tar.gz"
             with tarfile.open(archive, "w:gz") as tar:
-                for filename in ["egress_agent.py", "hostwatch-egress-agent.service", "hostwatch-egress-agent.openrc"]:
+                for filename in ["egress_agent.py", "hostwatch-egress-agent.service", "hostwatch-egress-agent.openrc", "uninstall-egress.sh"]:
                     body = (root / filename).read_text(encoding="utf-8").encode()
                     info = tarfile.TarInfo("host-watch-main/" + filename)
                     info.size = len(body)
@@ -112,6 +112,8 @@ source "$TEST_INSTALLER"
                                         capture_output=True, text=True, encoding="utf-8", timeout=45)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertFalse(failures)
+                self.assertEqual((sandbox / "opt/hostwatch-egress/uninstall.sh").read_text(encoding="utf-8"),
+                                 (root / "uninstall-egress.sh").read_text(encoding="utf-8"))
                 installed = json.loads((sandbox / "etc/hostwatch-egress.json").read_text(encoding="utf-8"))
                 self.assertEqual(installed["EGRESS_NODE_ID"], "installed-node")
                 self.assertEqual(installed["EGRESS_NODE_NAME"], settings["EGRESS_NODE_NAME"])
