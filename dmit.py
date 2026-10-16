@@ -124,15 +124,23 @@ def purchase_status(body: str, final_url: str, pid: str) -> int:
     if parsed.scheme != "https" or parsed.hostname != HOST or parsed.username or parsed.password or parsed.port not in (None, 443):
         raise MonitorError("DMIT 购买页重定向离开 www.dmit.io，未更新库存")
     soup = BeautifulSoup(body, "html.parser")
-    # A redirect to the directory is not a successful purchase-page check.
-    # Other cards' sold-out labels must not mark this product sold out either.
-    rows = parse_cards(body, final_url)
-    if rows:
-        matches = [row for row in rows if row.get("pid") == pid]
-        if len(matches) == 1 and matches[0].get("available") == 0:
-            return 0
-        raise MonitorError("DMIT 购买入口返回目录页，尚未确认可下单，未更新库存")
     query = parse_qs(parsed.query)
+    cart_page = parsed.path == "/cart.php" and query.get("a") in (["add"], ["confproduct"])
+    # Only parse a response as a catalogue when it has an explicit catalogue
+    # structure.  A cart action can contain product-like wrappers without a
+    # package title; sending those wrappers through parse_cards() produced a
+    # false "PID missing package name" error for valid add-to-cart responses.
+    catalogue_page = bool(
+        soup.select_one(".plan-group .plan-card")
+        or (not cart_page and soup.select_one('[id^="product"], [data-pid], .package, .pricing-table, .pricing-item, .plan, .product'))
+    )
+    if catalogue_page:
+        rows = parse_cards(body, final_url)
+        if rows:
+            matches = [row for row in rows if row.get("pid") == pid]
+            if len(matches) == 1 and matches[0].get("available") == 0:
+                return 0
+            raise MonitorError("DMIT 购买入口返回目录页，尚未确认可下单，未更新库存")
     ids = query.get("pid", []) + [str(n.get("value", "")) for n in soup.select('input[name="pid"]')]
     if any(value != pid for value in ids):
         raise MonitorError("DMIT 购买页商品 PID 不一致，未更新库存")
@@ -141,7 +149,6 @@ def purchase_status(body: str, final_url: str, pid: str) -> int:
     page_text = text(soup)
     if PURCHASE_SOLD_PATTERN.search(page_text):
         return 0
-    cart_page = parsed.path == "/cart.php" and query.get("a") in (["add"], ["confproduct"])
     # Require the actual WHMCS product configuration form. Generic navigation
     # labels such as Checkout/Continue alone are not evidence of stock.
     form = soup.select_one('form#frmConfigureProduct, form[action*="a=confproduct"]')

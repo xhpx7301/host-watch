@@ -216,6 +216,13 @@ class DMITVerifiedStockTests(unittest.TestCase):
             with self.subTest(body=body, url=url), self.assertRaises(monitor.MonitorError):
                 dmit.purchase_status(body, url, "253")
 
+    def test_cart_wrappers_without_titles_do_not_enter_catalogue_parser(self):
+        body = '''<div class="product" data-pid="253"><div class="product-summary">
+          <span>Product configuration</span><a href="/cart.php?a=add&amp;pid=253">Continue</a>
+        </div></div>'''
+        with self.assertRaisesRegex(monitor.MonitorError, "未明确返回"):
+            dmit.purchase_status(body, self.purchase_url, "253")
+
     def test_failed_cart_check_is_unknown_preserves_metadata_and_stops_repeated_challenges(self):
         body = pricing_card() + pricing_card(pid="254", hw="an4") + pricing_card(sold=True, net="tier1")
         with patch("monitor.fetch_page", side_effect=[(body, dmit.PRICING_URL), monitor.SiteBlocked("购买页验证失败")]) as fetch:
