@@ -46,6 +46,14 @@
     "dmit": "22544",
     "bwh": "84938"
   },
+  "affiliate_coupons": {
+    "vmiss": "",
+    "vps_soy": "",
+    "akile": "",
+    "isvoro": "",
+    "dmit": "",
+    "bwh": ""
+  },
   "merchant_order": [
     "vmiss",
     "vps_soy",

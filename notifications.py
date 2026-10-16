@@ -119,7 +119,7 @@ def stock_message(*, vendor: str, name: str, available: int, stock_mode: str, re
                   traffic: str = "", price: str = "", line: str = "", item: dict | None = None,
                   old_count: int | None = None, checked_at: str = "", test: bool = False,
                   duration: object = None, warning: str = "", purchase_url: str = "",
-                  live: bool = False, uncertain: bool = False) -> str:
+                  live: bool = False, uncertain: bool = False, coupon_code: str = "") -> str:
     # Leave room for labels, links and manual-test diagnostics within Telegram's limit.
     remaining_units = 2400
     def safe(value, limit=200):
@@ -149,6 +149,9 @@ def stock_message(*, vendor: str, name: str, available: int, stock_mode: str, re
         lines.append(f"🛣 <b>地区/线路：</b>{safe(line, 160)}")
     if item.get("remarks"):
         lines.append(f"📝 <b>备注：</b>{safe(item['remarks'])}")
+    if coupon_code:
+        # Telegram renders <code> as a copyable monospace token in clients.
+        lines.append(f"🎟 <b>优惠码：</b><code>{safe(coupon_code, 128)}</code>（点击复制）")
     carriers = [f"{label}：{safe(item.get('line_' + key), 100)}" for key, label in (("telecom", "电"), ("unicom", "联"), ("mobile", "移")) if item.get("line_" + key)]
     if carriers or item.get("line_label"):
         lines.append("📡 <b>线路：</b>" + (" | ".join(carriers) if carriers else safe(item["line_label"])))

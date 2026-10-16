@@ -7,6 +7,7 @@ import logging
 import time
 from datetime import datetime
 
+from affiliates import effective_coupon
 from notifications import purchase_button, stock_message
 
 
@@ -37,6 +38,7 @@ class StockAlerts:
         return dict(vendor=product.vendor, name=product.name, available=product.available, stock_mode=product.stock_mode,
             region=product.region or product.area_name, specs=product.specs, traffic=product.traffic, price=product.price,
             line=(product.match_details or {}).get("category_name", "") or product.node_name or item.get("category_name", ""),
+            coupon_code=effective_coupon(self.config, item, item.get("adapter", "")),
             item={key: item[key] for key in ("remarks", "line_label", "line_telecom", "line_unicom", "line_mobile") if item.get(key)},
             checked_at=datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"), purchase_url=self.backend.purchase_link(product, item, self.config))
 

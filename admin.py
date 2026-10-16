@@ -24,7 +24,7 @@ import requests
 
 from auth import DEFAULT_USERS_PATH, authentication_required, authorized, users_path
 from catalog import CatalogBusy, CatalogService
-from affiliates import DEFAULT_AFFILIATES, PROVIDERS, affiliate_purchase_url, normalize_affiliate_notes, normalize_affiliates, normalize_merchant_order
+from affiliates import DEFAULT_AFFILIATES, PROVIDERS, affiliate_purchase_url, effective_coupon, normalize_affiliate_coupons, normalize_affiliate_notes, normalize_affiliates, normalize_merchant_order
 from notifications import purchase_button, stock_message
 import egress
 
@@ -655,6 +655,7 @@ def default_config() -> dict:
         "affiliate_id": DEFAULT_AFFILIATES["vmiss"],
         "affiliates": dict(DEFAULT_AFFILIATES),
         "affiliate_notes": {provider: "" for provider in PROVIDERS},
+        "affiliate_coupons": {provider: "" for provider in PROVIDERS},
         "merchant_order": list(PROVIDERS),
         "watch_order": [],
         "notify_order": [],
@@ -968,6 +969,7 @@ def validate_config(value: object) -> dict:
 
     affiliates = normalize_affiliates(value)
     affiliate_notes = normalize_affiliate_notes(value)
+    affiliate_coupons = normalize_affiliate_coupons(value)
     merchant_order = normalize_merchant_order(value.get("merchant_order", []))
 
     for key in ("enabled", "notify_current_stock_on_start", "isvoro_seckill"):
@@ -1142,6 +1144,10 @@ def validate_config(value: object) -> dict:
             if not isinstance(text, str) or len(text) > 500:
                 raise ValueError(f"产品 {name} 的备注和线路必须是 500 字以内的文本")
             normalized_item[field] = text.strip()
+        coupon = item.get("notification_coupon_code", "")
+        if not isinstance(coupon, str) or len(coupon) > 128 or any(ch in coupon for ch in "\r\n"):
+            raise ValueError(f"产品 {name} 的通知优惠码格式无效")
+        normalized_item["notification_coupon_code"] = coupon.strip()
         snapshot = item.get("snapshot", {})
         if not isinstance(snapshot, dict):
             raise ValueError("商品快照必须是对象")
@@ -1177,6 +1183,7 @@ def validate_config(value: object) -> dict:
         "affiliate_id": affiliates["vmiss"],
         "affiliates": affiliates,
         "affiliate_notes": affiliate_notes,
+        "affiliate_coupons": affiliate_coupons,
         "merchant_order": merchant_order,
         **product_orders,
         "fetcher": {**fetcher, "egress": egress_config},
@@ -1231,7 +1238,7 @@ def telegram_call(token: str, method: str, **payload) -> dict:
 
 
 def telegram_chats(token: str) -> list[dict]:
-    result = telegram_call(token, "getUpdates", allowed_updates=["message", "channel_post"])
+    result = telegram_call(token, "getUpdates", allowed_updates=["message", "channel_post", "edited_message", "edited_channel_post"], limit=100)
     chats: dict[str, dict] = {}
     updates = result.get("result", [])
     if not isinstance(updates, list):
@@ -1239,7 +1246,11 @@ def telegram_chats(token: str) -> list[dict]:
     for update in updates:
         if not isinstance(update, dict):
             continue
-        for key in ("message", "channel_post"):
+        try:
+            update_id = int(update.get("update_id", 0) or 0)
+        except (TypeError, ValueError):
+            update_id = 0
+        for key in ("message", "channel_post", "edited_message", "edited_channel_post"):
             message = update.get(key, {})
             if not isinstance(message, dict):
                 continue
@@ -1252,8 +1263,12 @@ def telegram_chats(token: str) -> list[dict]:
                     "id": chat_id,
                     "type": str(chat.get("type", "unknown")),
                     "name": str(chat.get("title") or chat.get("username") or chat.get("first_name") or "(未命名)"),
+                    "username": str(chat.get("username") or ""),
+                    "last_update_id": update_id,
                 }
-    return list(chats.values())
+                if update_id >= chats[chat_id].get("last_update_id", 0):
+                    chats[chat_id]["last_update_id"] = update_id
+    return sorted(chats.values(), key=lambda row: (-row.get("last_update_id", 0), row["name"].casefold()))
 
 
 def current_config() -> dict:
@@ -1321,7 +1336,8 @@ def send_stock_test_result(product: dict, result: dict) -> dict:
                 region=result.get("region") or matched.get("area_name") or matched.get("type_name", ""),
                 specs=result.get("specs", ""), traffic=result.get("traffic", ""), price=result.get("price", ""),
                 line=matched.get("category_name") or matched.get("node_name") or product.get("category_name") or product.get("node_name", ""),
-                item=product, checked_at=result["checked_at"], test=True, duration=result["duration_seconds"], warning=result.get("warning", ""), purchase_url=link)
+                item=product, checked_at=result["checked_at"], test=True, duration=result["duration_seconds"], warning=result.get("warning", ""), purchase_url=link,
+                coupon_code=effective_coupon(current_config(), product, product.get("adapter", "")))
         else:
             message = escape("❌ HostWatch · 商品单次测试\n"
                 f"商家：{str(product.get('provider') or product.get('adapter', ''))[:80]}\n"
@@ -1520,9 +1536,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, "application/json; charset=utf-8", b'{"error":"Seckill task not found"}')
                 return
             self._send(200, "application/json; charset=utf-8", json.dumps(task.snapshot(), ensure_ascii=False).encode("utf-8"))
-        elif self.path == "/api/telegram/chats":
+        elif urlsplit(self.path).path == "/api/telegram/chats":
             try:
-                token, _ = telegram_credentials()
+                query = dict(parse_qsl(urlsplit(self.path).query, keep_blank_values=True))
+                token, _ = telegram_credentials(query.get("token", ""))
                 if not token:
                     raise ValueError("请先在管理页保存 Telegram bot token")
                 chats = telegram_chats(token)
@@ -1577,7 +1594,7 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if self.path not in {"/api/config", "/api/telegram/test", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
+        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
             self.send_error(404)
             return
         try:
@@ -1599,6 +1616,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, "application/json; charset=utf-8", json.dumps(result, ensure_ascii=False).encode("utf-8"))
                 return
             submitted = request_body(self)
+            if urlsplit(self.path).path == "/api/telegram/chats":
+                token, _ = telegram_credentials(str(submitted.get("bot_token", "")).strip())
+                if not token:
+                    raise ValueError("请先在管理页填写或保存 Telegram bot token")
+                result = {"ok": True, "chats": telegram_chats(token)}
+                self._send(200, "application/json; charset=utf-8", json.dumps(result, ensure_ascii=False).encode("utf-8"))
+                return
             if self.path == "/api/egress/install-command":
                 current = current_config()
                 if not isinstance(submitted.get("node"), dict):
@@ -1771,6 +1795,8 @@ class Handler(BaseHTTPRequestHandler):
                     submitted["affiliates"]["vmiss"] = str(submitted["affiliate_id"]).strip()
             if "affiliate_notes" not in submitted:
                 submitted["affiliate_notes"] = dict(current["affiliate_notes"])
+            if "affiliate_coupons" not in submitted:
+                submitted["affiliate_coupons"] = dict(current.get("affiliate_coupons", {}))
             if "merchant_order" not in submitted:
                 submitted["merchant_order"] = current["merchant_order"]
             for key in ("watch_order", "notify_order"):

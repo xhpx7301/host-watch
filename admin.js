@@ -716,6 +716,7 @@ function productEditor(item, index) {
     selectField("监控适配器", item.adapter || (item.category_url ? "vmiss" : "html"), "adapter", [["html", "通用 HTTPS 网页"], ["vmiss", "VMISS WHMCS"], ["vps_soy", "VPS.SOY 商品页"], ["akile", "Akile 商品库存"], ["isvoro", "Isvoro 商品库存"], ["dmit", "DMIT 商品库存"], ["bwh", "搬瓦工商品库存"]]),
     inputField("厂商名称", item.provider || (item.adapter === "vmiss" || item.category_url ? "VMISS" : "自定义网站"), "provider", "text", "例如 ExampleHost"),
     inputField("商品名称", item.name, "name", "text", "例如 US VPS 2 GB"),
+    inputField("通知优惠码（留空跟随 AFF 默认）", item.notification_coupon_code || "", "notification_coupon_code", "text", "例如 10%OFF"),
   );
   const modeWrap = text("div", "", "span-2");
   const vmissFields = text("div", "", "form-grid span-2");
@@ -826,6 +827,7 @@ function syncEditor(article) {
   item.adapter = get("adapter").value;
   item.provider = get("provider").value.trim();
   item.name = get("name").value.trim();
+  item.notification_coupon_code = get("notification_coupon_code")?.value.trim() || "";
   if (item.adapter === "vmiss") {
     item.category_url = get("category_url").value.trim();
     item.selector = get("selector").value.trim();
@@ -1231,6 +1233,9 @@ function collectAffiliates() {
 function collectAffiliateNotes() {
   return Object.fromEntries([...document.querySelectorAll("[data-affiliate-note]")].map((input) => [input.dataset.affiliateNote, input.value.trim()]));
 }
+function collectAffiliateCoupons() {
+  return Object.fromEntries([...document.querySelectorAll("[data-affiliate-coupon]")].map((input) => [input.dataset.affiliateCoupon, input.value.trim()]));
+}
 function renderAffiliatePreviews() {
   for (const [key, raw] of Object.entries(collectAffiliates())) {
     let code = raw, valid = true;
@@ -1258,17 +1263,25 @@ function renderMerchantOrder(focusKey = null, direction = null) {
   const order = merchantOrder();
   document.querySelector("#merchant-order-list").replaceChildren(...order.map((key, index) => {
     const row = text("div", "", "merchant-order-row"), actions = text("div", "", "actions");
+    row.draggable = !actionRunning;
+    row.dataset.orderKey = key;
+    row.addEventListener("dragstart", event => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", key); row.classList.add("dragging"); });
+    row.addEventListener("dragend", () => row.classList.remove("dragging"));
+    row.addEventListener("dragover", event => { event.preventDefault(); row.classList.add("drag-over"); });
+    row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
+    row.addEventListener("drop", event => {
+      event.preventDefault(); row.classList.remove("drag-over");
+      const source = event.dataTransfer.getData("text/plain"), next = merchantOrder();
+      const from = next.indexOf(source), to = next.indexOf(key);
+      if (from < 0 || to < 0 || from === to) return;
+      next.splice(from, 1); next.splice(to, 0, source); config.merchant_order = next;
+      renderMerchantOrder(source); renderProductList(); updateDraftState();
+      setMessage("商家顺序已调整，点击底部“保存配置”后保存到服务器。", "pending");
+    });
     row.append(text("strong", `${index + 1}. ${merchantNames[key]}`));
-    for (const [offset, label] of [[-1, "上移"], [1, "下移"]]) {
-      const button = text("button", label); button.type = "button"; button.dataset.orderKey = key; button.dataset.offset = offset;
-      button.setAttribute("aria-label", `${label} ${merchantNames[key]}`);
-      button.disabled = actionRunning || index + offset < 0 || index + offset >= order.length;
-      button.addEventListener("click", () => {
-        const next = merchantOrder(); [next[index], next[index + offset]] = [next[index + offset], next[index]];
-        config.merchant_order = next; renderMerchantOrder(key, offset); renderProductList(); updateDraftState();
-        setMessage("商家顺序已调整，点击底部“保存配置”后保存到服务器。", "pending");
-      }); actions.append(button);
-    }
+    const handle = text("button", "⠿", "merchant-drag-handle"); handle.type = "button"; handle.draggable = true; handle.disabled = actionRunning;
+    handle.title = "拖动调整商家顺序"; handle.setAttribute("aria-label", `拖动调整 ${merchantNames[key]} 顺序`);
+    actions.append(handle);
     row.append(actions); return row;
   }));
   const tabs = document.querySelector(".catalog-merchants");
@@ -2226,8 +2239,25 @@ window.addEventListener("hostwatch-action-change", renderVpsSeckillTask);
 async function pollVpsSeckill(taskId) { clearInterval(vpsSeckillPoll); vpsSeckillPoll = setInterval(async () => { try { vpsSeckillTask = await requestJSON(`/api/seckill/status/${encodeURIComponent(taskId)}`); renderVpsSeckillTask(); if (!vpsSeckillTask.pending) clearInterval(vpsSeckillPoll); } catch { clearInterval(vpsSeckillPoll); } }, 1000); }
 document.querySelector("#vps-seckill-start").addEventListener("click", async event => { if (hasUnsavedChanges()) { setMessage("请先点击底部“保存配置”，再启动 VPS 秒杀。", "error"); return; } try { const taskId = `seckill-${Date.now()}-${Math.random().toString(36).slice(2, 18)}`; vpsSeckillTask = await requestJSON("/api/seckill/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: taskId, mode: document.querySelector("#vps-seckill-mode").value }) }); renderVpsSeckillTask(); pollVpsSeckill(taskId); setMessage("VPS 秒杀任务已启动。", "success"); } catch (error) { setMessage(error.message, "error"); } });
 document.querySelector("#vps-seckill-stop").addEventListener("click", async () => { if (!vpsSeckillTask?.task_id) return; try { vpsSeckillTask = await requestJSON("/api/seckill/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: vpsSeckillTask.task_id }) }); renderVpsSeckillTask(); } catch (error) { setMessage(error.message, "error"); } });
-document.querySelector("#vps-seckill-open-monitor").addEventListener("click", () => navigatePage("monitor"));
-document.querySelector("#vps-seckill-open-notifications").addEventListener("click", () => navigatePage("notifications"));
+function openSeckillPicker(type) {
+  const dialog = document.querySelector("#seckill-picker-dialog"), content = document.querySelector("#seckill-picker-content");
+  const rows = config.products.filter(item => membership(item, type));
+  content.replaceChildren();
+  if (!rows.length) content.append(text("p", `暂无${type === "watch" ? "库存监控" : "库存通知"}商品，请先添加商品。`, "empty"));
+  const selected = new Set();
+  rows.forEach(item => {
+    const label = document.createElement("label"); label.className = "picker-row";
+    const input = document.createElement("input"); input.type = "checkbox"; input.value = item.id; input.disabled = seckillItems().some(row => row.product_id === item.id); input.addEventListener("change", () => input.checked ? selected.add(item.id) : selected.delete(item.id));
+    label.append(input, text("span", `${item.name} · ${item.provider}${input.disabled ? "（已添加）" : ""}`)); content.append(label);
+  });
+  const actions = text("div", "", "actions"); const add = text("button", "添加所选", "primary"); add.type = "button"; add.disabled = !rows.some(item => selected.has(item.id));
+  content.addEventListener("change", () => { add.disabled = !selected.size; }, { once: false });
+  add.addEventListener("click", () => { rows.filter(item => selected.has(item.id)).forEach(addToVpsSeckill); dialog.close(); renderVpsSeckill(); }); actions.append(add); content.append(actions);
+  dialog.showModal();
+}
+document.querySelector("#vps-seckill-open-monitor").addEventListener("click", () => openSeckillPicker("watch"));
+document.querySelector("#vps-seckill-open-notifications").addEventListener("click", () => openSeckillPicker("notify"));
+document.querySelector("#seckill-picker-close").addEventListener("click", () => document.querySelector("#seckill-picker-dialog").close());
 document.querySelector("#vps-seckill-delete-all").addEventListener("click", () => { seckillItems().splice(0); renderVpsSeckill(); updateDraftState(); setMessage("已删除全部秒杀商品，请保存配置。", "pending"); });
 document.querySelector("#vps-seckill-delete-all-accounts").addEventListener("click", () => deleteSeckillAccounts(seckillAccounts().map(account => account.id)));
 document.querySelector("#vps-seckill-add-account").addEventListener("click", () => { seckillAccounts().push({ id: `account-${Date.now()}`, name: "", provider: "", username: "", password: "", login_url: "", auto_submit: false }); renderVpsSeckill(); updateDraftState(); });
@@ -2273,6 +2303,7 @@ function collectConfig(enabled = config.enabled) {
     affiliate_id: config.affiliate_id || "",
     affiliates: collectAffiliates(),
     affiliate_notes: collectAffiliateNotes(),
+    affiliate_coupons: collectAffiliateCoupons(),
     merchant_order: merchantOrder(),
     watch_order: config.watch_order || [],
     notify_order: config.notify_order || [],
@@ -2403,6 +2434,7 @@ function applyConfig(value) {
   document.querySelector("#interval").value = config.interval_seconds ?? 600;
   for (const input of document.querySelectorAll("[data-affiliate]")) input.value = config.affiliates?.[input.dataset.affiliate] ?? (input.dataset.affiliate === "vmiss" ? config.affiliate_id || "" : "");
   for (const input of document.querySelectorAll("[data-affiliate-note]")) input.value = config.affiliate_notes?.[input.dataset.affiliateNote] ?? "";
+  for (const input of document.querySelectorAll("[data-affiliate-coupon]")) input.value = config.affiliate_coupons?.[input.dataset.affiliateCoupon] ?? "";
   renderAffiliatePreviews(); renderMerchantOrder();
   setOptionPressed("notify-current", config.notify_current_stock_on_start);
   setOptionPressed("isvoro-seckill", config.isvoro_seckill);
@@ -2585,8 +2617,11 @@ document.querySelector("#telegram-test").addEventListener("click", (event) => ru
 }));
 document.querySelector("#telegram-load-chats").addEventListener("click", (event) => runAction(event.currentTarget, "读取中…", "正在读取 Telegram 最近聊天…", async () => {
   const chatsNode = document.querySelector("#telegram-chats");
+  const token = document.querySelector("#telegram-token").value.trim();
+  const result = token
+    ? await requestJSON("/api/telegram/chats", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bot_token: token }) })
+    : await requestJSON("/api/telegram/chats");
   chatsNode.replaceChildren();
-  const result = await requestJSON("/api/telegram/chats");
   if (!result.chats.length) {
     const message = "读取完成，暂无聊天记录；请先打开 bot 并发送 /start 后重试。";
     chatsNode.append(text("p", message, "hint"));
@@ -2596,7 +2631,7 @@ document.querySelector("#telegram-load-chats").addEventListener("click", (event)
   for (const chat of result.chats) {
     const option = text("button", "", "chat-option");
     option.type = "button";
-    option.append(text("span", `${chat.name}（${chat.type}）`), text("span", chat.id));
+    option.append(text("span", `${chat.name}（${chat.type}）`), text("span", `${chat.id}${chat.username ? ` · @${chat.username}` : ""}`));
     option.addEventListener("click", () => { document.querySelector("#telegram-chat-id").value = chat.id; updateDraftState(); setMessage(`已选择 ${chat.name}，保存后生效。`, "pending"); });
     chatsNode.append(option);
   }
