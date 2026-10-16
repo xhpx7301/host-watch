@@ -2312,10 +2312,17 @@ function renderVpsSeckill() {
     const account = document.createElement("select"); account.replaceChildren(...accountOptions.map(option => option.cloneNode(true))); account.value = item.account_id || ""; account.addEventListener("change", () => { item.account_id = account.value; seckillAccountChecks.delete(item.id); renderVpsSeckill(); updateDraftState(); });
     const egressSelect = document.createElement("select"); const egressOptions = [new Option("跟随商家出口（未分配则直连）", "")]; egressNodes().forEach(node => egressOptions.push(new Option(node.name || node.id, node.id))); egressSelect.replaceChildren(...egressOptions); egressSelect.value = item.egress_node_id || ""; egressSelect.addEventListener("change", () => { item.egress_node_id = egressSelect.value; seckillAccountChecks.delete(item.id); renderVpsSeckill(); updateDraftState(); });
     const target = document.createElement("input"); target.type = "url"; target.value = item.target_url || product?.purchase_url || ""; target.placeholder = "下架商品目标购买链接（可选）"; target.addEventListener("input", () => { item.target_url = target.value; updateDraftState(); });
-    const submit = document.createElement("input"); submit.type = "url"; submit.value = item.submit_url || ""; submit.placeholder = "仅创建待付款订单的适配接口（非普通结算页）"; submit.addEventListener("input", () => { item.submit_url = submit.value; updateDraftState(); });
+    const submit = document.createElement("input"); submit.type = "url"; submit.value = item.submit_url || ""; submit.placeholder = "仅创建待付款订单的适配接口（非普通结算页）";
+    const submitHint = text("p", "", "hint span-2");
+    const updateSubmitHint = () => {
+      const missing = item.auto_submit && !String(item.submit_url || "").trim();
+      submitHint.textContent = missing ? "自动提交已允许，但未配置待付款下单接口；启动后只会提供官网购买链接，不会创建订单。" : "下单接口必须明确支持仅创建待付款订单，普通结算页不会被调用。";
+      submitHint.className = missing ? "error span-2" : "hint span-2";
+    };
+    submit.addEventListener("input", () => { item.submit_url = submit.value; updateSubmitHint(); updateDraftState(); });
     [["下单数量（台，1–100）", quantity], ["优惠码", coupon], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target], ["待付款下单接口", submit]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
     const enabled = settingButton("商品状态", item.enabled !== false, value => { item.enabled = value; renderVpsSeckillTask(); }, ["已停用", "已启用"]);
-    const auto = settingButton("自动提交", item.auto_submit, value => { item.auto_submit = value; });
+    const auto = settingButton("自动提交", item.auto_submit, value => { item.auto_submit = value; updateSubmitHint(); });
     const flags = text("div", "", "actions"); flags.append(enabled, auto);
     const check = text("button", "检查账户", "seckill-check-account"); check.type = "button"; check.disabled = actionRunning || !item.account_id;
     check.setAttribute("aria-label", `检查补货抢购账户 ${title.textContent}`);
@@ -2327,10 +2334,10 @@ function renderVpsSeckill() {
         seckillAccountChecks.set(item.id, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : "error");
       });
     });
-    flags.append(check); card.append(status);
+    flags.append(check); card.append(status); updateSubmitHint();
     const remove = text("button", "删除商品", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.setAttribute("aria-label", `删除补货抢购商品 ${title.textContent}`);
-    remove.addEventListener("click", () => { const index = seckillItems().indexOf(item); if (index >= 0) seckillItems().splice(index, 1); renderVpsSeckill(); updateDraftState(); setMessage("已删除该补货抢购商品，请保存配置。", "pending"); }); flags.append(remove); card.append(grid, flags); itemTarget.append(card);
+    remove.addEventListener("click", () => { const index = seckillItems().indexOf(item); if (index >= 0) seckillItems().splice(index, 1); renderVpsSeckill(); updateDraftState(); setMessage("已删除该补货抢购商品，请保存配置。", "pending"); }); flags.append(remove); card.append(grid, submitHint, flags); itemTarget.append(card);
   });
   const accountTarget = document.querySelector("#vps-seckill-accounts"); accountTarget.replaceChildren();
   if (!seckillAccounts().length) accountTarget.append(text("p", "尚未配置网站账户。手动抢购不需要账户。", "empty"));
@@ -2433,6 +2440,8 @@ function renderVpsSeckillTest(result) {
     row.append(text("strong", item.label || item.item_id));
     row.append(text("p", `${item.site_access?.ok ? "✓" : "✗"} 网站访问：${item.site_access?.message || "未检查"}`, "hint"));
     row.append(text("p", `${item.page_recognition?.ok ? "✓" : "✗"} 页面识别：${item.page_recognition?.message || "未检查"}`, "hint"));
+    const submission = item.order_submission || { ok: !item.required_account, message: item.required_account ? "尚未检查" : "未启用自动提交，本次只检查库存与账户" };
+    row.append(text("p", `${submission.ok ? "✓" : "✗"} 下单准备：${submission.message || "未检查"}`, submission.ok ? "hint" : "error"));
     const account = item.account || {};
     row.append(text("p", `${account.required ? (account.ok ? "✓" : "✗") : "－"} 账户状态：${account.message || "未绑定账户（手动模式可用）"}`, "hint"));
     return row;

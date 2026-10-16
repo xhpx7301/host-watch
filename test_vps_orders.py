@@ -128,6 +128,19 @@ class OrderTaskTests(unittest.TestCase):
         self.assertTrue(result['items'][0]['account']['ok'])
         self.assertEqual(self.orders(), [])
 
+    def test_seckill_test_rejects_auto_submission_without_unpaid_endpoint(self):
+        self.config['vps_seckill']['items'][0]['submit_url'] = ''
+        checked = {'ok': True, 'status': 'valid', 'message': '账户认证正常', 'account_id': 'account', 'checked_at': '2026-10-16T12:00:00+08:00'}
+        with patch.object(admin, 'current_config', return_value=self.config), \
+             patch.object(admin, 'check_order_account', return_value=checked), \
+             patch('monitor.inspect_product', self.stock):
+            result = admin.seckill_test({'mode': 'rapid'})
+        self.assertFalse(result['ok'])
+        submission = result['items'][0]['order_submission']
+        self.assertFalse(submission['ok'])
+        self.assertIn('未配置待付款下单接口', submission['message'])
+        self.assertEqual(self.orders(), [])
+
     def test_precise_rechecks_account_and_stock_before_submission(self):
         result = self.run_task('precise')
         self.assertEqual(self.stock.call_count, 2)

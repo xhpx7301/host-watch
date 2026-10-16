@@ -651,7 +651,12 @@ def seckill_test(submitted: dict) -> dict:
         result = {"item_id": item["id"], "label": label, "required_account": required_account,
                   "site_access": {"ok": False, "message": "尚未检查"},
                   "page_recognition": {"ok": False, "message": "尚未检查"},
+                  "order_submission": {"ok": not required_account, "required": required_account,
+                                        "message": "未启用自动提交，本次只检查库存与账户" if not required_account else "尚未检查"},
                   "account": {"ok": False, "required": required_account, "status": "unbound", "message": "未绑定账户"}}
+        if required_account:
+            if not str(item.get("submit_url", "")).strip():
+                result["order_submission"] = {"ok": False, "required": True, "message": "未配置待付款下单接口，本次不会创建订单"}
         if not product:
             result["site_access"] = {"ok": False, "message": "商品已下架，无法访问并识别页面"}
             result["page_recognition"] = {"ok": False, "message": "商品已下架，无法识别页面"}
@@ -660,6 +665,13 @@ def seckill_test(submitted: dict) -> dict:
         routed = {**product, "egress_node_id": item.get("egress_node_id", "")}
         fetcher = product_fetcher(current.get("fetcher"), routed)
         account = accounts.get(item.get("account_id"))
+        if required_account and str(item.get("submit_url", "")).strip():
+            if not account:
+                result["order_submission"] = {"ok": False, "required": True, "message": "未绑定账户，本次不会创建订单"}
+            elif not account.get("auto_submit"):
+                result["order_submission"] = {"ok": False, "required": True, "message": "账户未允许自动下单，本次不会创建订单"}
+            else:
+                result["order_submission"] = {"ok": True, "required": True, "message": "已配置待付款下单接口，启动时还会校验接口能力"}
         try:
             with requests.Session() as session:
                 session.trust_env = False
@@ -685,6 +697,7 @@ def seckill_test(submitted: dict) -> dict:
             if not result["page_recognition"]["ok"]:
                 result["page_recognition"] = {"ok": False, "message": f"页面识别失败：{message}"}
         result["ok"] = bool(result["site_access"]["ok"] and result["page_recognition"]["ok"]
+                            and result["order_submission"]["ok"]
                             and (not result["account"]["required"] or result["account"].get("ok")))
         results.append(result)
     return {"ok": all(item["ok"] for item in results), "mode": mode, "checked_at": beijing_iso(), "items": results}
@@ -810,7 +823,10 @@ class SeckillTask:
                             session.headers["User-Agent"] = "HostWatch/1.0 (VPS seckill; unpaid orders only)"
                             egress.apply_session(session, fetcher)
                         account = accounts.get(item.get("account_id"))
-                        auto = self.mode != "manual" and item.get("auto_submit") and account and account.get("auto_submit") and item.get("submit_url")
+                        auto_requested = self.mode != "manual" and item.get("auto_submit") and account and account.get("auto_submit")
+                        if auto_requested and not str(item.get("submit_url", "")).strip():
+                            self.log("自动提交已允许，但未配置待付款下单接口；本次不会创建订单，仅提供官网购买链接。", "error", item)
+                        auto = auto_requested and bool(str(item.get("submit_url", "")).strip())
                         if auto:
                             if not account.get("login_url") or urlsplit(account["login_url"]).netloc != urlsplit(item["submit_url"]).netloc:
                                 raise ValueError("账户检查接口与待付款下单接口必须同源，以复用认证会话")
