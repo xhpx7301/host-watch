@@ -533,6 +533,13 @@
     .egress-node-identity { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; min-width:0; overflow-wrap:anywhere; }
     .egress-node-ip { font-weight:400; }
     .egress-node-actions { flex-shrink:0; margin-left:auto; justify-content:flex-end; }
+    .egress-health { display:inline-flex; align-items:center; gap:5px; min-height:28px; padding:5px 9px; border:1px solid #cbd4d6; border-radius:7px; color:#657277; background:#f4f6f6; font-size:12px; font-weight:700; white-space:nowrap; }
+    .egress-health::before { content:""; width:7px; height:7px; border-radius:50%; background:currentColor; }
+    .egress-health.ok { color:var(--green); border-color:#b7d7c9; background:var(--green-soft); }
+    .egress-health.error { color:var(--red); border-color:#e7c1bc; background:var(--red-soft); }
+    .egress-health.checking { color:var(--blue); border-color:#bed2df; background:var(--blue-soft); }
+    .egress-health.pending,.egress-health.unknown { color:var(--amber); border-color:#e2d0a6; background:var(--amber-soft); }
+    .egress-health.disabled { color:var(--muted); }
     @media(max-width:780px) { .seckill-control-grid { grid-template-columns:1fr; grid-template-areas:"mode" "log"; } .seckill-items,.seckill-accounts { grid-template-columns:1fr; } .egress-node-head { flex-wrap:wrap; gap:8px; } .egress-node-toggle { flex-basis:100%; } .egress-node-actions { max-width:100%; gap:6px; } .egress-node-actions button { padding:6px 8px; font-size:12px; } }
     .egress-routes { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px 16px; margin-top:12px; }
     @media(max-width:520px) { .egress-routes { grid-template-columns:1fr; } }

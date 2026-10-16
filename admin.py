@@ -2097,9 +2097,10 @@ class Handler(BaseHTTPRequestHandler):
                     node.update(public_ip=result["public_ip"], last_seen=beijing_iso(), last_error="")
                 except (OSError, ValueError, requests.RequestException) as exc:
                     node["last_error"] = str(exc)[:240]
+                    save_config(current)
                     raise ValueError(f"出口节点检查失败：{exc}") from None
                 save_config(current)
-                self._send(200, "application/json; charset=utf-8", json.dumps({"ok": True, **result}, ensure_ascii=False).encode("utf-8")); return
+                self._send(200, "application/json; charset=utf-8", json.dumps({"ok": True, **result, "last_seen": node["last_seen"], "last_error": ""}, ensure_ascii=False).encode("utf-8")); return
             if self.path == "/api/fetcher/test":
                 fetcher = normalize_fetcher(submitted)
                 data = json.dumps(flaresolverr_health(fetcher["flaresolverr_url"]), ensure_ascii=False).encode("utf-8")

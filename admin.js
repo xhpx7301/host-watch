@@ -40,6 +40,8 @@ const providerFlareDraft = new Map();
 let serviceRefreshTimer, serviceRefreshPending = false;
 let serviceTransitionStartedAt = 0;
 let hostwatchService = null;
+let egressHealthTimer;
+let egressHealthRunning = false;
 let updatePollTimer;
 let updatePollTimeout;
 let exchangeRateData = null;
@@ -55,6 +57,7 @@ let merchantOrderEditing = false;
 const seckillTestId = "isvoro-seckill";
 const cloudscraperTestId = "cloudscraper-probe";
 const BEIJING_TIME_ZONE = "Asia/Shanghai";
+const EGRESS_HEALTH_INTERVAL_MS = 60_000;
 
 function formatBeijingDate(value, options = {}) {
   const date = value instanceof Date ? value : new Date(value);
@@ -2215,6 +2218,52 @@ function mergeEgressStatus(fresh) {
     }
   }
 }
+function egressHealth(node) {
+  if (node._egressHealthChecking) return { label: "检查中", tone: "checking", detail: "正在检查健康地址和 HTTPS 代理" };
+  if (node.enabled === false) return { label: "已停用", tone: "disabled", detail: "节点已停用，不执行自动检查" };
+  if (node.pending_registration || !node.proxy_url || !node.health_url || !node.token_configured) return { label: "待连接", tone: "pending", detail: "等待安装回报、代理地址或令牌" };
+  if (node.last_error) return { label: "出口异常", tone: "error", detail: node.last_error };
+  if (node.last_seen) return { label: "出口正常", tone: "ok", detail: `最近检查：${formatBeijingDate(node.last_seen)}` };
+  return { label: "待检查", tone: "unknown", detail: "尚未检查出口连接" };
+}
+async function probeEgressNode(node, automatic = false) {
+  node._egressHealthChecking = true;
+  renderEgress();
+  try {
+    const result = await requestJSON("/api/egress/probe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ node_id: node.id }), timeoutMs: 65_000 });
+    node.public_ip = result.public_ip;
+    node.last_seen = result.last_seen || new Date((result.checked_at || Date.now() / 1000) * 1000).toISOString();
+    node.last_error = "";
+    if (!automatic) setMessage(`${node.name} ${result.proxy_verified ? "HTTPS 代理验证成功，实际出口 IP" : "出口检查成功"}：${result.public_ip}`, "success");
+  } catch (error) {
+    node.last_error = error.message;
+    if (!automatic) setMessage(error.message, "error");
+  } finally {
+    node._egressHealthChecking = false;
+    renderEgress();
+  }
+}
+function scheduleEgressHealthCheck(delay = EGRESS_HEALTH_INTERVAL_MS) {
+  clearTimeout(egressHealthTimer);
+  egressHealthTimer = setTimeout(() => { void runEgressHealthChecks(); }, delay);
+}
+async function runEgressHealthChecks() {
+  if (egressHealthRunning || actionRunning) { scheduleEgressHealthCheck(); return; }
+  const nodes = egressNodes().filter(node => node.enabled !== false && !node.pending_registration && node.proxy_url && node.health_url && node.token_configured);
+  if (!nodes.length) { renderEgress(); scheduleEgressHealthCheck(); return; }
+  egressHealthRunning = true;
+  nodes.forEach(node => { node._egressHealthChecking = true; });
+  renderEgress();
+  try {
+    await Promise.all(nodes.map(node => probeEgressNode(node, true)));
+    try { mergeEgressStatus(await requestJSON("/api/egress")); } catch { /* retain the per-node result when status refresh is unavailable */ }
+  } finally {
+    egressHealthRunning = false;
+    nodes.forEach(node => { node._egressHealthChecking = false; });
+    renderEgress();
+    scheduleEgressHealthCheck();
+  }
+}
 async function copyEgressCommand(node) {
   let result;
   await runAction(null, "", "正在生成安装命令并保存此节点的配置…", async () => {
@@ -2282,19 +2331,12 @@ function renderEgress() {
     [["节点 ID", "id", "自动生成"], ["节点名称", "name", "出口节点"], ["代理地址", "proxy_url", "安装后自动回填"], ["健康检查地址", "health_url", "安装后自动回填"]].forEach(([label, key, placeholder]) => { const input = document.createElement("input"); input.value = node[key] || ""; input.placeholder = placeholder; input.disabled = key === "id" && Boolean(node.id); input.addEventListener("input", () => { node[key] = input.value.trim(); if (key === "name") { title.textContent = node.name || node.id || "未命名节点"; syncExpanded(); } updateDraftState(); }); const labelNode = document.createElement("label"); labelNode.append(text("span", label), input); grid.append(labelNode); });
     const port = document.createElement("input"); port.type = "number"; port.min = "1"; port.max = "65535"; port.value = node.listen_port || 8787; port.addEventListener("input", () => { node.listen_port = Number(port.value); updateDraftState(); }); const portLabel = document.createElement("label"); portLabel.append(text("span", "节点监听端口"), port); grid.append(portLabel);
     const token = document.createElement("input"); token.type = "password"; token.autocomplete = "new-password"; token.placeholder = node.token_configured ? "已配置，留空保持不变" : "复制安装命令时自动生成"; token.addEventListener("input", () => { node.token = token.value; updateDraftState(); }); const tokenLabel = document.createElement("label"); tokenLabel.append(text("span", "代理令牌"), token); grid.append(tokenLabel);
+    const health = egressHealth(node), healthLabel = text("span", health.label, `egress-health ${health.tone}`); healthLabel.title = health.detail;
     const enabledLabel = settingButton("出口节点", node.enabled !== false, value => { node.enabled = value; renderEgress(); }, ["已停用", "已启用"]);
     const probe = text("button", "检查出口 IP"); probe.type = "button";
-    probe.addEventListener("click", async () => {
-      probe.disabled = true; probe.textContent = "验证代理中…";
-      try {
-        const result = await requestJSON("/api/egress/probe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ node_id: node.id }), timeoutMs: 65000 });
-        node.public_ip = result.public_ip; node.last_error = "";
-        setMessage(`${node.name} ${result.proxy_verified ? "HTTPS 代理验证成功，实际出口 IP" : "出口检查成功"}：${result.public_ip}`, "success");
-      } catch (error) { node.last_error = error.message; setMessage(error.message, "error"); }
-      finally { renderEgress(); }
-    });
+    probe.addEventListener("click", () => { if (!egressHealthRunning) void probeEgressNode(node); });
     const remove = text("button", "移除节点", "danger"); remove.type = "button"; remove.addEventListener("click", () => { const index = egressNodes().indexOf(node); if (index >= 0) egressNodes().splice(index, 1); expandedEgressNodes.delete(node.id); Object.keys(config.egress.routes || {}).forEach(provider => { if (config.egress.routes[provider] === node.id) delete config.egress.routes[provider]; }); renderEgress(); updateDraftState(); });
-    const actions = text("div", "", "actions egress-node-actions"); actions.append(enabledLabel, probe, remove); probe.disabled = remove.disabled = actionRunning; head.append(actions); body.append(grid); if (node.last_error) card.append(text("p", node.last_error, "error")); target.append(card);
+    const actions = text("div", "", "actions egress-node-actions"); actions.append(healthLabel, enabledLabel, probe, remove); probe.disabled = remove.disabled = actionRunning || egressHealthRunning || Boolean(node._egressHealthChecking); head.append(actions); body.append(grid); if (node.last_error) card.append(text("p", node.last_error, "error")); target.append(card);
   });
   const routes = document.querySelector("#egress-routes"); routes.replaceChildren(); const options = [new Option("主服务器直连", "")]; nodes.forEach(node => options.push(new Option(`${node.name} · ${node.public_ip || "未检查"}`, node.id)));
   egressProviders.forEach(([id, label]) => {
@@ -2305,7 +2347,7 @@ function renderEgress() {
     select.addEventListener("change", () => { config.egress.routes[id] = select.value; if (!select.value) delete config.egress.routes[id]; updateHint(); updateDraftState(); });
     updateHint(); const node = document.createElement("label"); node.append(text("span", label), select, hint); routes.append(node);
   });
-  document.querySelector("#egress-status").textContent = `${nodes.length} 个出口节点；已绑定 ${Object.keys(config.egress?.routes || {}).length} 个商家。出口按商家生效，未绑定商家使用主服务器直连。修改后请点击底部“保存配置”。大盘、库存监控/通知、分类读取和网页测试沿用对应商家出口；VPS 补货抢购可单独指定出口。`;
+  document.querySelector("#egress-status").textContent = `${nodes.length} 个出口节点；已绑定 ${Object.keys(config.egress?.routes || {}).length} 个商家。已安装并启用的节点每 1 分钟自动检查健康地址和 HTTPS 代理，也可手动检查出口 IP。出口按商家生效，未绑定商家使用主服务器直连。修改后请点击底部“保存配置”。大盘、库存监控/通知、分类读取和网页测试沿用对应商家出口；VPS 补货抢购可单独指定出口。`;
 }
 function collectEgress() { return { nodes: egressNodes().map(node => ({ ...node })), routes: { ...(config.egress?.routes || {}) } }; }
 document.querySelector("#egress-add-node").addEventListener("click", () => { const node = { id: `egress-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name: `出口节点 ${egressNodes().length + 1}`, proxy_url: "", health_url: "", token: "", listen_port: 8787, pending_registration: true, enabled: true }; egressNodes().push(node); expandedEgressNodes.add(node.id); renderEgress(); updateDraftState(); document.querySelector("#egress-nodes").lastElementChild.scrollIntoView({ behavior: "smooth", block: "nearest" }); });
@@ -2739,6 +2781,7 @@ function applyConfig(value) {
   document.querySelector("#telegram-chats").replaceChildren();
   renderProducts();
   renderEgress();
+  scheduleEgressHealthCheck(1_000);
   renderVpsSeckill();
   savedConfig = JSON.stringify(collectConfig());
   updateDraftState();

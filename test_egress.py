@@ -147,6 +147,14 @@ class EgressEnrollmentTests(unittest.TestCase):
         self.assertNotIn(token.encode(), body)
         self.assertEqual(json.loads(body)["egress"]["nodes"][0]["public_ip"], "203.0.113.9")
 
+    def test_probe_failure_persists_node_error_for_status_display(self):
+        self.prepare(register_url="http://localhost:8765")
+        with patch.object(admin.egress, "probe", side_effect=ValueError("代理连接失败")):
+            code, body = self.request("/api/egress/probe", {"node_id": "egress-test"})
+        self.assertEqual(code, 400)
+        self.assertIn("代理连接失败", body.decode())
+        self.assertEqual(admin.current_config()["egress"]["nodes"][0]["last_error"], "代理连接失败")
+
     def test_real_agent_loads_installed_config_registers_and_authenticates_health(self):
         self.prepare()
         token = admin.current_config()["egress"]["nodes"][0]["token"]
