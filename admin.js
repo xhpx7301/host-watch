@@ -161,7 +161,7 @@ async function runAction(button, label, message, action, notify = true) {
   cancelProductDrag();
   actionRunning = true;
   document.querySelector(".shell").inert = !activeTest;
-  const controls = [...document.querySelectorAll("button,input,select")].filter((control) => control.id !== "toast-close" && !control.classList.contains("product-test-stop"));
+  const controls = [...document.querySelectorAll("button,input,select,textarea")].filter((control) => control.id !== "toast-close" && !control.classList.contains("product-test-stop"));
   const previousStates = controls.map((control) => control.disabled);
   const previousLabel = button?.textContent;
   controls.forEach((control) => { control.disabled = true; });
@@ -1663,11 +1663,22 @@ window.addEventListener("keydown", event => { if (event.key === "Escape" && prod
 window.addEventListener("blur", cancelProductDrag);
 window.addEventListener("hostwatch-page-change", cancelProductDrag);
 
+function resizeRemarkEditor(editor) {
+  if (!editor.offsetWidth) return;
+  editor.style.height = "auto";
+  editor.style.height = `${editor.scrollHeight + 2}px`;
+}
+function resizeRemarkEditors() {
+  listNode.querySelectorAll(".remarks-field").forEach(resizeRemarkEditor);
+}
+window.addEventListener("resize", resizeRemarkEditors);
+window.addEventListener("hostwatch-page-change", resizeRemarkEditors);
+
 function renderProductList() {
   if (productDrag) return;
   renderNotificationList();
   // Keep a focused manual editor alive during status polling.
-  if (listNode.querySelector(".action-popover:popover-open") || listNode.contains(document.activeElement) && document.activeElement.matches("input")) return;
+  if (listNode.querySelector(".action-popover:popover-open") || listNode.contains(document.activeElement) && document.activeElement.matches("input, textarea")) return;
   const focusedSortId = listNode.querySelector(".sort-handle:focus")?.dataset.sortId;
   const expanded = expandedPrices(listNode);
   const latest = new Map((lastStatus?.products || []).map(p => [p.id, p]));
@@ -1706,9 +1717,9 @@ function renderProductList() {
     const time = runtime ? runtime.checked_at || lastStatus?.last_checked : p.checked_at;
     const updated = text("small", time ? `读取 ${compactDate(time)}` : "等待首次读取"); updated.title = time ? new Date(time).toLocaleString() : "尚无商品快照"; identity.append(updated); cell(p.region || "—");
     for (const [key, label] of [["remarks", "备注"]]) {
-      const input = document.createElement("input"); input.className = "manual-field"; input.value = item[key] || ""; input.maxLength = 500; input.placeholder = "管理员填写";
+      const input = document.createElement("textarea"); input.className = "manual-field remarks-field"; input.rows = 1; input.value = item[key] || ""; input.maxLength = 500; input.placeholder = "管理员填写";
       input.setAttribute("aria-label", `${item.name} ${label}`); input.disabled = actionRunning;
-      input.addEventListener("input", () => { item[key] = input.value; updateDraftState(); }); cell().append(input);
+      input.addEventListener("input", () => { item[key] = input.value; resizeRemarkEditor(input); updateDraftState(); }); cell().append(input);
     }
     renderLineEditor(cell(), item);
     renderSpecs(cell("", "watch-specs"), p.specs); renderSpecs(cell("", "watch-specs"), p.traffic, true); renderPrice(cell("", "watch-price"), p.price, expanded.has(item.id));
@@ -1726,6 +1737,7 @@ function renderProductList() {
     actions.append(moreActions(`watch-${item.id}`, item.name, [notify, seckill, remove])); cell().append(actions); body.append(row);
   }
   table.append(head, body); wrap.append(table); listNode.replaceChildren(wrap);
+  resizeRemarkEditors();
   renderCompareBar();
   if (document.querySelector("#watch-compare-dialog")?.open) renderCompareContent();
   restoreProductSortFocus(listNode, focusedSortId);
