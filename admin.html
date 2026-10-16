@@ -87,7 +87,8 @@
     .overview-value { display:block; margin-top:8px; font-size:26px; font-weight:700; overflow-wrap:anywhere; letter-spacing:-.5px; }
     #overview-state { min-height:32px; font-size:16px; letter-spacing:0; }
     .overview-value.state { display:flex; }
-    .overview-note { display:block; margin-top:6px; color:var(--muted); font-size:12px; }
+    .overview-note { display:flex; flex-direction:column; gap:2px; margin-top:6px; color:var(--muted); font-size:12px; }
+    .overview-note-main,.overview-note-line { display:block; overflow-wrap:anywhere; }
     .section { padding:16px 0; border-bottom:1px solid var(--line); }
     #page-overview > .section { margin-top:16px; padding:16px; border:1px solid var(--line); border-radius:12px; background:var(--paper); }
     .section-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:12px; }
@@ -421,16 +422,12 @@
     @media(max-width:520px) { .savebar .actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); } }
     #message.success { display:none; }
     .header-status #last-checked { flex-basis:100%; margin:0; text-align:right; font-size:11px; }
-    .overview-item::after { position:absolute; top:14px; right:14px; display:grid; place-items:center; width:26px; height:26px; border-radius:7px; font-size:13px; font-weight:700; }
-    .overview-item:nth-child(1)::after { content:"●"; color:var(--muted); background:#f0f2f7; }
-    .overview-item:has(#overview-state.ok)::after { color:var(--green); background:var(--green-soft); }
-    .overview-item:has(#overview-state.error)::after { color:var(--red); background:var(--red-soft); }
-    .overview-item:has(#overview-state.pending)::after { color:var(--amber); background:var(--amber-soft); }
-    .overview-item:nth-child(2)::after { content:"▦"; color:var(--blue); background:var(--blue-soft); }
-    .overview-item:nth-child(3)::after { content:"↗"; color:var(--purple); background:var(--purple-soft); }
-    .overview-item:nth-child(4)::after { content:"◷"; color:var(--amber); background:var(--amber-soft); }
-    .overview-item:nth-child(2) .overview-value { color:var(--blue); }
-    .overview-item:nth-child(3) .overview-value { color:var(--purple); }
+    .module-overview > .eyebrow { color:var(--ink); font-size:14px; letter-spacing:0; text-transform:none; }
+    .module-overview-icon { position:absolute; top:14px; right:14px; display:grid; place-items:center; width:28px; height:28px; border-radius:7px; color:var(--muted); background:#f0f2f7; }
+    .module-overview-icon svg { width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .module-overview[data-state="ok"] .module-overview-icon { color:var(--green); background:var(--green-soft); }
+    .module-overview[data-state="error"] .module-overview-icon { color:var(--red); background:var(--red-soft); }
+    .module-overview[data-state="pending"] .module-overview-icon { color:var(--amber); background:var(--amber-soft); }
     #overview-state-note { max-width:310px; }
     .help-note { margin:0 0 10px; color:var(--muted); font-size:12px; }
     .help-note > summary { display:inline-flex; align-items:center; gap:5px; padding:3px 0; cursor:pointer; list-style:none; color:var(--blue); }
@@ -616,14 +613,14 @@
       .overview-item { min-height:112px; padding:12px; } .overview-value { font-size:24px; }
       .overview-note { font-size:11px; } #overview-state { font-size:14px; }
       .panel-card > .section-body,#page-overview > .section { padding:12px; }
-      .overview-item::after { width:22px; height:22px; top:10px; right:10px; }
+      .module-overview-icon { width:22px; height:22px; top:10px; right:10px; }
       .toast { bottom:120px; }
     }
     @media(max-width:520px) {
       button { min-height:36px; } input,select { height:38px; font-size:14px; }
       .overview { gap:8px; } .overview-item:first-child { grid-column:auto; min-height:106px; }
-      .overview { grid-template-columns:1fr; } .overview-item:not(:first-child)::after { display:none; }
-      .overview-item { min-height:100px; } .overview-value { font-size:22px; } .overview-item .eyebrow { font-size:10px; }
+      .overview { grid-template-columns:1fr; }
+      .overview-item { min-height:100px; } .overview-value { font-size:22px; } .overview-item .eyebrow { font-size:13px; }
       .overview-recent-head .actions { gap:5px; } .overview-recent-head button { font-size:12px; }
       .savebar { padding:9px 10px; } .savebar-note .subtle { display:none; }
       .catalog-row-actions { min-width:0; max-width:none; }
@@ -674,10 +671,10 @@
   <div class="page-stage">
   <div id="page-overview" class="page-panel" data-page="overview" aria-labelledby="page-title">
   <section class="overview" aria-label="监控摘要">
-    <div class="overview-item module-overview" data-overview-module="catalog"><span class="eyebrow">大盘</span><strong id="overview-catalog-state" class="overview-value state" role="status" aria-live="polite">读取中</strong><span id="overview-catalog-note" class="overview-note">等待刷新记录</span><div class="overview-log-actions"><button type="button" data-overview-log-toggle="catalog">隐藏日志</button><button type="button" data-overview-log-detail="catalog">详细日志</button></div><pre id="overview-catalog-log" class="overview-log">暂无日志</pre></div>
-    <div class="overview-item module-overview" data-overview-module="monitor"><span class="eyebrow">监控</span><strong id="overview-monitor-state" class="overview-value state" role="status" aria-live="polite">读取中</strong><span id="overview-monitor-note" class="overview-note">等待刷新记录</span><div class="overview-log-actions"><button type="button" data-overview-log-toggle="monitor">隐藏日志</button><button type="button" data-overview-log-detail="monitor">详细日志</button></div><pre id="overview-monitor-log" class="overview-log">暂无日志</pre></div>
-    <div class="overview-item module-overview" data-overview-module="notify"><span class="eyebrow">通知</span><strong id="overview-notify-state" class="overview-value state" role="status" aria-live="polite">读取中</strong><span id="overview-notify-note" class="overview-note">等待刷新记录</span><div class="overview-log-actions"><button type="button" data-overview-log-toggle="notify">隐藏日志</button><button type="button" data-overview-log-detail="notify">详细日志</button></div><pre id="overview-notify-log" class="overview-log">暂无日志</pre></div>
-    <div class="overview-item module-overview" data-overview-module="seckill"><span class="eyebrow">抢购</span><strong id="overview-seckill-state" class="overview-value state" role="status" aria-live="polite">读取中</strong><span id="overview-seckill-note" class="overview-note">等待刷新记录</span><div class="overview-log-actions"><button type="button" data-overview-log-toggle="seckill">隐藏日志</button><button type="button" data-overview-log-detail="seckill">详细日志</button></div><pre id="overview-seckill-log" class="overview-log">暂无日志</pre></div>
+    <div class="overview-item module-overview" data-overview-module="catalog"><span class="eyebrow">大盘</span><span class="module-overview-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12M15 9v12"/></svg></span><strong id="overview-catalog-state" class="overview-value state" role="status" aria-live="polite">读取中</strong><span id="overview-catalog-note" class="overview-note">等待刷新记录</span><div class="overview-log-actions"><button type="button" data-overview-log-toggle="catalog">隐藏日志</button><button type="button" data-overview-log-detail="catalog">详细日志</button></div><pre id="overview-catalog-log" class="overview-log">暂无日志</pre></div>
+    <div class="overview-item module-overview" data-overview-module="monitor"><span class="eyebrow">监控</span><span class="module-overview-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4M6 11h3l2-4 3 7 2-3h2"/></svg></span><strong id="overview-monitor-state" class="overview-value state" role="status" aria-live="polite">读取中</strong><span id="overview-monitor-note" class="overview-note">等待刷新记录</span><div class="overview-log-actions"><button type="button" data-overview-log-toggle="monitor">隐藏日志</button><button type="button" data-overview-log-detail="monitor">详细日志</button></div><pre id="overview-monitor-log" class="overview-log">暂无日志</pre></div>
+    <div class="overview-item module-overview" data-overview-module="notify"><span class="eyebrow">通知</span><span class="module-overview-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></span><strong id="overview-notify-state" class="overview-value state" role="status" aria-live="polite">读取中</strong><span id="overview-notify-note" class="overview-note">等待刷新记录</span><div class="overview-log-actions"><button type="button" data-overview-log-toggle="notify">隐藏日志</button><button type="button" data-overview-log-detail="notify">详细日志</button></div><pre id="overview-notify-log" class="overview-log">暂无日志</pre></div>
+    <div class="overview-item module-overview" data-overview-module="seckill"><span class="eyebrow">抢购</span><span class="module-overview-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m13 2-9 12h7l-1 8 9-12h-7l1-8Z"/></svg></span><strong id="overview-seckill-state" class="overview-value state" role="status" aria-live="polite">读取中</strong><span id="overview-seckill-note" class="overview-note">等待刷新记录</span><div class="overview-log-actions"><button type="button" data-overview-log-toggle="seckill">隐藏日志</button><button type="button" data-overview-log-detail="seckill">详细日志</button></div><pre id="overview-seckill-log" class="overview-log">暂无日志</pre></div>
   </section>
 
   <section class="section">

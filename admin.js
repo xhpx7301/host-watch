@@ -2139,14 +2139,21 @@ function renderOverview() {
     if (!node) continue;
     const result = state.last_result || (key === "seckill" && vpsSeckillTask ? (vpsSeckillTask.pending ? "pending" : vpsSeckillTask.error ? "error" : "success") : "unknown");
     node.textContent = result === "success" ? "运行正常" : result === "pending" ? "刷新中" : result === "skipped" ? "未启用" : result === "error" ? "运行异常" : "未刷新";
-    node.className = `overview-value state ${result === "success" ? "ok" : result === "pending" ? "pending" : result === "error" ? "error" : ""}`;
+    const tone = result === "success" ? "ok" : result === "pending" ? "pending" : result === "error" ? "error" : "";
+    node.className = `overview-value state ${tone}`;
+    const card = node.closest(".module-overview");
+    if (card) card.dataset.state = tone || "unknown";
     const schedule = config[`${key === "notify" ? "notify" : key}_schedule`] || (key === "monitor" ? config.monitor_schedule : key === "catalog" ? config.catalog_schedule : config.seckill_schedule) || {};
     const mode = schedule.mode === "auto" ? "自动" : "手动";
     const at = state.last_checked ? formatBeijingDate(state.last_checked) : "暂无";
     const manualAt = state.last_manual_refresh ? formatBeijingDate(state.last_manual_refresh) : "暂无";
     const autoAt = state.last_auto_refresh ? formatBeijingDate(state.last_auto_refresh) : "暂无";
     const serviceState = key === "monitor" || key === "notify" ? ({ active: "运行中", inactive: "已停止", failed: "运行失败", activating: "启动中", deactivating: "停止中" }[monitorService?.active] || "状态未知") : "";
-    note.textContent = `${mode} · 间隔 ${intervalLabel(Number(schedule.interval_seconds ?? 0))}${serviceState ? ` · 服务${serviceState}` : ""} · 最近 ${at} · 自动 ${autoAt} · 手动 ${manualAt}`;
+    note.replaceChildren(
+      text("span", `${mode} · 间隔 ${intervalLabel(Number(schedule.interval_seconds ?? 0))}${serviceState ? ` · 服务${serviceState}` : ""} · 最近 ${at}`, "overview-note-main"),
+      text("span", `自动 ${autoAt}`, "overview-note-line"),
+      text("span", `手动 ${manualAt}`, "overview-note-line"),
+    );
     if (log) {
       const sourceLogs = key === "seckill" && vpsSeckillTask?.logs?.length ? vpsSeckillTask.logs : state.logs || [];
       const lines = sourceLogs.slice(-5).map(item => `[${formatBeijingDate(item.at)}] ${(item.trigger || "manual") === "manual" ? "手动" : "自动"} · ${item.message || item.result || ""}`);
