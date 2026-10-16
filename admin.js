@@ -2740,14 +2740,14 @@ function applyConfig(value) {
 async function loadStatus() {
   lastStatus = await requestJSON("/api/status");
   const state = document.querySelector("#state");
-  state.textContent = ({ partial: "部分商品待核对", ok: "上次检查成功", blocked: "上次检查被拦截", error: "上次检查失败", unknown: "尚无检查记录" })[lastStatus.state] || lastStatus.state || "尚无检查记录";
+  state.textContent = ({ partial: "部分库存待核对", ok: "最近库存检查成功", blocked: "最近库存检查被拦截", error: "最近库存检查失败", unknown: "尚无库存检查记录" })[lastStatus.state] || lastStatus.state || "尚无库存检查记录";
   state.className = `state ${lastStatus.state || ""}`;
-  document.querySelector("#last-checked").textContent = lastStatus.last_checked ? `上次检查：${formatBeijingDate(lastStatus.last_checked)}` : "";
+  document.querySelector("#last-checked").textContent = lastStatus.last_checked ? `最近库存检查：${formatBeijingDate(lastStatus.last_checked)}` : "";
   blockedHelpNode.hidden = lastStatus.state !== "blocked";
   document.querySelector("#blocked-message").textContent = lastStatus.message || "检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。";
   const errorNode = document.querySelector("#request-error");
   errorNode.hidden = !["error", "partial"].includes(lastStatus.state);
-  errorNode.textContent = ["error", "partial"].includes(lastStatus.state) ? `最近检查提示：${lastStatus.message || "请查看服务日志"}` : "";
+  errorNode.textContent = ["error", "partial"].includes(lastStatus.state) ? `最近库存检查提示：${lastStatus.message || "请查看服务日志"}` : "";
   if (["monitor", "notifications"].includes(currentPage)) renderProductList();
   renderOverview();
   renderSeckill();
@@ -2846,9 +2846,9 @@ document.querySelector("#add").addEventListener("click", () => {
   }
   addProduct(item);
 });
-document.querySelector("#refresh-status").addEventListener("click", (event) => runAction(event.currentTarget, "刷新中…", "正在刷新监控状态…", async () => {
+document.querySelector("#refresh-status").addEventListener("click", (event) => runAction(event.currentTarget, "刷新中…", "正在刷新服务状态与最近检查记录…", async () => {
   await Promise.all([loadStatus(), refreshManagement()]);
-  setMessage("监控状态已刷新；此次操作不会触发库存检查。", "success");
+  setMessage("服务状态与最近检查记录已刷新；此次操作不会触发库存检查。", "success");
 }));
 async function triggerManualRefresh(role, button) {
   await runAction(button, "刷新中…", `正在手动刷新${role === "watch" ? "库存监控" : "库存通知"}…`, async () => {
