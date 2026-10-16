@@ -2276,15 +2276,16 @@ function renderVpsSeckill() {
         const nameLabel = document.createElement("label"); nameLabel.append(text("span", "商家名称"), name); providerExtra.append(nameLabel);
         const login = document.createElement("input"); login.type = "url"; login.value = account.login_url || ""; login.placeholder = "https://…（HostWatch JSON 接口）"; login.addEventListener("input", () => { account.login_url = login.value; updateDraftState(); });
         const loginLabel = document.createElement("label"); loginLabel.append(text("span", "账户检查接口"), login); providerExtra.append(loginLabel);
-      } else if (selected === "vmiss" || selected === "vps_soy" || selected === "bwh") {
-        const urls = { vmiss: "https://app.vmiss.com/login", vps_soy: "https://www.vps.soy/login", bwh: "https://bwh81.net/clientarea.php" };
+      } else if (selected === "vmiss" || selected === "vps_soy" || selected === "bwh" || selected === "akile") {
+        const urls = { vmiss: "https://app.vmiss.com/login", vps_soy: "https://www.vps.soy/login", bwh: "https://bwh81.net/clientarea.php", akile: "https://api.akile.ai/api/v1/user/login" };
         account.provider = selected; account.login_url = urls[selected];
-        adapterNote.textContent = `${ids[selected]} 已内置登录检查；只需填写官网登录名和密码。检查仅登录，不下单、不付款。`;
-        const link = text("a", `打开 ${ids[selected]} 官网登录页`); link.href = urls[selected]; link.target = "_blank"; link.rel = "noopener noreferrer"; providerExtra.append(link);
+        adapterNote.textContent = selected === "akile" ? "Akile 已内置 API 登录检查；填写邮箱和密码。若要求邮箱验证、二步验证、Passkey 或验证码，请到官网完成。检查不下单、不付款。" : `${ids[selected]} 已内置登录检查；只需填写官网登录名和密码。检查仅登录，不下单、不付款。`;
+        const destinations = { ...urls, akile: "https://akile.ai/login" };
+        const link = text("a", `打开 ${ids[selected]} 官网登录页`); link.href = destinations[selected]; link.target = "_blank"; link.rel = "noopener noreferrer"; providerExtra.append(link);
       } else if (selected) {
         account.provider = selected; account.login_url = "";
         adapterNote.textContent = `${ids[selected]} 登录含验证码、API 验证或二次验证，目前需到官网手动登录；检查会明确提示无法自动确认。`;
-        const urls = { akile: "https://akile.ai/", isvoro: "https://isvoro.com/", dmit: "https://www.dmit.io/login" };
+        const urls = { isvoro: "https://isvoro.com/", dmit: "https://www.dmit.io/login" };
         const link = text("a", `打开 ${ids[selected]} 官网`); link.href = urls[selected]; link.target = "_blank"; link.rel = "noopener noreferrer"; providerExtra.append(link);
       } else {
         account.provider = ""; account.login_url = ""; adapterNote.textContent = "先选择账户所属商家。";

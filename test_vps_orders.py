@@ -288,6 +288,33 @@ class AccountVerificationTests(unittest.TestCase):
         session.get.assert_not_called()
         session.post.assert_not_called()
 
+    def test_akile_api_requires_profile_identity_and_preserves_token_only_in_session(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='akile', login_url=admin.AKILE_LOGIN_URL)
+        session = Mock(headers={})
+        session.post.return_value = response({'status_code': 200, 'data': {'token': 'session-token'}})
+        session.get.return_value = response({'status_code': 200, 'data': {'email': 'user'}})
+        result = admin.check_order_account(session, account)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['status'], 'valid')
+        self.assertEqual(session.post.call_args.args[0], admin.AKILE_LOGIN_URL)
+        self.assertEqual(session.post.call_args.kwargs['json']['email'], 'user')
+        self.assertEqual(session.get.call_args.args[0], admin.AKILE_PROFILE_URL)
+        self.assertEqual(session.get.call_args.kwargs['headers'], {'Authorization': 'session-token'})
+        self.assertEqual(session.headers['Authorization'], 'session-token')
+        self.assertNotIn('session-token', str(result))
+
+    def test_akile_verification_requirements_stay_unknown(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='akile', login_url=admin.AKILE_LOGIN_URL)
+        session = Mock(headers={})
+        session.post.return_value = response({'status_code': 403, 'status_msg': '请输入二步验证码'})
+        result = admin.check_order_account(session, account)
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['status'], 'unknown')
+        self.assertIn('二步验证', result['message'])
+        session.get.assert_not_called()
+
 
 class AccountCheckAPITests(unittest.TestCase):
     setUp = _AdminAPIBase.setUp

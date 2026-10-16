@@ -400,6 +400,8 @@ MERCHANT_LOGIN_ADAPTERS = {
     "vps_soy": {"name": "VPS.SOY", "url": "https://www.vps.soy/login", "host": "www.vps.soy", "username_field": "email"},
     "bwh": {"name": "搬瓦工", "url": "https://bwh81.net/clientarea.php", "host": "bwh81.net", "username_field": "username"},
 }
+AKILE_LOGIN_URL = "https://api.akile.ai/api/v1/user/login"
+AKILE_PROFILE_URL = "https://api.akile.ai/api/v1/user/info"
 MERCHANT_LOGIN_IDS = {
     "vmiss": "vmiss", "vps.soy": "vps_soy", "vps_soy": "vps_soy",
     "搬瓦工": "bwh", "bwh": "bwh", "bandwagonhost": "bwh",
@@ -472,6 +474,50 @@ def _merchant_form_login(session, account: dict, adapter: dict) -> dict:
     return {"status": "unknown", "message": "官网未返回可确认的登录状态，请到官网检查"}
 
 
+def _akile_login(session, account: dict) -> dict:
+    response = session.post(AKILE_LOGIN_URL, json={"email": account["username"], "password": account["password"],
+        "token": "", "email_code": "", "new_password": "", "confirm": "", "verifyCode": ""},
+        timeout=(5, 20), allow_redirects=False)
+    if response.status_code in {401, 403}:
+        return {"status": "invalid", "message": "Akile 拒绝登录，账户或密码错误；也可能需要官网安全验证"}
+    if not 200 <= response.status_code < 300:
+        return {"status": "unknown", "message": f"Akile 登录 API 返回 HTTP {response.status_code}，请到官网检查"}
+    try:
+        payload = response.json()
+    except ValueError:
+        return {"status": "unknown", "message": "Akile 登录 API 响应无法识别，请到官网检查"}
+    if not isinstance(payload, dict):
+        return {"status": "unknown", "message": "Akile 登录 API 响应格式无效，请到官网检查"}
+    message = str(payload.get("status_msg", "")).casefold()
+    if payload.get("status_code") not in {0, 200, "0", "200"}:
+        if any(marker in message for marker in ("password", "username", "email", "密码", "账号", "账户")):
+            return {"status": "invalid", "message": "Akile 账户认证失败，请检查邮箱和密码"}
+        if any(marker in message for marker in ("two", "verification", "passkey", "captcha", "二步", "验证", "验证码")):
+            return {"status": "unknown", "message": "Akile 要求邮箱验证、二步验证、Passkey 或验证码，请到官网完成"}
+        return {"status": "unknown", "message": "Akile 未确认账户登录，请到官网检查"}
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return {"status": "unknown", "message": "Akile 未返回账户登录凭据，请到官网检查"}
+    if data.get("email_verification_required") or data.get("passkey_required") or not data.get("token"):
+        return {"status": "unknown", "message": "Akile 要求邮箱验证、Passkey 或额外验证，请到官网完成"}
+    token = str(data["token"])
+    if len(token) > 4096 or any(ord(char) < 33 for char in token):
+        return {"status": "unknown", "message": "Akile 返回的登录凭据格式无效，请到官网检查"}
+    profile_response = session.get(AKILE_PROFILE_URL, headers={"Authorization": token}, timeout=(5, 20), allow_redirects=False)
+    if not 200 <= profile_response.status_code < 300:
+        return {"status": "unknown", "message": "Akile 登录成功但无法读取账户身份，请到官网检查"}
+    try:
+        profile_payload = profile_response.json()
+    except ValueError:
+        return {"status": "unknown", "message": "Akile 账户信息响应无法识别，请到官网检查"}
+    profile = profile_payload.get("data") if isinstance(profile_payload, dict) else None
+    email = str(profile.get("email", "")).strip().casefold() if isinstance(profile, dict) else ""
+    if not isinstance(profile_payload, dict) or profile_payload.get("status_code") not in {0, 200, "0", "200"} or not email or email != account["username"].strip().casefold():
+        return {"status": "unknown", "message": "Akile 返回的账户身份未能与填写邮箱匹配，请到官网检查"}
+    session.headers["Authorization"] = token
+    return {"status": "valid", "message": "Akile 账户认证正常（不代表具有购买资格或库存）"}
+
+
 def order_json(response) -> dict:
     # Never follow checkout/payment redirects or mistake a login HTML page for success.
     if not 200 <= response.status_code < 300:
@@ -497,6 +543,13 @@ def check_order_account(session, account: dict) -> dict:
             if account.get("login_url") != adapter["url"]:
                 return {**result, "message": "商家登录地址与内置适配不一致，请重新选择商家并保存"}
             checked = _merchant_form_login(session, account, adapter)
+            if checked["status"] == "valid":
+                return {**result, "ok": True, **checked}
+            return {**result, **checked}
+        if adapter_id == "akile":
+            if account.get("login_url") != AKILE_LOGIN_URL:
+                return {**result, "message": "Akile 登录地址与内置适配不一致，请重新选择商家并保存"}
+            checked = _akile_login(session, account)
             if checked["status"] == "valid":
                 return {**result, "ok": True, **checked}
             return {**result, **checked}
@@ -983,7 +1036,7 @@ def normalize_seckill(value: object, product_ids: set[str]) -> dict:
             login_url = MERCHANT_LOGIN_ADAPTERS[adapter_id]["url"]
         elif adapter_id:
             provider = adapter_id
-            login_url = ""
+            login_url = AKILE_LOGIN_URL if adapter_id == "akile" else ""
         for key in ("auto_submit",):
             if key in account and not isinstance(account[key], bool):
                 raise ValueError(f"VPS 秒杀账户 {name or account_id} 的 {key} 必须是布尔值")
