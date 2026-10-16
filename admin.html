@@ -231,7 +231,9 @@
     .catalog-sync { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; }
     .catalog-sync strong,.catalog-sync .subtle { display:block; }
     #catalog-status { min-height:18px; margin-bottom:14px; }
-    #catalog-status.error { color:var(--red); }
+    #catalog-route { margin:8px 0; overflow-wrap:anywhere; }
+    #catalog-status.error, #catalog-route.error { color:var(--red); }
+    #catalog-route.stale { color:var(--amber); }
     #catalog-status.pending { color:var(--blue); }
     #catalog-status.stale { color:var(--amber); }
     .catalog-bulk { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:12px 0; border-top:1px solid var(--line); }
@@ -585,6 +587,7 @@
     <div class="panel-card catalog-browser">
       <div class="catalog-filters"><label>全部套餐 / 地区 / 线路<select id="catalog-scope" disabled><option value="">等待目录</option></select></label><label>搜索套餐<input id="catalog-search" type="search" placeholder="名称、地区、线路或配置"></label><label>库存状态<select id="catalog-stock"><option value="all">全部库存</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">状态未知</option><option value="watched">已加入监控</option><option value="notified">已加入通知</option></select></label><label>大盘自动刷新<select id="catalog-auto"><option value="0">仅手动</option><option value="60">1 分钟</option><option value="300" selected>5 分钟</option><option value="600">10 分钟</option></select></label></div>
       <div class="catalog-sync"><div><strong id="catalog-summary">尚未载入目录</strong><span id="catalog-updated" class="subtle"></span></div><div class="actions"><button id="catalog-refresh" type="button">刷新目录库存</button><button id="catalog-stop" type="button" class="danger" hidden>停止刷新</button></div></div>
+      <p id="catalog-route" class="hint" role="status" aria-live="polite"></p>
       <p id="catalog-status" class="hint" role="status" aria-live="polite">选择商家后获取公开套餐目录；切换分类时优先使用已读取的全量快照。</p>
       <div class="catalog-bulk"><button id="catalog-select-all" class="option-button" type="button" aria-pressed="false" aria-label="选择本页">选择本页 <span data-option-state>未全选</span></button><span id="catalog-selected" class="subtle">已选 0 项</span><button id="catalog-watch-selected" type="button" disabled>所选加入库存监控</button><button id="catalog-unwatch-selected" type="button" disabled>所选加入库存通知</button></div>
       <div id="catalog-results">

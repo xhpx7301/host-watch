@@ -4,8 +4,9 @@
   const get = (id) => document.getElementById(id);
   let provider = sessionStorage.getItem("hostwatch-catalog-provider") || "akile";
   if (!Object.hasOwn(providers, provider)) provider = "akile";
-  let scope = "", data = null, task = null, page = 0, generation = 0, loading = false, metadataOutdated = false;
+  let scope = "", data = null, task = null, route = null, page = 0, generation = 0, loading = false, metadataOutdated = false;
   let pollTimer, autoTimer;
+  let routeConfig = null;
   let tableSignature = "";
   let filterGeneration = null;
   const selected = new Set();
@@ -77,6 +78,9 @@
     const rows = filtered();
     page = Math.max(0, Math.min(page, Math.ceil(rows.length / pageSize) - 1));
     const visible = rows.slice(page * pageSize, (page + 1) * pageSize);
+    const hasSnapshot = Boolean(data?.fetched_at);
+    get("catalog-empty").hidden = rows.length > 0;
+    get("catalog-empty").textContent = !hasSnapshot ? (loading || task?.provider === provider && task.pending ? "正在读取目录，尚未取得库存结果…" : task?.provider === provider && task.error ? "目录读取失败，请根据上方错误检查出口或请求方式后重试。" : "尚无目录数据，点击“刷新目录库存”读取。") : data.rows.length ? "没有符合筛选条件的商品。" : "该分类暂无公开套餐。";
     const signature = JSON.stringify([visible, rows.length, page, [...selected], config.products, config.affiliates, savedConfig, config.enabled, monitorService?.active, actionRunning]);
     if (signature === tableSignature) { renderSelection(visible); renderReminders(); return; }
     tableSignature = signature;
@@ -124,8 +128,6 @@
       cell().append(actions);
       return tr;
     }));
-    get("catalog-empty").hidden = rows.length > 0;
-    get("catalog-empty").textContent = data ? (data.rows.length ? "没有符合筛选条件的商品。" : "该分类暂无公开套餐。") : "尚无目录数据，点击“刷新分类库存”读取。";
     get("catalog-page-label").textContent = `${rows.length} 个结果 · 第 ${page + 1} / ${Math.max(1, Math.ceil(rows.length / pageSize))} 页`;
     get("catalog-prev").disabled = actionRunning || page === 0;
     get("catalog-next").disabled = actionRunning || (page + 1) * pageSize >= rows.length;
@@ -166,9 +168,24 @@
     get("catalog-stop").hidden = !busy;
     get("catalog-stop").disabled = actionRunning || Boolean(task?.cancelled);
     get("catalog-stop").textContent = task?.cancelled ? "停止中…" : "停止刷新";
-    get("catalog-summary").textContent = `${providers[provider]} · ${data?.rows.length || 0} 个套餐 · ${data?.rows.filter((row) => row.available > 0).length || 0} 个有货`;
+    get("catalog-summary").textContent = data?.fetched_at ? `${providers[provider]} · ${data.rows.length} 个套餐 · ${data.rows.filter((row) => row.available > 0).length} 个有货` : `${providers[provider]} · 尚未取得库存结果`;
     get("catalog-updated").textContent = data?.fetched_at ? `数据更新时间：${new Date(data.fetched_at).toLocaleString()}` : "尚无库存快照";
     const status = get("catalog-status");
+    const savedRoute = merchantRequestPolicy(savedConfig ? JSON.parse(savedConfig) : config, provider);
+    const effectiveRoute = route && routeConfig === savedConfig ? route : savedRoute;
+    const changed = merchantRequestChanged(provider);
+    const routeHint = get("catalog-route");
+    const hints = [`${providers[provider]} 已保存的读取设置：${requestRouteLabel(effectiveRoute)}。`];
+    if (changed) hints.push("此商家的出口或请求设置尚未保存；当前刷新仍使用上面的已保存设置，请先点击底部“保存配置”。");
+    if (effectiveRoute.error) hints.push(effectiveRoute.error);
+    if (busy && task.provider === provider && task.route) hints.push(`本次刷新使用：${requestRouteLabel(task.route)}。执行期间修改设置将在下次刷新生效。`);
+    if (data?.fetched_at) {
+      const sameRoute = data.route && ["mode", "node_id", "public_ip"].every(key => data.route[key] === effectiveRoute[key]);
+      if (!data.route) hints.push("此历史快照未记录出口，请刷新以核对当前线路。");
+      else if (!sameRoute) hints.push(`当前展示的是历史快照，采集设置：${requestRouteLabel(data.route)}。请刷新后核对新出口的结果。`);
+    }
+    routeHint.textContent = hints.join(" ");
+    routeHint.className = `hint${effectiveRoute.error ? " error" : changed ? " stale" : ""}`;
     const stale = data && Date.now() - Date.parse(data.fetched_at) > 300000;
     status.className = "hint";
     if (busy) { status.classList.add("pending"); status.textContent = task.cancelled ? "正在终止目录刷新，保留上次快照…" : `正在刷新 ${providers[task.provider] || "商家"}${task.scope === "all" ? "全部公开套餐（会读取多个分类）" : "目录"}，页面仍可操作；可点击“停止刷新”。`; }
@@ -214,7 +231,7 @@
     try {
       const result = await requestJSON(`/api/catalog?${new URLSearchParams({ provider: requestedProvider, scope: requestedScope })}`, { timeoutMs: 10000 });
       if (version !== generation || currentPage !== "catalog") return;
-      data = result.data; task = result.task; metadataOutdated = Boolean(result.needs_refresh);
+      data = result.data; task = result.task; route = result.route; routeConfig = savedConfig; metadataOutdated = Boolean(result.needs_refresh);
       if (data) {
         scope = data.scope;
         knownScopes.set(provider, data.scopes);
@@ -245,7 +262,7 @@
 
   document.querySelectorAll("[data-catalog-provider]").forEach((button) => button.addEventListener("click", () => {
     if (provider === button.dataset.catalogProvider) return;
-    generation++; provider = button.dataset.catalogProvider; scope = ""; data = null; metadataOutdated = false; page = 0; selected.clear();
+    generation++; provider = button.dataset.catalogProvider; scope = ""; data = null; route = null; metadataOutdated = false; page = 0; selected.clear();
     filterGeneration = generation;
     sessionStorage.setItem("hostwatch-catalog-provider", provider);
     get("catalog-search").value = ""; get("catalog-stock").value = "all";
@@ -282,7 +299,7 @@
     generation++; filterGeneration = null; clearTimeout(autoTimer); clearTimeout(pollTimer); loading = false;
     if (event.detail === "catalog") void loadSnapshot();
   });
-  for (const event of ["hostwatch-draft-change", "hostwatch-service-change"]) window.addEventListener(event, () => { if (currentPage === "catalog") renderTable(); });
+  for (const event of ["hostwatch-draft-change", "hostwatch-service-change"]) window.addEventListener(event, () => { if (currentPage === "catalog") render(); });
   window.addEventListener("hostwatch-action-change", () => {
     if (currentPage !== "catalog") return;
     render();

@@ -1,6 +1,7 @@
 """Read-only vendor catalogues and one cancellable, cached discovery task."""
 from __future__ import annotations
 
+import copy
 import json
 import os
 from pathlib import Path
@@ -221,7 +222,8 @@ def isvoro_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[li
 
 def load_catalog(provider: str, scope: str = "", fetcher: dict | None = None) -> dict:
     provider, scope = validate_source(provider, scope)
-    from monitor import cloudscraper_request_session, product_fetcher
+    from monitor import cloudscraper_request_session, product_fetcher, fetcher_route
+    route = fetcher_route(fetcher, {"adapter": provider})
     fetcher = product_fetcher(fetcher, {"adapter": provider})
     with cloudscraper_request_session(fetcher) as fetcher, requests.Session() as session:
         session.headers["User-Agent"] = "HostWatch/1.0 (read-only VPS catalogue)"
@@ -235,7 +237,7 @@ def load_catalog(provider: str, scope: str = "", fetcher: dict | None = None) ->
             scopes, actual, rows = {"vmiss": vmiss_catalog, "vps_soy": soy_catalog, "akile": akile_catalog, "isvoro": isvoro_catalog}[provider](session, scope, fetcher)
     if len(rows) > MAX_ROWS or len({row["key"] for row in rows}) != len(rows):
         raise ValueError("商品目录超过容量或存在重复标识，未更新缓存")
-    return {"provider": provider, "scope": actual, "scopes": scopes, "rows": rows, "fetched_at": now(), "metadata_version": METADATA_VERSION, "unknown": sum(row["available"] is None for row in rows)}
+    return {"provider": provider, "scope": actual, "scopes": scopes, "rows": rows, "fetched_at": now(), "route": route, "metadata_version": METADATA_VERSION, "unknown": sum(row["available"] is None for row in rows)}
 
 
 class CatalogBusy(ValueError):
@@ -295,7 +297,9 @@ class CatalogService:
         # Old Isvoro snapshots contain traffic only, even when the API supplies
         # ratelimit. Keep them visible while the browser refreshes this scope.
         needs_refresh = bool(data and provider == "isvoro" and data.get("metadata_version") != METADATA_VERSION)
-        return {"data": data, "task": task, "needs_refresh": needs_refresh}
+        from monitor import fetcher_route
+        return {"data": data, "task": task, "needs_refresh": needs_refresh,
+                "route": fetcher_route(self.fetcher_settings(), {"adapter": provider})}
 
     @staticmethod
     def _akile_area_snapshot(data: dict, scope: str) -> dict:
@@ -317,15 +321,17 @@ class CatalogService:
 
     def refresh(self, provider: str, scope: str = "") -> dict:
         provider, scope = validate_source(provider, scope)
+        from monitor import fetcher_route
+        settings = copy.deepcopy(self.fetcher_settings())
         fetch_scope = "all" if provider == "akile" else scope
         with self.lock:
             if self.task and self.task["pending"]:
                 if (self.task["provider"], self.task.get("fetch_scope", self.task["scope"])) != (provider, fetch_scope):
                     raise CatalogBusy("已有目录刷新正在执行，请先停止或等待完成")
                 return dict(self.task)
-            self.task = {"provider": provider, "scope": scope, "fetch_scope": fetch_scope, "pending": True, "cancelled": False, "started_at": now(), "error": ""}
+            self.task = {"provider": provider, "scope": scope, "fetch_scope": fetch_scope, "pending": True, "cancelled": False, "started_at": now(), "error": "", "route": fetcher_route(settings, {"adapter": provider})}
             task = self.task
-        threading.Thread(target=self.run, args=(task,), daemon=True).start()
+        threading.Thread(target=self.run, args=(task, settings), daemon=True).start()
         return dict(task)
 
     def stop(self) -> dict:
@@ -341,9 +347,9 @@ class CatalogService:
                 pass
         return output
 
-    def run(self, task: dict) -> None:
+    def run(self, task: dict, settings: dict | None = None) -> None:
         try:
-            stdout = self.fetch_result(task)
+            stdout = self.fetch_result(task, settings)
             with self.lock:
                 if task["cancelled"]:
                     return
@@ -398,10 +404,13 @@ class CatalogService:
                     if self.process is process:
                         self.process = None
 
-    def fetch_result(self, task: dict) -> str:
+    def fetch_result(self, task: dict, settings: dict | None = None) -> str:
         from admin import BROWSER_CLEANUP_SECONDS, BROWSER_CLEANUP_WARNING
         from monitor import MonitorError, browser_request_slot, check_browser_memory, product_fetcher
-        fetcher = product_fetcher(self.fetcher_settings(), {"adapter": task["provider"]})
+        try:
+            fetcher = product_fetcher(settings if settings is not None else self.fetcher_settings(), {"adapter": task["provider"]})
+        except MonitorError as exc:
+            raise CatalogFailure(str(exc)) from None
         browser = fetcher["mode"] == "flaresolverr"
         session_id = "hostwatch-catalog-" + uuid.uuid4().hex
         attempted = created = False
@@ -413,7 +422,11 @@ class CatalogService:
                 try:
                     if browser and not task["cancelled"]:
                         attempted = True
-                        raw = self.worker(root / "admin.py", "--browser-session-worker", {"command": "create", "endpoint": fetcher["flaresolverr_url"], "session": session_id}, 35, task)
+                        import egress
+                        payload = {"command": "create", "endpoint": fetcher["flaresolverr_url"], "session": session_id}
+                        if fetcher.get("egress_proxy_url"):
+                            payload["proxy"] = egress.browser_proxy(fetcher)
+                        raw = self.worker(root / "admin.py", "--browser-session-worker", payload, 35, task)
                         if task["cancelled"]:
                             return "{}"
                         if not json.loads(raw).get("ok"):

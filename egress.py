@@ -6,7 +6,7 @@ import base64
 import json
 import shlex
 import time
-from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 import requests
 
@@ -145,6 +145,15 @@ def apply_session(session: requests.Session, fetcher: dict | None) -> None:
         session.proxies = {"http": proxy, "https": proxy}
     elif hasattr(session, "proxies"):
         session.proxies = {}
+
+
+def browser_proxy(fetcher: dict) -> dict:
+    """FlareSolverr requires an object, including auth at session creation."""
+    parsed = urlsplit(fetcher["egress_proxy_url"])
+    proxy = {"url": urlunsplit((parsed.scheme, parsed.netloc.rsplit("@", 1)[-1], parsed.path, parsed.query, ""))}
+    if parsed.username is not None:
+        proxy.update(username=unquote(parsed.username), password=unquote(parsed.password or ""))
+    return proxy
 
 
 def probe(node: dict, timeout: float = 8) -> dict:

@@ -150,7 +150,10 @@ def browser_session_worker() -> None:
         output = {"ok": not warning, "warning": warning}
     else:
         try:
-            response = requests.post(value["endpoint"], json={"cmd": "sessions.create", "session": value["session"]}, timeout=(3, 30))
+            command = {"cmd": "sessions.create", "session": value["session"]}
+            if value.get("proxy"):
+                command["proxy"] = value["proxy"]
+            response = requests.post(value["endpoint"], json=command, timeout=(3, 30))
             payload = response.json()
             output = {"ok": bool(response.ok and isinstance(payload, dict) and payload.get("status") == "ok")}
         except (requests.RequestException, ValueError):
@@ -194,10 +197,11 @@ def stock_test_worker() -> None:
 
 class StockTestTask:
     def __init__(self, task_id: str, product: dict, fetcher: dict):
-        from monitor import product_fetcher
+        from monitor import product_fetcher, fetcher_route
         self.id = task_id
         self.product = product
         self.fetcher = product_fetcher(fetcher, product)
+        self.route = fetcher_route(fetcher, product)
         self.started = time.monotonic()
         self.cancelled = threading.Event()
         self.done = threading.Event()
@@ -209,7 +213,7 @@ class StockTestTask:
 
     def snapshot(self) -> dict:
         with self.lock:
-            return {"task_id": self.id, "product_id": self.product["id"], **self.output, "stopping": self.cancelled.is_set() and not self.done.is_set()}
+            return {"task_id": self.id, "product_id": self.product["id"], "route": self.route, **self.output, "stopping": self.cancelled.is_set() and not self.done.is_set()}
 
     def cancel(self) -> None:
         with self.lock:
@@ -268,7 +272,10 @@ class StockTestTask:
                         with self.lock:
                             self.output["phase"] = "starting"
                         try:
-                            payload = self.run_process("--browser-session-worker", {"command": "create", "endpoint": self.fetcher["flaresolverr_url"], "session": self.session_id}, 35)
+                            command = {"command": "create", "endpoint": self.fetcher["flaresolverr_url"], "session": self.session_id}
+                            if self.fetcher.get("egress_proxy_url"):
+                                command["proxy"] = egress.browser_proxy(self.fetcher)
+                            payload = self.run_process("--browser-session-worker", command, 35)
                             if not payload["ok"]:
                                 raise ValueError("browser creation failed")
                             browser_created = True
@@ -338,12 +345,20 @@ def start_stock_test(submitted: dict) -> dict:
             raise ValueError("请选择支持的 cloudscraper 测试网站")
         fetcher = normalize_fetcher(submitted.get("fetcher", {}))
         fetcher.update(mode="cloudscraper", provider_modes={})
-        value = {"products": [{"id": CLOUDSCRAPER_TEST_ID, "adapter": "html", "name": "cloudscraper 访问测试", "target": target, "_request_probe": True}], "fetcher": fetcher}
+        value = {"products": [{"id": CLOUDSCRAPER_TEST_ID, "adapter": target, "name": "cloudscraper 访问测试", "target": target, "_request_probe": True}], "fetcher": fetcher}
     elif submitted.get("kind") == "isvoro_seckill":
         from seckill import TEST_PRODUCT_ID
         value = {"products": [{"id": TEST_PRODUCT_ID, "adapter": "isvoro", "provider": "Isvoro", "name": "限时秒杀", "_seckill": True}], "fetcher": normalize_fetcher(submitted.get("fetcher", {}))}
     else:
         value = validate_config({"products": [submitted.get("product")], "fetcher": submitted.get("fetcher", {})})
+    # Test inputs may change request mode, but proxy secrets/routes always come
+    # from saved server settings rather than the redacted browser draft.
+    value["fetcher"]["egress"] = current_config().get("egress", {})
+    from monitor import MonitorError
+    try:
+        task = StockTestTask(task_id, value["products"][0], value["fetcher"])
+    except MonitorError as exc:
+        raise ValueError(str(exc)) from None
     with TEST_LOCK:
         if task_id in TEST_TASKS:
             raise ValueError("测试任务编号已使用，请重新测试")
@@ -351,7 +366,6 @@ def start_stock_test(submitted: dict) -> dict:
             raise ValueError("已有商品测试正在执行，请先停止或等待完成")
         for old_id in list(TEST_TASKS)[:-19]:
             del TEST_TASKS[old_id]
-        task = StockTestTask(task_id, value["products"][0], value["fetcher"])
         TEST_TASKS[task_id] = task
         stopped_early = task_id in STOPPED_TEST_IDS
     if stopped_early:
@@ -1433,14 +1447,14 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self._send(400, "application/json; charset=utf-8", json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"))
         elif self.path == "/api/isvoro/categories" or self.path.startswith("/api/isvoro/category/"):
-            from monitor import MonitorError, fetch_isvoro_json, isvoro_categories, isvoro_category
+            from monitor import MonitorError, fetch_isvoro_json, isvoro_categories, isvoro_category, product_fetcher
             try:
                 slug = self.path.rsplit("/", 1)[-1]
                 if self.path != "/api/isvoro/categories" and not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", slug):
                     raise MonitorError("Isvoro 分类标识无效")
                 with requests.Session() as session:
                     path = "categories" if self.path == "/api/isvoro/categories" else f"categories/{slug}"
-                    raw = fetch_isvoro_json(session, path, {"mode": "requests"})
+                    raw = fetch_isvoro_json(session, path, product_fetcher(current_config()["fetcher"], {"adapter": "isvoro"}))
                 output = {"categories": isvoro_categories(raw)} if path == "categories" else {"category": isvoro_category(raw)}
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
             except (MonitorError, ValueError, requests.RequestException) as exc:

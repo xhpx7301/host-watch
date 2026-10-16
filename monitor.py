@@ -198,6 +198,8 @@ def _validate_page_response(status_code: int, body: str, final_url: str, expecte
 def fetch_with_requests(session: requests.Session, url: str, expected_host: str = "app.vmiss.com") -> tuple[str, str]:
     try:
         response = session.get(url, timeout=(10, 25), allow_redirects=True)
+    except requests.exceptions.ProxyError:
+        raise MonitorError(f"通过出口节点访问 {expected_host} 失败；请检查节点服务、代理令牌和主服务器到节点端口的连通性") from None
     except requests.RequestException:
         raise MonitorError(f"访问 {expected_host} 商品页失败；请检查 DNS、TLS 和服务器网络") from None
     return _validate_page_response(response.status_code, response.text, response.url, expected_host, getattr(response, "headers", {}))
@@ -212,9 +214,7 @@ def fetch_with_cloudscraper(url: str, expected_host: str, fetcher: dict | None =
     except ImportError:
         raise RequestServiceError("cloudscraper 依赖未安装或不完整，请通过“更新 HostWatch”安装依赖后重试") from None
     def request(scraper):
-        proxy = (fetcher or {}).get("egress_proxy_url", "")
-        if proxy:
-            scraper.proxies = {"http": proxy, "https": proxy}
+        egress.apply_session(scraper, fetcher)
         response = scraper.get(url, timeout=(options["connect_timeout_seconds"], options["read_timeout_seconds"]), allow_redirects=True)
         result = _validate_page_response(response.status_code, response.text, response.url, expected_host, getattr(response, "headers", {}))
         if diagnostics is not None:
@@ -233,6 +233,8 @@ def fetch_with_cloudscraper(url: str, expected_host: str, fetcher: dict | None =
             return request(scraper)
     except CloudflareException:
         raise SiteBlocked(f"{expected_host} 的 Cloudflare 验证未通过或不受 cloudscraper 支持；请检查站点访问规则或调整请求方式") from None
+    except requests.exceptions.ProxyError:
+        raise MonitorError(f"cloudscraper 通过出口节点访问 {expected_host} 失败；请检查节点服务、代理令牌和端口连通性") from None
     except requests.Timeout:
         raise MonitorError(f"cloudscraper 访问 {expected_host} 超时，请检查服务器网络或目标站点响应") from None
     except requests.RequestException:
@@ -315,11 +317,13 @@ def _fetch_with_flaresolverr(session: requests.Session, url: str, fetcher: dict,
     if wait:
         request["waitInSeconds"] = wait
     if fetcher.get("egress_proxy_url"):
-        request["proxy"] = fetcher["egress_proxy_url"]
+        request["proxy"] = egress.browser_proxy(fetcher)
     try:
         request_kwargs = {"json": request, "timeout": (10, timeout_seconds + wait + 15)}
         if fetcher.get("egress_proxy_url"):
-            request_kwargs["proxies"] = {}
+            # The API is a control connection, not a request to the merchant.
+            # Empty mappings still inherit Session.proxies in requests.
+            request_kwargs["proxies"] = {"http": "", "https": ""}
         response = session.post(endpoint, **request_kwargs)
         payload = response.json()
     except requests.Timeout:
@@ -361,11 +365,33 @@ def product_fetcher(fetcher: dict | None, item: dict) -> dict:
     mode = result.get("provider_modes", {}).get(item.get("adapter", "html"), item.get("request_mode", "inherit"))
     if mode != "inherit":
         result["mode"] = mode
-    node = egress.resolve(result.get("egress", {}), item.get("adapter", "html"), str(item.get("egress_node_id", ""))) if result.get("egress") else None
-    if node:
-        result["egress_proxy_url"] = egress.connect_url(node)
-        result["egress_node_id"] = node["id"]
+    if "egress" in result:
+        result.pop("egress_proxy_url", None)
+        result.pop("egress_node_id", None)
+        try:
+            node = egress.resolve(result["egress"], item.get("adapter", "html"), str(item.get("egress_node_id", "")))
+            if node:
+                result["egress_proxy_url"] = egress.connect_url(node)
+                result["egress_node_id"] = node["id"]
+        except RuntimeError as exc:
+            raise MonitorError(str(exc)) from None
     return result
+
+
+def fetcher_route(fetcher: dict | None, item: dict) -> dict:
+    """Describe a request policy without publishing proxy URLs or credentials."""
+    settings = fetcher or {}
+    provider = item.get("adapter", "html")
+    mode = settings.get("provider_modes", {}).get(provider, item.get("request_mode", "inherit"))
+    node_id = item.get("egress_node_id") or settings.get("egress", {}).get("routes", {}).get(provider, "")
+    node = next((row for row in settings.get("egress", {}).get("nodes", []) if row["id"] == node_id), {})
+    route = {"mode": settings.get("mode", "requests") if mode == "inherit" else mode,
+             "node_id": node_id, "node_name": node.get("name", node_id), "public_ip": node.get("public_ip", ""), "error": ""}
+    try:
+        product_fetcher(settings, item)
+    except MonitorError as exc:
+        route["error"] = str(exc)
+    return route
 
 
 def fetch_page(session: requests.Session, url: str, fetcher: dict | None, expected_host: str) -> tuple[str, str]:
@@ -849,6 +875,8 @@ def write_state(path: Path, state: dict[str, dict]) -> None:
 
 
 def telegram_request(session: requests.Session, token: str, method: str, **kwargs) -> dict:
+    # Merchant routing must not leak into notification API calls on this session.
+    egress.apply_session(session, None)
     endpoint = f"https://api.telegram.org/bot{token}/{method}"
     try:
         response = session.post(endpoint, json=kwargs, timeout=(10, 25)) if method in {"sendMessage", "editMessageText"} else session.get(endpoint, params=kwargs, timeout=(10, 25))
@@ -893,14 +921,14 @@ def notification_text(product: Product, old_count: int | None, purchase_url: str
 
 
 def collect_inventory(session, config, selected, found, unavailable):
-    by_category: dict[tuple[str, str], list[dict]] = {}
+    by_category: dict[tuple[str, str, str], list[dict]] = {}
     for item in selected:
         if item["adapter"] != "vmiss":
             continue
-        mode = product_fetcher(config.get("fetcher"), item).get("mode", "requests")
-        by_category.setdefault((item["category_url"].strip(), mode), []).append(item)
-    for (category_url, mode), items in by_category.items():
-        page_products = fetch_products(session, category_url, [], {**config.get("fetcher", {}), "mode": mode})
+        fetcher = product_fetcher(config.get("fetcher"), item)
+        by_category.setdefault((item["category_url"].strip(), fetcher.get("mode", "requests"), fetcher.get("egress_node_id", "")), []).append(item)
+    for (category_url, mode, node_id), items in by_category.items():
+        page_products = fetch_products(session, category_url, [], product_fetcher(config.get("fetcher"), items[0]))
         for item in items:
             selector = str(item["selector"]).strip().casefold()
             candidates = [p for p in page_products if selector in {
