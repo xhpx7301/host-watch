@@ -150,6 +150,25 @@ def vmiss_metadata(card, region="") -> dict:
     return {**metadata, "specs": " · ".join(hardware)[:500], "traffic": " · ".join(network)[:500]}
 
 
+def vmiss_order_element(card):
+    """Accept the Lagom link and the button/id variants used by VMISS pages."""
+    return card.select_one(
+        "a.btn-order-now[href], "
+        "a[data-href], a[data-url], button.btn-order-now, button[id$='-order-button']"
+    )
+
+
+def vmiss_order_href(card, page_url: str, order_el) -> str:
+    if order_el is None:
+        return ""
+    href = str(order_el.get("href") or order_el.get("data-href") or order_el.get("data-url") or "").strip()
+    if not href:
+        onclick = str(order_el.get("onclick", ""))
+        match = re.search(r"(?:location(?:\.href)?|window\.open)\s*\(?\s*['\"]([^'\"]+)", onclick, re.I)
+        href = match.group(1).strip() if match else ""
+    return href
+
+
 def soy_metadata(card, region="") -> dict:
     """Read labelled configuration values; omit port counts and store notices."""
     metadata = html_metadata(card, region)
@@ -186,9 +205,9 @@ def parse_products(html: str, page_url: str, selectors: list[str]) -> list[Produ
     matched_selectors: set[str] = set()
     page_host = urlsplit(page_url).hostname
     for card in cards:
-        title_el = card.select_one(".package-title")
+        title_el = card.select_one(".package-title, [class*='package-title']")
         qty_el = card.select_one(".package-qty")
-        order_el = card.select_one("a.btn-order-now[href]")
+        order_el = vmiss_order_element(card)
         if not title_el or not order_el:
             raise MonitorError("有商品卡片缺少名称或订购链接；本轮不更新状态")
 
@@ -204,15 +223,20 @@ def parse_products(html: str, page_url: str, selectors: list[str]) -> list[Produ
         if qty_el is not None:
             qty_text = " ".join(qty_el.get_text(" ", strip=True).split())
             match = re.fullmatch(r"(\d{1,3}(?:,\d{3})+|\d+)\s+Available", qty_text, flags=re.IGNORECASE)
-            if not match:
+            if match:
+                available = int(match.group(1).replace(",", ""))
+                if available > 0 and disabled:
+                    raise MonitorError(f"套餐 {name} 的库存数量与订购按钮状态不一致；本轮不更新状态")
+            elif re.fullmatch(r"(?:in\s+stock|available|有货|现货)", qty_text, re.I):
+                available, stock_mode = 1, "availability"
+            elif re.fullmatch(r"(?:out\s+of\s+stock|unavailable|sold\s+out|缺货|售罄|无货)", qty_text, re.I):
+                available = 0
+            else:
                 raise MonitorError(f"无法识别套餐 {name} 的库存文本：{qty_text!r}")
-            available = int(match.group(1).replace(",", ""))
-            if available > 0 and disabled:
-                raise MonitorError(f"套餐 {name} 的库存数量与订购按钮状态不一致；本轮不更新状态")
         else:
             available, stock_mode = (0 if disabled else 1), "availability"
 
-        href = str(order_el["href"]).strip()
+        href = vmiss_order_href(card, page_url, order_el)
         if not href or href.startswith(("#", "?")):
             raise MonitorError(f"套餐 {name} 缺少有效订购链接；本轮不更新状态")
         product_url = urljoin(page_url, href)

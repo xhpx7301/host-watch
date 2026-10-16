@@ -62,6 +62,21 @@ class VMISSStockTests(unittest.TestCase):
         product = monitor.parse_products(page(card(quantity="0 Available")), URL, ["product55"])[0]
         self.assertEqual(product.available, 0)  # Explicit zero always wins.
 
+    def test_accepts_stock_text_and_order_button_variants(self):
+        variants = [
+            ('<span class="package-qty">In Stock</span>', 1, "availability"),
+            ('<span class="package-qty">Out of Stock</span>', 0, "quantity"),
+        ]
+        for quantity, available, mode in variants:
+            with self.subTest(quantity=quantity):
+                body = page(card()).replace('</div></div>', quantity + '</div></div>', 1)
+                product = monitor.parse_products(body, URL, ["product55"])[0]
+                self.assertEqual((product.available, product.stock_mode), (available, mode))
+        body = page(card()).replace('class="btn btn-lg btn-primary btn-order-now "', 'id="product55-order-button" class="btn-order-now"')
+        body = body.replace('href="' + URL + '/elite"', 'data-url="' + URL + '/elite"')
+        product = monitor.parse_products(body, URL, ["product55"])[0]
+        self.assertEqual((product.available, product.url), (1, URL + "/elite"))
+
     def test_invalid_or_conflicting_quantity_never_falls_back_to_button_availability(self):
         for qty, attrs in [("", ""), ("Unknown", ""), ("--", ""), ("1,,2 Available", ""), ("3 Available", "disabled")]:
             with self.subTest(qty=qty, attrs=attrs), self.assertRaises(monitor.MonitorError):
