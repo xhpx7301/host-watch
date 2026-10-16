@@ -459,7 +459,7 @@
     .seckill-panel .section-head { margin-bottom:10px; flex-wrap:wrap; }
     .campaign-list { display:grid; gap:10px; }
     .vps-seckill-panel { background:#f7faff; border-color:#cbd9f5; }
-    .seckill-items,.seckill-accounts { display:grid; gap:10px; }
+    .seckill-items,.seckill-accounts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
     .seckill-item,.seckill-account { padding:12px; border:1px solid var(--line); border-radius:7px; background:#fff; }
     .seckill-item-head { display:flex; flex-wrap:wrap; gap:8px; align-items:baseline; justify-content:space-between; }
     .seckill-item .form-grid,.seckill-account .form-grid { margin-top:10px; }
@@ -483,7 +483,7 @@
     .egress-node-identity { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; min-width:0; overflow-wrap:anywhere; }
     .egress-node-ip { font-weight:400; }
     .egress-node-actions { flex-shrink:0; margin-left:auto; justify-content:flex-end; }
-    @media(max-width:780px) { .egress-node-head { flex-wrap:wrap; gap:8px; } .egress-node-toggle { flex-basis:100%; } .egress-node-actions { max-width:100%; gap:6px; } .egress-node-actions button { padding:6px 8px; font-size:12px; } }
+    @media(max-width:780px) { .seckill-items,.seckill-accounts { grid-template-columns:1fr; } .egress-node-head { flex-wrap:wrap; gap:8px; } .egress-node-toggle { flex-basis:100%; } .egress-node-actions { max-width:100%; gap:6px; } .egress-node-actions button { padding:6px 8px; font-size:12px; } }
     .egress-routes { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px 16px; margin-top:12px; }
     @media(max-width:520px) { .egress-routes { grid-template-columns:1fr; } }
     .campaign-card { min-width:0; padding:12px; border:1px solid var(--line); border-radius:7px; background:white; overflow-wrap:anywhere; }
