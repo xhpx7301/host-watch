@@ -885,14 +885,86 @@ def read_config(path: Path) -> dict:
 
 
 def write_status(path: Path, status: dict) -> None:
+    if path is None:
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Keep module status and the other role's product rows when one schedule
+    # finishes independently of the other.
+    try:
+        previous = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        if isinstance(previous, dict):
+            if "products" not in status and isinstance(previous.get("products"), list):
+                status["products"] = previous["products"]
+            if isinstance(status.get("products"), list) and isinstance(previous.get("products"), list):
+                rows = {str(row.get("id")): row for row in previous["products"] if isinstance(row, dict) and row.get("id")}
+                rows.update({str(row.get("id")): row for row in status["products"] if isinstance(row, dict) and row.get("id")})
+                status["products"] = list(rows.values())
+            if isinstance(previous.get("modules"), dict) and isinstance(status.get("modules"), dict):
+                merged = dict(previous["modules"])
+                merged.update(status["modules"])
+                status["modules"] = merged
+            elif isinstance(previous.get("modules"), dict) and "modules" not in status:
+                status["modules"] = previous["modules"]
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        pass
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(status, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(path)
 
 
-def selected_products(config: dict) -> list[dict]:
-    products = [item for item in config.get("products", []) if product_membership(item, "watch") or product_membership(item, "notify")]
+def module_schedule(config: dict, module: str) -> dict:
+    defaults = {
+        "monitor": ("monitor_schedule", "auto", int(config.get("interval_seconds", 600)), 0),
+        "notify": ("notify_schedule", "auto", int(config.get("interval_seconds", 600)), 0),
+        "catalog": ("catalog_schedule", "manual", 300, 0),
+        "seckill": ("seckill_schedule", "manual", int(config.get("vps_seckill", {}).get("interval_seconds", 5)), 1),
+    }
+    key, mode, interval, minimum = defaults[module]
+    value = config.get(key, {})
+    if not isinstance(value, dict):
+        value = {}
+    return {"mode": str(value.get("mode", mode)).casefold(),
+            "interval_seconds": max(minimum, int(value.get("interval_seconds", interval)))}
+
+
+def update_module_status(path: Path, module: str, schedule: dict, result: str,
+                        message: str = "", checked_at: str | None = None, trigger: str | None = None) -> None:
+    if path is None:
+        return
+    try:
+        current = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        current = {}
+    current = current if isinstance(current, dict) else {}
+    modules = current.get("modules") if isinstance(current.get("modules"), dict) else {}
+    previous = modules.get(module) if isinstance(modules.get(module), dict) else {}
+    at = checked_at or beijing_iso()
+    log = {"at": at, "result": result, "trigger": trigger or schedule.get("mode", "manual"), "message": message or ("完成" if result == "success" else "等待执行")}
+    logs = [item for item in previous.get("logs", []) if isinstance(item, dict)][-19:]
+    if result != "pending" or not logs:
+        logs.append(log)
+    modules[module] = {
+        "mode": schedule.get("mode", "manual"),
+        "interval_seconds": schedule.get("interval_seconds", 0),
+        "running": result == "pending",
+        "last_result": result,
+        "last_checked": at,
+        "last_manual_refresh": previous.get("last_manual_refresh", ""),
+        "last_auto_refresh": previous.get("last_auto_refresh", ""),
+        "message": message or previous.get("message", ""),
+        "logs": logs[-20:],
+    }
+    if result != "pending":
+        if (trigger or schedule.get("mode")) == "manual":
+            modules[module]["last_manual_refresh"] = at
+        else:
+            modules[module]["last_auto_refresh"] = at
+    current["modules"] = modules
+    write_status(path, current)
+
+
+def selected_products(config: dict, role: str | None = None) -> list[dict]:
+    products = [item for item in config.get("products", []) if role is None and (product_membership(item, "watch") or product_membership(item, "notify")) or role and product_membership(item, role)]
     for item in products:
         name = item.get("name", "(未命名)")
         if item.get("adapter") == "vmiss":
@@ -1079,13 +1151,22 @@ def check_once(
     status_path: Path,
     bot_token: str,
     chat_id: str,
+    role: str = "both",
+    trigger: str | None = None,
 ) -> None:
-    selected = selected_products(config)
-    if not selected and not config.get("isvoro_seckill", False):
+    if role not in {"both", "watch", "notify"}:
+        raise MonitorError("检查模块无效")
+    selected = selected_products(config, None if role == "both" else role)
+    schedule = module_schedule(config, "monitor" if role == "watch" else "notify" if role == "notify" else "monitor")
+    module = "monitor" if role == "watch" else "notify" if role == "notify" else "monitor"
+    if not selected and not (role == "both" and config.get("isvoro_seckill", False)):
+        update_module_status(status_path, module, schedule, "skipped", "没有启用的商品")
         raise MonitorError("没有启用的监控产品")
 
+    update_module_status(status_path, module, schedule, "pending", "正在检查库存", trigger=trigger)
+
     seckill_status = None
-    if config.get("isvoro_seckill", False):
+    if role == "both" and config.get("isvoro_seckill", False):
         from seckill import check_once as check_seckill
         try:
             seckill_status = {"ok": True, **check_seckill(session, config, state_path, bot_token, chat_id)}
@@ -1137,13 +1218,14 @@ def check_once(
             "url": product.url,
             "notify_enabled": subscribed,
         }
-        try:
-            alerts.sync(item, product, old_count, old is None and config.get("notify_current_stock_on_start", False))
-        except MonitorError as error:
-            # Delivery state is saved per product. Retrying one failed message
-            # must not duplicate messages already sent for other products.
-            notification_errors.append(str(error))
-            logging.error("更新商品 Telegram 通知失败：%s / %s", item["name"], error)
+        if role in {"both", "notify"} and subscribed:
+            try:
+                alerts.sync(item, product, old_count, old is None and config.get("notify_current_stock_on_start", False))
+            except MonitorError as error:
+                # Delivery state is saved per product. Retrying one failed message
+                # must not duplicate messages already sent for other products.
+                notification_errors.append(str(error))
+                logging.error("更新商品 Telegram 通知失败：%s / %s", item["name"], error)
 
     # Stop updating messages for products that have left the notification list.
     subscribed_ids = {item["id"] for item in config.get("products", []) if product_membership(item, "notify")}
@@ -1174,6 +1256,8 @@ def check_once(
         "products": rows,
         **({"seckill": seckill_status} if seckill_status is not None else {}),
     })
+    update_module_status(status_path, module, schedule, "error" if unavailable or notification_errors else "success",
+                         "；".join(notification_errors) if notification_errors else (f"{len(unavailable)} 个商品待核对" if unavailable else "检查完成"), checked_at, trigger)
     logging.info("本轮检查完成：%s 个成功，%s 个未匹配", len(found), len(unavailable))
 
 
@@ -1181,6 +1265,7 @@ def main() -> int:
     load_dotenv(ROOT / ".env")
     parser = argparse.ArgumentParser(description="低频监控多个厂商的商品库存，每轮补货发送一次 Telegram 通知并更新原消息。")
     parser.add_argument("--once", action="store_true", help="只检查一次后退出")
+    parser.add_argument("--role", choices=("both", "watch", "notify"), default="both", help="检查库存监控、库存通知，或兼容模式下两者")
     parser.add_argument("--show-chat-ids", action="store_true", help="读取 bot 收到的对话并显示 chat_id")
     parser.add_argument("--config", default=os.getenv("VMISS_CONFIG", str(CONFIG_PATH)))
     args = parser.parse_args()
@@ -1215,6 +1300,8 @@ def main() -> int:
             logging.error("%s", exc)
             return 1
 
+    last_run = {"watch": 0.0, "notify": 0.0}
+    active_due = []
     while True:
         try:
             config = read_config(config_path)
@@ -1228,14 +1315,42 @@ def main() -> int:
                 telegram_config = {"disabled": True}
             if not telegram_config.get("disabled", False) and (not bot_token or not chat_id):
                 raise MonitorError("Telegram bot token 和 chat_id 必须同时填写，或在管理页停用 Telegram")
-            interval = int(config.get("interval_seconds", 600))
-            if interval < 0:
-                raise MonitorError("检查间隔不能为负数")
-            check_once(session, config, state_path, status_path, bot_token, chat_id)
+            legacy_schedule = not any(key in config for key in ("monitor_schedule", "notify_schedule"))
+            if args.once:
+                if args.role == "both":
+                    check_once(session, config, state_path, status_path, bot_token, chat_id)
+                else:
+                    check_once(session, config, state_path, status_path, bot_token, chat_id, args.role)
+                return 0
+            if legacy_schedule and args.role == "both":
+                check_once(session, config, state_path, status_path, bot_token, chat_id)
+                time.sleep(int(config.get("interval_seconds", 600)))
+                continue
+            now = time.monotonic()
+            due = []
+            for role in ("watch", "notify"):
+                schedule = module_schedule(config, "monitor" if role == "watch" else "notify")
+                has_products = bool(selected_products(config, role))
+                if schedule["mode"] == "auto" and has_products and (not last_run[role] or now - last_run[role] >= schedule["interval_seconds"]):
+                    due.append(role)
+            active_due = due
+            if not due:
+                waits = []
+                for role in ("watch", "notify"):
+                    schedule = module_schedule(config, "monitor" if role == "watch" else "notify")
+                    if schedule["mode"] == "auto" and selected_products(config, role):
+                        waits.append(max(0.25, schedule["interval_seconds"] - (now - last_run[role])) if last_run[role] else 0.25)
+                time.sleep(min(waits) if waits else 1.0)
+                continue
+            for role in due:
+                check_once(session, config, state_path, status_path, bot_token, chat_id, role)
+                last_run[role] = time.monotonic()
         except (SiteBlocked, RequestServiceError) as exc:
             logging.error("%s", exc)
             state = "blocked" if isinstance(exc, SiteBlocked) else "error"
             write_status(status_path, {"last_checked": beijing_iso(), "state": state, "message": str(exc), "products": []})
+            for role in active_due:
+                update_module_status(status_path, "monitor" if role == "watch" else "notify", module_schedule(config, "monitor" if role == "watch" else "notify"), "error", str(exc))
             if bot_token and chat_id:
                 try:
                     telegram_request(session, bot_token, "sendMessage", chat_id=chat_id, text=f"🔴 库存监控已停止\n原因：{exc}\n请确认目标网站允许当前的自动检查方式后再恢复。")
@@ -1245,11 +1360,12 @@ def main() -> int:
         except (MonitorError, requests.RequestException) as exc:
             logging.error("监控失败：%s", exc)
             write_status(status_path, {"last_checked": beijing_iso(), "state": "error", "message": str(exc), "products": []})
+            for role in active_due:
+                update_module_status(status_path, "monitor" if role == "watch" else "notify", module_schedule(config, "monitor" if role == "watch" else "notify"), "error", str(exc))
             return 1
 
         if args.once:
             return 0
-        time.sleep(interval)
 
 
 if __name__ == "__main__":

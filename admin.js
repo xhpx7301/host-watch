@@ -1,6 +1,10 @@
 let config = {
   enabled: false,
   interval_seconds: 600,
+  monitor_schedule: { mode: "auto", interval_seconds: 600 },
+  notify_schedule: { mode: "auto", interval_seconds: 600 },
+  catalog_schedule: { mode: "manual", interval_seconds: 300 },
+  seckill_schedule: { mode: "manual", interval_seconds: 5 },
   notify_current_stock_on_start: false,
   isvoro_seckill: false,
   affiliate_id: "",
@@ -58,7 +62,7 @@ function beijingISOString(value = new Date()) {
 }
 
 const pages = {
-  overview: { title: "运行概览", description: "查看监控服务、商品库存与最近检查结果。" },
+  overview: { title: "运行概览", description: "查看大盘、监控、通知、抢购的状态与最近刷新记录。" },
   catalog: { title: "VPS 库存大盘", description: "浏览商家全部公开套餐或地区分类，选择你关心的 VPS 加入补货提醒。" },
   seckill: { title: "VPS 补货抢购", description: "从库存监控或库存通知选择商品，配置优惠码和账户后执行补货抢购。" },
   monitor: { title: "VPS 库存监控", description: "集中查看你关注的 VPS，查看库存与配置、编辑备注和线路，直接购买，不发送通知。" },
@@ -2039,10 +2043,30 @@ function renderOverview() {
   const vendors = new Set(enabled.map((item) => item.provider).filter(Boolean));
   const latest = new Map((lastStatus?.products || []).map((product) => [product.id, product]));
   const inStock = enabled.filter((item) => ((item.adapter === "dmit" ? productSnapshot(item, latest.get(item.id)) : latest.get(item.id))?.available || 0) > 0).length;
-  document.querySelector("#overview-total").textContent = String(config.products.length);
-  document.querySelector("#overview-total-note").textContent = `${vendors.size} 个商家 · ${config.products.filter(p => membership(p, "watch")).length} 个监控 / ${config.products.filter(p => membership(p, "notify")).length} 个通知`;
-  document.querySelector("#overview-stock").textContent = String(inStock);
-  document.querySelector("#overview-interval").textContent = intervalLabel(config.interval_seconds ?? 600);
+  const modules = lastStatus?.modules || {};
+  const moduleNames = { catalog: "大盘", monitor: "监控", notify: "通知", seckill: "抢购" };
+  for (const key of Object.keys(moduleNames)) {
+    const state = modules[key] || {};
+    const node = document.querySelector(`#overview-${key}-state`), note = document.querySelector(`#overview-${key}-note`), log = document.querySelector(`#overview-${key}-log`);
+    if (!node) continue;
+    const result = state.last_result || (key === "seckill" && vpsSeckillTask ? (vpsSeckillTask.pending ? "pending" : vpsSeckillTask.error ? "error" : "success") : "unknown");
+    node.textContent = result === "success" ? "运行正常" : result === "pending" ? "刷新中" : result === "skipped" ? "未启用" : result === "error" ? "运行异常" : "未刷新";
+    node.className = `overview-value state ${result === "success" ? "ok" : result === "pending" ? "pending" : result === "error" ? "error" : ""}`;
+    const schedule = config[`${key === "notify" ? "notify" : key}_schedule`] || (key === "monitor" ? config.monitor_schedule : key === "catalog" ? config.catalog_schedule : config.seckill_schedule) || {};
+    const mode = schedule.mode === "auto" ? "自动" : "手动";
+    const at = state.last_checked ? formatBeijingDate(state.last_checked) : "暂无";
+    const manualAt = state.last_manual_refresh ? formatBeijingDate(state.last_manual_refresh) : "暂无";
+    const autoAt = state.last_auto_refresh ? formatBeijingDate(state.last_auto_refresh) : "暂无";
+    note.textContent = `${mode} · 间隔 ${intervalLabel(Number(schedule.interval_seconds ?? 0))} · 最近 ${at} · 自动 ${autoAt} · 手动 ${manualAt}`;
+    if (log) {
+      const sourceLogs = key === "seckill" && vpsSeckillTask?.logs?.length ? vpsSeckillTask.logs : state.logs || [];
+      const lines = sourceLogs.slice(-5).map(item => `[${formatBeijingDate(item.at)}] ${item.trigger === "manual" ? "手动" : "自动"} · ${item.message || item.result || ""}`);
+      log.textContent = lines.length ? lines.join("\n") : "暂无日志";
+    }
+  }
+  const combinedLogs = ["monitor", "notify"].flatMap(key => (modules[key]?.logs || []).map(item => ({ ...item, module: key === "monitor" ? "监控" : "通知" }))).sort((a, b) => String(a.at).localeCompare(String(b.at))).slice(-10);
+  const combinedLogNode = document.querySelector("#watch-notify-logs");
+  if (combinedLogNode) combinedLogNode.textContent = combinedLogs.length ? combinedLogs.map(item => `[${formatBeijingDate(item.at)}] ${item.module} · ${item.trigger === "manual" ? "手动" : "自动"} · ${item.message || item.result || ""}`).join("\n") : "暂无日志";
   renderOverviewRecent();
   renderMonitorState();
 }
@@ -2349,7 +2373,7 @@ function renderVpsSeckillTask() {
     try { const url = new URL(result.url); if (url.protocol === "https:" && !url.username && !url.password) { const link = text("a", "前往官网核对 / 手动支付"); link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer"; row.append(link); } } catch {}
     results.append(row);
   });
-  const logs = vpsSeckillTask?.logs || []; document.querySelector("#vps-seckill-logs").textContent = logs.length ? logs.map(log => `[${formatBeijingDate(log.at)}] ${log.message}`).join("\n") : "暂无日志"; document.querySelector("#vps-seckill-log-note").textContent = vpsSeckillTask ? `${vpsSeckillTask.mode || ""} · ${logs.length} 条日志` : "尚未启动补货抢购任务。";
+  const logs = vpsSeckillTask?.logs || []; document.querySelector("#vps-seckill-logs").textContent = logs.length ? logs.map(log => `[${formatBeijingDate(log.at)}] ${log.message}`).join("\n") : "暂无日志"; document.querySelector("#vps-seckill-log-note").textContent = vpsSeckillTask ? `${vpsSeckillTask.mode || ""} · ${logs.length} 条日志` : "尚未启动补货抢购任务。"; renderOverview();
 }
 function renderVpsSeckillTest(result) {
   const status = document.querySelector("#vps-seckill-test-status"), target = document.querySelector("#vps-seckill-test-results");
@@ -2417,12 +2441,12 @@ function renderMonitorState() {
   runtime.className = `state ${tone}`;
   document.querySelector("#monitor-runtime-note").textContent = note;
   const overview = document.querySelector("#overview-state");
-  overview.textContent = label;
-  overview.className = `overview-value state ${tone}`;
+  if (overview) { overview.textContent = label; overview.className = `overview-value state ${tone}`; }
   const header = document.querySelector("#header-monitor-state");
   header.textContent = label;
   header.className = `state ${tone}`;
-  document.querySelector("#overview-state-note").textContent = active === "active" ? "后台持续检查，关闭网页后仍运行" : active === "activating" && transitionTimedOut ? "启动超过 60 秒未完成，请查看服务日志" : active === "activating" ? "正在确认启动状态，页面自动刷新" : active === "failed" ? "请检查配置或查看服务日志" : active === "deactivating" && transitionTimedOut ? "停止超过 60 秒未完成，请查看服务日志" : active === "deactivating" ? "正在停止，等待最终状态" : active === "inactive" ? "已暂停，保留最近库存记录" : "等待服务器返回服务状态";
+  const overviewNote = document.querySelector("#overview-state-note");
+  if (overviewNote) overviewNote.textContent = active === "active" ? "后台持续检查，关闭网页后仍运行" : active === "activating" && transitionTimedOut ? "启动超过 60 秒未完成，请查看服务日志" : active === "activating" ? "正在确认启动状态，页面自动刷新" : active === "failed" ? "请检查配置或查看服务日志" : active === "deactivating" && transitionTimedOut ? "停止超过 60 秒未完成，请查看服务日志" : active === "deactivating" ? "正在停止，等待最终状态" : active === "inactive" ? "已暂停，保留最近库存记录" : "等待服务器返回服务状态";
   renderProductList();
   window.dispatchEvent(new Event("hostwatch-service-change"));
 }
@@ -2431,6 +2455,10 @@ function collectConfig(enabled = config.enabled) {
   return {
     enabled,
     interval_seconds: Number(document.querySelector("#interval").value || NaN),
+    monitor_schedule: { mode: document.querySelector("#monitor-schedule-mode").value, interval_seconds: Number(document.querySelector("#interval").value || NaN) },
+    notify_schedule: { mode: document.querySelector("#notify-schedule-mode").value, interval_seconds: Number(document.querySelector("#notify-interval").value || NaN) },
+    catalog_schedule: config.catalog_schedule || { mode: "manual", interval_seconds: 300 },
+    seckill_schedule: { mode: document.querySelector("#vps-seckill-mode")?.value === "manual" ? "manual" : "auto", interval_seconds: Number(document.querySelector("#vps-seckill-interval")?.value || 5) },
     affiliate_id: config.affiliate_id || "",
     affiliates: collectAffiliates(),
     affiliate_notes: collectAffiliateNotes(),
@@ -2563,6 +2591,15 @@ function applyConfig(value) {
   config = value;
   config.products.forEach(item => { setMembership(item, "watch", membership(item, "watch")); });
   document.querySelector("#interval").value = config.interval_seconds ?? 600;
+  const monitorSchedule = config.monitor_schedule || { mode: "auto", interval_seconds: config.interval_seconds ?? 600 };
+  const notifySchedule = config.notify_schedule || { mode: "auto", interval_seconds: config.interval_seconds ?? 600 };
+  document.querySelector("#monitor-schedule-mode").value = monitorSchedule.mode || "auto";
+  document.querySelector("#interval").value = monitorSchedule.interval_seconds ?? config.interval_seconds ?? 600;
+  document.querySelector("#notify-schedule-mode").value = notifySchedule.mode || "auto";
+  document.querySelector("#notify-interval").value = notifySchedule.interval_seconds ?? config.interval_seconds ?? 600;
+  const catalogSchedule = config.catalog_schedule || { mode: "manual", interval_seconds: 300 };
+  const catalogAuto = document.querySelector("#catalog-auto");
+  if (catalogAuto) catalogAuto.value = catalogSchedule.mode === "auto" && [60, 300, 600].includes(Number(catalogSchedule.interval_seconds)) ? String(catalogSchedule.interval_seconds) : "0";
   for (const input of document.querySelectorAll("[data-affiliate]")) input.value = config.affiliates?.[input.dataset.affiliate] ?? (input.dataset.affiliate === "vmiss" ? config.affiliate_id || "" : "");
   for (const input of document.querySelectorAll("[data-affiliate-note]")) input.value = config.affiliate_notes?.[input.dataset.affiliateNote] ?? "";
   for (const input of document.querySelectorAll("[data-affiliate-coupon]")) input.value = config.affiliate_coupons?.[input.dataset.affiliateCoupon] ?? "";
@@ -2713,6 +2750,26 @@ document.querySelector("#refresh-status").addEventListener("click", (event) => r
   await Promise.all([loadStatus(), refreshManagement()]);
   setMessage("监控状态已刷新；此次操作不会触发库存检查。", "success");
 }));
+async function triggerManualRefresh(role, button) {
+  await runAction(button, "刷新中…", `正在手动刷新${role === "watch" ? "库存监控" : "库存通知"}…`, async () => {
+    const task = await requestJSON("/api/refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role }) });
+    let result = task;
+    for (let attempt = 0; attempt < 120 && result.pending; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      result = await requestJSON(`/api/refresh/status/${encodeURIComponent(task.task_id)}`);
+    }
+    if (result.pending) throw new Error("刷新仍在执行，请稍后查看状态");
+    if (!result.ok) throw new Error(result.error || "手动刷新失败");
+    await loadStatus();
+    setMessage(`${role === "watch" ? "库存监控" : "库存通知"}手动刷新完成。`, "success");
+  });
+}
+document.querySelector("#monitor-refresh-manual").addEventListener("click", event => triggerManualRefresh("watch", event.currentTarget));
+document.querySelector("#notify-refresh-manual").addEventListener("click", event => triggerManualRefresh("notify", event.currentTarget));
+document.querySelectorAll("[data-overview-log]").forEach(button => button.addEventListener("click", () => {
+  const log = document.querySelector(`#overview-${button.dataset.overviewLog}-log`);
+  if (log) log.hidden = !log.hidden;
+}));
 document.querySelector("#fetcher-mode").addEventListener("change", updateFetcherStatus);
 window.addEventListener("hostwatch-action-change", syncProviderFlareSettings);
 document.querySelectorAll("#flaresolverr-light, #flaresolverr-full").forEach(button => button.addEventListener("click", () => {
@@ -2725,11 +2782,15 @@ document.querySelector("#fetcher-test").addEventListener("click", (event) => run
   document.querySelector("#fetcher-health").textContent = `版本 ${result.version}：${result.message}`;
   setMessage(`FlareSolverr ${result.version} 服务连接成功；实际库存请在 VPS 库存通知中点击“测试通知”，无需开启监控。`, "success");
 }));
-document.querySelector("#interval").addEventListener("input", () => { config.interval_seconds = Number(document.querySelector("#interval").value || NaN); renderOverview(); });
+document.querySelector("#interval").addEventListener("input", () => { config.interval_seconds = Number(document.querySelector("#interval").value || NaN); config.monitor_schedule = { ...(config.monitor_schedule || {}), interval_seconds: config.interval_seconds }; renderOverview(); });
+document.querySelector("#notify-interval").addEventListener("input", () => { config.notify_schedule = { ...(config.notify_schedule || {}), interval_seconds: Number(document.querySelector("#notify-interval").value || NaN) }; renderOverview(); });
+document.querySelector("#monitor-schedule-mode").addEventListener("change", event => { config.monitor_schedule = { ...(config.monitor_schedule || {}), mode: event.target.value }; renderOverview(); updateDraftState(); });
+document.querySelector("#notify-schedule-mode").addEventListener("change", event => { config.notify_schedule = { ...(config.notify_schedule || {}), mode: event.target.value }; renderOverview(); updateDraftState(); });
 document.querySelector("#interval-preset").addEventListener("change", (event) => {
   if (event.target.value) {
     document.querySelector("#interval").value = event.target.value;
     config.interval_seconds = Number(event.target.value);
+    config.monitor_schedule = { ...(config.monitor_schedule || {}), interval_seconds: config.interval_seconds };
     renderOverview();
     updateDraftState();
   }

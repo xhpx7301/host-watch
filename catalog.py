@@ -330,7 +330,7 @@ class CatalogService:
             return None
         return {**data, "scope": scope, "rows": mapped, "unknown": sum(row.get("available") is None for row in mapped)}
 
-    def refresh(self, provider: str, scope: str = "") -> dict:
+    def refresh(self, provider: str, scope: str = "", trigger: str = "manual") -> dict:
         provider, scope = validate_source(provider, scope)
         from monitor import fetcher_route
         settings = copy.deepcopy(self.fetcher_settings())
@@ -340,7 +340,7 @@ class CatalogService:
                 if (self.task["provider"], self.task.get("fetch_scope", self.task["scope"])) != (provider, fetch_scope):
                     raise CatalogBusy("已有目录刷新正在执行，请先停止或等待完成")
                 return dict(self.task)
-            self.task = {"provider": provider, "scope": scope, "fetch_scope": fetch_scope, "pending": True, "cancelled": False, "started_at": now(), "error": "", "route": fetcher_route(settings, {"adapter": provider})}
+            self.task = {"provider": provider, "scope": scope, "fetch_scope": fetch_scope, "pending": True, "cancelled": False, "started_at": now(), "error": "", "trigger": "auto" if trigger == "auto" else "manual", "route": fetcher_route(settings, {"adapter": provider})}
             task = self.task
         threading.Thread(target=self.run, args=(task, settings), daemon=True).start()
         return dict(task)
@@ -359,6 +359,8 @@ class CatalogService:
         return output
 
     def run(self, task: dict, settings: dict | None = None) -> None:
+        module_result = "success"
+        module_message = "目录刷新完成"
         try:
             stdout = self.fetch_result(task, settings)
             with self.lock:
@@ -384,6 +386,8 @@ class CatalogService:
                     if os.path.exists(name):
                         os.unlink(name)
         except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
+            module_result = "error"
+            module_message = str(exc)[:500] or "目录刷新失败"
             with self.lock:
                 if not task["cancelled"]:
                     task["error"] = (str(exc) + "；保留上次快照。") if isinstance(exc, CatalogFailure) else "目录刷新失败或超时，保留上次缓存；请重试或查看商家访问情况。"
@@ -392,6 +396,12 @@ class CatalogService:
             with self.lock:
                 self.process = None
                 task.update(pending=False, finished_at=now())
+            try:
+                from admin import STATUS_PATH, current_config
+                from monitor import module_schedule, update_module_status
+                update_module_status(STATUS_PATH, "catalog", module_schedule(current_config(), "catalog"), module_result, module_message, trigger=task.get("trigger"))
+            except (OSError, ValueError, TypeError):
+                pass
 
     def worker(self, path: Path, mode: str, payload: dict, timeout: int, task: dict, cancellable=True) -> str:
         process = subprocess.Popen([sys.executable, str(path), mode], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8")

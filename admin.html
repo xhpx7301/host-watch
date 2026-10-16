@@ -550,6 +550,11 @@
     .seckill-mode-guide p { margin: 8px 0 0; line-height: 1.65; }
     .seckill-result { margin-bottom: 12px; }
     .seckill-result a { display: inline-block; padding: 10px 0; }
+    .module-overview { align-items: flex-start; gap: 6px; }
+    .module-overview button { align-self: flex-start; padding: 4px 8px; font-size: 12px; }
+    .overview-log { width: 100%; max-height: 120px; margin: 4px 0 0; padding: 8px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: #f8fafc; color: var(--ink); font: 11px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .module-log-panel { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+    .module-log-panel .overview-log { max-height: 180px; }
     @media (max-width: 760px) { .seckill-mode-guide { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -576,7 +581,7 @@
   <div class="workspace">
   <header class="topbar">
     <button id="mobile-nav-toggle" class="mobile-nav-toggle" type="button" aria-label="打开导航" aria-expanded="false" aria-controls="mobile-nav-close" title="打开导航"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
-    <div class="page-heading"><p class="eyebrow">HOSTWATCH / CONSOLE</p><h1 id="page-title" tabindex="-1">运行概览</h1><p id="page-description">查看监控服务、商品库存与最近检查结果。</p></div>
+    <div class="page-heading"><p class="eyebrow">HOSTWATCH / CONSOLE</p><h1 id="page-title" tabindex="-1">运行概览</h1><p id="page-description">查看大盘、监控、通知、抢购的状态与最近刷新记录。</p></div>
     <div id="exchange-rates" class="exchange-rates" role="status" aria-live="polite"><span id="exchange-time" class="exchange-time">当前时间读取中</span><span id="exchange-rate-note" class="exchange-rate-note">汇率读取中</span><div id="exchange-rate-list" class="exchange-rate-list"></div></div>
     <div class="header-status"><span id="header-monitor-state" class="state" role="status" aria-live="polite">读取服务状态中</span><div class="status-line"><span id="state" class="state">状态读取中</span><button id="refresh-status" type="button" title="刷新状态">刷新状态</button></div><span id="last-checked" class="subtle"></span></div>
   </header>
@@ -586,10 +591,10 @@
   <div class="page-stage">
   <div id="page-overview" class="page-panel" data-page="overview" aria-labelledby="page-title">
   <section class="overview" aria-label="监控摘要">
-    <div class="overview-item"><span class="eyebrow">监控服务</span><strong id="overview-state" class="overview-value state" role="status" aria-live="polite">读取中</strong><span id="overview-state-note" class="overview-note">等待状态数据</span></div>
-    <div class="overview-item"><span class="eyebrow">商品总数</span><strong id="overview-total" class="overview-value">0</strong><span id="overview-total-note" class="overview-note">0 个厂商</span></div>
-    <div class="overview-item"><span class="eyebrow">上次记录有货</span><strong id="overview-stock" class="overview-value">0</strong><span class="overview-note">后台最近检查记录</span></div>
-    <div class="overview-item"><span class="eyebrow">检查间隔</span><strong id="overview-interval" class="overview-value">10 分钟</strong><span class="overview-note">每轮完成后的等待时间</span></div>
+    <div class="overview-item module-overview" data-overview-module="catalog"><span class="eyebrow">大盘</span><strong id="overview-catalog-state" class="overview-value state" role="status" aria-live="polite">读取中</strong><span id="overview-catalog-note" class="overview-note">等待刷新记录</span><button type="button" data-overview-log="catalog">查看大盘日志</button><pre id="overview-catalog-log" class="overview-log" hidden>暂无日志</pre></div>
+    <div class="overview-item module-overview" data-overview-module="monitor"><span class="eyebrow">监控</span><strong id="overview-monitor-state" class="overview-value state" role="status" aria-live="polite">读取中</strong><span id="overview-monitor-note" class="overview-note">等待刷新记录</span><button type="button" data-overview-log="monitor">查看监控日志</button><pre id="overview-monitor-log" class="overview-log" hidden>暂无日志</pre></div>
+    <div class="overview-item module-overview" data-overview-module="notify"><span class="eyebrow">通知</span><strong id="overview-notify-state" class="overview-value state" role="status" aria-live="polite">读取中</strong><span id="overview-notify-note" class="overview-note">等待刷新记录</span><button type="button" data-overview-log="notify">查看通知日志</button><pre id="overview-notify-log" class="overview-log" hidden>暂无日志</pre></div>
+    <div class="overview-item module-overview" data-overview-module="seckill"><span class="eyebrow">抢购</span><strong id="overview-seckill-state" class="overview-value state" role="status" aria-live="polite">读取中</strong><span id="overview-seckill-note" class="overview-note">等待刷新记录</span><button type="button" data-overview-log="seckill">查看抢购日志</button><pre id="overview-seckill-log" class="overview-log" hidden>暂无日志</pre></div>
   </section>
 
   <section class="section">
@@ -668,15 +673,20 @@
       <strong id="monitor-runtime" class="state">正在读取服务状态</strong>
       <p id="monitor-runtime-note" class="subtle">以服务器实际运行状态为准。</p>
       <p id="monitor-draft" class="hint" aria-live="polite">配置读取中。</p>
-      <p class="hint">开始后立即检查一次，再按间隔自动检查；暂停后停止检查和库存提醒。刷新状态只读取记录，不会检查商品。</p>
+      <div class="actions"><button id="monitor-refresh-manual" type="button">手动刷新监控</button><button id="notify-refresh-manual" type="button">手动刷新通知</button></div>
+      <p class="hint">开始后按各自模式运行；暂停后停止检查和库存提醒。手动刷新只执行对应模块，不改变自动刷新设置。</p>
     </div>
     <div class="form-grid">
-      <label>检查间隔（秒）<input id="interval" type="number" min="0" max="86400" step="1"></label>
-      <label>常用检查间隔<select id="interval-preset"><option value="">自定义间隔</option><option value="0">0 秒（连续检查）</option><option value="1">1 秒</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option><option value="60">1 分钟</option><option value="300">5 分钟</option><option value="600">10 分钟</option><option value="1800">30 分钟</option><option value="3600">1 小时</option></select></label>
+      <label>库存监控<select id="monitor-schedule-mode"><option value="manual">仅手动刷新</option><option value="auto">自动刷新</option></select></label>
+      <label>监控间隔（秒）<input id="interval" type="number" min="0" max="86400" step="1"></label>
+      <label>库存通知<select id="notify-schedule-mode"><option value="manual">仅手动刷新</option><option value="auto">自动刷新</option></select></label>
+      <label>通知间隔（秒）<input id="notify-interval" type="number" min="0" max="86400" step="1"></label>
+      <label>常用监控间隔<select id="interval-preset"><option value="">自定义间隔</option><option value="0">0 秒（连续检查）</option><option value="1">1 秒</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option><option value="60">1 分钟</option><option value="300">5 分钟</option><option value="600">10 分钟</option><option value="1800">30 分钟</option><option value="3600">1 小时</option></select></label>
       <p id="interval-description" class="hint span-2"></p>
       <button id="notify-current" class="option-button span-2" type="button" data-config-option data-on="已开启" data-off="未开启" aria-pressed="false" aria-label="首次启用该商品通知时，有货也发送提醒"><span>首次启用该商品通知时，有货也发送提醒</span><span data-option-state>未开启</span></button>
     </div>
-    <p class="hint">监控和通知共用检查间隔。每轮缺货变有货时发送一条 Telegram 通知；库存增减更新原消息，售罄改为“❌ 售罄”，再次补货才发新通知。开启首次有货提醒后，新加入通知且有货的商品也会提醒。消息显示最后成功检查时间；读取失败标记“⚠️ 库存暂未确认”。状态变化在检查成功后更新；库存不变时，消息时间最多每分钟刷新一次。重启保留消息记录；仅库存监控无需配置 Telegram。</p>
+    <div class="module-log-panel"><strong>库存监控 / 通知刷新日志</strong><pre id="watch-notify-logs" class="overview-log">暂无日志</pre></div>
+    <p class="hint">库存监控和库存通知分别设置模式与间隔；仅手动刷新时后台不会自动访问网站，可在这里点击对应的手动刷新按钮。每轮缺货变有货时发送一条 Telegram 通知；库存增减更新原消息，售罄改为“❌ 售罄”，再次补货才发新通知。开启首次有货提醒后，新加入通知且有货的商品也会提醒。</p>
     </details>
     <div id="blocked-help" class="blocked-help" hidden><strong>上次库存检查被网站拦截（历史记录）</strong><span id="blocked-message">检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。</span><p class="hint">该记录保留至下一次检查；当前服务状态请看上方。请先确认访问方式，避免反复重启。</p></div>
     <p id="request-error" class="blocked-help" hidden></p>

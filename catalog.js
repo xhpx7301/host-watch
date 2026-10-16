@@ -13,7 +13,8 @@
   const knownScopes = new Map();
   const pageSize = 30;
   const catalogAutoKey = "hostwatch-catalog-auto-v2";
-  const autoValue = sessionStorage.getItem(catalogAutoKey) || "0";
+  const savedCatalogSchedule = config.catalog_schedule || {};
+  const autoValue = savedCatalogSchedule.mode === "auto" ? String(savedCatalogSchedule.interval_seconds || 300) : "0";
   get("catalog-auto").value = ["0", "60", "300", "600"].includes(autoValue) ? autoValue : "0";
   const priceSortKey = "hostwatch-catalog-price-sort";
 
@@ -226,7 +227,7 @@
     clearTimeout(pollTimer); clearTimeout(autoTimer);
     if (currentPage !== "catalog" || document.hidden) return;
     if (task?.pending) pollTimer = setTimeout(() => loadSnapshot(false), 1200);
-    else if (scope !== "all" && !task?.error && !task?.cancelled && Number(get("catalog-auto").value)) autoTimer = setTimeout(refresh, Number(get("catalog-auto").value) * 1000);
+    else if (scope !== "all" && !task?.error && !task?.cancelled && Number(get("catalog-auto").value)) autoTimer = setTimeout(() => refresh(true), Number(get("catalog-auto").value) * 1000);
   }
 
   async function loadSnapshot(refreshMissing = true) {
@@ -243,7 +244,7 @@
         for (const key of selected) if (!keys.has(key)) selected.delete(key);
       }
       if ((!data || metadataOutdated) && !task?.pending && refreshMissing && !(task?.provider === provider && (!task.scope || !scope || task.scope === scope) && (task.error || task.cancelled))) {
-        loading = false; await refresh(); return;
+        loading = false; await refresh(true); return;
       }
     } catch (error) {
       if (version !== generation) return;
@@ -253,12 +254,12 @@
     }
   }
 
-  async function refresh() {
+  async function refresh(auto = false) {
     if (loading || task?.pending || currentPage !== "catalog" || document.hidden || actionRunning) { schedule(); return; }
     const version = generation;
     loading = true; render();
     try {
-      const result = await requestJSON("/api/catalog/refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, scope }), timeoutMs: 10000 });
+      const result = await requestJSON("/api/catalog/refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, scope, trigger: auto ? "auto" : "manual" }), timeoutMs: 10000 });
       if (version === generation) task = result;
     } catch (error) { if (version === generation) task = { provider, pending: false, error: error.message }; }
     finally { if (version === generation) { loading = false; render(); schedule(); } }
@@ -281,7 +282,13 @@
     animateFilterResult(get("catalog-results"));
   });
   for (const id of ["catalog-search", "catalog-stock"]) get(id).addEventListener(id === "catalog-search" ? "input" : "change", () => { page = 0; renderTable(true); });
-  get("catalog-auto").addEventListener("change", () => { sessionStorage.setItem(catalogAutoKey, get("catalog-auto").value); schedule(); });
+  get("catalog-auto").addEventListener("change", () => {
+    const value = Number(get("catalog-auto").value || 0);
+    config.catalog_schedule = { mode: value ? "auto" : "manual", interval_seconds: value || 300 };
+    sessionStorage.setItem(catalogAutoKey, get("catalog-auto").value);
+    schedule();
+    if (typeof updateDraftState === "function") updateDraftState();
+  });
   get("catalog-refresh").addEventListener("click", () => { task = task?.pending ? task : null; void refresh(); });
   get("catalog-stop").addEventListener("click", async () => {
     get("catalog-auto").value = "0"; sessionStorage.setItem(catalogAutoKey, "0"); clearTimeout(autoTimer);

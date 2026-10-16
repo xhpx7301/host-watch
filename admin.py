@@ -45,6 +45,8 @@ STOPPED_TEST_IDS = {}
 SECKILL_LOCK = threading.Lock()
 SECKILL_TASKS = {}
 STOPPED_SECKILL_IDS = {}
+REFRESH_LOCK = threading.Lock()
+REFRESH_TASKS = {}
 BROWSER_CLEANUP_SECONDS = 8
 BROWSER_CLEANUP_WARNING = "本地测试进程已结束，但未能确认 FlareSolverr 浏览器释放；请检查服务日志，必要时重启 FlareSolverr，避免继续启动浏览器测试"
 CATALOG = CatalogService(lambda: CONFIG_PATH.parent / "catalog.json", lambda: current_config()["fetcher"])
@@ -667,6 +669,13 @@ class SeckillTask:
             del self.logs[:-200]
             self.output["logs"] = list(self.logs)
 
+    def publish_module_status(self, result: str, message: str = "") -> None:
+        try:
+            from monitor import module_schedule, update_module_status
+            update_module_status(STATUS_PATH, "seckill", module_schedule(self.config, "seckill"), result, message, trigger="manual")
+        except (OSError, ValueError, TypeError):
+            pass
+
     def snapshot(self) -> dict:
         with self.lock:
             return {**self.output, "logs": list(self.logs), "stopping": self.cancelled.is_set() and not self.done.is_set()}
@@ -740,6 +749,7 @@ class SeckillTask:
         accounts = {str(item.get("id")): item for item in seckill.get("accounts", [])}
         items = [item for item in seckill.get("items", []) if item.get("enabled", True)]
         finished, contexts = {}, {}
+        self.publish_module_status("pending", "正在执行抢购任务")
         self.log(f"秒杀任务已启动：{self.mode_label()}，共 {len(items)} 个商品；仅创建待付款订单，需手动到官网支付")
         try:
             with ExitStack() as stack:
@@ -835,6 +845,8 @@ class SeckillTask:
                     duration_seconds=round(time.monotonic() - self.started, 1))
                 self.done.set()
             self.log("秒杀任务已停止" if self.output.get("cancelled") else "秒杀任务已完成；如有待付款订单，请到官网手动支付")
+            self.publish_module_status("error" if any(item.get("status") == "blocked" for item in finished.values()) else "success",
+                                       "任务已停止" if self.output.get("cancelled") else "任务已完成")
 
     def mode_label(self):
         return {"rapid": "极速秒杀（自动）", "precise": "精准秒杀（自动）", "manual": "手动秒杀"}.get(self.mode, self.mode)
@@ -873,10 +885,47 @@ def stop_seckill(task_id: str) -> dict:
     return task.snapshot()
 
 
+def start_manual_refresh(role: str) -> dict:
+    if role not in {"watch", "notify"}:
+        raise ValueError("刷新模块无效")
+    task_id = secrets.token_urlsafe(12)
+    with REFRESH_LOCK:
+        if any(task.get("pending") for task in REFRESH_TASKS.values()):
+            raise ValueError("已有手动刷新正在执行，请稍后重试")
+        REFRESH_TASKS[task_id] = {"task_id": task_id, "role": role, "pending": True, "started_at": beijing_iso()}
+
+    def worker() -> None:
+        result = {"task_id": task_id, "role": role, "pending": False}
+        try:
+            from monitor import check_once, effective_telegram, read_config
+            current = read_config(CONFIG_PATH)
+            token, chat_id = effective_telegram(current)
+            check_once(requests.Session(), current, CONFIG_PATH.parent / "state.json", STATUS_PATH, token, chat_id, role, "manual")
+            result.update(ok=True, message="刷新完成")
+        except Exception as exc:  # noqa: BLE001 - expose a safe user-facing task result
+            result.update(ok=False, error=str(exc)[:500])
+            try:
+                from monitor import module_schedule, update_module_status
+                current = current_config()
+                module = "monitor" if role == "watch" else "notify"
+                update_module_status(STATUS_PATH, module, module_schedule(current, module), "error", result["error"], trigger="manual")
+            except (OSError, ValueError, TypeError):
+                pass
+        with REFRESH_LOCK:
+            REFRESH_TASKS[task_id] = result
+
+    threading.Thread(target=worker, daemon=True).start()
+    return dict(REFRESH_TASKS[task_id])
+
+
 def default_config() -> dict:
     return {
         "enabled": False,
         "interval_seconds": 600,
+        "monitor_schedule": {"mode": "auto", "interval_seconds": 600},
+        "notify_schedule": {"mode": "auto", "interval_seconds": 600},
+        "catalog_schedule": {"mode": "manual", "interval_seconds": 300},
+        "seckill_schedule": {"mode": "manual", "interval_seconds": 5},
         "notify_current_stock_on_start": False,
         "isvoro_seckill": False,
         "affiliate_id": DEFAULT_AFFILIATES["vmiss"],
@@ -1182,6 +1231,30 @@ def normalize_seckill(value: object, product_ids: set[str]) -> dict:
         "items": normalized_items, "accounts": normalized_accounts}
 
 
+def normalize_schedule(value: object, default_mode: str, default_interval: int, label: str,
+                       minimum: int = 0, maximum: int = 86400) -> dict:
+    """Normalize a module refresh schedule while accepting old scalar settings."""
+    if value is None:
+        value = {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{label}配置必须是对象")
+    mode = str(value.get("mode", default_mode)).strip().casefold()
+    if mode not in {"manual", "auto"}:
+        raise ValueError(f"{label}模式必须是 manual 或 auto")
+    interval = value.get("interval_seconds", default_interval)
+    if isinstance(interval, bool):
+        raise ValueError(f"{label}检查间隔必须是整数")
+    try:
+        interval = int(interval)
+    except (TypeError, ValueError):
+        raise ValueError(f"{label}检查间隔必须是整数") from None
+    if str(interval) != str(value.get("interval_seconds", default_interval)).strip():
+        raise ValueError(f"{label}检查间隔必须是整数")
+    if interval < minimum or interval > maximum:
+        raise ValueError(f"{label}检查间隔必须是 {minimum} 到 {maximum} 秒的整数")
+    return {"mode": mode, "interval_seconds": interval}
+
+
 def validate_config(value: object) -> dict:
     if not isinstance(value, dict):
         raise ValueError("配置必须是 JSON 对象")
@@ -1196,6 +1269,11 @@ def validate_config(value: object) -> dict:
         raise ValueError("检查间隔必须是整数")
     if interval < 0 or interval > 86400:
         raise ValueError("检查间隔必须是 0 到 86400 秒的整数；0 表示本轮完成后立即检查下一轮")
+
+    monitor_schedule = normalize_schedule(value.get("monitor_schedule"), "auto", interval, "库存监控")
+    notify_schedule = normalize_schedule(value.get("notify_schedule"), "auto", interval, "库存通知")
+    catalog_schedule = normalize_schedule(value.get("catalog_schedule"), "manual", 300, "库存大盘")
+    seckill_schedule = normalize_schedule(value.get("seckill_schedule"), "manual", 5, "VPS 抢购", 1, 3600)
 
     affiliate_id = str(value.get("affiliate_id", "")).strip()
     if affiliate_id and not re.fullmatch(r"\d{1,20}", affiliate_id):
@@ -1412,6 +1490,10 @@ def validate_config(value: object) -> dict:
     return {
         "enabled": enabled,
         "interval_seconds": interval,
+        "monitor_schedule": monitor_schedule,
+        "notify_schedule": notify_schedule,
+        "catalog_schedule": catalog_schedule,
+        "seckill_schedule": seckill_schedule,
         "notify_current_stock_on_start": value.get("notify_current_stock_on_start", False),
         "isvoro_seckill": value.get("isvoro_seckill", False),
         "affiliate_id": affiliates["vmiss"],
@@ -1770,6 +1852,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, "application/json; charset=utf-8", b'{"error":"Seckill task not found"}')
                 return
             self._send(200, "application/json; charset=utf-8", json.dumps(task.snapshot(), ensure_ascii=False).encode("utf-8"))
+        elif self.path.startswith("/api/refresh/status/"):
+            task_id = self.path.rsplit("/", 1)[-1]
+            with REFRESH_LOCK:
+                task = REFRESH_TASKS.get(task_id)
+            if task is None:
+                self._send(404, "application/json; charset=utf-8", b'{"error":"Refresh task not found"}')
+                return
+            self._send(200, "application/json; charset=utf-8", json.dumps(task, ensure_ascii=False).encode("utf-8"))
         elif urlsplit(self.path).path == "/api/telegram/chats":
             try:
                 query = dict(parse_qsl(urlsplit(self.path).query, keep_blank_values=True))
@@ -1828,7 +1918,7 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/test", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
+        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/refresh", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/test", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
             self.send_error(404)
             return
         try:
@@ -1879,11 +1969,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, "application/json; charset=utf-8", json.dumps({**result, "egress": egress.public(current_config()["egress"])}, ensure_ascii=False).encode()); return
             if self.path in {"/api/catalog/refresh", "/api/catalog/stop"}:
                 try:
-                    output = CATALOG.stop() if self.path.endswith("/stop") else CATALOG.refresh(submitted.get("provider"), submitted.get("scope", ""))
+                    if self.path.endswith("/stop"):
+                        output = CATALOG.stop()
+                    elif submitted.get("trigger", "manual") == "manual":
+                        output = CATALOG.refresh(submitted.get("provider"), submitted.get("scope", ""))
+                    else:
+                        output = CATALOG.refresh(submitted.get("provider"), submitted.get("scope", ""), "auto")
+                    if self.path.endswith("/refresh"):
+                        from monitor import module_schedule, update_module_status
+                        update_module_status(STATUS_PATH, "catalog", module_schedule(current_config(), "catalog"), "pending", "正在刷新库存大盘", trigger=output.get("trigger", "manual"))
                 except CatalogBusy as exc:
                     self._send(409, "application/json; charset=utf-8", json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"))
                     return
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
+                return
+            if self.path == "/api/refresh":
+                output = start_manual_refresh(str(submitted.get("role", "")))
+                self._send(202, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/products/test/stop":
                 output = stop_stock_test(str(submitted.get("task_id", "")))

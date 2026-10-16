@@ -1,6 +1,10 @@
 {
   "enabled": false,
   "interval_seconds": 600,
+  "monitor_schedule": {"mode": "auto", "interval_seconds": 600},
+  "notify_schedule": {"mode": "auto", "interval_seconds": 600},
+  "catalog_schedule": {"mode": "manual", "interval_seconds": 300},
+  "seckill_schedule": {"mode": "manual", "interval_seconds": 5},
   "notify_current_stock_on_start": false,
   "isvoro_seckill": false,
   "affiliate_id": "5340",
