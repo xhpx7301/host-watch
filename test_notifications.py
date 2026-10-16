@@ -22,6 +22,7 @@ class NotificationTests(unittest.TestCase):
         for value in ["补货提醒", "Isvoro · HK CN2 Core", "中国香港", "HK CN2", "自用", "电：CN2GT | 联：4837 | 移：CMI",
                       "2C/2G/30GB", "300GB@100Mbps", "¥25 / 月；¥249 / 年", "3 台", "由缺货变为有货"]:
             self.assertIn(value, text)
+        self.assertIn("2026-10-15 23:00:00 北京时间", text)
         self.assertIsNone(soup.code)
         self.assertIn("🛒 购买链接：点击直达购买", soup.get_text())
         self.assertEqual(soup.a["href"], "https://isvoro.com/buy/HKCN2?product=149&aff=example")

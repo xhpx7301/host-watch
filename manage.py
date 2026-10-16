@@ -31,6 +31,7 @@ from urllib.request import urlopen
 from urllib.error import HTTPError, URLError
 
 from auth import DEFAULT_USERS_PATH, load_users, password_record, validate_username
+from time_utils import BEIJING_TZ, format_beijing, now_beijing
 
 
 INSTALL_DIR = Path("/opt/vmiss-monitor")
@@ -55,7 +56,8 @@ RESTORE_DATA_FILES = ("config.json", "state.json", "state-seckill.json", "status
 
 
 def run(*args: str) -> None:
-    subprocess.run(args, check=True)
+    env = {**os.environ, "TZ": "Asia/Shanghai"} if args and args[0] == "journalctl" else None
+    subprocess.run(args, check=True, env=env)
 
 
 def atomic_write(path: Path, contents: str, mode: int = 0o640, group: int | None = None, owner: int = 0) -> None:
@@ -216,7 +218,7 @@ def backup() -> Path:
         raise ValueError("备份目录不能是符号链接")
     BACKUP_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(BACKUP_DIR, 0o700)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    timestamp = now_beijing().strftime("%Y%m%d-%H%M%S")
     fd, name = tempfile.mkstemp(prefix=f"host-watch-{timestamp}-", suffix=".tar.gz", dir=BACKUP_DIR)
     os.close(fd)
     target = Path(name)
@@ -393,6 +395,7 @@ Description=HostWatch scheduled local backup
 Type=oneshot
 User=root
 UMask=0077
+Environment=TZ=Asia/Shanghai
 ExecStart=/usr/bin/python3 /opt/vmiss-monitor/manage.py scheduled-backup
 TimeoutStartSec=15min
 """, mode=0o644)
@@ -400,7 +403,7 @@ TimeoutStartSec=15min
 Description=HostWatch daily backup schedule
 
 [Timer]
-OnCalendar=*-*-* {settings['time']}:00
+OnCalendar=*-*-* {settings['time']}:00 Asia/Shanghai
 Persistent=true
 AccuracySec=1min
 Unit={BACKUP_SERVICE}
@@ -432,19 +435,30 @@ def backup_schedule_status() -> dict:
             return {}
     timer = properties(BACKUP_TIMER, ["ActiveState", "UnitFileState", "NextElapseUSecRealtime", "LastTriggerUSec"])
     service = properties(BACKUP_SERVICE, ["Result", "ActiveState"])
-    local = datetime.now().astimezone()
-    zone = local.tzname() or "服务器本地时间"
-    try:
-        timezone_result = subprocess.run(["timedatectl", "show", "--property=Timezone", "--value"],
-            text=True, capture_output=True, check=False, timeout=5)
-        if timezone_result.returncode == 0 and timezone_result.stdout.strip():
-            zone = timezone_result.stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    return {**settings, "timezone": f"{zone} (UTC{local.strftime('%z')})", "error": error,
+    return {**settings, "timezone": "Asia/Shanghai (UTC+08:00)", "error": error,
         "timer_active": timer.get("ActiveState", "unknown"), "timer_enabled": timer.get("UnitFileState", "unknown"),
-        "next_run": timer.get("NextElapseUSecRealtime", ""), "last_run": timer.get("LastTriggerUSec", ""),
+        "next_run": _systemd_time_beijing(timer.get("NextElapseUSecRealtime", "")), "last_run": _systemd_time_beijing(timer.get("LastTriggerUSec", "")),
         "last_result": service.get("Result", ""), "backup_active": service.get("ActiveState", "unknown")}
+
+
+def _systemd_time_beijing(value: str) -> str:
+    if not value or value == "n/a":
+        return value
+    match = re.search(r"(?P<date>\d{4}-\d{2}-\d{2})\s+(?P<time>\d{2}:\d{2}:\d{2})(?:\s+(?P<zone>Z|UTC|GMT|CST|[+-]\d{2}(?::?\d{2})?))?", value)
+    if not match:
+        return value
+    zone = match.group("zone") or "Asia/Shanghai"
+    if zone == "CST":
+        tz = BEIJING_TZ
+    elif zone in {"Z", "UTC", "GMT"}:
+        tz = timezone.utc
+    elif zone.startswith(("+", "-")):
+        normalized_zone = f"{zone}:00" if len(zone) == 3 else zone if ":" in zone else zone[:3] + ":" + zone[3:]
+        tz = datetime.strptime(normalized_zone, "%z").tzinfo
+    else:
+        tz = BEIJING_TZ
+    parsed = datetime.strptime(f"{match.group('date')} {match.group('time')}", "%Y-%m-%d %H:%M:%S").replace(tzinfo=tz)
+    return format_beijing(parsed)
 
 
 def save_backup_schedule(payload: dict) -> dict:
@@ -757,7 +771,7 @@ def web_action(payload: dict) -> dict:
         return {"monitor": unit_state(MONITOR), "admin": unit_state(ADMIN), "users": sorted(users),
                 "backups": backups, "backup_dir": str(BACKUP_DIR), "backup_schedule": backup_schedule_status()}
     if action == "logs":
-        result = subprocess.run(["journalctl", "--no-pager", "-o", "short-iso", "-u", MONITOR, "-u", ADMIN, "-u", BACKUP_SERVICE, "-n", "100"], text=True, capture_output=True, check=False, timeout=15)
+        result = subprocess.run(["journalctl", "--no-pager", "-o", "short-iso", "-u", MONITOR, "-u", ADMIN, "-u", BACKUP_SERVICE, "-n", "100"], text=True, capture_output=True, check=False, timeout=15, env={**os.environ, "TZ": "Asia/Shanghai"})
         if result.returncode:
             raise ValueError(result.stderr.strip()[:500] or "读取日志失败")
         return {"logs": result.stdout[-40_000:]}
@@ -782,7 +796,7 @@ def web_action(payload: dict) -> dict:
     if action == "backup-schedule":
         return save_backup_schedule(payload)
     if action == "update":
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        stamp = now_beijing().strftime("%Y%m%d%H%M%S")
         unit = f"host-watch-web-update-{stamp}-{secrets.token_hex(4)}.service"
         run("systemd-run", "--quiet", "--no-block", f"--unit={unit.removesuffix('.service')}",
             "--property=Type=oneshot", "--property=RemainAfterExit=yes", "--property=TimeoutStartSec=15min",
@@ -797,7 +811,7 @@ def web_action(payload: dict) -> dict:
             raise ValueError("更新任务编号无效")
         result = subprocess.run(["systemctl", "show", unit, "--property=LoadState", "--property=ActiveState", "--property=SubState", "--property=Result"], text=True, capture_output=True, check=False, timeout=10)
         values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
-        logs = subprocess.run(["journalctl", "--no-pager", "-u", unit, "-n", "30"], text=True, capture_output=True, check=False, timeout=10)
+        logs = subprocess.run(["journalctl", "--no-pager", "-u", unit, "-n", "30"], text=True, capture_output=True, check=False, timeout=10, env={**os.environ, "TZ": "Asia/Shanghai"})
         return {"unit": unit, **values, "logs": logs.stdout[-12_000:]}
     if action in {"admin-add", "admin-passwd", "admin-delete"}:
         username = validate_username(str(payload.get("username", "")))

@@ -5,6 +5,7 @@ from html import escape
 import math
 import re
 from urllib.parse import urlsplit
+from time_utils import format_beijing
 
 
 CURRENCIES = {
@@ -147,6 +148,7 @@ def stock_message(*, vendor: str, name: str, available: int, stock_mode: str, re
         remaining_units -= len(clipped.encode("utf-16-le")) // 2
         return escape(clipped)
     item = item or {}
+    checked_at = format_beijing(checked_at)
     status = "有货" if stock_mode == "availability" and available > 0 else f"{available} 台" if available > 0 else "缺货"
     change = ""
     if not test and not live:

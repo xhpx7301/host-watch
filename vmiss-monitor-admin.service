@@ -13,6 +13,7 @@ Environment=VMISS_CONFIG=/var/lib/vmiss-monitor/config.json
 Environment=VMISS_STATUS=/var/lib/vmiss-monitor/status.json
 Environment=ADMIN_HOST=127.0.0.1
 Environment=ADMIN_PORT=8765
+Environment=TZ=Asia/Shanghai
 ExecStart=/opt/vmiss-monitor/.venv/bin/python /opt/vmiss-monitor/admin.py
 Restart=on-failure
 RestartSec=5

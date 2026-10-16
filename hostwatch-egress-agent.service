@@ -8,6 +8,7 @@ Type=simple
 User=hostwatch-egress
 WorkingDirectory=/opt/hostwatch-egress
 EnvironmentFile=/etc/hostwatch-egress.env
+Environment=TZ=Asia/Shanghai
 ExecStart=/usr/bin/python3 /opt/hostwatch-egress/egress_agent.py
 Restart=always
 RestartSec=5

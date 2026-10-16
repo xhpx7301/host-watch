@@ -11,6 +11,7 @@ pidfile="/run/${RC_SVCNAME}.pid"
 output_log="/var/log/hostwatch-egress.log"
 error_log="/var/log/hostwatch-egress.log"
 export EGRESS_CONFIG="/etc/hostwatch-egress.json"
+export TZ="Asia/Shanghai"
 
 depend() {
   need net

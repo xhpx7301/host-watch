@@ -10,6 +10,7 @@ Group=vmiss-monitor
 WorkingDirectory=/opt/vmiss-monitor
 EnvironmentFile=/etc/vmiss-monitor.env
 Environment=PYTHONUNBUFFERED=1
+Environment=TZ=Asia/Shanghai
 Environment=VMISS_CONFIG=/var/lib/vmiss-monitor/config.json
 Environment=VMISS_STATUS=/var/lib/vmiss-monitor/status.json
 Environment=STATE_FILE=/var/lib/vmiss-monitor/state.json

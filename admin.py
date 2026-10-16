@@ -14,7 +14,6 @@ import tempfile
 import threading
 import time
 from html import escape
-from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
 from pathlib import Path
@@ -25,6 +24,7 @@ import requests
 from auth import DEFAULT_USERS_PATH, authentication_required, authorized, users_path
 from catalog import CatalogBusy, CatalogService
 from affiliates import DEFAULT_AFFILIATES, PROVIDERS, affiliate_purchase_url, effective_coupon, normalize_affiliate_coupons, normalize_affiliate_notes, normalize_affiliates, normalize_merchant_order
+from time_utils import beijing_iso, format_beijing
 from notifications import purchase_button, stock_message
 import egress
 
@@ -323,7 +323,7 @@ class StockTestTask:
                     result = {"ok": False, "cancelled": True, "error": "测试已停止"}
                 if cleanup_warning:
                     result["warning"] = cleanup_warning
-                self.output = {**result, "pending": True, "notifying": not self.cancelled.is_set() and not self.product.get("_request_probe"), "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"), "duration_seconds": round(time.monotonic() - self.started, 1)}
+                self.output = {**result, "pending": True, "notifying": not self.cancelled.is_set() and not self.product.get("_request_probe"), "checked_at": beijing_iso(), "duration_seconds": round(time.monotonic() - self.started, 1)}
             # Stock checking and browser cleanup have finished. Do not hold the
             # task lock across Telegram I/O; status polling must remain responsive.
             if self.product.get("_request_probe"):
@@ -533,7 +533,7 @@ def order_json(response) -> dict:
 
 def check_order_account(session, account: dict) -> dict:
     result = {"status": "unknown", "ok": False, "account_id": account.get("id", ""),
-        "checked_at": datetime.now().astimezone().isoformat(timespec="seconds")}
+        "checked_at": beijing_iso()}
     if not account.get("username") or not account.get("password"):
         return {**result, "message": "请填写用户名和密码，才能检查账户状态"}
     try:
@@ -600,7 +600,7 @@ class SeckillTask:
         self.output = {"task_id": task_id, "pending": True, "mode": mode, "logs": self.logs, "items": []}
 
     def log(self, message: str, level: str = "info", item: dict | None = None) -> None:
-        entry = {"at": datetime.now().astimezone().isoformat(timespec="seconds"), "level": level, "message": message}
+        entry = {"at": beijing_iso(), "level": level, "message": message}
         if item:
             entry["item_id"] = item.get("id", "")
         with self.lock:
@@ -746,7 +746,7 @@ class SeckillTask:
         finally:
             with self.lock:
                 self.output.update(items=[{"item_id": key, **value} for key, value in finished.items()], pending=False,
-                    cancelled=self.cancelled.is_set(), checked_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+                    cancelled=self.cancelled.is_set(), checked_at=beijing_iso(),
                     duration_seconds=round(time.monotonic() - self.started, 1))
                 self.done.set()
             self.log("秒杀任务已停止" if self.output.get("cancelled") else "秒杀任务已完成；如有待付款订单，请到官网手动支付")
@@ -1438,7 +1438,7 @@ def register_egress_node(payload: dict, authorization: str = "") -> dict:
     node = {**(existing or {}), "id": node_id, "name": existing["name"] if existing else payload.get("name", node_id), "proxy_url": payload.get("proxy_url", ""),
         "health_url": payload.get("health_url", ""), "token": existing["token"] if existing else payload.get("token", ""), "public_ip": payload.get("public_ip", ""),
         "enabled": existing["enabled"] if existing else True, "pending_registration": False,
-        "last_seen": datetime.now().astimezone().isoformat(timespec="seconds"), "last_error": ""}
+        "last_seen": beijing_iso(), "last_error": ""}
     nodes = [item for item in current.get("egress", {}).get("nodes", []) if item["id"] != node_id]
     nodes.append(node)
     current["egress"] = egress.normalize({"nodes": nodes, "routes": current.get("egress", {}).get("routes", {})})
@@ -1491,7 +1491,7 @@ def send_stock_test_result(product: dict, result: dict) -> dict:
             message = escape("❌ HostWatch · 商品单次测试\n"
                 f"商家：{str(product.get('provider') or product.get('adapter', ''))[:80]}\n"
                 f"商品：{str(product['name'])[:200]}\n测试失败：{str(result.get('error', '未知错误'))[:800]}\n"
-                f"检查时间：{result['checked_at']}\n耗时：{result['duration_seconds']} 秒")
+                f"检查时间：{format_beijing(result['checked_at'])}\n耗时：{result['duration_seconds']} 秒")
             if result.get("warning"):
                 message += "\n提示：" + escape(str(result["warning"])[:300])
         if matched:
@@ -1830,7 +1830,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("出口节点不存在")
                 try:
                     result = egress.probe(node)
-                    node.update(public_ip=result["public_ip"], last_seen=datetime.now().astimezone().isoformat(timespec="seconds"), last_error="")
+                    node.update(public_ip=result["public_ip"], last_seen=beijing_iso(), last_error="")
                 except (OSError, ValueError, requests.RequestException) as exc:
                     node["last_error"] = str(exc)[:240]
                     raise ValueError(f"出口节点检查失败：{exc}") from None

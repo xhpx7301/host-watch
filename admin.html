@@ -792,12 +792,12 @@
     <p class="hint manage-global-note">监控启停请使用页面底部“开始监控 / 暂停监控”；配置修改使用“保存配置”。</p>
     <p id="manage-task-status" class="manage-task-status" aria-live="polite"></p>
     <div class="manage-block">
-      <div class="manage-section-head"><div><h3>自动备份计划</h3><p>每天按服务器时间备份到服务器硬盘，关闭管理页后仍会执行。错过计划时，服务器恢复后补做一次。</p></div></div>
+      <div class="manage-section-head"><div><h3>自动备份计划</h3><p>每天按北京时间备份到服务器硬盘，关闭管理页后仍会执行。错过计划时，服务器恢复后补做一次。</p></div></div>
       <div class="manage-form">
         <button id="manage-auto-backup" type="button" class="option-button" aria-pressed="false" data-on="已开启" data-off="未开启"><span>每日自动备份</span><span data-option-state>未开启</span></button>
-        <label>每日备份时间（服务器时间）<input id="manage-backup-time" type="time" step="60" value="03:00" required></label>
+        <label>每日备份时间（北京时间）<input id="manage-backup-time" type="time" step="60" value="03:00" required></label>
       </div>
-      <p id="manage-backup-timezone" class="hint">服务器时区：读取中</p>
+      <p id="manage-backup-timezone" class="hint">调度时区：北京时间读取中</p>
       <p id="manage-backup-schedule-status" class="hint" role="status" aria-live="polite">正在读取备份计划。</p>
       <div class="manage-actions"><button id="manage-backup-schedule-save" type="button" class="primary" disabled>保存备份计划</button></div>
       <p class="hint">备份计划通过此处单独保存并立即生效，无需点击底部“保存配置”。关闭定时备份不影响更新前备份和手动导出。</p>

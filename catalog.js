@@ -171,7 +171,7 @@
     get("catalog-stop").disabled = actionRunning || Boolean(task?.cancelled);
     get("catalog-stop").textContent = task?.cancelled ? "停止中…" : "停止刷新";
     get("catalog-summary").textContent = data?.fetched_at ? `${providers[provider]} · ${data.rows.length} 个套餐 · ${data.rows.filter((row) => row.available > 0).length} 个有货` : `${providers[provider]} · 尚未取得库存结果`;
-    get("catalog-updated").textContent = data?.fetched_at ? `数据更新时间：${new Date(data.fetched_at).toLocaleString()}` : "尚无库存快照";
+    get("catalog-updated").textContent = data?.fetched_at ? `数据更新时间：${new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", dateStyle: "medium", timeStyle: "medium" }).format(new Date(data.fetched_at))}` : "尚无库存快照";
     const status = get("catalog-status");
     const savedRoute = merchantRequestPolicy(savedConfig ? JSON.parse(savedConfig) : config, provider);
     const effectiveRoute = route && routeConfig === savedConfig ? route : savedRoute;

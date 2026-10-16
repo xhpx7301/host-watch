@@ -10,7 +10,6 @@ import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 
@@ -21,6 +20,7 @@ from admin import default_config, effective_telegram, normalize_cloudscraper, no
 from affiliates import affiliate_purchase_url
 from notifications import purchase_button, stock_message
 import egress
+from time_utils import beijing_iso, beijing_logging_converter, now_beijing
 
 
 ROOT = Path(__file__).resolve().parent
@@ -963,7 +963,7 @@ def read_state(path: Path) -> dict[str, dict]:
 def write_state(path: Path, state: dict[str, dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    payload = {"updated_at": datetime.now().astimezone().isoformat(timespec="seconds"), "products": state}
+    payload = {"updated_at": beijing_iso(), "products": state}
     temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(path)
 
@@ -1011,7 +1011,7 @@ def notification_text(product: Product, old_count: int | None, purchase_url: str
     return stock_message(vendor=product.vendor, name=product.name, available=product.available, stock_mode=product.stock_mode,
         region=product.region or product.area_name, specs=product.specs, traffic=product.traffic, price=product.price,
         line=(product.match_details or {}).get("category_name", "") or product.node_name or (item or {}).get("category_name", ""), item=item, old_count=old_count, purchase_url=purchase_url,
-        checked_at=datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"))
+        checked_at=now_beijing().strftime("%Y-%m-%d %H:%M:%S 北京时间"))
 
 
 def collect_inventory(session, config, selected, found, unavailable):
@@ -1093,7 +1093,7 @@ def check_once(
             raise
         except (MonitorError, requests.RequestException) as exc:
             seckill_status = {"ok": False, "error": str(exc)}
-        seckill_status["checked_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        seckill_status["checked_at"] = beijing_iso()
 
     from stock_alerts import StockAlerts
     previous = read_state(state_path)
@@ -1151,7 +1151,7 @@ def check_once(
         if key not in subscribed_ids:
             entry.pop("telegram", None)
     write_state(state_path, current)
-    checked_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    checked_at = beijing_iso()
     rows = []
     for item in selected:
         if item["id"] in unavailable:
@@ -1195,7 +1195,8 @@ def main() -> int:
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    logging.Formatter.converter = beijing_logging_converter
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s 北京时间 %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     session = requests.Session()
     session.headers.update({
         "User-Agent": "HostWatch/1.0 (polite periodic stock check)",
@@ -1234,7 +1235,7 @@ def main() -> int:
         except (SiteBlocked, RequestServiceError) as exc:
             logging.error("%s", exc)
             state = "blocked" if isinstance(exc, SiteBlocked) else "error"
-            write_status(status_path, {"last_checked": datetime.now().astimezone().isoformat(timespec="seconds"), "state": state, "message": str(exc), "products": []})
+            write_status(status_path, {"last_checked": beijing_iso(), "state": state, "message": str(exc), "products": []})
             if bot_token and chat_id:
                 try:
                     telegram_request(session, bot_token, "sendMessage", chat_id=chat_id, text=f"🔴 库存监控已停止\n原因：{exc}\n请确认目标网站允许当前的自动检查方式后再恢复。")
@@ -1243,7 +1244,7 @@ def main() -> int:
             return 0
         except (MonitorError, requests.RequestException) as exc:
             logging.error("监控失败：%s", exc)
-            write_status(status_path, {"last_checked": datetime.now().astimezone().isoformat(timespec="seconds"), "state": "error", "message": str(exc), "products": []})
+            write_status(status_path, {"last_checked": beijing_iso(), "state": "error", "message": str(exc), "products": []})
             return 1
 
         if args.once:

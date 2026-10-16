@@ -44,6 +44,18 @@ let productDrag = null;
 let merchantOrderEditing = false;
 const seckillTestId = "isvoro-seckill";
 const cloudscraperTestId = "cloudscraper-probe";
+const BEIJING_TIME_ZONE = "Asia/Shanghai";
+
+function formatBeijingDate(value, options = {}) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.valueOf())) return "时间未知";
+  return new Intl.DateTimeFormat("zh-CN", { timeZone: BEIJING_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23", ...options }).format(date);
+}
+
+function beijingISOString(value = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: BEIJING_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).formatToParts(value).map(part => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}+08:00`;
+}
 
 const pages = {
   overview: { title: "运行概览", description: "查看监控服务、商品库存与最近检查结果。" },
@@ -330,11 +342,11 @@ function renderBackupSchedule() {
   document.querySelector("#manage-backup-time").value = value.time;
   document.querySelector("#manage-backup-time").disabled = actionRunning || !backupScheduleRuntime;
   document.querySelector("#manage-backup-schedule-save").disabled = actionRunning || !backupScheduleRuntime || JSON.stringify(backupScheduleDraft) === JSON.stringify(backupScheduleSaved);
-  document.querySelector("#manage-backup-timezone").textContent = `服务器时区：${backupScheduleRuntime?.timezone || "尚未返回，请更新安装后刷新"}`;
+  document.querySelector("#manage-backup-timezone").textContent = `调度时区：${backupScheduleRuntime?.timezone || "尚未返回，请更新安装后刷新"}`;
   const state = backupScheduleRuntime;
   let note = "服务器尚未提供备份计划，请先更新 HostWatch 安装后刷新。";
   if (state) {
-    note = state.error || (state.enabled ? (state.timer_active === "active" && state.timer_enabled === "enabled" ? `已启用，每天 ${state.time}；下次执行：${state.next_run && state.next_run !== "n/a" ? state.next_run : "等待定时器安排"}` : "计划已保存为开启，但定时器未正常运行，请检查服务日志。") : "每日自动备份已关闭。");
+    note = state.error || (state.enabled ? (state.timer_active === "active" && state.timer_enabled === "enabled" ? `已启用，每天北京时间 ${state.time}；下次执行：${state.next_run && state.next_run !== "n/a" ? state.next_run : "等待定时器安排"}` : "计划已保存为开启，但定时器未正常运行，请检查服务日志。") : "每日自动备份已关闭。");
     if (state.last_run && state.last_run !== "n/a") note += ` 上次触发：${state.last_run}；${state.backup_active === "activating" ? "正在备份" : state.last_result === "success" ? "执行成功" : state.last_result ? `执行异常（${state.last_result}），请载入日志检查` : "结果未知"}。`;
   }
   if (backupScheduleDraft && JSON.stringify(backupScheduleDraft) !== JSON.stringify(backupScheduleSaved)) note += " 有未保存的备份计划，请点击“保存备份计划”。";
@@ -916,8 +928,8 @@ function renderProductTest(article, id) {
   if (!result) { node.textContent = ""; return; }
   node.className = `product-test-result ${result.pending || result.cancelled ? "pending" : result.ok ? "success" : "error"}`;
   node.textContent = result.pending ? (result.notifying ? `${result.ok ? `库存检查完成：${stockLabel(result)}` : `测试失败：${result.error}`}。正在发送 Telegram 测试结果…` : result.stopUnconfirmed ? "停止状态尚未确认，可再次点击“停止测试”；不会因页面超时就认为后台已经停止。" : result.phase === "cleaning" ? "本地库存检查已结束，正在清理浏览器会话；清理等待最多约 10 秒，失败会明确提示。" : result.stopping ? "停止请求已提交，正在终止本次测试进程…" : "正在读取此商品库存，可点击“停止测试”，页面其他功能仍可使用。") : result.cancelled ? "测试已停止，未改动自动监控和库存历史。" : result.ok
-    ? `测试成功：${stockLabel(result)}。${new Date(result.checked_at).toLocaleString()} · 耗时 ${result.duration_seconds} 秒。自动监控状态保持不变。`
-    : `测试失败：${result.error}${result.checked_at ? `（${new Date(result.checked_at).toLocaleString()}）` : ""}`;
+    ? `测试成功：${stockLabel(result)}。${formatBeijingDate(result.checked_at)} · 耗时 ${result.duration_seconds} 秒。自动监控状态保持不变。`
+    : `测试失败：${result.error}${result.checked_at ? `（${formatBeijingDate(result.checked_at)}）` : ""}`;
   if (result.warning) node.textContent += ` ${result.warning}`;
   if (result.route) node.append(text("div", `本次读取：${requestRouteLabel(result.route)}。出口使用已保存配置。`, "test-notification"));
   if (result.matched_product) {
@@ -1052,14 +1064,14 @@ async function followProductTest(task, initial) {
     if (task.draft && task.draft !== JSON.stringify({ product: config.products.find((product) => product.id === task.id), fetcher: collectConfig().fetcher })) {
       result.warning = [result.warning, "此结果使用测试开始时的配置；页面已修改，请按需重新测试。"].filter(Boolean).join(" ");
     }
-    if (task.id === seckillTestId) result.checked_at ||= new Date().toISOString();
+    if (task.id === seckillTestId) result.checked_at ||= beijingISOString();
     if (task.probeDraft && task.probeDraft !== JSON.stringify(collectConfig().fetcher.cloudscraper)) result.warning = "此结果使用测试开始时的 cloudscraper 参数；当前参数已修改，请按需重新测试。";
     productTests.set(task.id, result);
     const notificationIssue = result.notification && !["sent", "skipped"].includes(result.notification.status);
     const summary = result.cancelled ? "测试已停止。" : result.ok ? (task.id === cloudscraperTestId ? "cloudscraper 访问测试完成，结果已显示在网页请求中。" : task.id === seckillTestId ? "秒杀单次测试完成，结果已显示在秒杀区域。" : "单次库存测试完成，结果已显示在商品下方。") : `${task.id === cloudscraperTestId ? "cloudscraper 访问" : "单次库存"}测试失败：${result.error}`;
     setMessage([summary, result.notification?.message, result.warning].filter(Boolean).join(" "), result.warning || notificationIssue || (!result.ok && !result.cancelled) ? "error" : "success");
   } catch (error) {
-    productTests.set(task.id, { ok: false, error: error.message, ...(task.id === seckillTestId ? { checked_at: new Date().toISOString() } : {}) });
+    productTests.set(task.id, { ok: false, error: error.message, ...(task.id === seckillTestId ? { checked_at: beijingISOString() } : {}) });
     setMessage(error.message, "error");
   } finally {
     clearTimeout(task.retryStopTimer);
@@ -1114,7 +1126,7 @@ function renderSeckill() {
   const status = document.querySelector("#seckill-status");
   const changed = optionPressed("isvoro-seckill") !== Boolean(config.isvoro_seckill);
   const setting = changed ? "提醒开关有未保存修改。" : config.isvoro_seckill ? "自动提醒已开启，随监控服务运行。" : "自动提醒未开启。";
-  let message = !result ? "尚无秒杀检查记录。" : result.pending ? (result.notifying ? "秒杀检查已完成，正在发送 Telegram 结果…" : "正在读取秒杀活动，可停止测试。") : result.cancelled ? "秒杀测试已停止。" : !result.ok ? `秒杀检查失败：${result.error}` : `${manual ? "单次测试" : "最近自动检查"}：${result.activities.length ? `${result.activities.length} 个活动` : "暂无秒杀活动"}。${result.checked_at ? new Date(result.checked_at).toLocaleString() : ""}`;
+  let message = !result ? "尚无秒杀检查记录。" : result.pending ? (result.notifying ? "秒杀检查已完成，正在发送 Telegram 结果…" : "正在读取秒杀活动，可停止测试。") : result.cancelled ? "秒杀测试已停止。" : !result.ok ? `秒杀检查失败：${result.error}` : `${manual ? "单次测试" : "最近自动检查"}：${result.activities.length ? `${result.activities.length} 个活动` : "暂无秒杀活动"}。${result.checked_at ? formatBeijingDate(result.checked_at) : ""}`;
   if (manual && result.notification) message += ` ${result.notification.message}`;
   if (result?.warning) message += ` ${result.warning}`;
   status.textContent = setting + " " + message;
@@ -1125,7 +1137,7 @@ function renderSeckill() {
   for (const campaign of (result?.activities || []).slice(0, 6)) {
     const card = text("article", "", "campaign-card");
     card.append(text("h3", `${campaign.running ? "进行中" : "即将开始"} · ${campaign.title}`));
-    card.append(text("div", `${new Date(campaign.starts_at).toLocaleString()} 至 ${new Date(campaign.ends_at).toLocaleString()}`, "subtle"));
+    card.append(text("div", `${formatBeijingDate(campaign.starts_at)} 至 ${formatBeijingDate(campaign.ends_at)}`, "subtle"));
     const list = document.createElement("ul");
     for (const item of campaign.items.slice(0, 6)) list.append(text("li", `${item.name} · ${item.plan} · ${item.price} · 剩余 ${item.available} 份 · ${item.specs} · ${item.traffic}`));
     card.append(list);
@@ -1419,8 +1431,7 @@ function soyHardware(raw) {
   return String(raw).match(/^\s*\d+(?:\.\d+)?C\s*\/\s*\d+(?:\.\d+)?G\s*\/\s*\d+(?:\.\d+)?[KMGT]i?B\b/i)?.[0].trim() || "—";
 }
 function compactDate(value) {
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? "时间未知" : date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+  return formatBeijingDate(value, { year: undefined, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: undefined });
 }
 function renderSpecs(cell, raw, network = false) {
   const value = raw || "—";
@@ -1480,7 +1491,7 @@ function usedCurrencies() {
 function renderExchangeRates() {
   const timeNode = document.querySelector("#exchange-time"), noteNode = document.querySelector("#exchange-rate-note"), listNode = document.querySelector("#exchange-rate-list");
   if (!timeNode || !noteNode || !listNode) return;
-  timeNode.textContent = `当前时间 ${new Date().toLocaleString("zh-CN", { hour12: false })}`;
+  timeNode.textContent = `当前时间（北京时间）${formatBeijingDate(new Date())}`;
   const currencies = usedCurrencies();
   listNode.replaceChildren(...currencies.map(currency => {
     const rate = cnyRates[currency];
@@ -1489,7 +1500,7 @@ function renderExchangeRates() {
   if (!currencies.length) noteNode.textContent = "当前商品未使用外币价格";
   else if (exchangeRateData?.error) noteNode.textContent = exchangeRateData.error;
   else {
-    const updated = exchangeRateData?.fetched_at ? new Date(Number(exchangeRateData.fetched_at) * 1000).toLocaleString("zh-CN", { hour12: false }) : "内置参考值";
+    const updated = exchangeRateData?.fetched_at ? formatBeijingDate(Number(exchangeRateData.fetched_at) * 1000) : "内置参考值";
     noteNode.textContent = `汇率更新 ${updated}${exchangeRateData?.stale ? " · 使用缓存" : ""}`;
   }
 }
@@ -1931,7 +1942,7 @@ function renderProductList() {
     const merchant = text("div", "", "merchant-sort"); merchant.append(productSortHandle(item, "watch", row, visible.length), text("span", item.provider)); cell().append(merchant);
     const identity = cell(); identity.append(text("strong", p.name || item.name));
     const time = item.adapter === "dmit" ? p.checked_at : runtime ? runtime.checked_at || lastStatus?.last_checked : p.checked_at;
-    const updated = text("small", time ? `${p._fromTest ? "测试" : "读取"} ${compactDate(time)}` : "等待首次读取"); updated.title = time ? new Date(time).toLocaleString() : "尚无商品快照"; identity.append(updated); cell(p.region || "—");
+    const updated = text("small", time ? `${p._fromTest ? "测试" : "读取"} ${compactDate(time)}` : "等待首次读取"); updated.title = time ? formatBeijingDate(time) : "尚无商品快照"; identity.append(updated); cell(p.region || "—");
     for (const [key, label] of [["remarks", "备注"]]) {
       const input = document.createElement("textarea"); input.className = "manual-field remarks-field"; input.rows = 1; input.value = item[key] || ""; input.maxLength = 500; input.placeholder = "管理员填写";
       input.setAttribute("aria-label", `${item.name} ${label}`); input.disabled = actionRunning;
@@ -2000,7 +2011,7 @@ function renderNotificationList() {
     const savedItem = savedProducts.get(item.id);
     if (!savedItem || JSON.stringify(item) !== JSON.stringify(savedItem)) identity.append(text("small", "修改待保存", "draft-note"));
     const time = item.adapter === "dmit" ? p.checked_at : testIsLatest ? testResult.checked_at : runtime ? runtime.checked_at || lastStatus?.last_checked : p.checked_at;
-    const updated = text("small", time ? `${testIsLatest || p._fromTest ? "测试" : "读取"} ${compactDate(time)}` : "等待首次读取"); updated.title = time ? new Date(time).toLocaleString() : "尚无商品快照"; identity.append(updated);
+    const updated = text("small", time ? `${testIsLatest || p._fromTest ? "测试" : "读取"} ${compactDate(time)}` : "等待首次读取"); updated.title = time ? formatBeijingDate(time) : "尚无商品快照"; identity.append(updated);
     cell(p.region || "—"); renderSpecs(cell("", "watch-specs"), p.specs); renderSpecs(cell("", "watch-specs"), p.traffic, true); renderPrice(cell("", "watch-price"), p.price, expanded.has(item.id));
     const stock = cell();
     stock.append(text("span", Number.isInteger(p.available) ? stockLabel(p) : "未知", `state ${!Number.isInteger(p.available) ? "pending" : p.available > 0 ? "ok" : "error"}`));
@@ -2196,7 +2207,7 @@ function seckillAccountNote(item) {
   if (!item.account_id) return "未绑定账户：发现有货后提供链接，由你到官网下单和付款。";
   const checks = [seckillAccountChecks.get(item.id), vpsSeckillTask?.accounts?.[item.id]]
     .filter(result => result?.account_id === item.account_id).sort((a, b) => Date.parse(b.checked_at) - Date.parse(a.checked_at));
-  return checks.length ? `上次检查：${checks[0].message} · ${new Date(checks[0].checked_at).toLocaleString()}` : "账户待检查：自动下单前会通过此商品的出口验证账户。";
+  return checks.length ? `上次检查：${checks[0].message} · ${formatBeijingDate(checks[0].checked_at)}` : "账户待检查：自动下单前会通过此商品的出口验证账户。";
 }
 let vpsSeckillPoll = null;
 function seckillItemId() { return `seckill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; }
@@ -2338,7 +2349,7 @@ function renderVpsSeckillTask() {
     try { const url = new URL(result.url); if (url.protocol === "https:" && !url.username && !url.password) { const link = text("a", "前往官网核对 / 手动支付"); link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer"; row.append(link); } } catch {}
     results.append(row);
   });
-  const logs = vpsSeckillTask?.logs || []; document.querySelector("#vps-seckill-logs").textContent = logs.length ? logs.map(log => `[${new Date(log.at).toLocaleString()}] ${log.message}`).join("\n") : "暂无日志"; document.querySelector("#vps-seckill-log-note").textContent = vpsSeckillTask ? `${vpsSeckillTask.mode || ""} · ${logs.length} 条日志` : "尚未启动补货抢购任务。";
+  const logs = vpsSeckillTask?.logs || []; document.querySelector("#vps-seckill-logs").textContent = logs.length ? logs.map(log => `[${formatBeijingDate(log.at)}] ${log.message}`).join("\n") : "暂无日志"; document.querySelector("#vps-seckill-log-note").textContent = vpsSeckillTask ? `${vpsSeckillTask.mode || ""} · ${logs.length} 条日志` : "尚未启动补货抢购任务。";
 }
 window.addEventListener("hostwatch-action-change", renderVpsSeckillTask);
 async function pollVpsSeckill(taskId) { clearInterval(vpsSeckillPoll); vpsSeckillPoll = setInterval(async () => { try { vpsSeckillTask = await requestJSON(`/api/seckill/status/${encodeURIComponent(taskId)}`); renderVpsSeckillTask(); if (!vpsSeckillTask.pending) clearInterval(vpsSeckillPoll); } catch { clearInterval(vpsSeckillPoll); } }, 1000); }
@@ -2579,7 +2590,7 @@ async function loadStatus() {
   const state = document.querySelector("#state");
   state.textContent = ({ partial: "部分商品待核对", ok: "上次检查成功", blocked: "上次检查被拦截", error: "上次检查失败", unknown: "尚无检查记录" })[lastStatus.state] || lastStatus.state || "尚无检查记录";
   state.className = `state ${lastStatus.state || ""}`;
-  document.querySelector("#last-checked").textContent = lastStatus.last_checked ? `上次检查：${new Date(lastStatus.last_checked).toLocaleString()}` : "";
+  document.querySelector("#last-checked").textContent = lastStatus.last_checked ? `上次检查：${formatBeijingDate(lastStatus.last_checked)}` : "";
   blockedHelpNode.hidden = lastStatus.state !== "blocked";
   document.querySelector("#blocked-message").textContent = lastStatus.message || "检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。";
   const errorNode = document.querySelector("#request-error");

@@ -12,11 +12,11 @@ import tempfile
 import threading
 import uuid
 from contextlib import nullcontext
-from datetime import datetime
 from urllib.parse import urljoin, urlsplit
 
 import requests
 from bs4 import BeautifulSoup
+from time_utils import beijing_iso
 
 
 PROVIDERS = {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "isvoro": "Isvoro", "dmit": "DMIT", "bwh": "搬瓦工"}
@@ -25,7 +25,7 @@ METADATA_VERSION = 1
 
 
 def now() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
+    return beijing_iso()
 
 
 def validate_source(provider: object, scope: object = "") -> tuple[str, str]:

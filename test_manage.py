@@ -169,6 +169,7 @@ class ManagementTests(unittest.TestCase):
             self.assertEqual(settings_path.stat().st_mode & 0o777, 0o600)
             timer = (systemd / self.manage.BACKUP_TIMER).read_text()
             self.assertIn("OnCalendar=*-*-* 04:25:00", timer)
+            self.assertIn("Asia/Shanghai", timer)
             self.assertIn("Persistent=true", timer)
             self.assertIn(("systemctl", "restart", self.manage.BACKUP_TIMER), [call.args for call in run.call_args_list])
             self.assertIn("manage.py scheduled-backup", (systemd / self.manage.BACKUP_SERVICE).read_text())
@@ -203,9 +204,14 @@ class ManagementTests(unittest.TestCase):
             return SimpleNamespace(returncode=0, stdout="Result=success\nActiveState=inactive\n")
         with patch.object(self.manage, "read_backup_schedule", return_value={"enabled": True, "time": "04:25"}), patch.object(self.manage.subprocess, "run", side_effect=fake_run):
             result = self.manage.backup_schedule_status()
-        self.assertIn("Asia/Singapore", result["timezone"])
-        self.assertIn("2026-10-17", result["next_run"])
+        self.assertEqual(result["timezone"], "Asia/Shanghai (UTC+08:00)")
+        self.assertEqual(result["next_run"], "2026-10-17 04:25:00 北京时间")
+        self.assertEqual(result["last_run"], "2026-10-16 04:25:00 北京时间")
         self.assertEqual(result["last_result"], "success")
+
+    def test_backup_schedule_status_converts_utc_and_cst_timestamps(self):
+        self.assertEqual(self.manage._systemd_time_beijing("Sat 2026-10-17 04:25:00 UTC"), "2026-10-17 12:25:00 北京时间")
+        self.assertEqual(self.manage._systemd_time_beijing("Sat 2026-10-17 04:25:00 CST"), "2026-10-17 04:25:00 北京时间")
 
     def test_corrupt_backup_schedule_does_not_break_management_status(self):
         with patch.object(self.manage, "read_backup_schedule", side_effect=ValueError("invalid settings")), patch.object(self.manage.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout="")):

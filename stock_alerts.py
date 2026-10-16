@@ -5,10 +5,9 @@ import hashlib
 import json
 import logging
 import time
-from datetime import datetime
-
 from affiliates import effective_coupon
 from notifications import purchase_button, stock_message
+from time_utils import now_beijing
 
 
 REFRESH_SECONDS = 60
@@ -40,7 +39,7 @@ class StockAlerts:
             line=(product.match_details or {}).get("category_name", "") or product.node_name or item.get("category_name", ""),
             coupon_code=effective_coupon(self.config, item, item.get("adapter", "")),
             item={key: item[key] for key in ("remarks", "line_label", "line_telecom", "line_unicom", "line_mobile") if item.get(key)},
-            checked_at=datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"), purchase_url=self.backend.purchase_link(product, item, self.config))
+            checked_at=now_beijing().strftime("%Y-%m-%d %H:%M:%S 北京时间"), purchase_url=self.backend.purchase_link(product, item, self.config))
 
     def edit(self, record, payload, uncertain=False):
         if record.get("uneditable"):

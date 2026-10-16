@@ -5,6 +5,7 @@ from pathlib import Path
 
 from affiliates import affiliate_purchase_url
 from notifications import hardware_text, network_text, price_text, purchase_button
+from time_utils import BEIJING_TZ
 
 
 TEST_PRODUCT_ID = "isvoro-seckill"
@@ -17,7 +18,7 @@ def timestamp(value):
         result = datetime.fromisoformat(value.replace("Z", "+00:00"))
         if result.utcoffset() is None:
             raise ValueError()
-        return result
+        return result.astimezone(BEIJING_TZ)
     except (AttributeError, TypeError, ValueError):
         raise MonitorError("Isvoro 秒杀活动时间格式异常，未更新通知记录") from None
 
