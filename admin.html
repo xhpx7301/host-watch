@@ -36,17 +36,17 @@
     .mobile-nav-toggle,.mobile-nav-close { display:none; }
     .mobile-nav-scrim { display:none; }
     .workspace { display:flex; flex-direction:column; width:100%; min-width:0; min-height:100vh; max-width:1880px; margin:0 auto; padding:20px 24px 16px; }
-    .page-heading { min-width:0; }
+    .page-heading { min-width:0; display:flex; align-items:baseline; gap:18px; }
     .page-heading .eyebrow { display:none; margin:0 0 6px; color:#8a969e; font-size:10px; letter-spacing:2px; }
     .page-heading h1 { margin:0; font-size:24px; line-height:1.3; letter-spacing:-.8px; }
     .page-heading h1:focus { outline:none; }
-    .page-heading p:last-child { margin:4px 0 0; color:var(--muted); font-size:13px; }
+    .page-heading p:last-child { margin:0; color:var(--muted); font-size:13px; }
     .header-status { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:8px 14px; max-width:530px; flex-shrink:0; }
-    .exchange-rates { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px 24px; min-width:0; max-width:100%; color:var(--muted); font-size:14px; line-height:1.4; text-align:left; }
-    .exchange-time { color:var(--ink); font-size:15px; font-weight:650; font-variant-numeric:tabular-nums; }
-    .exchange-rate-list { display:grid; justify-items:start; gap:2px; font-variant-numeric:tabular-nums; }
+    .exchange-rates { display:grid; grid-template-columns:auto auto; grid-template-areas:"note time" "rates rates"; align-items:baseline; column-gap:24px; row-gap:2px; min-width:0; max-width:100%; color:var(--muted); font-size:14px; line-height:1.4; text-align:left; }
+    .exchange-time { grid-area:time; justify-self:end; color:var(--ink); font-size:15px; font-weight:650; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .exchange-rate-list { grid-area:rates; display:grid; justify-items:start; gap:2px; font-variant-numeric:tabular-nums; }
     .exchange-rate-item { display:block; white-space:nowrap; }
-    .exchange-rate-note { font-size:13px; overflow-wrap:anywhere; }
+    .exchange-rate-note { grid-area:note; font-size:13px; overflow-wrap:anywhere; white-space:nowrap; }
     #header-monitor-state { padding:4px 9px; border:1px solid var(--line); border-radius:20px; background:var(--paper); font-size:12px; }
     .page-stage { flex:1; min-width:0; padding-top:16px; }
     .page-panel { min-width:0; }
@@ -55,8 +55,10 @@
     .panel-card { border:1px solid var(--line); border-radius:12px; background:var(--paper); box-shadow:0 2px 5px rgba(25,43,42,.02); }
     .panel-card > .section-body { padding:16px; }
     a:focus-visible,button:focus-visible { outline:3px solid #4b8790; outline-offset:3px; }
-    .topbar { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:16px; padding-bottom:16px; border-bottom:1px solid var(--line); }
-    .header-status { margin-left:auto; }
+    .topbar { display:grid; grid-template-columns:minmax(300px,1fr) minmax(440px,auto) minmax(260px,auto); align-items:center; column-gap:24px; padding-bottom:16px; border-bottom:1px solid var(--line); }
+    .topbar > .page-heading { grid-column:1; }
+    .topbar > .exchange-rates { grid-column:2; justify-self:center; }
+    .header-status { grid-column:3; margin-left:0; justify-self:end; }
     .brand { display:flex; align-items:center; gap:11px; }
     .brand-mark { display:grid; place-items:center; width:34px; height:34px; border-radius:7px; color:#fff; background:var(--green); font-weight:750; }
     .brand h1 { margin:0; font-size:19px; line-height:1.2; }
@@ -271,7 +273,7 @@
     @media(max-width:1250px) { .catalog-filters { grid-template-columns:repeat(2,minmax(160px,260px)); justify-content:start; } }
     @media(max-width:520px) { .catalog-intro,.catalog-sync,.catalog-reminders { align-items:flex-start; flex-direction:column; } .catalog-browser { padding:14px; } .catalog-merchants { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); } .catalog-merchants button { min-width:0; } .catalog-filters { grid-template-columns:minmax(0,1fr); } .catalog-bulk .subtle { margin-right:0; } .catalog-table { min-width:0; } .catalog-table thead { display:none; } .catalog-table,.catalog-table tbody,.catalog-table tr,.catalog-table td { display:block; } .catalog-table tr { display:grid; grid-template-columns:52px minmax(0,1fr); padding:14px 10px; gap:8px; } .catalog-table tr + tr { border-top:1px solid var(--line); } .catalog-table td { grid-column:2; min-width:0 !important; max-width:none !important; width:auto !important; padding:0; border:0; } .catalog-table td:first-child { grid-column:1; grid-row:1; } .catalog-table td:nth-child(2) { grid-column:2; grid-row:1; } .catalog-table td:nth-child(4)::before { content:"配置："; } .catalog-table td:nth-child(5)::before { content:"价格："; color:var(--muted); font-weight:400; } .catalog-row-actions { display:flex; flex-wrap:wrap; align-items:center; } .catalog-pagination { flex-wrap:wrap; } }
     @media(max-width:1100px) { .shell { grid-template-columns:200px minmax(0,1fr); } .workspace { padding:26px 24px 20px; } .sidebar { padding-left:12px; padding-right:12px; } .overview { grid-template-columns:repeat(2,minmax(0,1fr)); } .product { grid-template-columns:1fr 1fr; gap:11px; } .product-name { grid-column:1/-1; } .product-actions { grid-column:1/-1; justify-content:flex-start; } .savebar { align-items:stretch; flex-direction:column; } .savebar .actions { justify-content:flex-end; } }
-    @media(max-width:780px) { .shell { display:block; } .sidebar { position:sticky; z-index:5; height:auto; padding:14px 14px 0; border-right:0; border-bottom:1px solid var(--line); } .sidebar .brand { padding:0 4px 12px; } .brand strong { font-size:19px; } .brand p { font-size:11px; } .brand-mark { width:32px; height:32px; } .nav-label,.sidebar-note { display:none; } .page-nav { display:flex; gap:5px; overflow-x:auto; padding:2px 0 10px; scrollbar-width:thin; } .page-nav a { flex-shrink:0; min-height:40px; padding:9px 12px; gap:7px; font-size:12px; } .page-nav svg { width:16px; height:16px; } .workspace { min-height:calc(100vh - 119px); padding:22px 16px 16px; } .overview-item { min-height:130px; padding:16px; } .page-heading h1 { font-size:25px; } .header-status { justify-items:start; } .topbar { align-items:flex-start; flex-direction:column; gap:16px; } .header-status .status-line { justify-content:flex-start; } .page-stage { padding-top:20px; } .panel-card > .section-body,#page-overview > .section { padding:18px; } }
+    @media(max-width:780px) { .shell { display:block; } .sidebar { position:sticky; z-index:5; height:auto; padding:14px 14px 0; border-right:0; border-bottom:1px solid var(--line); } .sidebar .brand { padding:0 4px 12px; } .brand strong { font-size:19px; } .brand p { font-size:11px; } .brand-mark { width:32px; height:32px; } .nav-label,.sidebar-note { display:none; } .page-nav { display:flex; gap:5px; overflow-x:auto; padding:2px 0 10px; scrollbar-width:thin; } .page-nav a { flex-shrink:0; min-height:40px; padding:9px 12px; gap:7px; font-size:12px; } .page-nav svg { width:16px; height:16px; } .workspace { min-height:calc(100vh - 119px); padding:22px 16px 16px; } .overview-item { min-height:130px; padding:16px; } .page-heading { display:block; } .page-heading p:last-child { margin-top:4px; } .page-heading h1 { font-size:25px; } .header-status { justify-items:start; } .topbar { display:flex; align-items:flex-start; flex-direction:column; gap:16px; } .header-status .status-line { justify-content:flex-start; } .page-stage { padding-top:20px; } .panel-card > .section-body,#page-overview > .section { padding:18px; } }
     @media(max-width:780px) { .management-intro { flex-direction:column; gap:10px; } .manage-grid,.manage-record-grid { grid-template-columns:1fr; } .manage-record-grid > div + div { padding-left:0; padding-top:20px; border-top:1px solid var(--line); border-left:0; } .manage-form { grid-template-columns:1fr; } .manage-form label { width:100%; max-width:360px; } .manage-section-head { flex-direction:column; gap:8px; } .product-editor { scroll-margin-top:140px; } }
     @media(max-width:520px) { .section-head { align-items:flex-start; flex-direction:column; } .status-line { justify-content:flex-start; } .form-grid { grid-template-columns:1fr; } .span-2 { grid-column:auto; } .overview { gap:10px; } .overview-value { font-size:22px; } #overview-state { font-size:16px; } .savebar { bottom:8px; padding:12px; } .savebar .actions button { flex:1; padding:7px 8px; } .savebar .subtle { font-size:11px; } .merchant-add { width:100%; } }
     .watchlist-filters { display:flex; flex-wrap:wrap; gap:12px; margin:14px 0; }
