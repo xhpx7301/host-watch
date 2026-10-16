@@ -67,10 +67,10 @@
     get("catalog-watch-count").textContent = `${count} / ${notifications}`;
     const dirty = savedConfig !== null && hasUnsavedChanges();
     let note = dirty ? "选择已修改，点击底部“保存配置”应用全部栏目修改。" : "选择已保存。";
-    if (!config.enabled || monitorService?.active !== "active") note += "自动监控尚未运行，保存后点击“开始监控”。";
-    else note += "服务器自动检查已开启，关闭网页后继续运行。";
+    if (!config.enabled || monitorService?.active !== "active") note += "后台自动刷新尚未运行，请检查监控 / 通知的独立刷新设置并保存。";
+    else note += "HostWatch 服务已按保存的自动刷新设置运行，关闭网页后继续检查。";
     if (notifications && (!config.telegram?.configured || config.telegram?.disabled)) note += "请在 Telegram 通知中配置并启用机器人后保存。";
-    if (config.enabled && !config.products.some(p => p.enabled)) note += "已取消全部商品，请先暂停监控再保存。";
+    if (config.enabled && !config.products.some(p => p.enabled)) note += "已取消全部商品，保存后自动刷新服务会停止。";
     get("catalog-reminder-note").textContent = note;
   }
 

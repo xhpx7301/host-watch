@@ -36,6 +36,7 @@ let savedConfig = null;
 const providerFlareDraft = new Map();
 let serviceRefreshTimer, serviceRefreshPending = false;
 let serviceTransitionStartedAt = 0;
+let hostwatchService = null;
 let exchangeRateData = null;
 let exchangeClockTimer;
 let exchangeRateRefreshTimer;
@@ -62,7 +63,7 @@ function beijingISOString(value = new Date()) {
 }
 
 const pages = {
-  overview: { title: "运行概览", description: "查看大盘、监控、通知、抢购的状态与最近刷新记录。" },
+  overview: { title: "运行概览", description: "每分钟查看大盘、监控、通知、抢购的状态与最近刷新记录。" },
   catalog: { title: "VPS 库存大盘", description: "浏览商家全部公开套餐或地区分类，选择你关心的 VPS 加入补货提醒。" },
   seckill: { title: "VPS 补货抢购", description: "从库存监控或库存通知选择商品，配置优惠码和账户后执行补货抢购。" },
   monitor: { title: "VPS 库存监控", description: "集中查看你关注的 VPS，查看库存与配置、编辑备注和线路，直接购买，不发送通知。" },
@@ -302,12 +303,14 @@ async function refreshManagement() {
   try { state = await requestJSON("/api/manage"); }
   catch (error) {
     monitorService = null;
+    hostwatchService = null;
     renderMonitorState();
     scheduleServiceRefresh();
     throw error;
   }
   const previousActive = monitorService?.active;
   monitorService = state.monitor;
+  hostwatchService = state.admin;
   if (["activating", "deactivating"].includes(monitorService?.active)) {
     if (previousActive !== monitorService.active || !serviceTransitionStartedAt) serviceTransitionStartedAt = Date.now();
     monitorService.transition_timeout = Date.now() - serviceTransitionStartedAt >= SERVICE_TRANSITION_TIMEOUT_MS;
@@ -365,7 +368,7 @@ function serviceTone(active) {
 function scheduleServiceRefresh() {
   clearTimeout(serviceRefreshTimer);
   const transition = ["activating", "deactivating"].includes(monitorService?.active);
-  const delay = transition && !monitorService?.transition_timeout ? 2000 : 10000;
+  const delay = transition && !monitorService?.transition_timeout ? 2000 : 60000;
   serviceRefreshTimer = setTimeout(refreshLiveState, delay);
 }
 async function refreshLiveState() {
@@ -480,7 +483,7 @@ async function importManagementBackup(file) {
   const signature = new Uint8Array(await file.slice(0, 2).arrayBuffer());
   if (signature[0] !== 0x1f || signature[1] !== 0x8b) { setMessage("文件不是有效的 gzip 备份。", "error"); return; }
   const draftNote = hasUnsavedChanges() ? "当前页面未保存的修改将被替换。\n" : "";
-  if (!window.confirm(`确认导入备份“${file.name}”？\n${draftNote}将恢复商品配置、库存记录和备份计划，保留当前管理员账号、访问设置及程序版本。\n导入前自动备份当前数据，完成后暂停监控，请确认配置后手动启动。`)) return;
+  if (!window.confirm(`确认导入备份“${file.name}”？\n${draftNote}将恢复商品配置、库存记录和备份计划，保留当前管理员账号、访问设置及程序版本。\n导入前自动备份当前数据，恢复后按保存的自动刷新设置运行。`)) return;
   await runAction(document.querySelector("#manage-import-backup"), "导入中…", "正在校验备份并恢复数据，请勿关闭页面…", async () => {
     const result = await requestJSON("/api/manage/backup-import", {
       method: "POST", headers: { "Content-Type": "application/gzip" }, body: file, timeoutMs: 150_000,
@@ -2061,7 +2064,7 @@ function renderOverview() {
     note.textContent = `${mode} · 间隔 ${intervalLabel(Number(schedule.interval_seconds ?? 0))}${serviceState ? ` · 服务${serviceState}` : ""} · 最近 ${at} · 自动 ${autoAt} · 手动 ${manualAt}`;
     if (log) {
       const sourceLogs = key === "seckill" && vpsSeckillTask?.logs?.length ? vpsSeckillTask.logs : state.logs || [];
-      const lines = sourceLogs.slice(-5).map(item => `[${formatBeijingDate(item.at)}] ${item.trigger === "manual" ? "手动" : "自动"} · ${item.message || item.result || ""}`);
+      const lines = sourceLogs.slice(-5).map(item => `[${formatBeijingDate(item.at)}] ${(item.trigger || "manual") === "manual" ? "手动" : "自动"} · ${item.message || item.result || ""}`);
       log.textContent = lines.length ? lines.join("\n") : "暂无日志";
     }
   }
@@ -2424,18 +2427,19 @@ document.querySelector("#vps-seckill-interval").addEventListener("input", event 
 function renderMonitorState() {
   const active = monitorService?.active;
   const transitionTimedOut = monitorService?.transition_timeout;
-  const labels = { active: "监控服务运行中", inactive: "监控服务已停止", failed: "监控服务运行失败", activating: transitionTimedOut ? "监控服务启动超时" : "监控服务启动中", deactivating: transitionTimedOut ? "监控服务停止超时" : "监控服务停止中" };
-  const label = labels[active] || "监控服务状态未知";
-  let note = config.enabled ? "已保存：开启自动监控。" : "已保存：暂停自动监控。";
+  const labels = { active: "自动刷新服务运行中", inactive: "自动刷新服务已停止", failed: "自动刷新服务运行失败", activating: transitionTimedOut ? "自动刷新服务启动超时" : "自动刷新服务启动中", deactivating: transitionTimedOut ? "自动刷新服务停止超时" : "自动刷新服务停止中" };
+  const label = labels[active] || "自动刷新服务状态未知";
+  const automaticModules = [config.monitor_schedule?.mode === "auto" ? "库存监控" : "", config.notify_schedule?.mode === "auto" ? "库存通知" : ""].filter(Boolean);
+  let note = automaticModules.length ? `已保存：${automaticModules.join("、")}开启自动刷新。` : "已保存：库存监控和库存通知均为仅手动刷新。";
   if (!savedConfig) note = "正在读取配置。";
   if (!monitorService) note += "请刷新状态核对服务器实际运行情况。";
-  else if (active === "active") note += config.enabled ? "服务已启动，库存检查是否成功请查看最近检查结果。" : "暂停尚未生效，服务仍在运行，请重新暂停监控。";
-  else if (active === "activating" && transitionTimedOut) note += "超过 60 秒仍未确认启动；请刷新状态并查看服务日志，必要时重试启动。";
+  else if (active === "active") note += "服务已启动，库存检查是否成功请查看各模块最近检查结果。";
+  else if (active === "activating" && transitionTimedOut) note += "超过 60 秒仍未确认启动；请刷新状态并查看服务日志。";
   else if (active === "activating") note += "服务尚未确认启动成功，正在自动刷新；超过 60 秒会提示启动超时。";
-  else if (active === "deactivating" && transitionTimedOut) note += "超过 60 秒仍未确认停止；请刷新状态并查看服务日志，必要时重试暂停。";
+  else if (active === "deactivating" && transitionTimedOut) note += "超过 60 秒仍未确认停止；请刷新状态并查看服务日志。";
   else if (active === "deactivating") note += "服务正在停止，正在自动刷新最终状态。";
-  else if (config.enabled) note += "服务尚未运行，请查看最近检查错误及服务日志，修正配置后再开始监控。";
-  else note += "点击“开始监控”后开始检查。";
+  else if (automaticModules.length) note += "服务尚未运行，请查看最近检查错误及服务日志，修正配置后保存设置。";
+  else note += "当前没有启用自动刷新；可在对应栏目手动刷新。";
   const runtime = document.querySelector("#monitor-runtime");
   const tone = serviceTone(active);
   runtime.textContent = label;
@@ -2444,10 +2448,12 @@ function renderMonitorState() {
   const overview = document.querySelector("#overview-state");
   if (overview) { overview.textContent = label; overview.className = `overview-value state ${tone}`; }
   const header = document.querySelector("#header-monitor-state");
-  header.textContent = label;
-  header.className = `state ${tone}`;
+  const hostActive = hostwatchService?.active;
+  const hostLabels = { active: "HostWatch 服务运行中", inactive: "HostWatch 服务已停止", failed: "HostWatch 服务运行失败", activating: "HostWatch 服务启动中", deactivating: "HostWatch 服务停止中" };
+  header.textContent = hostLabels[hostActive] || "HostWatch 服务状态未知";
+  header.className = `state ${serviceTone(hostActive)}`;
   const overviewNote = document.querySelector("#overview-state-note");
-  if (overviewNote) overviewNote.textContent = active === "active" ? "后台持续检查，关闭网页后仍运行" : active === "activating" && transitionTimedOut ? "启动超过 60 秒未完成，请查看服务日志" : active === "activating" ? "正在确认启动状态，页面自动刷新" : active === "failed" ? "请检查配置或查看服务日志" : active === "deactivating" && transitionTimedOut ? "停止超过 60 秒未完成，请查看服务日志" : active === "deactivating" ? "正在停止，等待最终状态" : active === "inactive" ? "已暂停，保留最近库存记录" : "等待服务器返回服务状态";
+  if (overviewNote) overviewNote.textContent = active === "active" ? "按各模块设置后台刷新，关闭网页后仍运行" : active === "activating" && transitionTimedOut ? "启动超过 60 秒未完成，请查看服务日志" : active === "activating" ? "正在确认启动状态，页面自动刷新" : active === "failed" ? "请检查配置或查看服务日志" : active === "deactivating" && transitionTimedOut ? "停止超过 60 秒未完成，请查看服务日志" : active === "deactivating" ? "正在停止，等待最终状态" : active === "inactive" ? "没有模块启用自动刷新，保留最近库存记录" : "等待服务器返回服务状态";
   renderProductList();
   window.dispatchEvent(new Event("hostwatch-service-change"));
 }
@@ -2459,7 +2465,9 @@ function collectConfig(enabled = config.enabled) {
     monitor_schedule: { mode: document.querySelector("#monitor-schedule-mode").value, interval_seconds: Number(document.querySelector("#interval").value || NaN) },
     notify_schedule: { mode: document.querySelector("#notify-schedule-mode").value, interval_seconds: Number(document.querySelector("#notify-interval").value || NaN) },
     catalog_schedule: config.catalog_schedule || { mode: "manual", interval_seconds: 300 },
-    seckill_schedule: { mode: document.querySelector("#vps-seckill-mode")?.value === "manual" ? "manual" : "auto", interval_seconds: Number(document.querySelector("#vps-seckill-interval")?.value || 5) },
+    // VPS 抢购由页面上的启动/暂停按钮独立控制；执行模式（极速/精准/手动）
+    // 只决定任务内行为，不把一次性任务误报成后台自动刷新。
+    seckill_schedule: { mode: "manual", interval_seconds: Number(document.querySelector("#vps-seckill-interval")?.value || 5) },
     affiliate_id: config.affiliate_id || "",
     affiliates: collectAffiliates(),
     affiliate_notes: collectAffiliateNotes(),
@@ -2500,7 +2508,7 @@ function updateDraftState() {
   saveState.className = dirty ? "draft-note" : "";
   const seconds = Number(document.querySelector("#interval").value || NaN);
   const valid = Number.isInteger(seconds) && seconds >= 0 && seconds <= 86400;
-  document.querySelector("#interval-description").textContent = valid ? (seconds === 0 ? "本轮检查完成后立即检查下一轮，不额外等待；各轮顺序执行。" : `每轮检查完成后等待 ${intervalLabel(seconds)}，再检查下一轮；开始监控后立即进行第一次检查。`) : "检查间隔必须是 0–86400 秒的整数。";
+  document.querySelector("#interval-description").textContent = valid ? (seconds === 0 ? "本轮检查完成后立即检查下一轮，不额外等待；各轮顺序执行。" : `每轮检查完成后等待 ${intervalLabel(seconds)}，再检查下一轮；保存后自动刷新生效。`) : "检查间隔必须是 0–86400 秒的整数。";
   document.querySelector("#interval-preset").value = [0, 1, 5, 10, 30, 60, 300, 600, 1800, 3600].includes(seconds) ? String(seconds) : "";
   window.dispatchEvent(new Event("hostwatch-draft-change"));
 }
@@ -2767,10 +2775,32 @@ async function triggerManualRefresh(role, button) {
 }
 document.querySelector("#monitor-refresh-manual").addEventListener("click", event => triggerManualRefresh("watch", event.currentTarget));
 document.querySelector("#notify-refresh-manual").addEventListener("click", event => triggerManualRefresh("notify", event.currentTarget));
-document.querySelectorAll("[data-overview-log]").forEach(button => button.addEventListener("click", () => {
-  const log = document.querySelector(`#overview-${button.dataset.overviewLog}-log`);
-  if (log) log.hidden = !log.hidden;
+const overviewLogDialog = document.querySelector("#overview-log-dialog");
+const overviewLogDetail = document.querySelector("#overview-log-detail-content");
+const overviewLogTitle = document.querySelector("#overview-log-title");
+const overviewModuleNames = { catalog: "大盘", monitor: "监控", notify: "通知", seckill: "抢购" };
+function moduleLogItems(key) {
+  const state = lastStatus?.modules?.[key] || {};
+  return key === "seckill" && vpsSeckillTask?.logs?.length ? vpsSeckillTask.logs : state.logs || [];
+}
+function formatModuleLogs(key, limit = 0) {
+  const logs = moduleLogItems(key), items = limit ? logs.slice(-limit) : logs;
+  return items.length ? items.map(item => `[${formatBeijingDate(item.at)}] ${(item.trigger || "manual") === "manual" ? "手动" : "自动"} · ${item.message || item.result || ""}`).join("\n") : "暂无日志";
+}
+document.querySelectorAll("[data-overview-log-toggle]").forEach(button => button.addEventListener("click", () => {
+  const log = document.querySelector(`#overview-${button.dataset.overviewLogToggle}-log`);
+  if (!log) return;
+  log.hidden = !log.hidden;
+  button.textContent = log.hidden ? "显示日志" : "隐藏日志";
 }));
+document.querySelectorAll("[data-overview-log-detail]").forEach(button => button.addEventListener("click", () => {
+  const key = button.dataset.overviewLogDetail;
+  overviewLogTitle.textContent = `${overviewModuleNames[key] || "模块"}详细日志`;
+  overviewLogDetail.textContent = formatModuleLogs(key);
+  overviewLogDialog.showModal();
+}));
+document.querySelector("#overview-log-close").addEventListener("click", () => overviewLogDialog.close());
+overviewLogDialog.addEventListener("click", event => { if (event.target === overviewLogDialog) overviewLogDialog.close(); });
 document.querySelector("#fetcher-mode").addEventListener("change", updateFetcherStatus);
 window.addEventListener("hostwatch-action-change", syncProviderFlareSettings);
 document.querySelectorAll("#flaresolverr-light, #flaresolverr-full").forEach(button => button.addEventListener("click", () => {
@@ -2802,11 +2832,6 @@ document.querySelector(".shell").addEventListener("input", (event) => {
 document.querySelector(".shell").addEventListener("change", (event) => {
   if (!event.target.closest("#page-catalog, .watchlist-filters")) updateDraftState();
 });
-document.querySelector("#monitor-start").addEventListener("click", (event) => {
-  if (hasUnsavedChanges()) { setMessage("请先点击底部“保存配置”，再开始监控；未保存商品也可以先单次测试。", "pending"); return; }
-  runAction(event.currentTarget, "启动中…", "正在使用已保存配置开始监控…", () => performManagementAction("monitor-start"));
-});
-document.querySelector("#monitor-stop").addEventListener("click", (event) => runAction(event.currentTarget, "暂停中…", "正在暂停自动监控；页面未保存修改会保留…", () => performManagementAction("monitor-stop")));
 document.querySelector("#telegram-test").addEventListener("click", (event) => runAction(event.currentTarget, "发送中…", "正在发送 Telegram 测试消息…", async () => {
   await requestJSON("/api/telegram/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim() }) });
   setMessage("Telegram 测试消息已发送。", "success");
@@ -2840,7 +2865,7 @@ async function saveConfig() {
   document.querySelector("#telegram-token").value = "";
   applyConfig(result.config);
   if (result.service?.ok) {
-    setMessage(result.config.enabled ? "配置已保存并应用，自动监控保持开启。" : "配置已保存，自动监控保持暂停。可先测试商品，再点击“开始监控”。", "success");
+    setMessage(result.config.enabled ? "配置已保存并应用，HostWatch 服务已按自动刷新设置运行。" : "配置已保存，当前没有启用自动刷新；手动刷新仍可单独使用。", "success");
   } else {
     setMessage(`配置已保存，但自动应用服务失败：${result.service?.error || "请在监控设置中重试"}`, "error");
   }

@@ -2142,9 +2142,17 @@ class Handler(BaseHTTPRequestHandler):
             for key in ("watch_order", "notify_order"):
                 if key not in submitted:
                     submitted[key] = current[key]
-            # Saving settings never toggles monitoring. Start/stop are explicit
-            # management actions against the persisted configuration.
-            submitted["enabled"] = current["enabled"]
+            # The service follows the two independent automatic refresh switches.
+            # Manual-only modules still work through their page-level refresh buttons.
+            monitor_schedule = submitted.get("monitor_schedule", {})
+            notify_schedule = submitted.get("notify_schedule", {})
+            automatic_refresh = (
+                isinstance(monitor_schedule, dict) and str(monitor_schedule.get("mode", "")).casefold() == "auto"
+            ) or (
+                isinstance(notify_schedule, dict) and str(notify_schedule.get("mode", "")).casefold() == "auto"
+            )
+            has_refreshable_products = any(isinstance(item, dict) and (item.get("watch_enabled") or item.get("notify_enabled") or item.get("enabled")) for item in submitted.get("products", [])) or bool(submitted.get("isvoro_seckill"))
+            submitted["enabled"] = bool(automatic_refresh and has_refreshable_products)
             value = validate_config(submitted)
             save_config(value)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
