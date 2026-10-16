@@ -436,7 +436,7 @@ sudo systemctl disable --now vmiss-monitor-admin.service
 
 ## 升级
 
-在网页管理员管理区点击“更新 HostWatch”，或在服务器运行 `hw update`。升级不会覆盖商品、Telegram 或管理员配置；更新前自动备份，成功后恢复原来正在运行的监控。旧版本首次升级请先运行一次 `hw update`。
+在网页管理员管理区点击“更新 HostWatch”，或在服务器运行 `hw update`。升级不会覆盖商品、Telegram 或管理员配置；更新前自动备份，成功后恢复原来正在运行的监控。网页更新启动后约 10 秒自动刷新管理页，并恢复刷新前所在的栏目。手动刷新浏览器也会保留当前栏目。旧版本首次升级请先运行一次 `hw update`。
 
 ## 离线语法检查
 

@@ -27,6 +27,8 @@ const toastNode = document.querySelector("#toast");
 let toastTimer;
 let actionRunning = false;
 let updateUnit = sessionStorage.getItem("hostwatch-update-unit") || "";
+const UPDATE_RELOAD_KEY = "hostwatch-update-reload-at";
+let updateReloadTimer;
 let managementUsers = [];
 let backupScheduleDraft = null;
 let backupScheduleSaved = null;
@@ -103,6 +105,7 @@ function navigatePage(name, { history = true, focus = true } = {}) {
   if (name === "products") { navigatePage("notifications", { history, focus }); openAdvancedProducts(); return; }
   if (!Object.hasOwn(pages, name)) name = "overview";
   if (history && location.hash !== `#${name}`) window.history.pushState(null, "", `#${name}`);
+  sessionStorage.setItem("hostwatch-current-page", name);
   if (currentPage === name) return;
   currentPage = name;
   document.querySelectorAll("[data-page]").forEach((panel) => {
@@ -134,7 +137,8 @@ document.querySelectorAll("[data-page-link]").forEach((link) => {
   });
 });
 window.addEventListener("hashchange", () => navigatePage(location.hash.slice(1), { history: false }));
-navigatePage(location.hash.slice(1), { history: false, focus: false });
+const initialPage = location.hash.slice(1) || sessionStorage.getItem("hostwatch-current-page") || "overview";
+navigatePage(initialPage, { history: false, focus: false });
 
 function setMessage(message, kind = "", notify = true) {
   messageNode.textContent = message;
@@ -407,6 +411,27 @@ async function refreshUpdateStatus() {
   return { ...result, finished };
 }
 
+function scheduleUpdateReload(delayMs = 10_000) {
+  clearTimeout(updateReloadTimer);
+  const deadline = Date.now() + Math.max(0, Number(delayMs) || 0);
+  sessionStorage.setItem(UPDATE_RELOAD_KEY, String(deadline));
+  const reload = () => {
+    sessionStorage.removeItem(UPDATE_RELOAD_KEY);
+    window.location.reload();
+  };
+  updateReloadTimer = setTimeout(reload, Math.max(0, deadline - Date.now()));
+}
+
+function resumeUpdateReload() {
+  const deadline = Number(sessionStorage.getItem(UPDATE_RELOAD_KEY));
+  if (!Number.isFinite(deadline)) return;
+  const delay = Math.max(0, deadline - Date.now());
+  updateReloadTimer = setTimeout(() => {
+    sessionStorage.removeItem(UPDATE_RELOAD_KEY);
+    window.location.reload();
+  }, delay);
+}
+
 async function performManagementAction(action, extra = {}) {
   const result = await managementRequest({ action, ...extra });
   if (result.update_unit) {
@@ -415,6 +440,10 @@ async function performManagementAction(action, extra = {}) {
     document.querySelector("#manage-task-status").textContent = result.message;
     setMessage(result.message, "success");
     pollUpdateStatus();
+    if (action === "update") {
+      document.querySelector("#manage-task-status").textContent = `${result.message} 管理页将在 10 秒后自动刷新。`;
+      scheduleUpdateReload();
+    }
   } else {
     setMessage(result.message || "管理员操作已完成。", "success");
   }
@@ -508,7 +537,7 @@ function pollUpdateStatus() {
       const result = await refreshUpdateStatus();
       if (result.finished || result.LoadState === "not-found") {
         clearInterval(timer);
-        setMessage(result.Result === "success" ? "HostWatch 更新完成。管理页可能需要重新载入。" : `HostWatch 更新结束：${result.Result || result.LoadState}`, result.Result === "success" ? "success" : "error");
+        setMessage(result.Result === "success" ? "HostWatch 更新完成，管理页将在 10 秒后自动刷新。" : `HostWatch 更新结束：${result.Result || result.LoadState}`, result.Result === "success" ? "success" : "error");
         updateUnit = "";
         sessionStorage.removeItem("hostwatch-update-unit");
         await refreshManagement();
@@ -2886,3 +2915,4 @@ exchangeRateRefreshTimer = setInterval(() => { if (!document.hidden) void loadEx
 runAction(null, "", "正在载入配置和监控状态…", () => reloadConfig(false), false);
 bindManagementActions();
 if (updateUnit) pollUpdateStatus();
+resumeUpdateReload();
