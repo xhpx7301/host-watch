@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hmac
+import hashlib
 import ipaddress
 import json
 import os
@@ -375,6 +376,58 @@ def stop_stock_test(task_id: str) -> dict:
     return task.snapshot()
 
 
+ORDER_PROTOCOL = "hostwatch-unpaid-v1"
+
+
+def order_json(response) -> dict:
+    # Never follow checkout/payment redirects or mistake a login HTML page for success.
+    if not 200 <= response.status_code < 300:
+        raise ValueError(f"接口返回 HTTP {response.status_code}（不跟随跳转）")
+    try:
+        data = response.json()
+    except ValueError:
+        raise ValueError("接口未返回 JSON，普通登录/结算网页尚未适配") from None
+    if not isinstance(data, dict):
+        raise ValueError("接口响应格式无效")
+    return data
+
+
+def check_order_account(session, account: dict) -> dict:
+    result = {"status": "unknown", "ok": False, "account_id": account.get("id", ""),
+        "checked_at": datetime.now().astimezone().isoformat(timespec="seconds")}
+    if not account.get("login_url") or not account.get("username") or not account.get("password"):
+        return {**result, "message": "缺少账户检查接口、用户名或密码，无法确认账户状态"}
+    try:
+        response = session.post(account["login_url"], json={"protocol": ORDER_PROTOCOL,
+            "action": "check_account", "username": account["username"], "password": account["password"]},
+            timeout=(5, 20), allow_redirects=False)
+        if response.status_code in {401, 403}:
+            return {**result, "status": "invalid", "message": "账户认证失败或访问受限，请到官网检查"}
+        data = order_json(response)
+        if data.get("authenticated") is False:
+            return {**result, "status": "invalid", "message": "账户认证失败，请检查密码、验证码或二次验证"}
+        if data.get("protocol") == ORDER_PROTOCOL and data.get("authenticated") is True and data.get("username") == account["username"]:
+            return {**result, "ok": True, "status": "valid", "message": "账户认证正常（不代表具有购买资格或库存）"}
+        return {**result, "message": "未取得明确的账户认证凭据；需适配登录接口或到官网检查"}
+    except (requests.RequestException, ValueError):
+        return {**result, "message": "无法验证账户：网络异常、跳转或接口未适配，请到官网检查"}
+
+
+def seckill_account_check(submitted: dict) -> dict:
+    from monitor import product_fetcher
+    current = validate_config(current_config())
+    account = next((row for row in current["vps_seckill"]["accounts"] if row["id"] == submitted.get("account_id")), None)
+    item = next((row for row in current["vps_seckill"]["items"] if row["id"] == submitted.get("item_id") and row["account_id"] == submitted.get("account_id")), None)
+    if not account or not item:
+        raise ValueError("请先保存商品与账户绑定，再检查该商品的账户")
+    product = next((row for row in current["products"] if row["id"] == item["product_id"]), {})
+    fetcher = product_fetcher(current.get("fetcher"), {**product, "egress_node_id": item["egress_node_id"]})
+    with requests.Session() as session:
+        session.trust_env = False
+        egress.apply_session(session, fetcher)
+        return {**check_order_account(session, account), "account_id": account["id"], "item_id": item["id"]}
+
+
 class SeckillTask:
     def __init__(self, task_id: str, config: dict, mode: str):
         self.id = task_id
@@ -404,68 +457,140 @@ class SeckillTask:
         self.cancelled.set()
 
     def _submit(self, session, item, account, url):
-        if not item.get("submit_url") or not item.get("auto_submit") or not account or not account.get("auto_submit"):
-            self.log(f"检测到库存，已准备购买链接：{url}；未执行自动提交，请确认商品自动提交和账户自动下单均为已允许，并填写提交地址", "ready", item)
-            return {"status": "ready", "url": url}
-        payload = {"username": account.get("username", ""), "password": account.get("password", ""), "coupon": item.get("coupon_code", "")}
-        if account.get("login_url"):
-            login = session.post(account["login_url"], data={"username": payload["username"], "password": payload["password"]}, timeout=(5, 20), allow_redirects=True)
-            if not login.ok:
-                raise ValueError(f"账户登录返回 HTTP {login.status_code}")
-        response = session.post(item["submit_url"], data=payload, timeout=(5, 20), allow_redirects=True)
-        if not response.ok:
-            raise ValueError(f"自动提交返回 HTTP {response.status_code}")
-        self.log(f"自动提交请求已发送：HTTP {response.status_code}，请到商家账户核对订单和支付状态", "success", item)
-        return {"status": "submitted", "url": response.url, "status_code": response.status_code}
+        quantity = item.get("quantity", 1)
+        # This is an explicit unpaid-order adapter contract, never a generic checkout POST.
+        # The adapter MUST enforce no charging, including saved cards/account credit.
+        if self.cancelled.is_set():
+            return {"status": "cancelled", "url": url, "quantity": quantity}
+        key = hashlib.sha256(f"{self.id}:{item['id']}".encode()).hexdigest()
+        payload = {"protocol": ORDER_PROTOCOL, "action": "create_unpaid_order",
+            "product_id": item["product_id"], "purchase_url": url, "quantity": quantity,
+            "coupon_code": item.get("coupon_code", ""), "payment_mode": "manual",
+            "auto_pay": False, "idempotency_key": key}
+        try:
+            response = session.post(item["submit_url"], json=payload,
+                headers={"Idempotency-Key": key}, timeout=(5, 20), allow_redirects=False)
+            data = order_json(response)
+            if (data.get("protocol") != ORDER_PROTOCOL or data.get("status") != "unpaid"
+                    or not isinstance(data.get("order_id"), str) or not data["order_id"].strip()
+                    or type(data.get("quantity")) is not int or data["quantity"] != quantity):
+                raise ValueError("未确认待付款订单")
+        except (requests.RequestException, ValueError):
+            # A lost response may still have created an order. Never retry automatically.
+            self.log("已发送一次下单请求，但无法确认待付款订单；已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
+            return {"status": "uncertain", "url": url, "quantity": quantity}
+        self.log(f"已创建待付款订单，数量 {quantity}；请手动前往官网核对订单并支付。", "success", item)
+        # Do not expose or visit arbitrary response links, and never fetch payment_url.
+        return {"status": "submitted", "order_id": data["order_id"][:128], "url": url, "quantity": quantity, "payment_status": "unpaid"}
+
+    @staticmethod
+    def enough_stock(result, quantity):
+        return (type(result.available) is int and result.available > 0
+            and (result.stock_mode == "availability" or result.available >= quantity))
 
     def run(self) -> None:
+        from contextlib import ExitStack
         from monitor import inspect_product, product_fetcher
         products = {str(item.get("id")): item for item in self.config.get("products", [])}
         seckill = self.config.get("vps_seckill", {})
         accounts = {str(item.get("id")): item for item in seckill.get("accounts", [])}
         items = [item for item in seckill.get("items", []) if item.get("enabled", True)]
-        self.log(f"秒杀任务已启动：{self.mode_label()}，共 {len(items)} 个商品")
+        finished, contexts = {}, {}
+        self.log(f"秒杀任务已启动：{self.mode_label()}，共 {len(items)} 个商品；仅创建待付款订单，需手动到官网支付")
         try:
-            with requests.Session() as session:
-                session.headers["User-Agent"] = "HostWatch/1.0 (VPS seckill)"
+            with ExitStack() as stack:
+                # Separate stock and authenticated sessions per item, even for the same account.
+                for item in items:
+                    if self.cancelled.is_set():
+                        break
+                    try:
+                        product = products.get(item["product_id"])
+                        routed = {**(product or {}), "egress_node_id": item.get("egress_node_id", "")}
+                        fetcher = product_fetcher(self.config.get("fetcher"), routed)
+                        stock_session = stack.enter_context(requests.Session())
+                        order_session = stack.enter_context(requests.Session())
+                        for session in (stock_session, order_session):
+                            session.trust_env = False
+                            session.headers["User-Agent"] = "HostWatch/1.0 (VPS seckill; unpaid orders only)"
+                            egress.apply_session(session, fetcher)
+                        account = accounts.get(item.get("account_id"))
+                        auto = self.mode != "manual" and item.get("auto_submit") and account and account.get("auto_submit") and item.get("submit_url")
+                        if auto:
+                            if not account.get("login_url") or urlsplit(account["login_url"]).netloc != urlsplit(item["submit_url"]).netloc:
+                                raise ValueError("账户检查接口与待付款下单接口必须同源，以复用认证会话")
+                            capability = order_json(order_session.get(item["submit_url"], timeout=(5, 20), allow_redirects=False))
+                            if capability.get("protocol") != ORDER_PROTOCOL or capability.get("order_only") is not True or capability.get("automatic_payment") is not False:
+                                raise ValueError("接口未明确支持仅创建待付款订单；普通结算网页不能自动提交")
+                        if account:
+                            checked = check_order_account(order_session, account)
+                            self.log(f"账户 {account['name']}：{checked['message']}", "info" if checked["ok"] else "error", item)
+                            with self.lock:
+                                self.output.setdefault("accounts", {})[item["id"]] = checked
+                            if auto and not checked["ok"]:
+                                raise ValueError("账户未通过验证，已停止该商品自动提交")
+                        contexts[item["id"]] = (product, routed, fetcher, stock_session, order_session, account, auto)
+                    except (requests.RequestException, ValueError) as exc:
+                        detail = str(exc) if isinstance(exc, ValueError) else "接口网络异常，请检查出口或接口连通性"
+                        self.log(f"预检查未通过：{detail}；未提交订单。", "error", item)
+                        finished[item["id"]] = {"status": "blocked", "url": item.get("target_url", "")}
                 round_no = 0
-                while not self.cancelled.is_set():
+                while not self.cancelled.is_set() and len(finished) < len(items):
                     round_no += 1
-                    ready = []
                     for item in items:
                         if self.cancelled.is_set():
                             break
-                        product = products.get(item.get("product_id"))
-                        account = accounts.get(item.get("account_id"))
-                        result = None
+                        if item["id"] in finished:
+                            continue
+                        product, routed, fetcher, stock_session, order_session, account, auto = contexts[item["id"]]
+                        quantity = item.get("quantity", 1)
                         try:
-                            if product:
-                                routed_product = {**product, "egress_node_id": item.get("egress_node_id", "")}
-                                result = inspect_product(session, routed_product, product_fetcher(self.config.get("fetcher"), routed_product))
-                                available = isinstance(result.available, int) and result.available > 0
-                                url = result.url or item.get("target_url", "")
+                            if not product:
+                                self.log("商品已移出配置，保留购买链接；请从高级设置重新添加商品以恢复库存检查。", "ready", item)
+                                finished[item["id"]] = {"status": "ready", "url": item.get("target_url", ""), "quantity": quantity}
+                                continue
+                            result = inspect_product(stock_session, routed, fetcher)
+                            url = result.url or item.get("target_url", "")
+                            available = self.enough_stock(result, quantity)
+                            self.log(f"第 {round_no} 轮：{item.get('label') or item['product_id']} · 需求 {quantity} 台 · {'可下单' if available else '缺货/库存不足/未知'}", "info", item)
+                            if not available:
+                                continue
+                            if result.stock_mode == "availability":
+                                self.log("商家仅提供有货状态，数量由下单接口最终核验；不会自动减少下单数量。", "info", item)
+                            if auto and self.mode == "precise":
+                                checked = check_order_account(order_session, account)
+                                with self.lock:
+                                    self.output.setdefault("accounts", {})[item["id"]] = checked
+                                if not checked["ok"]:
+                                    finished[item["id"]] = {"status": "blocked", "url": url, "quantity": quantity}
+                                    self.log("提交前账户复核失败，已停止该商品，请到官网检查。", "error", item)
+                                    continue
+                                if self.cancelled.is_set():
+                                    break
+                                result = inspect_product(stock_session, routed, fetcher)
+                                if not self.enough_stock(result, quantity):
+                                    self.log("提交前第二次库存检查不足，继续等待，不发送订单。", "info", item)
+                                    continue
+                                url = result.url or url
+                            if auto:
+                                finished[item["id"]] = self._submit(order_session, item, account, url)
                             else:
-                                available, url = False, item.get("target_url", "")
-                                if not url:
-                                    raise ValueError("商品已下架且没有保存目标链接")
-                            self.log(f"第 {round_no} 轮：{item.get('label') or item.get('product_id')} · {'有货' if available else '缺货/未知'}", "info", item)
-                            if available:
-                                ready.append(self._submit(session, item, account, url))
-                                if self.mode == "manual" or ready[-1].get("status") == "submitted":
-                                    self.cancelled.set()
-                        except Exception as exc:
-                            self.log(f"第 {round_no} 轮检查失败：{exc}", "error", item)
+                                finished[item["id"]] = {"status": "ready", "url": url, "quantity": quantity}
+                                self.log(f"已准备购买链接（数量 {quantity}）：{url}；请到官网手动下单和付款。", "ready", item)
+                        except Exception:
+                            self.log(f"第 {round_no} 轮库存检查失败，未发送下单请求；请检查商品和出口配置。", "error", item)
                     with self.lock:
-                        self.output["items"] = ready
+                        self.output["items"] = [{"item_id": key, **value} for key, value in finished.items()]
                         self.output["round"] = round_no
-                    if self.mode == "manual" or self.cancelled.is_set():
+                    if self.mode == "manual" or len(finished) == len(items):
                         break
                     self.cancelled.wait(seckill.get("interval_seconds", 5))
         finally:
             with self.lock:
-                self.output.update(pending=False, cancelled=self.cancelled.is_set() and not self.output.get("items"), checked_at=datetime.now().astimezone().isoformat(timespec="seconds"), duration_seconds=round(time.monotonic() - self.started, 1))
+                self.output.update(items=[{"item_id": key, **value} for key, value in finished.items()], pending=False,
+                    cancelled=self.cancelled.is_set(), checked_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+                    duration_seconds=round(time.monotonic() - self.started, 1))
                 self.done.set()
-            self.log("秒杀任务已停止" if self.output.get("cancelled") else "秒杀任务已完成")
+            self.log("秒杀任务已停止" if self.output.get("cancelled") else "秒杀任务已完成；如有待付款订单，请到官网手动支付")
 
     def mode_label(self):
         return {"rapid": "极速秒杀（自动）", "precise": "精准秒杀（自动）", "manual": "手动秒杀"}.get(self.mode, self.mode)
@@ -479,9 +604,11 @@ def start_seckill(submitted: dict) -> dict:
     requested_mode = str(submitted.get("mode", current["vps_seckill"]["mode"])).strip().casefold()
     if requested_mode not in {"rapid", "precise", "manual"}:
         raise ValueError("秒杀模式无效")
-    if not current["vps_seckill"]["items"]:
+    if not any(item["enabled"] for item in current["vps_seckill"]["items"]):
         raise ValueError("请先从库存监控或库存通知选择至少一个秒杀商品")
     with SECKILL_LOCK:
+        if task_id in STOPPED_SECKILL_IDS or task_id in SECKILL_TASKS:
+            raise ValueError("秒杀任务编号已使用，请重新启动")
         if any(not task.done.is_set() for task in SECKILL_TASKS.values()):
             raise ValueError("已有 VPS 秒杀任务正在执行，请先停止")
         task = SeckillTask(task_id, current, requested_mode)
@@ -773,10 +900,13 @@ def normalize_seckill(value: object, product_ids: set[str]) -> dict:
                 raise ValueError(f"VPS 秒杀商品 {item_id} 的 {key} 必须是布尔值")
         if account_id and account_id not in account_ids:
             raise ValueError(f"VPS 秒杀商品 {item_id} 绑定的账户不存在")
+        quantity = item.get("quantity", 1)
+        if type(quantity) is not int or not 1 <= quantity <= 100:
+            raise ValueError(f"VPS 秒杀商品 {item_id} 的下单数量必须是 1 到 100 的整数")
         item_ids.add(item_id)
         normalized_items.append({"id": item_id, "product_id": product_id, "coupon_code": coupon[:256],
             "target_url": target_url, "submit_url": submit_url, "account_id": account_id,
-            "egress_node_id": egress_node_id[:64],
+            "egress_node_id": egress_node_id[:64], "quantity": quantity,
             "enabled": bool(item.get("enabled", True)), "auto_submit": bool(item.get("auto_submit", False)),
             "label": str(item.get("label", ""))[:160]})
     return {"enabled": enabled, "mode": mode, "interval_seconds": interval,
@@ -1392,7 +1522,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(403)
             return
         # Stopping and polling tests must never wait behind config/service locks.
-        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/egress/probe"}:
+        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/egress/probe"}:
             self._post_action()
             return
         if not MUTATION_LOCK.acquire(blocking=False):
@@ -1404,7 +1534,7 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if self.path not in {"/api/config", "/api/telegram/test", "/api/manage", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
+        if self.path not in {"/api/config", "/api/telegram/test", "/api/manage", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
             self.send_error(404)
             return
         try:
@@ -1445,6 +1575,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not submitted.get("task_id"):
                     raise ValueError("请刷新管理页后重试，以使用可停止的商品测试")
                 output = start_stock_test(submitted)
+                self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
+                return
+            if self.path == "/api/seckill/account-check":
+                output = seckill_account_check(submitted)
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/seckill/start":

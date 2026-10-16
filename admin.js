@@ -1941,6 +1941,13 @@ document.querySelector("#egress-add-node").addEventListener("click", () => { con
 document.querySelector("#egress-refresh").addEventListener("click", async () => { try { mergeEgressStatus(await requestJSON("/api/egress")); renderEgress(); updateDraftState(); setMessage("出口节点状态已刷新，其他未保存修改已保留。", "success"); } catch (error) { setMessage(error.message, "error"); } });
 
 let vpsSeckillTask = null;
+const seckillAccountChecks = new Map();
+function seckillAccountNote(item) {
+  if (!item.account_id) return "未绑定账户：发现有货后提供链接，由你到官网下单和付款。";
+  const checks = [seckillAccountChecks.get(item.id), vpsSeckillTask?.accounts?.[item.id]]
+    .filter(result => result?.account_id === item.account_id).sort((a, b) => Date.parse(b.checked_at) - Date.parse(a.checked_at));
+  return checks.length ? `上次检查：${checks[0].message} · ${new Date(checks[0].checked_at).toLocaleString()}` : "账户待检查：自动下单前会通过此商品的出口验证账户。";
+}
 let vpsSeckillPoll = null;
 function seckillItemId() { return `seckill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; }
 function seckillItems() { return config.vps_seckill?.items || (config.vps_seckill = { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] }).items; }
@@ -1948,7 +1955,7 @@ function seckillAccounts() { return config.vps_seckill?.accounts || (config.vps_
 function addToVpsSeckill(product) {
   if (!product || !config.products.some(item => item.id === product.id && (membership(item, "watch") || membership(item, "notify")))) return;
   const items = seckillItems();
-  if (!items.some(item => item.product_id === product.id)) items.push({ id: product.id, product_id: product.id, label: product.name, coupon_code: "", target_url: product.purchase_url || product.snapshot?.url || "", submit_url: "", account_id: "", egress_node_id: "", enabled: true, auto_submit: false });
+  if (!items.some(item => item.product_id === product.id)) items.push({ id: product.id, product_id: product.id, label: product.name, quantity: 1, coupon_code: "", target_url: product.purchase_url || product.snapshot?.url || "", submit_url: "", account_id: "", egress_node_id: "", enabled: true, auto_submit: false });
   navigatePage("seckill"); renderVpsSeckill(); updateDraftState(); setMessage(`${product.name} 已加入 VPS 秒杀，保存配置后可启动。`, "pending");
 }
 function renderVpsSeckill() {
@@ -1965,15 +1972,28 @@ function renderVpsSeckill() {
     const title = text("strong", product?.name || item.label || item.product_id || "已下架商品");
     const head = text("div", "", "seckill-item-head"); head.append(title, text("small", product ? `${product.provider} · ${item.product_id}` : "商品已下架，保留秒杀配置", "subtle")); card.append(head);
     const grid = text("div", "", "form-grid");
+    const quantity = document.createElement("input"); quantity.type = "number"; quantity.min = "1"; quantity.max = "100"; quantity.step = "1"; quantity.value = item.quantity ?? 1;
+    quantity.addEventListener("input", () => { item.quantity = Number(quantity.value); updateDraftState(); });
     const coupon = document.createElement("input"); coupon.value = item.coupon_code || ""; coupon.maxLength = 256; coupon.placeholder = "可选专属优惠码"; coupon.addEventListener("input", () => { item.coupon_code = coupon.value; updateDraftState(); });
-    const account = document.createElement("select"); account.replaceChildren(...accountOptions.map(option => option.cloneNode(true))); account.value = item.account_id || ""; account.addEventListener("change", () => { item.account_id = account.value; updateDraftState(); });
-    const egressSelect = document.createElement("select"); const egressOptions = [new Option("主服务器直连", "")]; egressNodes().forEach(node => egressOptions.push(new Option(node.name || node.id, node.id))); egressSelect.replaceChildren(...egressOptions); egressSelect.value = item.egress_node_id || ""; egressSelect.addEventListener("change", () => { item.egress_node_id = egressSelect.value; updateDraftState(); });
+    const account = document.createElement("select"); account.replaceChildren(...accountOptions.map(option => option.cloneNode(true))); account.value = item.account_id || ""; account.addEventListener("change", () => { item.account_id = account.value; seckillAccountChecks.delete(item.id); renderVpsSeckill(); updateDraftState(); });
+    const egressSelect = document.createElement("select"); const egressOptions = [new Option("跟随商家出口（未分配则直连）", "")]; egressNodes().forEach(node => egressOptions.push(new Option(node.name || node.id, node.id))); egressSelect.replaceChildren(...egressOptions); egressSelect.value = item.egress_node_id || ""; egressSelect.addEventListener("change", () => { item.egress_node_id = egressSelect.value; seckillAccountChecks.delete(item.id); renderVpsSeckill(); updateDraftState(); });
     const target = document.createElement("input"); target.type = "url"; target.value = item.target_url || product?.purchase_url || ""; target.placeholder = "下架商品目标购买链接（可选）"; target.addEventListener("input", () => { item.target_url = target.value; updateDraftState(); });
-    const submit = document.createElement("input"); submit.type = "url"; submit.value = item.submit_url || ""; submit.placeholder = "自动提交地址（可选）"; submit.addEventListener("input", () => { item.submit_url = submit.value; updateDraftState(); });
-    [["优惠码", coupon], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target], ["自动提交地址", submit]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
+    const submit = document.createElement("input"); submit.type = "url"; submit.value = item.submit_url || ""; submit.placeholder = "仅创建待付款订单的适配接口（非普通结算页）"; submit.addEventListener("input", () => { item.submit_url = submit.value; updateDraftState(); });
+    [["下单数量（台，1–100）", quantity], ["优惠码", coupon], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target], ["待付款下单接口", submit]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
     const enabled = settingButton("商品状态", item.enabled !== false, value => { item.enabled = value; renderVpsSeckillTask(); }, ["已停用", "已启用"]);
     const auto = settingButton("自动提交", item.auto_submit, value => { item.auto_submit = value; });
     const flags = text("div", "", "actions"); flags.append(enabled, auto);
+    const check = text("button", "检查账户", "seckill-check-account"); check.type = "button"; check.disabled = actionRunning || !item.account_id;
+    check.setAttribute("aria-label", `检查秒杀账户 ${title.textContent}`);
+    const status = text("p", seckillAccountNote(item), "hint seckill-account-status"); status.setAttribute("role", "status");
+    check.addEventListener("click", () => {
+      if (hasUnsavedChanges()) { setMessage("请先保存配置，再按该商品的出口检查账户。", "error"); return; }
+      runAction(check, "检查中…", "正在检查账户，不创建订单、不付款…", async () => {
+        const result = await requestJSON("/api/seckill/account-check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account_id: item.account_id, item_id: item.id }) });
+        seckillAccountChecks.set(item.id, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : "error");
+      });
+    });
+    flags.append(check); card.append(status);
     const remove = text("button", "删除商品", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.setAttribute("aria-label", `删除秒杀商品 ${title.textContent}`);
     remove.addEventListener("click", () => { const index = seckillItems().indexOf(item); if (index >= 0) seckillItems().splice(index, 1); renderVpsSeckill(); updateDraftState(); setMessage("已删除该秒杀商品，请保存配置。", "pending"); }); flags.append(remove); card.append(grid, flags); itemTarget.append(card);
@@ -1982,7 +2002,7 @@ function renderVpsSeckill() {
   if (!seckillAccounts().length) accountTarget.append(text("p", "尚未配置网站账户。手动秒杀不需要账户。", "empty"));
   seckillAccounts().forEach(account => {
     const card = text("article", "", "seckill-account"), grid = text("div", "", "form-grid");
-    const fields = [["账户名称", "name", "账户名称"], ["商家", "provider", "商家名称"], ["用户名", "username", "登录用户名"], ["登录地址", "login_url", "https://…"]];
+    const fields = [["账户名称", "name", "账户名称"], ["商家", "provider", "商家名称"], ["用户名", "username", "登录用户名"], ["账户检查 / 登录适配接口", "login_url", "https://…（非普通登录网页）"]];
     fields.forEach(([label, key, placeholder]) => { const input = document.createElement("input"); input.value = account[key] || ""; input.placeholder = placeholder; input.addEventListener("input", () => { account[key] = input.value; updateDraftState(); }); const node = document.createElement("label"); node.append(text("span", label), input); grid.append(node); });
     const password = document.createElement("input"); password.type = "password"; password.autocomplete = "new-password"; password.placeholder = account.password_configured ? "已保存，留空保持不变" : "登录密码"; password.addEventListener("input", () => { account.password = password.value; account.password_configured = Boolean(password.value) || account.password_configured; updateDraftState(); }); const passwordLabel = document.createElement("label"); passwordLabel.append(text("span", "密码"), password); grid.append(passwordLabel);
     const autoLabel = settingButton("自动下单", account.auto_submit, value => { account.auto_submit = value; });
@@ -2006,10 +2026,22 @@ function collectVpsSeckill() {
 }
 function renderVpsSeckillTask() {
   document.querySelectorAll("#page-seckill .option-button, .seckill-item .danger, .seckill-account .danger, #egress-nodes .option-button, #egress-nodes .egress-install-copy").forEach(button => { button.disabled = actionRunning; });
+  document.querySelectorAll(".seckill-check-account").forEach(button => { const item = seckillItems().find(row => row.id === button.closest(".seckill-item").dataset.id); button.disabled = actionRunning || !item?.account_id; });
+  document.querySelectorAll(".seckill-account-status").forEach(node => { const item = seckillItems().find(row => row.id === node.closest(".seckill-item").dataset.id); if (item) node.textContent = seckillAccountNote(item); });
   document.querySelector("#vps-seckill-delete-all").disabled = actionRunning || !seckillItems().length;
   document.querySelector("#vps-seckill-delete-all-accounts").disabled = actionRunning || !seckillAccounts().length;
   const state = document.querySelector("#seckill-task-state"), start = document.querySelector("#vps-seckill-start"), stop = document.querySelector("#vps-seckill-stop");
   const running = vpsSeckillTask && vpsSeckillTask.pending !== false; state.textContent = running ? "执行中" : vpsSeckillTask ? (vpsSeckillTask.cancelled ? "已暂停" : "已完成") : "未运行"; state.className = `state ${running ? "pending" : vpsSeckillTask?.cancelled ? "error" : vpsSeckillTask ? "ok" : ""}`; start.disabled = Boolean(running) || actionRunning || !seckillItems().some(item => item.enabled !== false); stop.hidden = !running; stop.disabled = !running;
+  const results = document.querySelector("#vps-seckill-results"); results.replaceChildren();
+  const labels = { submitted: "已创建待付款订单", ready: "请手动下单", uncertain: "结果待核对，请勿重复下单", blocked: "预检查未通过", cancelled: "已停止" };
+  (vpsSeckillTask?.items || []).forEach(result => {
+    const item = seckillItems().find(row => row.id === result.item_id);
+    const row = text("div", "", "seckill-result");
+    row.append(text("strong", `${item?.label || result.item_id} · ${labels[result.status] || result.status}${result.quantity ? ` · ${result.quantity} 台` : ""}`));
+    if (result.order_id) row.append(text("p", `订单号：${result.order_id}。请登录官网手动支付。`, "hint"));
+    try { const url = new URL(result.url); if (url.protocol === "https:" && !url.username && !url.password) { const link = text("a", "前往官网核对 / 手动支付"); link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer"; row.append(link); } } catch {}
+    results.append(row);
+  });
   const logs = vpsSeckillTask?.logs || []; document.querySelector("#vps-seckill-logs").textContent = logs.length ? logs.map(log => `[${new Date(log.at).toLocaleString()}] ${log.message}`).join("\n") : "暂无日志"; document.querySelector("#vps-seckill-log-note").textContent = vpsSeckillTask ? `${vpsSeckillTask.mode || ""} · ${logs.length} 条日志` : "尚未启动秒杀任务。";
 }
 window.addEventListener("hostwatch-action-change", renderVpsSeckillTask);

@@ -1,0 +1,264 @@
+"""Order-only seckill regressions: no live merchant requests or payments."""
+import copy
+import json
+import unittest
+from unittest.mock import Mock, patch
+
+import requests
+import admin
+from monitor import Product
+from test_monitor import html_product
+from test_admin import AdminAPITests as _AdminAPIBase
+
+
+def configuration(quantity=2):
+    value = admin.default_config()
+    value['products'] = [html_product(id='plan')]
+    value['vps_seckill'].update(items=[{'id': 'one', 'product_id': 'plan',
+        'target_url': 'https://shop.example.com/buy', 'submit_url': 'https://shop.example.com/orders',
+        'account_id': 'account', 'quantity': quantity, 'auto_submit': True}],
+        accounts=[{'id': 'account', 'name': 'Main', 'username': 'user', 'password': 'private-password',
+            'login_url': 'https://shop.example.com/account-check', 'auto_submit': True}])
+    return admin.validate_config(value)
+
+
+def response(data=None, status=200):
+    result = Mock(status_code=status)
+    result.json.return_value = data
+    return result
+
+
+class OrderTaskTests(unittest.TestCase):
+    def setUp(self):
+        self.config = configuration()
+        self.sessions = []
+        self.auth_checks = 0
+        self.auth_valid = True
+        self.capability = {'protocol': admin.ORDER_PROTOCOL, 'order_only': True, 'automatic_payment': False}
+        self.order_result = {'protocol': admin.ORDER_PROTOCOL, 'status': 'unpaid', 'order_id': 'order-123', 'quantity': 2,
+            'payment_url': 'https://payments.example/charge'}
+        self.order_exception = None
+        self.stock = Mock(return_value=Product('plan', 'Plan', 3, 'https://shop.example.com/buy'))
+        self.factory = patch.object(admin.requests, 'Session', side_effect=self.session).start()
+        self.addCleanup(patch.stopall)
+        patch('monitor.inspect_product', self.stock).start()
+        self.task = None
+
+    def session(self):
+        session = Mock(headers={}, proxies={})
+        session.__enter__ = Mock(return_value=session)
+        session.__exit__ = Mock(return_value=False)
+        session.get.side_effect = lambda *a, **kw: response(self.capability)
+        def post(url, **kwargs):
+            payload = kwargs['json']
+            if payload['action'] == 'check_account':
+                self.auth_checks += 1
+                return response({'protocol': admin.ORDER_PROTOCOL, 'authenticated': self.auth_valid,
+                    'username': 'user'})
+            if self.order_exception:
+                raise self.order_exception
+            return response(self.order_result)
+        session.post.side_effect = post
+        self.sessions.append(session)
+        return session
+
+    def run_task(self, mode='rapid', stop_on_wait=True):
+        self.task = admin.SeckillTask('seckill-testing-123456', self.config, mode)
+        if stop_on_wait:
+            self.task.cancelled.wait = Mock(side_effect=lambda *args: self.task.cancel())
+        self.task.run()
+        return self.task.snapshot()
+
+    def orders(self):
+        return [call for session in self.sessions for call in session.post.call_args_list
+            if call.kwargs['json']['action'] == 'create_unpaid_order']
+
+    def test_quantity_defaults_and_rejects_invalid_values(self):
+        item = self.config['vps_seckill']['items'][0]
+        del item['quantity']
+        self.assertEqual(admin.validate_config(self.config)['vps_seckill']['items'][0]['quantity'], 1)
+        for quantity in (0, -1, 101, True, 1.5, '2', None):
+            with self.subTest(quantity=quantity), self.assertRaisesRegex(ValueError, '下单数量'):
+                item['quantity'] = quantity
+                admin.validate_config(self.config)
+
+    def test_rapid_checks_once_and_creates_only_unpaid_order_with_quantity_coupon(self):
+        self.config['vps_seckill']['items'][0]['coupon_code'] = 'SPECIAL'
+        result = self.run_task()
+        self.assertEqual(self.stock.call_count, 1)
+        self.assertEqual(self.auth_checks, 1)
+        self.assertEqual(result['items'][0]['status'], 'submitted')
+        self.assertEqual(result['items'][0]['payment_status'], 'unpaid')
+        order = self.orders()[0]
+        payload = order.kwargs['json']
+        self.assertEqual(payload['quantity'], 2)
+        self.assertEqual(payload['coupon_code'], 'SPECIAL')
+        self.assertEqual(payload['payment_mode'], 'manual')
+        self.assertIs(payload['auto_pay'], False)
+        self.assertNotIn('password', payload)
+        self.assertEqual(order.kwargs['headers']['Idempotency-Key'], payload['idempotency_key'])
+        self.assertNotIn('payments.example', str(result))
+        for session in self.sessions:
+            for call in session.get.call_args_list + session.post.call_args_list:
+                self.assertFalse(call.kwargs['allow_redirects'])
+                self.assertNotIn('payments.example', call.args[0])
+
+    def test_precise_rechecks_account_and_stock_before_submission(self):
+        result = self.run_task('precise')
+        self.assertEqual(self.stock.call_count, 2)
+        self.assertEqual(self.auth_checks, 2)
+        self.assertEqual(result['items'][0]['status'], 'submitted')
+
+    def test_precise_does_not_submit_if_stock_disappears(self):
+        self.stock.side_effect = [Product('p', 'P', 3, 'https://shop.example.com/buy'), Product('p', 'P', 1, 'https://shop.example.com/buy')]
+        self.run_task('precise')
+        self.assertEqual(self.stock.call_count, 2)
+        self.assertEqual(self.orders(), [])
+
+    def test_precise_stops_if_account_expires_after_initial_check(self):
+        def inspect(*args):
+            self.auth_valid = False
+            return Product('p', 'P', 3, 'https://shop.example.com/buy')
+        self.stock.side_effect = inspect
+        result = self.run_task('precise')
+        self.assertEqual(self.orders(), [])
+        self.assertEqual(result['items'][0]['status'], 'blocked')
+
+    def test_manual_never_submits_even_when_both_auto_buttons_enabled(self):
+        result = self.run_task('manual')
+        self.assertEqual(self.stock.call_count, 1)
+        self.assertEqual(self.orders(), [])
+        self.assertEqual(result['items'][0]['status'], 'ready')
+        self.assertEqual(result['items'][0]['quantity'], 2)
+        self.assertEqual(self.auth_checks, 1)
+        self.assertTrue(all(not session.get.called for session in self.sessions))
+
+    def test_quantity_insufficient_does_not_create_partial_order(self):
+        self.stock.return_value = Product("p", "P", 1, "https://shop.example.com/buy")
+        self.run_task()
+        self.assertEqual(self.orders(), [])
+
+    def test_boolean_availability_allows_requested_quantity_for_final_server_validation(self):
+        self.stock.return_value = Product("p", "P", 1, "https://shop.example.com/buy", stock_mode="availability")
+        result = self.run_task()
+        self.assertEqual(self.orders()[0].kwargs['json']['quantity'], 2)
+        self.assertEqual(result['items'][0]['status'], 'submitted')
+
+    def test_invalid_account_blocks_order(self):
+        self.auth_valid = False
+        result = self.run_task()
+        self.assertEqual(result['items'][0]['status'], 'blocked')
+        self.assertEqual(self.orders(), [])
+        self.stock.assert_not_called()
+
+    def test_checkout_without_explicit_no_payment_contract_is_blocked(self):
+        for capability in ({}, {**self.capability, 'automatic_payment': True}):
+            with self.subTest(capability=capability):
+                self.capability = capability
+                result = self.run_task()
+                self.assertEqual(result['items'][0]['status'], 'blocked')
+                self.assertEqual(self.orders(), [])
+        self.assertEqual(self.auth_checks, 0)
+
+    def test_timeout_after_post_stops_without_retry_or_secret_in_logs(self):
+        self.order_exception = requests.Timeout('private-password https://secret.example')
+        result = self.run_task()
+        self.assertEqual(result['items'][0]['status'], 'uncertain')
+        self.assertEqual(len(self.orders()), 1)
+        self.assertNotIn('private-password', str(result))
+        self.assertNotIn('secret.example', str(result))
+        self.assertTrue(self.task.done.is_set())
+
+    def test_html_redirect_paid_or_wrong_quantity_are_never_reported_as_unpaid_success(self):
+        for data in ({}, {**self.order_result, 'status': 'paid'}, {**self.order_result, 'quantity': 1},
+                     {**self.order_result, 'quantity': True}):
+            with self.subTest(data=data):
+                self.order_result = data
+                result = self.run_task()
+                self.assertEqual(result['items'][0]['status'], 'uncertain')
+        with self.assertRaises(ValueError):
+            admin.order_json(response({}, 302))
+        html = response()
+        html.json.side_effect = ValueError('html')
+        with self.assertRaisesRegex(ValueError, '未返回 JSON'):
+            admin.order_json(html)
+
+    def test_multiple_items_use_isolated_sessions_and_submit_once_each(self):
+        second = copy.deepcopy(self.config['vps_seckill']['items'][0])
+        second['id'] = 'two'
+        self.config['vps_seckill']['items'].append(second)
+        result = self.run_task()
+        self.assertEqual(len(self.sessions), 4)
+        self.assertEqual(len(self.orders()), 2)
+        self.assertEqual(len(result['items']), 2)
+        self.assertNotEqual(self.orders()[0].kwargs['json']['idempotency_key'], self.orders()[1].kwargs['json']['idempotency_key'])
+        self.assertTrue(all(not session.trust_env for session in self.sessions))
+        self.sessions[0].post.assert_not_called()
+        self.sessions[2].post.assert_not_called()
+
+    def test_stop_during_stock_check_prevents_order_post(self):
+        def inspect(*args):
+            self.task.cancel()
+            return Product('p', 'P', 3, 'https://shop.example.com/buy')
+        self.stock.side_effect = inspect
+        self.run_task()
+        self.assertEqual(self.orders(), [])
+
+    def test_account_and_order_endpoints_must_share_origin(self):
+        self.config['vps_seckill']['items'][0]['submit_url'] = 'https://other.example/order'
+        result = self.run_task()
+        self.assertEqual(result['items'][0]['status'], 'blocked')
+        self.assertEqual(self.orders(), [])
+        self.assertEqual(self.auth_checks, 0)
+
+
+class AccountVerificationTests(unittest.TestCase):
+    def test_requires_positive_authentication_and_matching_identity(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        for data in ({}, {'authenticated': True},
+                     {'protocol': admin.ORDER_PROTOCOL, 'authenticated': True, 'username': 'other'}):
+            with self.subTest(data=data):
+                session = Mock()
+                session.post.return_value = response(data)
+                result = admin.check_order_account(session, account)
+                self.assertFalse(result['ok'])
+                self.assertEqual(result['status'], 'unknown')
+        session.post.return_value = response({}, 401)
+        self.assertEqual(admin.check_order_account(session, account)['status'], 'invalid')
+        session.post.side_effect = requests.ConnectionError('private-password')
+        self.assertNotIn('private-password', str(admin.check_order_account(session, account)))
+
+
+class AccountCheckAPITests(unittest.TestCase):
+    setUp = _AdminAPIBase.setUp
+    request = _AdminAPIBase.request
+
+    def test_saved_password_used_and_result_redacted_with_item_route(self):
+        config = configuration()
+        self.config.write_text(json.dumps(config), encoding='utf-8')
+        checked = {'ok': True, 'status': 'valid', 'message': 'OK'}
+        with patch.object(admin, 'check_order_account', return_value=checked) as check, patch.object(admin.egress, 'apply_session') as route:
+            status, body = self.request('/api/seckill/account-check', {'account_id': 'account', 'item_id': 'one'})
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)['ok'])
+        self.assertEqual(check.call_args.args[1]['password'], 'private-password')
+        self.assertNotIn(b'private-password', body)
+        route.assert_called_once()
+        self.assertEqual(json.loads(self.config.read_text()), config)
+
+    def test_requires_saved_binding_and_authentication(self):
+        self.config.write_text(json.dumps(configuration()), encoding='utf-8')
+        with patch.object(admin, 'check_order_account') as check:
+            status, _ = self.request('/api/seckill/account-check', {'account_id': 'account', 'item_id': 'missing'})
+            self.assertEqual(status, 400)
+            check.assert_not_called()
+            with patch.object(admin, 'authorized', return_value=False):
+                status, _ = self.request('/api/seckill/account-check', {'account_id': 'account', 'item_id': 'one'})
+                self.assertEqual(status, 401)
+
+
+# Do not discover the borrowed API fixture as a second copy of its entire suite.
+del _AdminAPIBase
+
+if __name__ == '__main__':
+    unittest.main()

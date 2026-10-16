@@ -516,6 +516,12 @@
       .savebar { padding:9px 10px; } .savebar-note .subtle { display:none; }
       .catalog-row-actions { min-width:0; max-width:none; }
     }
+    .seckill-mode-guide { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+    .seckill-mode-guide article, .seckill-result { border: 1px solid var(--line); border-radius: 12px; padding: 14px; min-width: 0; overflow-wrap: anywhere; }
+    .seckill-mode-guide p { margin: 8px 0 0; line-height: 1.65; }
+    .seckill-result { margin-bottom: 12px; }
+    .seckill-result a { display: inline-block; padding: 10px 0; }
+    @media (max-width: 760px) { .seckill-mode-guide { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -586,13 +592,19 @@
     <div class="section-body">
       <div class="section-head"><div><h2>VPS 秒杀</h2><p>从 VPS 库存监控或 VPS 库存通知逐个加入商品。下架商品仍可保留目标链接，恢复上架后继续检查。</p></div><span id="seckill-task-state" class="state">未运行</span></div>
       <div class="seckill-panel vps-seckill-panel">
-        <div class="section-head"><div><h3>执行模式</h3><p>极速模式高频检查，精准模式按商品条件检查，手动模式只检查一次并准备购买链接。</p></div><div class="actions"><button id="vps-seckill-start" type="button" class="primary">启动秒杀</button><button id="vps-seckill-stop" type="button" class="danger" hidden>暂停秒杀</button></div></div>
+        <div class="section-head"><div><h3>执行模式</h3><p>所有模式均不自动付款。自动模式仅创建待付款订单，付款需要你手动前往商家官网完成。</p></div><div class="actions"><button id="vps-seckill-start" type="button" class="primary">启动秒杀</button><button id="vps-seckill-stop" type="button" class="danger" hidden>暂停秒杀</button></div></div>
         <div class="form-grid"><label>模式<select id="vps-seckill-mode"><option value="rapid">极速秒杀（自动）</option><option value="precise">精准秒杀（自动）</option><option value="manual">手动秒杀</option></select></label><label>检查间隔（秒）<input id="vps-seckill-interval" type="number" min="1" max="3600" step="1"></label></div>
-        <p class="hint">自动模式只有商品“自动提交”和账户“自动下单”均为“已允许”，并填写商品提交地址时才会发送下单请求；否则发现有货后仅记录并提供购买链接。点击状态按钮切换，保存配置后生效。</p>
+        <div class="seckill-mode-guide">
+          <article><strong>极速秒杀（自动）</strong><p>启动时检查账户；发现一次库存满足数量后立即提交。减少重复检查，抢单更快，但提交时库存或登录状态可能已变化。</p></article>
+          <article><strong>精准秒杀（自动）</strong><p>启动时检查账户；发现有货后再次验证账户、重新读取库存，数量仍满足才提交。核验更多、请求更多，可能错过短暂库存；不保证抢单成功。</p></article>
+          <article><strong>手动秒杀</strong><p>只检查一轮，准备购买链接和数量提示。即使已允许自动提交，也不会发送订单；由你到官网完成下单与付款。</p></article>
+        </div>
+        <p class="hint">两种自动模式均使用上方检查间隔（每轮结束后的等待时间），每个商品每次任务最多发送一次下单请求。数量库存不足时继续等待；商家只提供有货状态时，由下单接口最终核验数量，不自动减少数量。</p>
+        <p class="hint">自动模式只有商品“自动提交”和账户“自动下单”均为“已允许”，账户检查通过，且下单接口明确支持“仅创建待付款订单、禁止自动扣款”时才会发送下单请求；否则提示配置问题或提供手动购买链接。点击状态按钮切换，保存配置后生效。</p>
       </div>
-      <div class="seckill-panel"><div class="section-head"><div><h3>秒杀商品</h3><p>在库存监控 / 通知商品的“更多”中点击“加入 VPS 秒杀”；优惠码按商品保存。删除后点击“保存配置”生效，可用“取消修改”恢复。</p></div><div class="actions"><button id="vps-seckill-open-monitor" type="button">从库存监控添加</button><button id="vps-seckill-open-notifications" type="button">从库存通知添加</button><button id="vps-seckill-delete-all" type="button" class="danger" disabled>删除全部商品</button></div></div><div id="vps-seckill-items" class="seckill-items"></div></div>
-      <div class="seckill-panel"><div class="section-head"><div><h3>网站账户</h3><p>密码只在保存时提交，页面读取时不会回显。删除账户会同时解除商品绑定，保存配置后生效。</p></div><div class="actions"><button id="vps-seckill-add-account" type="button">添加账户</button><button id="vps-seckill-delete-all-accounts" type="button" class="danger" disabled>删除全部账户</button></div></div><div id="vps-seckill-accounts" class="seckill-accounts"></div></div>
-      <div class="seckill-panel"><div class="section-head"><div><h3>执行日志</h3><p id="vps-seckill-log-note">尚未启动秒杀任务。</p></div><button id="vps-seckill-clear-log" type="button">清空显示</button></div><pre id="vps-seckill-logs" class="seckill-logs" aria-live="polite">暂无日志</pre></div>
+      <div class="seckill-panel"><div class="section-head"><div><h3>秒杀商品</h3><p>在库存监控 / 通知商品的“更多”中点击“加入 VPS 秒杀”；数量和优惠码按商品保存；每个商品可按所选出口检查绑定账户。删除后点击“保存配置”生效，可用“取消修改”恢复。</p></div><div class="actions"><button id="vps-seckill-open-monitor" type="button">从库存监控添加</button><button id="vps-seckill-open-notifications" type="button">从库存通知添加</button><button id="vps-seckill-delete-all" type="button" class="danger" disabled>删除全部商品</button></div></div><div id="vps-seckill-items" class="seckill-items"></div></div>
+      <div class="seckill-panel"><div class="section-head"><div><h3>网站账户</h3><p>密码保存后不回显。账户检查和自动下单需要商家适配支持；普通网站登录 / 结算页不能直接作为接口使用，未适配网站可用手动模式，验证码、二次验证需到官网处理。删除账户会解除商品绑定，保存后生效。</p></div><div class="actions"><button id="vps-seckill-add-account" type="button">添加账户</button><button id="vps-seckill-delete-all-accounts" type="button" class="danger" disabled>删除全部账户</button></div></div><div id="vps-seckill-accounts" class="seckill-accounts"></div></div>
+      <div class="seckill-panel"><div class="section-head"><div><h3>执行日志</h3><p id="vps-seckill-log-note">尚未启动秒杀任务。</p></div><button id="vps-seckill-clear-log" type="button">清空显示</button></div><div id="vps-seckill-results" aria-live="polite"></div><pre id="vps-seckill-logs" class="seckill-logs" aria-live="polite">暂无日志</pre></div>
     </div>
   </section>
 
