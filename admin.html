@@ -508,6 +508,15 @@
     .monitor-settings[open] > summary::before { transform:rotate(90deg); }
     .monitor-settings > summary .subtle { margin-left:8px; font-size:11px; font-weight:400; }
     .monitor-control { padding:10px 12px; margin-bottom:12px; background:#fafbfe; }
+    .module-settings { margin:14px 0 16px; padding:14px; border:1px solid var(--line); border-left:3px solid var(--blue); border-radius:8px; background:#fbfcff; }
+    .module-settings-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; margin-bottom:8px; }
+    .module-settings-head h3 { margin:0; font-size:14px; }
+    .module-settings-head p { margin:4px 0 0; color:var(--muted); font-size:12px; }
+    .module-settings-head > .state { flex-shrink:0; margin-top:1px; }
+    .module-settings > .form-grid { margin-top:12px; }
+    .module-settings-actions { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin-top:12px; }
+    .module-settings-actions .hint { margin:0; }
+    @media(max-width:620px) { .module-settings-head { flex-direction:column; gap:6px; } }
     .affiliate-card { padding:14px; }
     @media(min-width:781px) and (max-width:1100px) { .workspace { padding:20px; } }
     @media(max-width:780px) {
@@ -651,6 +660,17 @@
     <div class="section-head"><div><h2>我的 VPS 库存监控 <span id="watchlist-count" class="subtle">0</span></h2><p>关注商品与实时库存 · 仅查看，不发送通知。</p></div><button id="watchlist-browse" type="button">从大盘添加</button></div>
     <div class="watchlist-filters"><label>搜索商品<input id="watchlist-search" type="search" placeholder="商品、商家或线路"></label><label>商家<select id="watchlist-provider"><option value="all">全部商家</option></select></label><label>最近库存<select id="watchlist-stock"><option value="all">全部状态</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">暂无记录</option></select></label></div>
     <details class="help-note"><summary>库存监控说明</summary><p id="watchlist-note" class="hint" role="status"></p></details>
+    <div class="module-settings" aria-labelledby="monitor-settings-title">
+      <div class="module-settings-head"><div><h3 id="monitor-settings-title">库存监控刷新设置</h3><p>只控制库存监控商品的检查，不影响库存通知。保存配置后按这里的设置运行。</p></div><strong id="monitor-runtime" class="state">正在读取服务状态</strong></div>
+      <p id="monitor-runtime-note" class="subtle">以服务器实际运行状态为准。</p>
+      <div class="form-grid">
+        <label>刷新模式<select id="monitor-schedule-mode"><option value="manual">仅手动刷新</option><option value="auto">自动刷新</option></select></label>
+        <label>监控检查间隔（秒）<input id="interval" type="number" min="0" max="86400" step="1"></label>
+        <label>常用监控间隔<select id="interval-preset"><option value="">自定义间隔</option><option value="0">0 秒（连续检查）</option><option value="1">1 秒</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option><option value="60">1 分钟</option><option value="300">5 分钟</option><option value="600">10 分钟</option><option value="1800">30 分钟</option><option value="3600">1 小时</option></select></label>
+        <p id="interval-description" class="hint span-2"></p>
+      </div>
+      <div class="module-settings-actions"><button id="monitor-refresh-manual" type="button">手动刷新库存监控</button><span id="monitor-draft" class="hint" aria-live="polite">配置读取中。</span></div>
+    </div>
     <div id="product-list"></div>
      <div id="watch-compare-bar" class="watch-compare-bar" hidden role="region" aria-live="polite"><div><strong id="watch-compare-count">已选 0 项</strong><span id="watch-compare-note" class="subtle">再选择至少 1 个商品开始参数对比</span></div><div class="actions"><button id="watch-compare-clear" type="button">清除选择</button><button id="watch-compare-start" type="button" class="primary" disabled>开始对比</button></div></div>
     <p class="table-footnote">拖动商家旁的 ⠿ 调整顺序，保存后保留 · 购买链接已应用 AFF · 备注与线路可点击编辑</p>
@@ -660,6 +680,15 @@
     <div class="section-body">
     <div class="section-head"><div><h2>我的 VPS 库存通知 <span id="notification-count" class="subtle"></span></h2><p>每轮补货通知一次，库存变化更新原 Telegram 消息，支持单次测试。</p></div><div class="actions"><button id="notification-browse" type="button">从大盘添加</button></div></div>
     <details class="help-note"><summary>库存通知说明</summary><p id="notification-note" class="hint"></p></details>
+    <div class="module-settings" aria-labelledby="notify-settings-title">
+      <div class="module-settings-head"><div><h3 id="notify-settings-title">库存通知刷新设置</h3><p>只控制库存通知商品的检查，不影响库存监控。通知仍需配置 Telegram 才会发送。</p></div><span class="subtle">独立于库存监控</span></div>
+      <div class="form-grid">
+        <label>刷新模式<select id="notify-schedule-mode"><option value="manual">仅手动刷新</option><option value="auto">自动刷新</option></select></label>
+        <label>通知检查间隔（秒）<input id="notify-interval" type="number" min="0" max="86400" step="1"></label>
+        <button id="notify-current" class="option-button span-2" type="button" data-config-option data-on="已开启" data-off="未开启" aria-pressed="false" aria-label="首次启用该商品通知时，有货也发送提醒"><span>首次启用该商品通知时，有货也发送提醒</span><span data-option-state>未开启</span></button>
+      </div>
+      <div class="module-settings-actions"><button id="notify-refresh-manual" type="button">手动刷新库存通知</button><span class="hint">间隔为 0 秒时，当前轮次完成后立即开始下一轮。</span></div>
+    </div>
     <div id="notification-list"></div>
     <p class="table-footnote">拖动商家旁的 ⠿ 调整顺序，保存后保留；与库存监控分别排序</p>
     <div class="seckill-panel" id="seckill-panel">
@@ -671,26 +700,8 @@
       <p id="seckill-status" class="hint" role="status" aria-live="polite">尚无秒杀检查记录。</p>
       <div id="seckill-activities" class="campaign-list"></div>
     </div>
-    <details class="monitor-settings"><summary>自动检查与通知设置 <span class="subtle">检查间隔 · 首次有货提醒</span></summary>
-    <div class="monitor-control">
-      <strong id="monitor-runtime" class="state">正在读取服务状态</strong>
-      <p id="monitor-runtime-note" class="subtle">以服务器实际运行状态为准。</p>
-      <p id="monitor-draft" class="hint" aria-live="polite">配置读取中。</p>
-      <div class="actions"><button id="monitor-refresh-manual" type="button">手动刷新监控</button><button id="notify-refresh-manual" type="button">手动刷新通知</button></div>
-      <p class="hint">监控和通知分别按各自的模式与间隔运行；手动刷新只执行对应模块，不改变自动刷新设置。两个模块都设为仅手动时，HostWatch 服务会停止自动检查。</p>
-    </div>
-    <div class="form-grid">
-      <label>库存监控自动刷新<select id="monitor-schedule-mode"><option value="manual">关闭（仅手动刷新）</option><option value="auto">开启自动刷新</option></select></label>
-      <label>监控间隔（秒）<input id="interval" type="number" min="0" max="86400" step="1"></label>
-      <label>库存通知自动刷新<select id="notify-schedule-mode"><option value="manual">关闭（仅手动刷新）</option><option value="auto">开启自动刷新</option></select></label>
-      <label>通知间隔（秒）<input id="notify-interval" type="number" min="0" max="86400" step="1"></label>
-      <label>常用监控间隔<select id="interval-preset"><option value="">自定义间隔</option><option value="0">0 秒（连续检查）</option><option value="1">1 秒</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option><option value="60">1 分钟</option><option value="300">5 分钟</option><option value="600">10 分钟</option><option value="1800">30 分钟</option><option value="3600">1 小时</option></select></label>
-      <p id="interval-description" class="hint span-2"></p>
-      <button id="notify-current" class="option-button span-2" type="button" data-config-option data-on="已开启" data-off="未开启" aria-pressed="false" aria-label="首次启用该商品通知时，有货也发送提醒"><span>首次启用该商品通知时，有货也发送提醒</span><span data-option-state>未开启</span></button>
-    </div>
     <div class="module-log-panel"><strong>库存监控 / 通知刷新日志</strong><pre id="watch-notify-logs" class="overview-log">暂无日志</pre></div>
-    <p class="hint">库存监控和库存通知分别设置模式与间隔；仅手动刷新时后台不会自动访问网站，可在这里点击对应的手动刷新按钮。每轮缺货变有货时发送一条 Telegram 通知；库存增减更新原消息，售罄改为“❌ 售罄”，再次补货才发新通知。开启首次有货提醒后，新加入通知且有货的商品也会提醒。</p>
-    </details>
+    <p class="hint">两个模块分别保存刷新模式和检查间隔。仅手动刷新时后台不会自动访问网站；每轮缺货变有货时发送一条 Telegram 通知，库存增减更新原消息。</p>
     <div id="blocked-help" class="blocked-help" hidden><strong>上次库存检查被网站拦截（历史记录）</strong><span id="blocked-message">检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。</span><p class="hint">该记录保留至下一次检查；当前服务状态请看上方。请先确认访问方式，避免反复重启。</p></div>
     <p id="request-error" class="blocked-help" hidden></p>
     <p class="table-footnote">修改后请保存配置 · 监控和通知分别控制刷新 · 仅手动模式下也可测试通知</p>
