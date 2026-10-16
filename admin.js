@@ -1495,10 +1495,14 @@ function usedCurrencies() {
   });
   return [...new Set(values.flatMap(value => String(value || "").split(/[；;]/).map(currencyFromPrice).filter(Boolean)))].sort();
 }
+function renderCurrentTime() {
+  const timeNode = document.querySelector("#exchange-time");
+  if (timeNode) timeNode.textContent = `当前时间（北京时间）${formatBeijingDate(new Date())}`;
+}
 function renderExchangeRates() {
   const timeNode = document.querySelector("#exchange-time"), noteNode = document.querySelector("#exchange-rate-note"), listNode = document.querySelector("#exchange-rate-list");
   if (!timeNode || !noteNode || !listNode) return;
-  timeNode.textContent = `当前时间（北京时间）${formatBeijingDate(new Date())}`;
+  renderCurrentTime();
   const currencies = usedCurrencies();
   listNode.replaceChildren(...currencies.map(currency => {
     const rate = cnyRates[currency];
@@ -2875,7 +2879,7 @@ async function saveConfig() {
 document.querySelector("#discard-changes").addEventListener("click", (event) => { if (!activeTest) runAction(event.currentTarget, "恢复中…", "正在恢复已保存配置…", discardChanges); });
 document.querySelector("#save").addEventListener("click", (event) => runAction(event.currentTarget, "保存中…", "正在保存配置…", () => saveConfig()));
 renderExchangeRates();
-exchangeClockTimer = setInterval(renderExchangeRates, 30_000);
+exchangeClockTimer = setInterval(renderCurrentTime, 1_000);
 exchangeRateRefreshTimer = setInterval(() => { if (!document.hidden) void loadExchangeRates(); }, 60 * 60 * 1000);
 runAction(null, "", "正在载入配置和监控状态…", () => reloadConfig(false), false);
 bindManagementActions();

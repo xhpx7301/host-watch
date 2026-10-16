@@ -1714,6 +1714,15 @@ def manager_action(value: dict) -> dict:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "HostWatchAdmin/1.0"
+    # Reuse the browser's authenticated HTTP connection for the lightweight
+    # status requests instead of opening a new TCP connection every time.
+    protocol_version = "HTTP/1.1"
+
+    def send_error(self, code, message=None, explain=None):
+        # Rejected requests may still have an unread body. Close them instead
+        # of letting HTTP/1.1 parse that body as the next request.
+        self.close_connection = True
+        super().send_error(code, message, explain)
 
     def _secure(self) -> bool:
         try:
@@ -1743,6 +1752,7 @@ class Handler(BaseHTTPRequestHandler):
                 return False
         if authorized(self.headers.get("Authorization", "")):
             return True
+        self.close_connection = True
         self.send_response(401)
         self.send_header("WWW-Authenticate", 'Basic realm="HostWatch admin", charset="UTF-8"')
         self.send_header("Content-Length", "0")
@@ -1753,9 +1763,13 @@ class Handler(BaseHTTPRequestHandler):
         return self._secure() and self._authorized()
 
     def _send(self, status: int, content_type: str, body: bytes) -> None:
+        reusable = status < 400
+        if not reusable:
+            self.close_connection = True
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "keep-alive" if reusable else "close")
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'")
@@ -1766,6 +1780,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/gzip")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "keep-alive")
         self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
