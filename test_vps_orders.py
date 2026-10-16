@@ -268,6 +268,35 @@ class AccountVerificationTests(unittest.TestCase):
         self.assertEqual(session.post.call_args.args[0], 'https://app.vmiss.com/login')
         self.assertEqual(session.post.call_args.kwargs['data'], {'token': 'csrf', 'username': 'user', 'password': 'private-password'})
         self.assertFalse(session.post.call_args.kwargs['allow_redirects'])
+        self.assertEqual(session.post.call_args.kwargs['headers']['Origin'], 'https://app.vmiss.com')
+        self.assertEqual(session.post.call_args.kwargs['headers']['Referer'], 'https://app.vmiss.com/login')
+        self.assertIn('Mozilla/5.0', session.post.call_args.kwargs['headers']['User-Agent'])
+
+    def test_vmiss_login_get_403_is_reported_as_access_block(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='vmiss', login_url='https://app.vmiss.com/login')
+        blocked = Mock(status_code=403, headers={'CF-Ray': 'abc123'}, url='https://app.vmiss.com/login')
+        session = Mock(headers={})
+        session.get.return_value = blocked
+        result = admin.check_order_account(session, account)
+        self.assertEqual(result['status'], 'unknown')
+        self.assertIn('GET 返回 HTTP 403', result['message'])
+        self.assertIn('abc123', result['message'])
+
+    def test_vmiss_flaresolverr_login_reuses_same_site_browser_state(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='vmiss', login_url='https://app.vmiss.com/login')
+        page = b'<form action="/login" method="post"><input type="hidden" name="token" value="csrf"><input name="username"><input name="password"></form>'
+        redirected = Mock(status_code=302, headers={'Location': '/clientarea.php'})
+        logged_in = Mock(status_code=200, url='https://app.vmiss.com/clientarea.php', content=b'<a href="/logout.php">Logout</a>')
+        session = Mock(headers={}, cookies=Mock())
+        session.get.return_value = logged_in
+        session.post.return_value = redirected
+        with patch('monitor.fetch_page', return_value=(page.decode(), 'https://app.vmiss.com/login')) as fetch:
+            result = admin.check_order_account(session, account, {'mode': 'flaresolverr'})
+        self.assertTrue(result['ok'])
+        fetch.assert_called_once()
+        self.assertTrue(fetch.call_args.args[2]['_copy_browser_state'])
 
     def test_vps_soy_login_error_and_cross_origin_form_are_not_success(self):
         account = configuration()['vps_seckill']['accounts'][0]

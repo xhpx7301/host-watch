@@ -431,12 +431,47 @@ def _login_form(response, username_field: str):
     return soup, None, {}
 
 
-def _merchant_form_login(session, account: dict, adapter: dict) -> dict:
-    from urllib.parse import urljoin
+MERCHANT_BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    # Do not advertise Brotli unless the runtime can decode it. requests may
+    # otherwise expose compressed bytes to the HTML parser on minimal installs.
+    "Accept-Encoding": "gzip, deflate",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+}
 
-    response = session.get(adapter["url"], timeout=(5, 20), allow_redirects=False)
+
+def _response_detail(response) -> str:
+    ray = str(getattr(response, "headers", {}).get("CF-Ray", "")).strip()
+    return f"（Cloudflare Ray ID: {ray[:100]}）" if re.fullmatch(r"[A-Za-z0-9-]{1,100}", ray) else ""
+
+
+def _merchant_form_login(session, account: dict, adapter: dict, fetcher: dict | None = None) -> dict:
+    from urllib.parse import urljoin
+    from types import SimpleNamespace
+
+    # A FlareSolverr page is rendered in a separate browser process. Copy its
+    # short-lived clearance state into this dedicated login session so the
+    # subsequent credential POST uses the same merchant-facing identity.
+    if (fetcher or {}).get("mode") == "flaresolverr":
+        try:
+            from monitor import MonitorError, fetch_page
+            browser_fetcher = dict(fetcher)
+            browser_fetcher["_copy_browser_state"] = True
+            body, final_url = fetch_page(session, adapter["url"], browser_fetcher, adapter["host"])
+            response = SimpleNamespace(status_code=200, url=final_url, content=body.encode("utf-8"), text=body, headers={})
+        except (MonitorError, OSError, requests.RequestException, ValueError) as exc:
+            return {"status": "unknown", "message": f"{adapter['name']} 登录页访问失败：{str(exc)[:220]}"}
+    else:
+        session.headers.update(MERCHANT_BROWSER_HEADERS)
+        response = session.get(adapter["url"], timeout=(5, 20), allow_redirects=False,
+                               headers={**MERCHANT_BROWSER_HEADERS, "Sec-Fetch-Site": "none", "Sec-Fetch-User": "?1"})
+
     if not 200 <= response.status_code < 300:
-        return {"status": "unknown", "message": f"官网登录页返回 HTTP {response.status_code}，请到官网检查"}
+        return {"status": "unknown", "message": f"{adapter['name']} 登录页 GET 返回 HTTP {response.status_code}{_response_detail(response)}；脚本请求被官网拒绝，请检查出口节点/IP或浏览器请求方式"}
     soup, form, fields = _login_form(response, adapter["username_field"])
     if form is None:
         return {"status": "unknown", "message": "官网登录页结构已变化或需要安全验证，请到官网检查"}
@@ -446,9 +481,16 @@ def _merchant_form_login(session, account: dict, adapter: dict) -> dict:
     payload = {key: node.get("value", "") for key, node in fields.items() if key and node.get("type", "").casefold() == "hidden"}
     payload[adapter["username_field"]] = account["username"]
     payload["password"] = account["password"]
-    submitted = session.post(action, data=payload, timeout=(5, 20), allow_redirects=False)
-    if submitted.status_code in {401, 403}:
-        return {"status": "invalid", "message": "官网拒绝登录请求；账户或密码错误，也可能需要验证码 / 二次验证"}
+    origin = f"{urlsplit(action).scheme}://{urlsplit(action).netloc}"
+    submitted = session.post(action, data=payload, timeout=(5, 20), allow_redirects=False,
+                             headers={**MERCHANT_BROWSER_HEADERS, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                                      "Content-Type": "application/x-www-form-urlencoded", "Origin": origin,
+                                      "Referer": response.url or adapter["url"], "Sec-Fetch-Site": "same-origin",
+                                      "Sec-Fetch-User": "?1"})
+    if submitted.status_code == 401:
+        return {"status": "invalid", "message": "官网拒绝登录：用户名或密码错误（HTTP 401）"}
+    if submitted.status_code == 403:
+        return {"status": "unknown", "message": f"{adapter['name']} 登录 POST 被官网拒绝（HTTP 403）{_response_detail(submitted)}；可能是安全策略、验证码或出口 IP，不代表账号密码错误"}
     if 300 <= submitted.status_code < 400:
         location = submitted.headers.get("Location", "")
         destination = urljoin(action, location)
@@ -533,7 +575,7 @@ def order_json(response) -> dict:
     return data
 
 
-def check_order_account(session, account: dict) -> dict:
+def check_order_account(session, account: dict, fetcher: dict | None = None) -> dict:
     result = {"status": "unknown", "ok": False, "account_id": account.get("id", ""),
         "checked_at": beijing_iso()}
     if not account.get("username") or not account.get("password"):
@@ -544,7 +586,7 @@ def check_order_account(session, account: dict) -> dict:
         if adapter:
             if account.get("login_url") != adapter["url"]:
                 return {**result, "message": "商家登录地址与内置适配不一致，请重新选择商家并保存"}
-            checked = _merchant_form_login(session, account, adapter)
+            checked = _merchant_form_login(session, account, adapter, fetcher)
             if checked["status"] == "valid":
                 return {**result, "ok": True, **checked}
             return {**result, **checked}
@@ -586,7 +628,7 @@ def seckill_account_check(submitted: dict) -> dict:
     with requests.Session() as session:
         session.trust_env = False
         egress.apply_session(session, fetcher)
-        return {**check_order_account(session, account), "account_id": account["id"], "item_id": item["id"]}
+        return {**check_order_account(session, account, fetcher), "account_id": account["id"], "item_id": item["id"]}
 
 
 def seckill_test(submitted: dict) -> dict:
@@ -634,7 +676,7 @@ def seckill_test(submitted: dict) -> dict:
                     result["site_access"] = {"ok": False, "message": f"网站访问失败：{message}"}
                     result["page_recognition"] = {"ok": False, "message": f"页面识别失败：{message}"}
                 if account:
-                    checked = check_order_account(session, account)
+                    checked = check_order_account(session, account, fetcher)
                     result["account"] = {**checked, "required": required_account, "account_id": account["id"]}
         except (OSError, requests.RequestException, ValueError) as exc:
             message = str(exc)[:300] or "检查失败"
@@ -776,7 +818,7 @@ class SeckillTask:
                             if capability.get("protocol") != ORDER_PROTOCOL or capability.get("order_only") is not True or capability.get("automatic_payment") is not False:
                                 raise ValueError("接口未明确支持仅创建待付款订单；普通结算网页不能自动提交")
                         if account:
-                            checked = check_order_account(order_session, account)
+                            checked = check_order_account(order_session, account, fetcher)
                             self.log(f"账户 {account['name']}：{checked['message']}", "info" if checked["ok"] else "error", item)
                             with self.lock:
                                 self.output.setdefault("accounts", {})[item["id"]] = checked
@@ -811,7 +853,7 @@ class SeckillTask:
                             if result.stock_mode == "availability":
                                 self.log("商家仅提供有货状态，数量由下单接口最终核验；不会自动减少下单数量。", "info", item)
                             if auto and self.mode == "precise":
-                                checked = check_order_account(order_session, account)
+                                checked = check_order_account(order_session, account, fetcher)
                                 with self.lock:
                                     self.output.setdefault("accounts", {})[item["id"]] = checked
                                 if not checked["ok"]:

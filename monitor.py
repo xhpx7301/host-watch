@@ -411,6 +411,31 @@ def fetch_with_flaresolverr(session: requests.Session, url: str, fetcher: dict, 
         return _fetch_with_flaresolverr(session, url, fetcher, expected_host)
 
 
+def _copy_browser_state(session: requests.Session, solution: dict, expected_host: str) -> None:
+    """Copy only same-site browser state into the dedicated follow-up session."""
+    user_agent = str(solution.get("userAgent", "")).strip()
+    if user_agent and len(user_agent) <= 512 and "\r" not in user_agent and "\n" not in user_agent:
+        session.headers["User-Agent"] = user_agent
+    cookies = solution.get("cookies", [])
+    if isinstance(cookies, dict):
+        cookies = [{"name": name, "value": value} for name, value in cookies.items()]
+    if not isinstance(cookies, list):
+        return
+    host = str(expected_host or "").casefold().lstrip(".")
+    for cookie in cookies:
+        if not isinstance(cookie, dict):
+            continue
+        name = str(cookie.get("name", ""))
+        value = str(cookie.get("value", ""))
+        domain = str(cookie.get("domain", "")).strip().casefold().lstrip(".") or host
+        path = str(cookie.get("path", "/"))
+        if (not name or len(name) > 256 or len(value) > 4096 or "\r" in name or "\n" in name
+                or "\r" in value or "\n" in value or not path.startswith("/")
+                or not host or not (host == domain or host.endswith("." + domain))):
+            continue
+        session.cookies.set(name, value, domain=domain, path=path)
+
+
 def _fetch_with_flaresolverr(session: requests.Session, url: str, fetcher: dict, expected_host: str) -> tuple[str, str]:
     endpoint = str(fetcher["flaresolverr_url"])
     timeout_seconds = int(fetcher["timeout_seconds"])
@@ -458,8 +483,11 @@ def _fetch_with_flaresolverr(session: requests.Session, url: str, fetcher: dict,
     status_code = solution.get("status")
     if not isinstance(body, str) or not isinstance(final_url, str) or not isinstance(status_code, int):
         raise RequestServiceError("FlareSolverr 响应格式异常，监控已停止")
+    if fetcher.get("_copy_browser_state"):
+        _copy_browser_state(session, solution, expected_host)
     # Parse the browser's HTML directly; cookies and User-Agent need not be copied
-    # into the shared HTTP session used for other vendors and Telegram.
+    # into the shared HTTP session used for other vendors and Telegram unless a
+    # caller explicitly requests a same-site login bootstrap above.
     page_headers = solution.get("headers")
     return _validate_page_response(status_code, body, final_url, expected_host, page_headers if isinstance(page_headers, dict) else {})
 

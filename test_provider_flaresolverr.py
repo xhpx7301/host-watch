@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 import admin
 import catalog
 import monitor
+import requests
 
 
 DMIT_OPTIONS = {"timeout_seconds": 25, "wait_seconds": 0, "disable_media": True}
@@ -74,6 +75,29 @@ class ProviderFlareSettingsTests(unittest.TestCase):
         self.assertNotIn("waitInSeconds", payload)
         self.assertTrue(payload["disableMedia"])
         self.assertEqual(session.post.call_args.kwargs["timeout"], (10, 40))
+
+    def test_login_bootstrap_copies_only_same_site_browser_state(self):
+        session = requests.Session()
+        response = Mock(ok=True, status_code=200)
+        response.json.return_value = {"status": "ok", "solution": {
+            "status": 200, "url": "https://app.vmiss.com/login", "response": "<form>",
+            "userAgent": "Mozilla/5.0 browser", "cookies": [
+                {"name": "cf_clearance", "value": "clear", "domain": ".app.vmiss.com", "path": "/"},
+                {"name": "other", "value": "skip", "domain": ".attacker.example", "path": "/"},
+            ]}}
+        control = Mock(headers={}, cookies=Mock())
+        control.post.return_value = response
+        fetcher = {"mode": "flaresolverr", "flaresolverr_url": "http://127.0.0.1:8191/v1",
+                   "timeout_seconds": 30, "wait_seconds": 0, "disable_media": True,
+                   "_copy_browser_state": True}
+        monitor._fetch_with_flaresolverr(control, "https://app.vmiss.com/login", fetcher, "app.vmiss.com")
+        self.assertEqual(session.cookies.get("cf_clearance"), None)
+        # The helper is exercised with a real session so cookie-domain filtering
+        # is covered independently of the mocked FlareSolverr control client.
+        monitor._copy_browser_state(session, response.json.return_value["solution"], "app.vmiss.com")
+        self.assertEqual(session.cookies.get("cf_clearance"), "clear")
+        self.assertIsNone(session.cookies.get("other"))
+        self.assertEqual(session.headers["User-Agent"], "Mozilla/5.0 browser")
 
     def test_catalog_route_and_worker_use_the_same_effective_parameters(self):
         options = settings()
