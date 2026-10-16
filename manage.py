@@ -10,7 +10,6 @@ import getpass
 import gzip
 import grp
 import io
-from ipaddress import ip_address
 import json
 import os
 import pwd
@@ -30,7 +29,6 @@ import zlib
 from datetime import datetime, timezone
 from urllib.request import urlopen
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
 
 from auth import DEFAULT_USERS_PATH, load_users, password_record, validate_username
 
@@ -148,39 +146,12 @@ def initialize_admin(restart: bool = True) -> bool:
     return True
 
 
-def normalize_admin_domain(value: str) -> str:
-    raw = value.strip()
-    if not raw or any(char.isspace() for char in raw) or "*" in raw or "\\" in raw:
-        raise ValueError("请填写精确访问域名，例如 hw.example.com，不允许通配符或空白")
-    parsed = urlsplit(raw if "://" in raw else "//" + raw)
-    if parsed.scheme not in {"", "http", "https"} or parsed.username is not None or parsed.password is not None or parsed.path not in {"", "/"} or parsed.query or parsed.fragment or not parsed.hostname:
-        raise ValueError("请填写域名或站点首页地址，不要包含账号、路径、查询参数或片段")
-    parsed.port  # Validate a supplied port even though Host matching ignores it.
-    host = parsed.hostname.rstrip(".").encode("idna").decode("ascii").casefold()
-    try:
-        return str(ip_address(host))
-    except ValueError:
-        if len(host) > 253 or any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) for label in host.split(".")):
-            raise ValueError("访问域名格式无效") from None
-    return host
-
-
 def configure_admin_domain(domain: str | None = None) -> None:
-    host = normalize_admin_domain(domain if domain is not None else input("管理页访问域名（例如 hw.example.com）："))
-    environment = admin_environment()
-    hosts = {"127.0.0.1", "localhost"}
-    for item in environment.get("ADMIN_ALLOWED_HOSTS", "").split(","):
-        if item.strip():
-            hosts.add(normalize_admin_domain(item))
-    hosts.add(host)
+    """Compatibility entry point for older hw admin-domain instructions."""
     initialize_admin(restart=False)
-    original = ADMIN_ENV.read_text(encoding="utf-8") if ADMIN_ENV.exists() else ""
-    retained = [line for line in original.splitlines() if not re.match(r"^\s*ADMIN_ALLOWED_HOSTS\s*=", line)]
-    retained.append("ADMIN_ALLOWED_HOSTS=" + ",".join(sorted(hosts)))
-    atomic_write(ADMIN_ENV, "\n".join(retained) + "\n", group=grp.getgrnam(SERVICE_GROUP).gr_gid)
     run("systemctl", "restart", ADMIN)
-    print(f"已允许管理页域名：{host}，管理页服务已重启。")
-    print("反向代理后端保持 http://127.0.0.1:8765；浏览器使用 HTTPS 域名访问并输入管理员账号。")
+    print("管理页已取消域名允许列表，所有访问域名均可使用，无需逐个配置。")
+    print("已检查管理员账号并重启管理页。反向代理后端保持 http://127.0.0.1:8765，使用 HTTPS 域名访问并登录。")
 
 
 def ask_password() -> str:
@@ -611,7 +582,7 @@ def print_menu_status() -> None:
         ("监控", _systemd_state(MONITOR)),
         ("管理页", _systemd_state(ADMIN)),
     )
-    print("\n当前运行状态：" + "  ".join(f"{name} {_state_label(state)}" for name, state in states))
+    print("\n当前运行状态：\n" + "\n".join(f"  {name} {_state_label(state)}" for name, state in states))
 
 
 def start_monitor() -> None:
@@ -888,7 +859,7 @@ def admin_service_menu() -> None:
     _submenu("管理页服务", {
         "1": ("重启管理页", lambda: run("systemctl", "restart", ADMIN)),
         "2": ("查看管理页和监控日志", lambda: run("journalctl", "--no-pager", "-u", MONITOR, "-u", ADMIN, "-n", "100")),
-        "3": ("设置管理页访问域名 / 修复域名 403", configure_admin_domain),
+        "3": ("检查管理页账号并重启（域名不限）", configure_admin_domain),
     })
 
 
@@ -945,7 +916,7 @@ def menu() -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="HostWatch Debian 管理菜单；用户指管理页账号。")
     parser.add_argument("command", nargs="?", default="menu", choices=["menu", "status", "update", "backup", "users", "add-user", "passwd", "delete-user", "init-admin", "admin-domain", "uninstall", "web-action", "web-update-worker", "scheduled-backup", "backup-schedule-apply"])
-    parser.add_argument("domain", nargs="?", help="admin-domain 的访问域名，例如 hw.example.com")
+    parser.add_argument("domain", nargs="?", help="兼容旧版 admin-domain 命令；域名已不限，此参数不再需要")
     args = parser.parse_args()
     if args.domain is not None and args.command != "admin-domain":
         parser.error("只有 admin-domain 命令接受域名参数")

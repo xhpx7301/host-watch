@@ -83,10 +83,11 @@ class ManagementTests(unittest.TestCase):
 
         with patch.object(self.manage.shutil, "which", return_value="/usr/bin/docker"), patch.object(self.manage.subprocess, "run", side_effect=fake_run), patch("builtins.print") as output:
             self.manage.print_menu_status()
-        line = output.call_args.args[0]
-        self.assertIn("FlareSolverr 运行中", line)
-        self.assertIn("监控 运行中", line)
-        self.assertIn("管理页 已停止", line)
+        lines = output.call_args.args[0].splitlines()
+        self.assertIn("  FlareSolverr 运行中", lines)
+        self.assertIn("  监控 运行中", lines)
+        self.assertIn("  管理页 已停止", lines)
+        self.assertTrue(any(line.startswith("  cloudscraper ") for line in lines))
 
     def test_cloudscraper_status_reports_library_availability(self):
         interpreter = self.directory / ".venv" / "bin" / "python"

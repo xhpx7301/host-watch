@@ -99,7 +99,7 @@ hw add-user     # 交互式添加用户
 hw passwd       # 交互式修改密码
 hw delete-user  # 交互式删除用户
 hw init-admin   # 尚无认证时创建 admin 和随机密码，已有账号保持不变
-hw admin-domain watch.example.com  # 放行访问域名、补建缺失账号并重启管理页
+hw admin-domain              # 兼容旧命令：检查账号并重启，已无需设置域名
 hw uninstall   # 二次确认后从服务器完全删除 HostWatch
 ```
 
@@ -115,7 +115,7 @@ hw uninstall   # 二次确认后从服务器完全删除 HostWatch
 
 ### SSH 隧道（推荐）
 
-管理页默认只接受本机 Host，不暴露到公网。从自己的电脑建立隧道：
+管理页默认只监听本机地址。从自己的电脑建立隧道：
 
 ```sh
 ssh -N -L 8765:127.0.0.1:8765 your-user@your-server
@@ -125,36 +125,19 @@ ssh -N -L 8765:127.0.0.1:8765 your-user@your-server
 
 ### 反向代理域名
 
-如果使用 Nginx、Caddy 或面板把 `host-watch.example.com` 转发到 `http://127.0.0.1:8765`，还需在 HostWatch 中允许该域名，否则管理服务会因为 Host 校验返回 403。DNS 正确、Caddy 已配置及管理页服务“运行中”均不代表访问域名已放行。运行：
+使用 Nginx、Caddy 或面板将 HTTPS 域名转发到 `http://127.0.0.1:8765`，并传递原始 `Host`，即可用管理员账号登录。管理页不限制访问域名，无需逐个添加允许列表；旧配置中的 `ADMIN_ALLOWED_HOSTS`（包括 `*`）不再生效，也不会阻止启动。
+
+新安装自动创建管理员并在终端显示一次随机密码。旧安装如果尚无账号，先执行：
 
 ```sh
-hw admin-domain host-watch.example.com
+hw init-admin
 ```
 
-命令将该域名加入 `/etc/vmiss-monitor-admin.env` 的 `ADMIN_ALLOWED_HOSTS`，保留本机及已有域名，检查认证并重启管理页。没有管理员时自动创建 `admin` 和随机密码并显示一次；已有账号、旧版密码或自定义账号文件保持原样。也可以通过 `hw → 管理页服务 → 设置管理页访问域名` 操作。迁移到新域名后在新服务器执行一次此命令；数据导入不会替你修改服务器域名或账号。
+已有账号、旧版密码或自定义账号文件会保留。没有配置账号时，通过域名访问会提示初始化账号；原有本地 SSH 隧道访问仍可使用。忘记密码可执行 `hw passwd`。菜单中的“管理页服务 → 检查管理页账号并重启”也可补建缺失账号。
 
-然后打开 HTTPS 域名并输入管理员账号。新的 403 页面会区分域名未配置与登录认证，提示上述修复命令；不会自动信任任意 Host。也可手动配置允许域名和认证：
+迁移服务器或更换域名时，只需调整 DNS 和反向代理，无需修改 HostWatch 允许列表。账号仍由新服务器的安装及账号配置管理，导入业务备份不会覆盖管理员账号。旧命令 `hw admin-domain [域名]` 保留兼容，只检查账号并重启服务，不再保存或限制域名。
 
-```sh
-sudoedit /etc/vmiss-monitor-admin.env
-```
-
-可以先执行 `hw add-user` 创建账号，再只设置允许的域名；如果继续使用旧单账号方式，至少填写：
-
-```env
-ADMIN_ALLOWED_HOSTS=127.0.0.1,localhost,host-watch.example.com
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=替换为足够长的随机密码
-```
-
-同时确认反向代理传递原始 `Host`，然后重载并重启管理服务：
-
-```sh
-sudo systemctl daemon-reload
-sudo systemctl restart vmiss-monitor-admin.service
-```
-
-浏览器打开域名后会弹出 Basic Auth，用户名和密码就是上面设置的值。不要把管理页直接绑定到公网 IP，也不要使用 `ADMIN_ALLOWED_HOSTS=*`。
+管理服务继续仅监听本机地址，管理员认证和浏览器跨站请求校验保持启用。
 
 ## 在管理页配置 Telegram
 

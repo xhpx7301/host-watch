@@ -1,4 +1,4 @@
-"""Fresh-install credentials and exact-host reverse-proxy setup regressions."""
+"""Fresh-install credentials and legacy reverse-proxy command regressions."""
 import base64
 from contextlib import ExitStack, redirect_stdout
 import io
@@ -101,11 +101,11 @@ class AdminSetupTests(unittest.TestCase):
         self.assertNotIn("hw.example.com", self.env.read_text())
         self.run.assert_not_called()
 
-    def test_domain_setup_initializes_auth_and_preserves_settings_and_hosts(self):
+    def test_legacy_domain_command_initializes_auth_without_changing_domain_settings(self):
         self.env.write_text("# original\nADMIN_ALLOWED_HOSTS=localhost,old.example.com\nADMIN_PASSWORD=\nCUSTOM_VALUE=keep\n")
         self.manage.configure_admin_domain("https://HW.6990699.xyz:443/")
         environment = self.manage.admin_environment()
-        self.assertEqual(set(environment["ADMIN_ALLOWED_HOSTS"].split(",")), {"127.0.0.1", "localhost", "old.example.com", "hw.6990699.xyz"})
+        self.assertEqual(environment["ADMIN_ALLOWED_HOSTS"], "localhost,old.example.com")
         self.assertIn("CUSTOM_VALUE=keep", self.env.read_text())
         self.assertIn("# original", self.env.read_text())
         self.assertEqual(environment["ADMIN_USERS_FILE"], str(self.users))
@@ -113,7 +113,7 @@ class AdminSetupTests(unittest.TestCase):
         original = self.users.read_bytes()
         self.manage.configure_admin_domain("hw.6990699.xyz")
         self.assertEqual(self.users.read_bytes(), original)
-        self.assertEqual(self.env.read_text().count("hw.6990699.xyz"), 1)
+        self.assertNotIn("hw.6990699.xyz", self.env.read_text())
 
     def test_domain_setup_preserves_legacy_authentication(self):
         self.env.write_text('ADMIN_ALLOWED_HOSTS=localhost\nADMIN_PASSWORD="legacy long password"\nADMIN_USERNAME=owner\n')
@@ -122,15 +122,15 @@ class AdminSetupTests(unittest.TestCase):
         self.assertIn("ADMIN_USERNAME=owner", self.env.read_text())
         self.assertFalse(self.users.exists())
 
-    def test_invalid_domain_never_changes_authentication_or_configuration(self):
-        for domain in ("*", "*.example.com", "bad.example\nADMIN_PASSWORD=bad", "https://user:pass@example.com", "https://example.com/path", "https://example.com?x=1", "https://example.com/#x", "bad example.com", "-bad.example", "bad..example", "example.com:99999", "ftp://example.com", "example.com\\bad"):
-            with self.subTest(domain=domain):
-                original = self.env.read_bytes()
-                with self.assertRaises(ValueError):
-                    self.manage.configure_admin_domain(domain)
-                self.assertEqual(self.env.read_bytes(), original)
-                self.assertFalse(self.users.exists())
-        self.run.assert_not_called()
+    def test_compatibility_command_ignores_old_wildcard_and_does_not_prompt_for_domain(self):
+        self.env.write_text('ADMIN_ALLOWED_HOSTS=*\nADMIN_PASSWORD="legacy long password"\n')
+        original = self.env.read_bytes()
+        with patch("builtins.input", side_effect=AssertionError("No domain input is needed")):
+            self.manage.configure_admin_domain()
+            self.manage.configure_admin_domain("new.example")
+        self.assertEqual(self.env.read_bytes(), original)
+        self.assertIn("无需逐个配置", self.output.getvalue())
+        self.assertFalse(self.users.exists())
 
     def test_real_installer_block_initializes_once_without_starting_service(self):
         # Execute the actual installer branch with filesystem/service isolation.

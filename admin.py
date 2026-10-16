@@ -820,11 +820,6 @@ def public_config(value: dict) -> dict:
     return normalized
 
 
-def allowed_hosts() -> set[str]:
-    raw = os.getenv("ADMIN_ALLOWED_HOSTS", "").strip() or "127.0.0.1,localhost"
-    return {item.strip().casefold() for item in raw.split(",") if item.strip()}
-
-
 def normalize_vps_soy_url(value: object) -> str:
     catalog_url = str(value).strip()
     parsed = urlsplit(catalog_url)
@@ -1370,29 +1365,24 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             self.send_error(403)
             return False
-        host_header = self.headers.get("Host", "")
-        try:
-            host = urlsplit(f"//{host_header}").hostname or ""
-        except ValueError:
-            host = ""
-        hosts = allowed_hosts()
-        if host.casefold() not in hosts:
-            message = "当前访问域名未加入管理页允许列表。反向代理已连接到 HostWatch，请在服务器终端运行 hw admin-domain 你的管理页域名，然后使用管理员账号登录。"
-            if self.path.startswith("/api/"):
-                self._send(403, "application/json; charset=utf-8", json.dumps({"error": message, "code": "admin_host_not_allowed"}, ensure_ascii=False).encode("utf-8"))
-            else:
-                body = ('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-                        '<title>管理页域名尚未配置 · HostWatch</title><style>body{font:16px/1.7 system-ui,sans-serif;background:#f6f8fc;color:#24334b;margin:0;padding:8vh 20px}'
-                        'main{max-width:640px;margin:auto;background:white;padding:28px;border:1px solid #dfe5ef;border-radius:16px}h1{font-size:24px}'
-                        'pre{background:#f0f3f8;padding:14px;white-space:pre-wrap;overflow-wrap:anywhere;border-radius:8px}</style>'
-                        '<main><p>HostWatch · HTTP 403</p><h1>管理页访问域名尚未配置</h1><p>' + message + '</p>'
-                        '<pre>hw admin-domain 你的管理页域名</pre><p>此命令会放行指定域名并重启管理页。尚无管理员时会生成 admin 和随机密码；已有账号保持不变。</p>'
-                        '<p>反向代理后端保持 http://127.0.0.1:8765。仅重启服务不会自动放行新域名。</p></main></html>')
-                self._send(403, "text/html; charset=utf-8", body.encode("utf-8"))
-            return False
         return True
 
     def _authorized(self) -> bool:
+        # Preserve legacy password-free SSH tunnels, while requiring credentials
+        # when a reverse proxy forwards an arbitrary public hostname.
+        if not authentication_required():
+            try:
+                host = (urlsplit("//" + self.headers.get("Host", "")).hostname or "").casefold().rstrip(".")
+                local = host == "localhost" or ip_address(host).is_loopback
+            except ValueError:
+                local = False
+            if not local:
+                message = "管理页尚未配置管理员账号，请在服务器运行 hw init-admin，然后使用生成的账号登录。访问域名无需配置允许列表。"
+                if self.path.startswith("/api/"):
+                    self._send(503, "application/json; charset=utf-8", json.dumps({"error": message, "code": "admin_auth_not_configured"}, ensure_ascii=False).encode("utf-8"))
+                else:
+                    self._send(503, "text/html; charset=utf-8", ('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>请初始化管理员 · HostWatch</title><h1>请初始化管理员账号</h1><p>' + message + '</p></html>').encode("utf-8"))
+                return False
         if authorized(self.headers.get("Authorization", "")):
             return True
         self.send_response(401)
@@ -1781,11 +1771,6 @@ def main() -> None:
     host = os.getenv("ADMIN_HOST", "127.0.0.1")
     if host not in {"127.0.0.1", "localhost"}:
         raise SystemExit("管理页只允许监听 localhost")
-    hosts = allowed_hosts()
-    if "*" in hosts:
-        raise SystemExit("ADMIN_ALLOWED_HOSTS 不允许使用通配符；请填写精确域名")
-    if any(item not in {"127.0.0.1", "localhost"} for item in hosts) and not authentication_required():
-        raise SystemExit("允许域名访问时必须设置 ADMIN_PASSWORD 或使用 hw add-user 创建管理页账号")
     port = int(os.getenv("ADMIN_PORT", "8765"))
     print(f"HostWatch admin listening on http://{host}:{port}")
     ThreadingHTTPServer((host, port), Handler).serve_forever()
