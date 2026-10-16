@@ -188,6 +188,8 @@ def stock_test_worker() -> None:
             output["matched_product"] = {"area_id": result.area_id, "area_name": result.area_name, "node_name": result.node_name, "plan_name": result.name}
         if result.vendor in {"VPS.SOY", "DMIT"}:
             output["catalog_url"] = result.catalog_url
+        if result.vendor == "DMIT":
+            output["stock_version"] = result.match_details["stock_version"]
         if result.vendor == "Isvoro":
             output["matched_product"] = result.match_details
     except MonitorError as exc:
@@ -1132,6 +1134,8 @@ def validate_config(value: object) -> dict:
         if type(snapshot.get("available")) is int and snapshot["available"] >= 0:
             normalized_item["snapshot"]["available"] = snapshot["available"]
         normalized_item["snapshot"]["stock_mode"] = "availability" if snapshot.get("stock_mode") == "availability" else "quantity"
+        if adapter == "dmit" and type(snapshot.get("stock_version")) is int:
+            normalized_item["snapshot"]["stock_version"] = max(0, snapshot["stock_version"])
         normalized_item["request_mode"] = request_mode
         seen_ids.add(product_id)
         normalized.append(normalized_item)

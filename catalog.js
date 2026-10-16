@@ -177,6 +177,7 @@
     const changed = merchantRequestChanged(provider);
     const routeHint = get("catalog-route");
     const hints = [`${providers[provider]} 已保存的读取设置：${requestRouteLabel(effectiveRoute)}。`];
+    if (provider === "dmit") hints.push("有货须通过购买页校验；价格页可购买但下单页缺货时统一显示缺货，验证失败显示未知。不同时间的快照可能变化。");
     if (changed) hints.push("此商家的出口或请求设置尚未保存；当前刷新仍使用上面的已保存设置，请先点击底部“保存配置”。");
     if (effectiveRoute.error) hints.push(effectiveRoute.error);
     if (busy && task.provider === provider && task.route) hints.push(`本次刷新使用：${requestRouteLabel(task.route)}。执行期间修改设置将在下次刷新生效。`);
@@ -193,7 +194,7 @@
     else if (task?.provider === provider && task.error) { status.classList.add("error"); status.textContent = task.error; }
     else if (task?.provider === provider && task.cancelled) status.textContent = "刷新已停止，保留上次快照。";
     else if (loading) status.textContent = "正在读取目录缓存…";
-    else if (metadataOutdated) { status.classList.add("stale"); status.textContent = "此分类为旧版快照，带宽信息尚未更新，请刷新分类库存。"; }
+    else if (metadataOutdated) { status.classList.add("stale"); status.textContent = provider === "dmit" ? "此分类为旧版快照，有货记录尚未校验购买页，请刷新目录库存。" : "此分类为旧版快照，带宽信息尚未更新，请刷新分类库存。"; }
     else { status.textContent = data ? `已读取${scope === "all" ? "全部公开套餐（仅手动刷新）" : "此分类"}。${data.unknown ? `${data.unknown} 个套餐库存未知，未当作缺货或现货。` : ""}${stale ? "当前为历史快照，请刷新后核对。" : "库存以此快照的检查时间为准。"}` : "选择商家后刷新公开套餐目录，无需先开启自动监控。"; if (stale) status.classList.add("stale"); }
     const filterArrived = filterGeneration === generation && !loading && (data?.fetched_at || !task?.pending);
     renderTable(Boolean(filterArrived));
@@ -213,6 +214,7 @@
       }
       if (!item) continue;
       item.snapshot = { name: row.name, region: row.region, specs: row.specs, traffic: row.traffic || "", price: row.price, available: row.available, stock_mode: row.stock_mode, url: row.purchase_url, checked_at: data?.fetched_at || "" };
+      if (row.watch.adapter === "dmit") item.snapshot.stock_version = data?.stock_version || 0;
       if (membership(item, type) !== enabled) { setMembership(item, type, enabled); changed++; }
     }
     renderProducts(); updateDraftState(); renderTable();

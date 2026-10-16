@@ -1036,6 +1036,7 @@ async function followProductTest(task, initial) {
     if (activeTest === task) activeTest = null;
     sessionStorage.removeItem("hostwatch-stock-test");
     renderProductList();
+    renderOverview();
     syncTestControls();
   }
 }
@@ -1286,6 +1287,25 @@ function setMembership(item, type, enabled) {
 }
 function productSnapshot(item, status) {
   const data = { ...(item.snapshot || {}), ...status, region: status?.region || item.snapshot?.region || item.category_name || "—" };
+  if (item.adapter === "dmit") {
+    const stamp = value => Date.parse(value || "") || 0;
+    // All stock views use the latest completed observation, including failures.
+    // Keep old successful values in storage, never present them as a new check.
+    if (data.available > 0 && (status ? status.stock_version : data.stock_version) !== 1) {
+      data.available = null; data.error = "旧版库存尚未校验购买页，请刷新目录或测试商品";
+    }
+    if (!status && ["blocked", "error"].includes(lastStatus?.state) && stamp(lastStatus.last_checked) > stamp(data.checked_at)) {
+      data.available = null; data.error = `最近检查未取得此商品结果：${lastStatus.message || "读取失败"}`; data.checked_at = lastStatus.last_checked;
+    }
+    const test = productTests.get(item.id);
+    if (test && !test.pending && !test.cancelled && !test.warning && stamp(test.checked_at) >= stamp(data.checked_at) && stamp(test.checked_at)) {
+      if (test.ok && Number.isInteger(test.available) && (test.available === 0 || test.stock_version === 1)) {
+        Object.assign(data, test, { error: "", url: test.url || test.purchase_url || data.url, _fromTest: true });
+      } else if (!test.ok && test.error) {
+        Object.assign(data, { available: null, error: `本次库存未确认：${test.error}`, checked_at: test.checked_at, _fromTest: true });
+      }
+    }
+  }
   // VMISS's older snapshots may repeat the same inline resources in both fields.
   if (item.adapter === "vmiss") {
     const fields = [...new Set([data.specs, data.traffic].filter(Boolean).join(" · ").split(/\s*·\s*|\s+(?=\d+(?:\.\d+)?\s*(?:v?CPU|cores?|[KMGT]i?B|[KMGT]?bps|IPv[46])\b)/i).map(value => value.trim()).filter(Boolean))];
@@ -1834,8 +1854,8 @@ function renderProductList() {
     compare.addEventListener("change", () => updateCompareSelection(item.id, compare.checked)); compareCell.append(compare);
     const merchant = text("div", "", "merchant-sort"); merchant.append(productSortHandle(item, "watch", row, visible.length), text("span", item.provider)); cell().append(merchant);
     const identity = cell(); identity.append(text("strong", p.name || item.name));
-    const time = runtime ? runtime.checked_at || lastStatus?.last_checked : p.checked_at;
-    const updated = text("small", time ? `读取 ${compactDate(time)}` : "等待首次读取"); updated.title = time ? new Date(time).toLocaleString() : "尚无商品快照"; identity.append(updated); cell(p.region || "—");
+    const time = item.adapter === "dmit" ? p.checked_at : runtime ? runtime.checked_at || lastStatus?.last_checked : p.checked_at;
+    const updated = text("small", time ? `${p._fromTest ? "测试" : "读取"} ${compactDate(time)}` : "等待首次读取"); updated.title = time ? new Date(time).toLocaleString() : "尚无商品快照"; identity.append(updated); cell(p.region || "—");
     for (const [key, label] of [["remarks", "备注"]]) {
       const input = document.createElement("textarea"); input.className = "manual-field remarks-field"; input.rows = 1; input.value = item[key] || ""; input.maxLength = 500; input.placeholder = "管理员填写";
       input.setAttribute("aria-label", `${item.name} ${label}`); input.disabled = actionRunning;
@@ -1843,7 +1863,8 @@ function renderProductList() {
     }
     renderLineEditor(cell(), item);
     renderSpecs(cell("", "watch-specs"), p.specs); renderSpecs(cell("", "watch-specs"), p.traffic, true); renderPrice(cell("", "watch-price"), p.price, expanded.has(item.id));
-    cell().append(text("span", Number.isInteger(p.available) ? stockLabel(p) : "未知", `state ${!Number.isInteger(p.available) ? "pending" : p.available > 0 ? "ok" : "error"}`));
+    const stockCell = cell(); stockCell.append(text("span", Number.isInteger(p.available) ? stockLabel(p) : "未知", `state ${!Number.isInteger(p.available) ? "pending" : p.available > 0 ? "ok" : "error"}`));
+    if (item.adapter === "dmit" && p.error) stockCell.append(text("small", p.error, "error"));
     const actions = text("div", "", "watch-operations");
     const raw = p.url || item.purchase_url;
     if (raw && /^https:\/\//i.test(raw)) { const link = text("a", "直接购买", "buy-link"); link.href = affiliatePurchaseURL(raw, item.adapter, item); link.target = "_blank"; link.rel = "noopener noreferrer"; actions.append(link); }
@@ -1902,8 +1923,8 @@ function renderNotificationList() {
     const identity = cell(); identity.append(text("strong", p.name || item.name));
     const savedItem = savedProducts.get(item.id);
     if (!savedItem || JSON.stringify(item) !== JSON.stringify(savedItem)) identity.append(text("small", "修改待保存", "draft-note"));
-    const time = testIsLatest ? testResult.checked_at : runtime ? runtime.checked_at || lastStatus?.last_checked : p.checked_at;
-    const updated = text("small", time ? `${testIsLatest ? "测试" : "读取"} ${compactDate(time)}` : "等待首次读取"); updated.title = time ? new Date(time).toLocaleString() : "尚无商品快照"; identity.append(updated);
+    const time = item.adapter === "dmit" ? p.checked_at : testIsLatest ? testResult.checked_at : runtime ? runtime.checked_at || lastStatus?.last_checked : p.checked_at;
+    const updated = text("small", time ? `${testIsLatest || p._fromTest ? "测试" : "读取"} ${compactDate(time)}` : "等待首次读取"); updated.title = time ? new Date(time).toLocaleString() : "尚无商品快照"; identity.append(updated);
     cell(p.region || "—"); renderSpecs(cell("", "watch-specs"), p.specs); renderSpecs(cell("", "watch-specs"), p.traffic, true); renderPrice(cell("", "watch-price"), p.price, expanded.has(item.id));
     const stock = cell();
     stock.append(text("span", Number.isInteger(p.available) ? stockLabel(p) : "未知", `state ${!Number.isInteger(p.available) ? "pending" : p.available > 0 ? "ok" : "error"}`));
@@ -1930,7 +1951,7 @@ function renderOverview() {
   const enabled = config.products.filter((item) => item.enabled);
   const vendors = new Set(enabled.map((item) => item.provider).filter(Boolean));
   const latest = new Map((lastStatus?.products || []).map((product) => [product.id, product]));
-  const inStock = enabled.filter((item) => (latest.get(item.id)?.available || 0) > 0).length;
+  const inStock = enabled.filter((item) => ((item.adapter === "dmit" ? productSnapshot(item, latest.get(item.id)) : latest.get(item.id))?.available || 0) > 0).length;
   document.querySelector("#overview-total").textContent = String(config.products.length);
   document.querySelector("#overview-total-note").textContent = `${vendors.size} 个商家 · ${config.products.filter(p => membership(p, "watch")).length} 个监控 / ${config.products.filter(p => membership(p, "notify")).length} 个通知`;
   document.querySelector("#overview-stock").textContent = String(inStock);

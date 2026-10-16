@@ -1109,6 +1109,7 @@ def check_once(
         rows.append({"id": item["id"], "name": product.name, "vendor": item["provider"],
                      "available": product.available, "stock_mode": product.stock_mode, "url": product.url,
                      "purchase_url": purchase_link(product, item, config), "checked_at": checked_at,
+                     **({"stock_version": product.match_details["stock_version"]} if item["adapter"] == "dmit" else {}),
                      **{field: getattr(product, field) for field in ("region", "specs", "traffic", "price")}})
     write_status(status_path, {
         "last_checked": checked_at, "state": "partial" if unavailable or notification_errors or alerts.warnings or seckill_status and not seckill_status["ok"] else "ok",

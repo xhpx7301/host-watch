@@ -1,5 +1,6 @@
 """DMIT fixture contracts; real inventory is never inferred from HTTP failures."""
 import json
+import io
 from pathlib import Path
 import tempfile
 import unittest
@@ -44,6 +45,19 @@ def pricing_card(sold=False, pid="253", loc="lax", hw="as3", net="premium", name
       <div class="plan-card-action">{action}</div></div></div></div>'''
 
 
+def configuration(pid="253"):
+    return f'''<form id="frmConfigureProduct" action="/cart.php?a=confproduct&i=0" method="post">
+      <input name="pid" type="hidden" value="{pid}"><select name="billingcycle"><option>Monthly</option></select>
+      <button id="btnCompleteProductConfig" type="submit">Continue</button></form>'''
+
+
+def pages(body):
+    def fetch(_session, url, *_args):
+        pid = dmit.link_pid(url, dmit.PRICING_URL)
+        return (configuration(pid), url) if pid else (body, url)
+    return fetch
+
+
 class DMITCurrentPricingTests(unittest.TestCase):
     def test_current_theme_parses_regions_platforms_lines_and_icon_metadata(self):
         body = pricing_card() + pricing_card(sold=True, hw="an4") + pricing_card(pid="259", net="eyeball") + pricing_card(pid="270", loc="tyo", net="tier1")
@@ -77,7 +91,7 @@ class DMITCurrentPricingTests(unittest.TestCase):
             fetch.return_value = (pricing_card(sold=True), dmit.PRICING_URL)
             monitor.check_once(Mock(), config, state, status, "token", "123")
             send.assert_not_called()
-            fetch.return_value = (pricing_card(), dmit.PRICING_URL)
+            fetch.side_effect = pages(pricing_card())
             monitor.check_once(Mock(), config, state, status, "token", "123")
             send.assert_called_once()
             link = send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["url"]
@@ -88,7 +102,7 @@ class DMITCurrentPricingTests(unittest.TestCase):
     def test_known_pid_survives_sold_out_but_cannot_silently_switch_product(self):
         watched = item("253", plan_key="LAX:AS3:PREMIUM:TINY")
         for body, expected in [(pricing_card(sold=True), 0), (pricing_card(), 1)]:
-            with patch("monitor.fetch_page", return_value=(body, dmit.PRICING_URL)):
+            with patch("monitor.fetch_page", side_effect=pages(body)):
                 self.assertEqual(monitor.inspect_product(Mock(), watched, {"mode": "cloudscraper"}).available, expected)
         with patch("monitor.fetch_page", return_value=(pricing_card(pid="999"), dmit.PRICING_URL)), self.assertRaisesRegex(monitor.MonitorError, "PID.*不一致"):
             monitor.inspect_product(Mock(), watched, {})
@@ -157,6 +171,110 @@ class DMITParsingTests(unittest.TestCase):
             dmit.fetch_catalog(Mock(), dmit.PRICING_URL, {"mode": "requests"})
 
 
+class DMITVerifiedStockTests(unittest.TestCase):
+    purchase_url = "https://www.dmit.io/cart.php?a=add&pid=253"
+
+    def test_catalog_monitor_manual_test_and_seckill_agree_on_purchase_result(self):
+        for purchase_body, expected in [("<h1>缺貨中</h1>", 0), (configuration(), 1)]:
+            with self.subTest(expected=expected):
+                def fetch(_session, url, *_args):
+                    return (purchase_body, url) if dmit.link_pid(url, dmit.PRICING_URL) else (pricing_card(), url)
+                watched = item("253", plan_key="LAX:AS3:PREMIUM:TINY", watch_enabled=True, notify_enabled=True)
+                config = admin.validate_config({"products": [watched], "enabled": True})
+                with patch("monitor.fetch_page", side_effect=fetch), tempfile.TemporaryDirectory() as temp, patch("monitor.telegram_request") as send:
+                    data = catalog.load_catalog("dmit")
+                    self.assertEqual(data["rows"][0]["available"], expected)
+                    self.assertEqual(data["stock_version"], dmit.STOCK_VERSION)
+                    product = monitor.inspect_product(Mock(), watched, config["fetcher"])
+                    self.assertEqual(product.available, expected)
+                    self.assertEqual(admin.SeckillTask.enough_stock(product, 1), bool(expected))
+                    state, status = Path(temp) / "state.json", Path(temp) / "status.json"
+                    monitor.check_once(Mock(), config, state, status, "", "")
+                    saved_status = json.loads(status.read_text(encoding="utf-8"))["products"][0]
+                    self.assertEqual(saved_status["available"], expected)
+                    self.assertEqual(saved_status["stock_version"], dmit.STOCK_VERSION)
+                    request = json.dumps({"product": watched, "fetcher": config["fetcher"]})
+                    with patch("sys.stdin", io.StringIO(request)), patch("sys.stdout", new_callable=io.StringIO) as output:
+                        admin.stock_test_worker()
+                    tested = json.loads(output.getvalue())
+                    self.assertEqual(tested["available"], expected)
+                    self.assertEqual(tested["stock_version"], dmit.STOCK_VERSION)
+                    normalized = admin.validate_config({"products": [{**watched, "snapshot": {"available": expected, "stock_version": dmit.STOCK_VERSION}}]})
+                    self.assertEqual(normalized["products"][0]["snapshot"]["stock_version"], dmit.STOCK_VERSION)
+                    send.assert_not_called()
+
+    def test_redirect_to_pricing_never_confirms_stock_or_borrows_other_cards_status(self):
+        for body in [pricing_card(), pricing_card() + pricing_card(sold=True, hw="an4"), card("253", stock="In Stock", order=buy("253")) + card("254")]:
+            with self.subTest(body=body), self.assertRaisesRegex(monitor.MonitorError, "返回目录"):
+                dmit.purchase_status(body, dmit.PRICING_URL, "253")
+        self.assertEqual(dmit.purchase_status(card("253"), dmit.PRICING_URL, "253"), 0)
+
+    def test_cart_requires_actual_configuration_and_matching_product(self):
+        self.assertEqual(dmit.purchase_status(configuration(), self.purchase_url, "253"), 1)
+        self.assertEqual(dmit.purchase_status(configuration(), "https://www.dmit.io/cart.php?a=confproduct&i=0", "253"), 1)
+        for body, url in [("<nav>Checkout</nav><h1>Login</h1>", self.purchase_url), ("<h1>Available Continue</h1>", self.purchase_url), (configuration(), "https://www.dmit.io/clientarea.php"), (configuration("999"), self.purchase_url), (configuration(), self.purchase_url.replace("253", "999"))]:
+            with self.subTest(body=body, url=url), self.assertRaises(monitor.MonitorError):
+                dmit.purchase_status(body, url, "253")
+
+    def test_failed_cart_check_is_unknown_preserves_metadata_and_stops_repeated_challenges(self):
+        body = pricing_card() + pricing_card(pid="254", hw="an4") + pricing_card(sold=True, net="tier1")
+        with patch("monitor.fetch_page", side_effect=[(body, dmit.PRICING_URL), monitor.SiteBlocked("购买页验证失败")]) as fetch:
+            data = catalog.load_catalog("dmit")
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual([row["available"] for row in data["rows"]], [None, None, 0])
+        self.assertEqual(data["unknown"], 2)
+        self.assertTrue(all(row["price"] and row["specs"] for row in data["rows"]))
+        self.assertIn("验证失败", data["rows"][0]["error"])
+        for error in [monitor.MonitorError("网络失败"), monitor.RequestServiceError("浏览器超时")]:
+            with self.subTest(error=error), patch("monitor.fetch_page", side_effect=[(pricing_card(), dmit.PRICING_URL), error]):
+                row = catalog.load_catalog("dmit")["rows"][0]
+                self.assertIsNone(row["available"])
+                self.assertIn(str(error), row["error"])
+
+    def test_scope_only_verifies_selected_region_and_sold_out_skips_purchase_page(self):
+        body = pricing_card() + pricing_card(pid="254", loc="tyo") + pricing_card(sold=True, hw="an4")
+        with patch("monitor.fetch_page", side_effect=pages(body)) as fetch:
+            data = catalog.load_catalog("dmit", "LAX")
+        self.assertEqual([row["available"] for row in data["rows"]], [1, 0])
+        self.assertEqual([call.args[1] for call in fetch.call_args_list], [dmit.PRICING_URL, self.purchase_url])
+
+    def test_budget_retains_completed_results_without_unverified_positives(self):
+        body = pricing_card() + pricing_card(pid="254", hw="an4") + pricing_card(sold=True, net="tier1")
+        with patch("monitor.fetch_page", side_effect=pages(body)) as fetch, patch("dmit.time.monotonic", side_effect=[0, 1, 200]):
+            data = catalog.load_catalog("dmit")
+        self.assertEqual([row["available"] for row in data["rows"]], [1, None, 0])
+        self.assertIn("时间不足", data["rows"][1]["error"])
+        self.assertEqual(fetch.call_count, 2)
+
+    def test_shared_round_cache_reuses_success_and_failure_but_isolates_egress(self):
+        watched, cache = item("253"), {}
+        with patch("monitor.fetch_page", side_effect=pages(pricing_card())) as fetch:
+            for node in ["one", "one", "two"]:
+                dmit.inspect(Mock(), watched, {"mode": "requests", "egress_proxy_url": node}, cache)
+        self.assertEqual(fetch.call_count, 4)
+        cache = {}
+        with patch("monitor.fetch_page", side_effect=[(pricing_card(), dmit.PRICING_URL), monitor.SiteBlocked("验证失败")]) as fetch:
+            for _ in range(2):
+                with self.assertRaises(monitor.SiteBlocked):
+                    dmit.inspect(Mock(), watched, {}, cache)
+        self.assertEqual(fetch.call_count, 2)
+
+    def test_legacy_catalog_positives_require_recheck_without_destroying_cache(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "catalog.json"
+            old = {"provider": "dmit", "scope": "all", "fetched_at": catalog.now(), "rows": [{"key": "yes", "available": 1}, {"key": "no", "available": 0}]}
+            path.write_text(json.dumps({"dmit:all": old}), encoding="utf-8")
+            service = catalog.CatalogService(lambda: path)
+            result = service.snapshot("dmit")
+            self.assertTrue(result["needs_refresh"])
+            self.assertEqual([row["available"] for row in result["data"]["rows"]], [None, 0])
+            self.assertEqual(service.read_cache()["dmit:all"], old)
+            old["stock_version"] = dmit.STOCK_VERSION
+            path.write_text(json.dumps({"dmit:all": old}), encoding="utf-8")
+            self.assertFalse(service.snapshot("dmit")["needs_refresh"])
+            self.assertEqual(service.snapshot("dmit")["data"]["rows"][0]["available"], 1)
+
+
 class DMITIntegrationTests(unittest.TestCase):
     def test_config_defaults_migration_and_explicit_blank_aff(self):
         config = admin.validate_config({"merchant_order": ["akile"], "affiliates": {"vmiss": ""}, "products": [item()]})
@@ -189,7 +307,7 @@ class DMITIntegrationTests(unittest.TestCase):
     def test_directory_can_join_watch_or_notify_and_unknown_rows_keep_metadata(self):
         body = card() + card("228", "TYO.EB.TINY", stock="In Stock", order=buy("228")) + card("229", "HKG.Pro.TINY", stock="待确认")
         fetcher = admin.normalize_fetcher({"provider_modes": {"dmit": "flaresolverr"}})
-        with patch("monitor.fetch_page", return_value=(body, dmit.PRICING_URL)) as fetch:
+        with patch("monitor.fetch_page", side_effect=pages(body)) as fetch:
             data = catalog.load_catalog("dmit", "", fetcher)
         self.assertEqual(fetch.call_args.args[2]["mode"], "flaresolverr")
         self.assertEqual(data["scope"], "all")
@@ -202,7 +320,7 @@ class DMITIntegrationTests(unittest.TestCase):
         for role in ("watch", "notify"):
             config = admin.validate_config({"products": [{**row["watch"], "id": "new", "watch_enabled": role == "watch", "notify_enabled": role == "notify"}]})
             self.assertTrue(monitor.product_membership(config["products"][0], role))
-        with patch("monitor.fetch_page", return_value=(body, dmit.PRICING_URL)):
+        with patch("monitor.fetch_page", side_effect=pages(body)):
             filtered = catalog.load_catalog("dmit", "TYO")
         self.assertEqual([r["watch"]["pid"] for r in filtered["rows"]], ["228"])
 
@@ -220,7 +338,7 @@ class DMITIntegrationTests(unittest.TestCase):
     def test_inspect_matches_pid_and_applies_unsaved_policy(self):
         body = card(stock="2 Available") + card("228", name="LAX.Pro.WEE", stock="8 Available")
         fetcher = admin.normalize_fetcher({"provider_modes": {"dmit": "flaresolverr"}})
-        with patch("monitor.fetch_page", return_value=(body, dmit.PRICING_URL)) as fetch:
+        with patch("monitor.fetch_page", side_effect=pages(body)) as fetch:
             product = monitor.inspect_product(Mock(), item("228"), fetcher)
         self.assertEqual(product.available, 8)
         self.assertEqual(product.vendor, "DMIT")
@@ -235,7 +353,7 @@ class DMITIntegrationTests(unittest.TestCase):
             monitor.check_once(Mock(), config, state, status, "token", "123")
             self.assertEqual(fetch.call_count, 1)
             send.assert_not_called()
-            fetch.return_value = (card(stock="5 Available") + card("228", stock="2 Available"), dmit.PRICING_URL)
+            fetch.side_effect = pages(card(stock="5 Available") + card("228", stock="2 Available"))
             monitor.check_once(Mock(), config, state, status, "token", "123")
             self.assertEqual(fetch.call_count, 4)
             send.assert_called_once()

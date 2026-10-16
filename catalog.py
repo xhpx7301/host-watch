@@ -237,7 +237,11 @@ def load_catalog(provider: str, scope: str = "", fetcher: dict | None = None) ->
             scopes, actual, rows = {"vmiss": vmiss_catalog, "vps_soy": soy_catalog, "akile": akile_catalog, "isvoro": isvoro_catalog}[provider](session, scope, fetcher)
     if len(rows) > MAX_ROWS or len({row["key"] for row in rows}) != len(rows):
         raise ValueError("商品目录超过容量或存在重复标识，未更新缓存")
-    return {"provider": provider, "scope": actual, "scopes": scopes, "rows": rows, "fetched_at": now(), "route": route, "metadata_version": METADATA_VERSION, "unknown": sum(row["available"] is None for row in rows)}
+    data = {"provider": provider, "scope": actual, "scopes": scopes, "rows": rows, "fetched_at": now(), "route": route, "metadata_version": METADATA_VERSION, "unknown": sum(row["available"] is None for row in rows)}
+    if provider == "dmit":
+        from dmit import STOCK_VERSION
+        data["stock_version"] = STOCK_VERSION
+    return data
 
 
 class CatalogBusy(ValueError):
@@ -297,6 +301,13 @@ class CatalogService:
         # Old Isvoro snapshots contain traffic only, even when the API supplies
         # ratelimit. Keep them visible while the browser refreshes this scope.
         needs_refresh = bool(data and provider == "isvoro" and data.get("metadata_version") != METADATA_VERSION)
+        if data and provider == "dmit":
+            from dmit import STOCK_VERSION
+            if data.get("stock_version") != STOCK_VERSION:
+                needs_refresh = True
+                # Retain metadata, but never advertise unverified legacy stock.
+                rows = [{**row, "available": None, "error": "旧版库存尚未校验购买页，请刷新目录"} if (row.get("available") or 0) > 0 else row for row in data.get("rows", [])]
+                data = {**data, "rows": rows, "unknown": sum(row.get("available") is None for row in rows)}
         from monitor import fetcher_route
         return {"data": data, "task": task, "needs_refresh": needs_refresh,
                 "route": fetcher_route(self.fetcher_settings(), {"adapter": provider})}
