@@ -1848,7 +1848,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if not self._guard():
             return
-        if self.path == "/":
+        if self.path in {"/", "/admin.html"}:
             self._send(200, "text/html; charset=utf-8", PAGE_PATH.read_bytes())
         elif self.path in {"/admin.js", "/catalog.js"}:
             self._send(200, "text/javascript; charset=utf-8", (ROOT / self.path[1:]).read_bytes())
