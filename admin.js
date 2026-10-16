@@ -2276,6 +2276,16 @@ let vpsSeckillPoll = null;
 function seckillItemId() { return `seckill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; }
 function seckillItems() { return config.vps_seckill?.items || (config.vps_seckill = { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] }).items; }
 function seckillAccounts() { return config.vps_seckill?.accounts || (config.vps_seckill.accounts = []); }
+function seckillAccountMerchant(account) {
+  const aliases = { vmiss: "vmiss", "vps.soy": "vps_soy", vps_soy: "vps_soy", "搬瓦工": "bwh", bwh: "bwh", bandwagonhost: "bwh", akile: "akile", isvoro: "isvoro", dmit: "dmit" };
+  const provider = String(account?.provider || "").trim();
+  const key = aliases[provider.toLowerCase()] || provider;
+  return merchantNames[key] || provider || (account?.login_url ? "自定义商家" : "未选择商家");
+}
+function seckillAccountLabel(account) {
+  const name = account?.name || account?.username || account?.id || "未命名账户";
+  return `${name} · ${seckillAccountMerchant(account)}${account?.password_configured ? " · 已保存密码" : ""}`;
+}
 function addToVpsSeckill(product) {
   if (!product || !config.products.some(item => item.id === product.id && (membership(item, "watch") || membership(item, "notify")))) return;
   const items = seckillItems();
@@ -2287,7 +2297,7 @@ function renderVpsSeckill() {
   document.querySelector("#vps-seckill-mode").value = value.mode || "manual";
   document.querySelector("#vps-seckill-interval").value = value.interval_seconds || 5;
   const accountOptions = [new Option("不绑定账户", "")];
-  seckillAccounts().forEach(account => accountOptions.push(new Option(`${account.name}${account.password_configured ? " · 已保存密码" : ""}`, account.id)));
+  seckillAccounts().forEach(account => accountOptions.push(new Option(seckillAccountLabel(account), account.id)));
   const itemTarget = document.querySelector("#vps-seckill-items"); itemTarget.replaceChildren();
   const products = new Map(config.products.map(item => [item.id, item]));
   if (!seckillItems().length) itemTarget.append(text("p", "还没有补货抢购商品，请从 VPS 库存监控或 VPS 库存通知的“更多”中逐个加入。", "empty"));
