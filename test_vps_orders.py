@@ -228,6 +228,66 @@ class AccountVerificationTests(unittest.TestCase):
         session.post.side_effect = requests.ConnectionError('private-password')
         self.assertNotIn('private-password', str(admin.check_order_account(session, account)))
 
+    def test_vmiss_form_login_uses_csrf_and_requires_logged_in_marker(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='vmiss', login_url='https://app.vmiss.com/login')
+        page = Mock(status_code=200, url='https://app.vmiss.com/login', content=b'<form action="/login" method="post"><input type="hidden" name="token" value="csrf"><input name="username"><input name="password"></form>')
+        redirected = Mock(status_code=302, headers={'Location': '/clientarea.php'})
+        logged_in = Mock(status_code=200, url='https://app.vmiss.com/clientarea.php', content=b'<a href="/logout.php">Logout</a>')
+        session = Mock()
+        session.get.side_effect = [page, logged_in]
+        session.post.return_value = redirected
+        result = admin.check_order_account(session, account)
+        self.assertEqual(result['status'], 'valid')
+        self.assertTrue(result['ok'])
+        self.assertEqual(session.post.call_args.args[0], 'https://app.vmiss.com/login')
+        self.assertEqual(session.post.call_args.kwargs['data'], {'token': 'csrf', 'username': 'user', 'password': 'private-password'})
+        self.assertFalse(session.post.call_args.kwargs['allow_redirects'])
+
+    def test_vps_soy_login_error_and_cross_origin_form_are_not_success(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='vps_soy', login_url='https://www.vps.soy/login')
+        page = Mock(status_code=200, url='https://www.vps.soy/login', content=b'<form action="/login?action=email"><input type="hidden" name="token" value="csrf"><input name="email"><input name="password"></form>')
+        failed = Mock(status_code=200, url='https://www.vps.soy/login', content=b'<form><input name="email"><input name="password"></form><div>Invalid password</div>')
+        session = Mock()
+        session.get.return_value = page
+        session.post.return_value = failed
+        self.assertEqual(admin.check_order_account(session, account)['status'], 'invalid')
+        self.assertEqual(session.post.call_args.kwargs['data']['email'], 'user')
+        page.content = b'<form action="https://attacker.example/login"><input type="hidden" name="token" value="csrf"><input name="email"><input name="password"></form>'
+        session.get.return_value = page
+        session.get.side_effect = None
+        session.post.reset_mock()
+        result = admin.check_order_account(session, account)
+        self.assertEqual(result['status'], 'unknown')
+        session.post.assert_not_called()
+
+    def test_bandwagon_form_login_uses_login_origin_token_and_logout_marker(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='bwh', login_url='https://bwh81.net/clientarea.php')
+        page = Mock(status_code=200, url='https://bwh81.net/clientarea.php', content=b'<form action="dologin.php"><input type="hidden" name="token" value="csrf"><input type="hidden" name="loginorigin" value="clientarea"><input name="username"><input name="password"></form>')
+        redirected = Mock(status_code=302, headers={'Location': '/clientarea.php'})
+        logged_in = Mock(status_code=200, url='https://bwh81.net/clientarea.php', content=b'<a href="logout.php">Logout</a>')
+        session = Mock()
+        session.get.side_effect = [page, logged_in]
+        session.post.return_value = redirected
+        result = admin.check_order_account(session, account)
+        self.assertEqual(result['status'], 'valid')
+        self.assertEqual(session.post.call_args.kwargs['data'], {'token': 'csrf', 'loginorigin': 'clientarea', 'username': 'user', 'password': 'private-password'})
+
+    def test_known_merchant_url_is_canonical_and_unsupported_auth_stays_unknown(self):
+        value = admin.default_config()
+        value['vps_seckill']['accounts'] = [{'id': 'v', 'name': 'VMISS', 'provider': 'VMISS', 'username': 'user', 'password': 'pw', 'login_url': 'https://attacker.example/collect'}]
+        account = admin.validate_config(value)['vps_seckill']['accounts'][0]
+        self.assertEqual(account['provider'], 'vmiss')
+        self.assertEqual(account['login_url'], 'https://app.vmiss.com/login')
+        account.update(provider='dmit', login_url='')
+        session = Mock()
+        result = admin.check_order_account(session, account)
+        self.assertEqual(result['status'], 'unknown')
+        session.get.assert_not_called()
+        session.post.assert_not_called()
+
 
 class AccountCheckAPITests(unittest.TestCase):
     setUp = _AdminAPIBase.setUp

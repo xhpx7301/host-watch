@@ -2252,14 +2252,59 @@ function renderVpsSeckill() {
   if (!seckillAccounts().length) accountTarget.append(text("p", "尚未配置网站账户。手动抢购不需要账户。", "empty"));
   seckillAccounts().forEach(account => {
     const card = text("article", "", "seckill-account"), grid = text("div", "", "form-grid");
-    const fields = [["账户名称", "name", "账户名称"], ["商家", "provider", "商家名称"], ["用户名", "username", "登录用户名"], ["账户检查 / 登录适配接口", "login_url", "https://…（非普通登录网页）"]];
-    fields.forEach(([label, key, placeholder]) => { const input = document.createElement("input"); input.value = account[key] || ""; input.placeholder = placeholder; input.addEventListener("input", () => { account[key] = input.value; updateDraftState(); }); const node = document.createElement("label"); node.append(text("span", label), input); grid.append(node); });
+    const merchantIds = { vmiss: "vmiss", "vps.soy": "vps_soy", vps_soy: "vps_soy", "搬瓦工": "bwh", bwh: "bwh", bandwagonhost: "bwh", akile: "akile", isvoro: "isvoro", dmit: "dmit" };
+    const providerValue = () => account.provider ? (merchantIds[String(account.provider).trim().toLowerCase()] || "custom") : (account.login_url ? "custom" : "");
+    const field = (label, key, placeholder, type = "text") => {
+      const input = document.createElement("input"); input.type = type; input.value = account[key] || ""; input.placeholder = placeholder;
+      input.addEventListener("input", () => { account[key] = input.value; updateDraftState(); });
+      const node = document.createElement("label"); node.append(text("span", label), input); grid.append(node);
+    };
+    field("账户名称", "name", "账户名称");
+    const provider = document.createElement("select");
+    provider.replaceChildren(new Option("选择商家", ""), new Option("VMISS", "vmiss"), new Option("VPS.SOY", "vps_soy"), new Option("Akile", "akile"), new Option("Isvoro", "isvoro"), new Option("DMIT", "dmit"), new Option("搬瓦工", "bwh"), new Option("其他商家 · JSON 适配接口", "custom"));
+    provider.value = providerValue();
+    const providerLabel = document.createElement("label"); providerLabel.append(text("span", "商家"), provider); grid.append(providerLabel);
+    const adapterNote = text("p", "", "hint span-2"); adapterNote.setAttribute("role", "status");
+    const providerExtra = text("div", "", "form-grid span-2");
+    const setProviderExtra = () => {
+      providerExtra.replaceChildren();
+      const selected = provider.value;
+      const ids = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", isvoro: "Isvoro", dmit: "DMIT", bwh: "搬瓦工" };
+      if (selected === "custom") {
+        adapterNote.textContent = "其他商家需要自行提供实现 hostwatch-unpaid-v1 的账户检查 JSON 接口；普通登录页不能直接使用。";
+        const name = document.createElement("input"); name.value = account.provider && !merchantIds[String(account.provider).trim().toLowerCase()] ? account.provider : ""; name.placeholder = "商家名称"; name.addEventListener("input", () => { account.provider = name.value; updateDraftState(); });
+        const nameLabel = document.createElement("label"); nameLabel.append(text("span", "商家名称"), name); providerExtra.append(nameLabel);
+        const login = document.createElement("input"); login.type = "url"; login.value = account.login_url || ""; login.placeholder = "https://…（HostWatch JSON 接口）"; login.addEventListener("input", () => { account.login_url = login.value; updateDraftState(); });
+        const loginLabel = document.createElement("label"); loginLabel.append(text("span", "账户检查接口"), login); providerExtra.append(loginLabel);
+      } else if (selected === "vmiss" || selected === "vps_soy" || selected === "bwh") {
+        const urls = { vmiss: "https://app.vmiss.com/login", vps_soy: "https://www.vps.soy/login", bwh: "https://bwh81.net/clientarea.php" };
+        account.provider = selected; account.login_url = urls[selected];
+        adapterNote.textContent = `${ids[selected]} 已内置登录检查；只需填写官网登录名和密码。检查仅登录，不下单、不付款。`;
+        const link = text("a", `打开 ${ids[selected]} 官网登录页`); link.href = urls[selected]; link.target = "_blank"; link.rel = "noopener noreferrer"; providerExtra.append(link);
+      } else if (selected) {
+        account.provider = selected; account.login_url = "";
+        adapterNote.textContent = `${ids[selected]} 登录含验证码、API 验证或二次验证，目前需到官网手动登录；检查会明确提示无法自动确认。`;
+        const urls = { akile: "https://akile.ai/", isvoro: "https://isvoro.com/", dmit: "https://www.dmit.io/login" };
+        const link = text("a", `打开 ${ids[selected]} 官网`); link.href = urls[selected]; link.target = "_blank"; link.rel = "noopener noreferrer"; providerExtra.append(link);
+      } else {
+        account.provider = ""; account.login_url = ""; adapterNote.textContent = "先选择账户所属商家。";
+      }
+      updateDraftState();
+    };
+    provider.addEventListener("change", () => {
+      if (provider.value === "custom" && account.provider && merchantIds[String(account.provider).trim().toLowerCase()]) {
+        account.provider = ""; account.login_url = "";
+      }
+      setProviderExtra();
+    });
+    setProviderExtra();
+    field("用户名 / 邮箱", "username", "官网登录名或邮箱");
     const password = document.createElement("input"); password.type = "password"; password.autocomplete = "new-password"; password.placeholder = account.password_configured ? "已保存，留空保持不变" : "登录密码"; password.addEventListener("input", () => { account.password = password.value; account.password_configured = Boolean(password.value) || account.password_configured; updateDraftState(); }); const passwordLabel = document.createElement("label"); passwordLabel.append(text("span", "密码"), password); grid.append(passwordLabel);
     const autoLabel = settingButton("自动下单", account.auto_submit, value => { account.auto_submit = value; });
     const remove = text("button", "删除账户", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.setAttribute("aria-label", `删除补货抢购账户 ${account.name || account.id}`);
     remove.addEventListener("click", () => deleteSeckillAccounts([account.id]));
-    card.append(grid, text("div", "", "actions")); card.lastChild.append(autoLabel, remove); accountTarget.append(card);
+    card.append(grid, adapterNote, providerExtra, text("div", "", "actions")); card.lastChild.append(autoLabel, remove); accountTarget.append(card);
   });
   renderVpsSeckillTask();
 }

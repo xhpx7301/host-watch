@@ -395,6 +395,82 @@ def stop_stock_test(task_id: str) -> dict:
 
 ORDER_PROTOCOL = "hostwatch-unpaid-v1"
 
+MERCHANT_LOGIN_ADAPTERS = {
+    "vmiss": {"name": "VMISS", "url": "https://app.vmiss.com/login", "host": "app.vmiss.com", "username_field": "username"},
+    "vps_soy": {"name": "VPS.SOY", "url": "https://www.vps.soy/login", "host": "www.vps.soy", "username_field": "email"},
+    "bwh": {"name": "搬瓦工", "url": "https://bwh81.net/clientarea.php", "host": "bwh81.net", "username_field": "username"},
+}
+MERCHANT_LOGIN_IDS = {
+    "vmiss": "vmiss", "vps.soy": "vps_soy", "vps_soy": "vps_soy",
+    "搬瓦工": "bwh", "bwh": "bwh", "bandwagonhost": "bwh",
+    "akile": "akile", "isvoro": "isvoro", "dmit": "dmit",
+}
+
+
+def merchant_login_id(provider: object) -> str:
+    value = str(provider or "").strip().casefold()
+    return MERCHANT_LOGIN_IDS.get(value, "")
+
+
+def _same_merchant_url(url: str, adapter: dict) -> bool:
+    parsed = urlsplit(url)
+    return parsed.scheme == "https" and parsed.hostname == adapter["host"] and parsed.port in {None, 443} and not parsed.username and not parsed.password
+
+
+def _login_form(response, username_field: str):
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(response.content or response.text or "", "html.parser")
+    for form in soup.find_all("form"):
+        fields = {str(node.get("name", "")): node for node in form.find_all("input")}
+        if username_field in fields and "password" in fields:
+            return soup, form, fields
+    return soup, None, {}
+
+
+def _merchant_form_login(session, account: dict, adapter: dict) -> dict:
+    from urllib.parse import urljoin
+
+    response = session.get(adapter["url"], timeout=(5, 20), allow_redirects=False)
+    if not 200 <= response.status_code < 300:
+        return {"status": "unknown", "message": f"官网登录页返回 HTTP {response.status_code}，请到官网检查"}
+    soup, form, fields = _login_form(response, adapter["username_field"])
+    if form is None:
+        return {"status": "unknown", "message": "官网登录页结构已变化或需要安全验证，请到官网检查"}
+    action = urljoin(response.url or adapter["url"], form.get("action") or response.url or adapter["url"])
+    if not _same_merchant_url(action, adapter):
+        return {"status": "unknown", "message": "官网登录表单跳转地址不符合商家域名，请到官网检查"}
+    payload = {key: node.get("value", "") for key, node in fields.items() if key and node.get("type", "").casefold() == "hidden"}
+    payload[adapter["username_field"]] = account["username"]
+    payload["password"] = account["password"]
+    submitted = session.post(action, data=payload, timeout=(5, 20), allow_redirects=False)
+    if submitted.status_code in {401, 403}:
+        return {"status": "invalid", "message": "官网拒绝登录请求；账户或密码错误，也可能需要验证码 / 二次验证"}
+    if 300 <= submitted.status_code < 400:
+        location = submitted.headers.get("Location", "")
+        destination = urljoin(action, location)
+        if not location or not _same_merchant_url(destination, adapter):
+            return {"status": "unknown", "message": "官网登录跳转无法安全确认，请到官网检查"}
+        checked = session.get(destination, timeout=(5, 20), allow_redirects=False)
+        if not 200 <= checked.status_code < 300:
+            return {"status": "unknown", "message": "官网登录结果无法读取，请到官网检查"}
+        page = checked
+    elif 200 <= submitted.status_code < 300:
+        page = submitted
+    else:
+        return {"status": "unknown", "message": f"官网登录返回 HTTP {submitted.status_code}，请到官网检查"}
+    soup, form, _ = _login_form(page, adapter["username_field"])
+    if form is not None:
+        body = soup.get_text(" ", strip=True).casefold()
+        if any(marker in body for marker in ("incorrect", "invalid", "incorrect password", "用户名或密码", "密码错误", "账号或密码")):
+            return {"status": "invalid", "message": "官网提示账户认证失败，请检查用户名和密码"}
+        if any(marker in body for marker in ("captcha", "验证码", "two-factor", "two factor", "二次验证", "安全验证")):
+            return {"status": "unknown", "message": "官网要求验证码或二次验证，请先到官网完成验证"}
+        return {"status": "invalid", "message": "官网仍显示登录表单，账户认证未通过"}
+    authenticated = soup.find("a", href=re.compile(r"logout|clientarea\.php\?action=details", re.I))
+    if authenticated:
+        return {"status": "valid", "message": "官网登录成功（不代表具有购买资格或库存）"}
+    return {"status": "unknown", "message": "官网未返回可确认的登录状态，请到官网检查"}
+
 
 def order_json(response) -> dict:
     # Never follow checkout/payment redirects or mistake a login HTML page for success.
@@ -412,9 +488,22 @@ def order_json(response) -> dict:
 def check_order_account(session, account: dict) -> dict:
     result = {"status": "unknown", "ok": False, "account_id": account.get("id", ""),
         "checked_at": datetime.now().astimezone().isoformat(timespec="seconds")}
-    if not account.get("login_url") or not account.get("username") or not account.get("password"):
-        return {**result, "message": "缺少账户检查接口、用户名或密码，无法确认账户状态"}
+    if not account.get("username") or not account.get("password"):
+        return {**result, "message": "请填写用户名和密码，才能检查账户状态"}
     try:
+        adapter_id = merchant_login_id(account.get("provider"))
+        adapter = MERCHANT_LOGIN_ADAPTERS.get(adapter_id)
+        if adapter:
+            if account.get("login_url") != adapter["url"]:
+                return {**result, "message": "商家登录地址与内置适配不一致，请重新选择商家并保存"}
+            checked = _merchant_form_login(session, account, adapter)
+            if checked["status"] == "valid":
+                return {**result, "ok": True, **checked}
+            return {**result, **checked}
+        if adapter_id:
+            return {**result, "message": "该商家的登录含 API 验证、验证码或二次验证，目前无法安全自动确认；请到官网登录"}
+        if not account.get("login_url"):
+            return {**result, "message": "请填写其他商家提供的 HostWatch 账户检查 JSON 接口"}
         response = session.post(account["login_url"], json={"protocol": ORDER_PROTOCOL,
             "action": "check_account", "username": account["username"], "password": account["password"]},
             timeout=(5, 20), allow_redirects=False)
@@ -888,6 +977,13 @@ def normalize_seckill(value: object, product_ids: set[str]) -> dict:
         username = str(account.get("username", "")).strip()
         password = str(account.get("password", ""))
         login_url = str(account.get("login_url", "")).strip()
+        adapter_id = merchant_login_id(provider)
+        if adapter_id in MERCHANT_LOGIN_ADAPTERS:
+            provider = adapter_id
+            login_url = MERCHANT_LOGIN_ADAPTERS[adapter_id]["url"]
+        elif adapter_id:
+            provider = adapter_id
+            login_url = ""
         for key in ("auto_submit",):
             if key in account and not isinstance(account[key], bool):
                 raise ValueError(f"VPS 秒杀账户 {name or account_id} 的 {key} 必须是布尔值")
