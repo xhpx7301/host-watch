@@ -42,11 +42,11 @@
     .page-heading h1:focus { outline:none; }
     .page-heading p:last-child { margin:4px 0 0; color:var(--muted); font-size:13px; }
     .header-status { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:8px 14px; max-width:530px; flex-shrink:0; }
-    .exchange-rates { display:grid; gap:4px; min-width:210px; max-width:420px; color:var(--muted); font-size:14px; line-height:1.4; text-align:right; }
+    .exchange-rates { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px 24px; min-width:0; max-width:100%; color:var(--muted); font-size:14px; line-height:1.4; text-align:left; }
     .exchange-time { color:var(--ink); font-size:15px; font-weight:650; font-variant-numeric:tabular-nums; }
-    .exchange-rate-list { display:grid; justify-items:end; gap:2px; font-variant-numeric:tabular-nums; }
+    .exchange-rate-list { display:grid; justify-items:start; gap:2px; font-variant-numeric:tabular-nums; }
     .exchange-rate-item { display:block; white-space:nowrap; }
-    .exchange-rate-note { font-size:13px; }
+    .exchange-rate-note { font-size:13px; overflow-wrap:anywhere; }
     #header-monitor-state { padding:4px 9px; border:1px solid var(--line); border-radius:20px; background:var(--paper); font-size:12px; }
     .page-stage { flex:1; min-width:0; padding-top:16px; }
     .page-panel { min-width:0; }
@@ -55,7 +55,8 @@
     .panel-card { border:1px solid var(--line); border-radius:12px; background:var(--paper); box-shadow:0 2px 5px rgba(25,43,42,.02); }
     .panel-card > .section-body { padding:16px; }
     a:focus-visible,button:focus-visible { outline:3px solid #4b8790; outline-offset:3px; }
-    .topbar { display:flex; justify-content:space-between; align-items:center; gap:16px; padding-bottom:16px; border-bottom:1px solid var(--line); }
+    .topbar { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:16px; padding-bottom:16px; border-bottom:1px solid var(--line); }
+    .header-status { margin-left:auto; }
     .brand { display:flex; align-items:center; gap:11px; }
     .brand-mark { display:grid; place-items:center; width:34px; height:34px; border-radius:7px; color:#fff; background:var(--green); font-weight:750; }
     .brand h1 { margin:0; font-size:19px; line-height:1.2; }
@@ -511,7 +512,7 @@
       .mobile-nav-scrim { position:fixed; inset:0; z-index:30; display:block; width:100%; height:100%; padding:0; border:0; border-radius:0; background:rgba(22,31,45,.42); cursor:pointer; }
       .topbar { position:relative; padding-left:52px; }
       .page-heading h1 { font-size:22px; } .brand strong { font-size:18px; }
-      .topbar { gap:10px; padding-bottom:12px; } .exchange-rates { min-width:0; max-width:100%; text-align:left; } .exchange-rate-list { justify-content:start; justify-items:start; } .header-status { gap:6px 10px; justify-content:flex-start; max-width:100%; }
+      .topbar { gap:10px; padding-bottom:12px; } .exchange-rates { column-gap:18px; } .exchange-rate-list { justify-content:start; justify-items:start; } .header-status { margin-left:0; gap:6px 10px; justify-content:flex-start; max-width:100%; }
       .header-status #last-checked { text-align:left; } .page-stage { padding-top:12px; }
       .overview-item { min-height:112px; padding:12px; } .overview-value { font-size:24px; }
       .overview-note { font-size:11px; } #overview-state { font-size:14px; }
