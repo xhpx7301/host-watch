@@ -735,6 +735,12 @@
         <label>FlareSolverr 超时（秒）<input id="flaresolverr-timeout" type="number" min="10" max="180"></label>
         <label>浏览器页面渲染等待（秒）<input id="fetcher-wait" type="number" min="0" max="30" step="1"></label>
       </div>
+      <div class="actions" style="margin-top:10px">
+        <button id="flaresolverr-light" class="option-button" type="button" data-config-option data-on="已开启" data-off="完整加载" aria-pressed="false"><span>轻量加载</span><span data-option-state>完整加载</span></button>
+        <button id="flaresolverr-fast" type="button">速度优先：轻量加载 + 零额外等待</button>
+      </div>
+      <p class="hint">轻量加载减少图片、样式和字体下载，适合只读取库存；需要支持 disableMedia 的 FlareSolverr 版本，旧服务可能忽略此选项。若读取不完整，关闭轻量加载，并将渲染等待设为 2–5 秒。超时是等待上限，调小不会让成功请求更快。首次启动浏览器和网站验证仍需要时间。</p>
+      <p class="hint">提速建议：能正常读取的商家单独使用普通 HTTPS 或 cloudscraper；FlareSolverr 只用于需要浏览器的商家。尽量只刷新所需分类，“全部公开套餐”可能需要访问多页。页面上的连接测试只测服务就绪，速度以商品测试为准。</p>
       <div class="actions" style="margin-top:10px"><button id="fetcher-test" type="button">测试 FlareSolverr 连接</button></div>
       <p id="fetcher-health" class="hint" aria-live="polite">这里只检测服务是否就绪，不启动浏览器、不访问商品网站。实际库存请在“VPS 库存通知”中点击“测试通知”。</p>
     </div>

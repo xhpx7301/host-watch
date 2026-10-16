@@ -351,6 +351,8 @@ def _fetch_with_flaresolverr(session: requests.Session, url: str, fetcher: dict,
         request["session"] = fetcher["_test_browser_session"]
     if wait:
         request["waitInSeconds"] = wait
+    if "disable_media" in fetcher:
+        request["disableMedia"] = fetcher["disable_media"]
     if fetcher.get("egress_proxy_url"):
         request["proxy"] = egress.browser_proxy(fetcher)
     try:

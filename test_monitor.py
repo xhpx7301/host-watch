@@ -109,6 +109,18 @@ class BrowserRequestTests(unittest.TestCase):
         self.session.headers.update.assert_not_called()
         self.session.cookies.set.assert_not_called()
 
+    def test_browser_light_loading_keeps_real_html_and_omits_extra_wait(self):
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled):
+                self.session.post.reset_mock()
+                product = fetch_html_stock(self.session, html_product(), {**self.fetcher, "wait_seconds": 0, "disable_media": enabled})
+                self.assertEqual(product.available, 3)
+                payload = self.session.post.call_args.kwargs["json"]
+                self.assertIs(payload["disableMedia"], enabled)
+                self.assertNotIn("waitInSeconds", payload)
+                self.assertEqual(payload["url"], "https://shop.example.com/item")
+                self.session.cookies.set.assert_not_called()
+
     def test_product_override_uses_http_even_with_global_browser(self):
         self.session.get.return_value = FakeResponse('<p class="stock">4</p>')
         result = fetch_html_stock(self.session, html_product(request_mode="requests"), self.fetcher)

@@ -1194,7 +1194,7 @@ function merchantRequestChanged(provider) {
     const policy = merchantRequestPolicy(value, provider), fetcher = value.fetcher || {};
     const node = value.egress?.nodes?.find(row => row.id === policy.node_id);
     return [policy, node?.proxy_url, node?.enabled, node?.token, node?.token_configured,
-      policy.mode === "flaresolverr" ? [fetcher.flaresolverr_url, fetcher.timeout_seconds, fetcher.wait_seconds] : policy.mode === "cloudscraper" ? fetcher.cloudscraper : null];
+      policy.mode === "flaresolverr" ? [fetcher.flaresolverr_url, fetcher.timeout_seconds, fetcher.wait_seconds, Boolean(fetcher.disable_media)] : policy.mode === "cloudscraper" ? fetcher.cloudscraper : null];
   };
   return JSON.stringify(relevant(collectConfig())) !== JSON.stringify(relevant(JSON.parse(savedConfig)));
 }
@@ -2253,7 +2253,7 @@ function collectConfig(enabled = config.enabled) {
     notify_order: config.notify_order || [],
     notify_current_stock_on_start: optionPressed("notify-current"),
     isvoro_seckill: optionPressed("isvoro-seckill"),
-    fetcher: { provider_modes: collectProviderModes(), mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value), wait_seconds: Number(document.querySelector("#fetcher-wait").value), cloudscraper: { connect_timeout_seconds: Number(document.querySelector("#cloudscraper-connect-timeout").value), read_timeout_seconds: Number(document.querySelector("#cloudscraper-read-timeout").value), challenge_delay_seconds: Number(document.querySelector("#cloudscraper-challenge-delay").value) } },
+    fetcher: { provider_modes: collectProviderModes(), mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value), wait_seconds: Number(document.querySelector("#fetcher-wait").value), disable_media: optionPressed("flaresolverr-light"), cloudscraper: { connect_timeout_seconds: Number(document.querySelector("#cloudscraper-connect-timeout").value), read_timeout_seconds: Number(document.querySelector("#cloudscraper-read-timeout").value), challenge_delay_seconds: Number(document.querySelector("#cloudscraper-challenge-delay").value) } },
     telegram: { bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim(), disabled: optionPressed("telegram-disabled"), clear: optionPressed("telegram-clear") },
     egress: collectEgress(),
     vps_seckill: collectVpsSeckill(),
@@ -2342,6 +2342,7 @@ function applyConfig(value) {
   document.querySelector("#flaresolverr-url").value = fetcher.flaresolverr_url || "http://127.0.0.1:8191/v1";
   document.querySelector("#flaresolverr-timeout").value = fetcher.timeout_seconds || 60;
   document.querySelector("#fetcher-wait").value = fetcher.wait_seconds || 0;
+  setOptionPressed("flaresolverr-light", Boolean(fetcher.disable_media));
   const cloud = fetcher.cloudscraper || {};
   document.querySelector("#cloudscraper-connect-timeout").value = cloud.connect_timeout_seconds ?? 10;
   document.querySelector("#cloudscraper-read-timeout").value = cloud.read_timeout_seconds ?? 25;
@@ -2473,6 +2474,13 @@ document.querySelector("#refresh-status").addEventListener("click", (event) => r
   setMessage("监控状态已刷新；此次操作不会触发库存检查。", "success");
 }));
 document.querySelector("#fetcher-mode").addEventListener("change", updateFetcherStatus);
+document.querySelector("#flaresolverr-fast").addEventListener("click", () => {
+  if (actionRunning) return;
+  document.querySelector("#fetcher-wait").value = 0;
+  setOptionPressed("flaresolverr-light", true);
+  updateDraftState();
+  setMessage("已设置轻量加载和零额外渲染等待，点击底部保存配置后生效。", "pending");
+});
 document.querySelector("#fetcher-test").addEventListener("click", (event) => runAction(event.currentTarget, "检测中…", "正在测试 FlareSolverr 服务连接，不访问商品网站…", async () => {
   const result = await requestJSON("/api/fetcher/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(collectConfig().fetcher) });
   document.querySelector("#fetcher-health").textContent = `版本 ${result.version}：${result.message}`;

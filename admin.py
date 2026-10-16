@@ -661,6 +661,7 @@ def default_config() -> dict:
             "flaresolverr_url": "http://127.0.0.1:8191/v1",
             "timeout_seconds": 60,
             "wait_seconds": 0,
+            "disable_media": False,
             "cloudscraper": normalize_cloudscraper(None),
         },
         "telegram": {"bot_token": "", "chat_id": "", "disabled": False},
@@ -764,6 +765,9 @@ def normalize_fetcher(value: object) -> dict:
     wait = value.get("wait_seconds", 0)
     if isinstance(wait, bool) or not isinstance(wait, int) or not 0 <= wait <= 30:
         raise ValueError("网页渲染等待必须是 0 到 30 秒的整数")
+    disable_media = value.get("disable_media", False)
+    if type(disable_media) is not bool:
+        raise ValueError("FlareSolverr 轻量加载必须是布尔值")
     provider_modes = value.get("provider_modes", {})
     if not isinstance(provider_modes, dict) or any(key not in (*PROVIDERS, "html") or not isinstance(mode, str) or mode not in {"inherit", "requests", "flaresolverr", "cloudscraper"} for key, mode in provider_modes.items()):
         raise ValueError("商家请求方式必须是支持商家的 inherit、requests、flaresolverr 或 cloudscraper")
@@ -772,6 +776,7 @@ def normalize_fetcher(value: object) -> dict:
         "flaresolverr_url": endpoint.rstrip("/"),
         "timeout_seconds": timeout_seconds,
         "wait_seconds": wait,
+        "disable_media": disable_media,
         "provider_modes": dict(provider_modes),
         "cloudscraper": normalize_cloudscraper(value.get("cloudscraper")),
     }
@@ -1737,6 +1742,7 @@ class Handler(BaseHTTPRequestHandler):
             elif isinstance(submitted["fetcher"], dict):
                 submitted["fetcher"].setdefault("provider_modes", current["fetcher"].get("provider_modes", {}))
                 submitted["fetcher"].setdefault("cloudscraper", current["fetcher"]["cloudscraper"])
+                submitted["fetcher"].setdefault("disable_media", current["fetcher"].get("disable_media", False))
             if "affiliates" not in submitted:
                 submitted["affiliates"] = dict(current["affiliates"])
                 if "affiliate_id" in submitted:

@@ -31,6 +31,15 @@ class MerchantRequestTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 admin.normalize_fetcher({"provider_modes": value})
 
+    def test_browser_light_loading_defaults_to_full_and_requires_a_boolean(self):
+        self.assertFalse(admin.normalize_fetcher({})["disable_media"])
+        for enabled in (False, True):
+            fetcher = admin.normalize_fetcher({"disable_media": enabled, "provider_modes": {"vmiss": "flaresolverr"}})
+            self.assertIs(monitor.product_fetcher(fetcher, {"adapter": "vmiss"})["disable_media"], enabled)
+        for invalid in (1, 0, "true", "false", None, []):
+            with self.subTest(value=invalid), self.assertRaises(ValueError):
+                admin.normalize_fetcher({"disable_media": invalid})
+
     def test_browser_task_uses_merchant_policy_for_session_lifecycle(self):
         fetcher = admin.normalize_fetcher({"mode": "flaresolverr", "provider_modes": {"akile": "requests"}})
         item = {"adapter": "akile", "id": "one", "request_mode": "flaresolverr"}
@@ -71,6 +80,22 @@ class MerchantRequestAPITests(unittest.TestCase):
             code, body = self.request("/api/config", stored)
         self.assertEqual(code, 200)
         self.assertEqual(admin.current_config()["fetcher"]["provider_modes"], value["fetcher"]["provider_modes"])
+
+    def test_light_loading_persists_across_old_clients_and_can_be_disabled(self):
+        value = admin.default_config()
+        value["fetcher"]["disable_media"] = True
+        with patch.object(admin, "manager_action", return_value={"ok": True}):
+            code, body = self.request("/api/config", value)
+            self.assertEqual(code, 200)
+            old_client = json.loads(body)["config"]
+            del old_client["fetcher"]["disable_media"]
+            code, _ = self.request("/api/config", old_client)
+            self.assertEqual(code, 200)
+            self.assertTrue(admin.current_config()["fetcher"]["disable_media"])
+            old_client["fetcher"]["disable_media"] = False
+            code, _ = self.request("/api/config", old_client)
+            self.assertEqual(code, 200)
+            self.assertFalse(admin.current_config()["fetcher"]["disable_media"])
 
     def test_unsaved_single_test_receives_current_merchant_policy(self):
         item = {"id": "one", "adapter": "html", "name": "Test", "url": "https://example.com/item", "stock_selector": ".stock", "request_mode": "flaresolverr", "enabled": True}
