@@ -35,6 +35,7 @@ STATUS_PATH = Path(os.getenv("VMISS_STATUS", str(CONFIG_PATH.parent / "status.js
 RATES_PATH = Path(os.getenv("VMISS_RATES", str(CONFIG_PATH.parent / "exchange-rates.json")))
 PAGE_PATH = ROOT / "admin.html"
 MAX_BODY = 64 * 1024
+MAX_BACKUP_UPLOAD = 20 * 1024 * 1024
 MANAGER = Path("/opt/vmiss-monitor/manage.py")
 MUTATION_LOCK = threading.Lock()
 RATES_LOCK = threading.Lock()
@@ -1327,7 +1328,7 @@ def manager_action(value: dict) -> dict:
             input=json.dumps(value, ensure_ascii=False),
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=120 if value.get("action") == "backup-import" else 30,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -1511,8 +1512,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not self._guard():
             return
-        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
-            self._send(415, "application/json; charset=utf-8", b'{"error":"Content-Type must be application/json"}')
+        content_type = "application/gzip" if self.path == "/api/manage/backup-import" else "application/json"
+        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != content_type:
+            self._send(415, "application/json; charset=utf-8", json.dumps({"error": f"Content-Type must be {content_type}"}).encode())
             return
         if self.headers.get("Sec-Fetch-Site") == "cross-site":
             self.send_error(403)
@@ -1534,10 +1536,27 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if self.path not in {"/api/config", "/api/telegram/test", "/api/manage", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
+        if self.path not in {"/api/config", "/api/telegram/test", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
             self.send_error(404)
             return
         try:
+            if self.path == "/api/manage/backup-import":
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0 or length > MAX_BACKUP_UPLOAD:
+                    raise ValueError("请求体大小无效，导入文件须为不超过 20 MB 的 tar.gz 备份")
+                # Hold task-start locks during restore so current workers cannot
+                # overwrite restored records or continue using replaced settings.
+                with TEST_LOCK, SECKILL_LOCK, CATALOG.lock:
+                    if (any(task.snapshot().get("pending") for task in TEST_TASKS.values())
+                            or any(task.snapshot().get("pending") for task in SECKILL_TASKS.values())
+                            or (CATALOG.task and CATALOG.task.get("pending"))):
+                        raise ValueError("请先停止或等待商品测试、秒杀任务和大盘刷新完成，再导入备份")
+                    raw = self.rfile.read(length)
+                    if len(raw) != length or not raw.startswith(b"\x1f\x8b"):
+                        raise ValueError("请上传有效的 tar.gz 备份文件")
+                    result = manager_action({"action": "backup-import", "content": base64.b64encode(raw).decode("ascii")})
+                self._send(200, "application/json; charset=utf-8", json.dumps(result, ensure_ascii=False).encode("utf-8"))
+                return
             submitted = request_body(self)
             if self.path == "/api/egress/install-command":
                 current = current_config()
@@ -1609,6 +1628,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, "application/json; charset=utf-8", data)
                 return
             if self.path == "/api/manage":
+                if submitted.get("action") == "backup-import":
+                    raise ValueError("请通过“导入备份”上传 tar.gz 文件")
                 if submitted.get("action") in {"admin-add", "admin-passwd", "admin-delete"} and users_path() not in {None, DEFAULT_USERS_PATH}:
                     raise ValueError("当前使用自定义账号文件，请使用终端管理该文件中的管理员")
                 if submitted.get("action") == "monitor-start":

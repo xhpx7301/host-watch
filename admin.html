@@ -745,9 +745,12 @@
       <div class="manage-actions">
       <button id="manage-refresh" type="button">刷新状态</button>
       <button id="manage-restart-admin" type="button">重启管理页</button>
-      <button id="manage-backup" type="button">下载备份</button>
+      <button id="manage-backup" type="button">导出备份</button>
+      <button id="manage-import-backup" type="button">导入备份</button>
+      <input id="manage-import-backup-file" type="file" accept=".tar.gz,application/gzip" aria-label="选择 HostWatch 备份文件" hidden>
       <button id="manage-update" type="button" class="primary">更新 HostWatch</button>
       </div>
+      <p class="hint">导出备份通过浏览器保存到本地。导入支持 20 MB 以内的 HostWatch .tar.gz 备份，恢复商品配置、库存记录和备份计划，保留当前管理员账号、访问设置及程序版本。导入前自动备份当前数据，完成后暂停监控。</p>
     </div>
     <p class="hint manage-global-note">监控启停请使用页面底部“开始监控 / 暂停监控”；配置修改使用“保存配置”。</p>
     <p id="manage-task-status" class="manage-task-status" aria-live="polite"></p>
@@ -760,7 +763,7 @@
       <p id="manage-backup-timezone" class="hint">服务器时区：读取中</p>
       <p id="manage-backup-schedule-status" class="hint" role="status" aria-live="polite">正在读取备份计划。</p>
       <div class="manage-actions"><button id="manage-backup-schedule-save" type="button" class="primary" disabled>保存备份计划</button></div>
-      <p class="hint">备份计划通过此处单独保存并立即生效，无需点击底部“保存配置”。关闭定时备份不影响更新前备份和手动下载。</p>
+      <p class="hint">备份计划通过此处单独保存并立即生效，无需点击底部“保存配置”。关闭定时备份不影响更新前备份和手动导出。</p>
     </div>
     <div class="manage-block manage-accounts">
       <div class="manage-section-head"><div><h3>管理员账号</h3><p>密码至少 12 个字符，账号修改立即生效。删除最后一个管理员会被拒绝。</p></div><span class="section-badge">账号安全</span></div>
@@ -779,7 +782,7 @@
     <div class="manage-block manage-records">
       <div class="manage-record-grid">
         <div><div class="manage-section-head"><div><h3>最近日志</h3><p>监控和管理服务的最近记录。</p></div></div><div class="manage-actions"><button id="manage-load-logs" type="button">载入日志</button></div><pre id="manage-logs" class="manage-logs">点击“载入日志”查看最近记录。</pre></div>
-        <div><div class="manage-section-head"><div><h3>最近备份</h3><p>定时备份和更新前备份保存在服务器硬盘；手动备份下载到当前浏览器。</p></div></div><p id="manage-backup-storage" class="hint">自动备份存储位置：读取中</p><div id="manage-backups" class="manage-users"><span>读取中</span></div></div>
+        <div><div class="manage-section-head"><div><h3>最近备份</h3><p>定时备份、更新前及导入前备份保存在服务器硬盘；手动导出的备份由浏览器保存到本地。</p></div></div><p id="manage-backup-storage" class="hint">自动备份存储位置：读取中</p><div id="manage-backups" class="manage-users"><span>读取中</span></div></div>
       </div>
     </div>
     </div>

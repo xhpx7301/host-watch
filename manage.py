@@ -7,11 +7,13 @@ import base64
 from collections.abc import Callable
 import fcntl
 import getpass
+import gzip
 import grp
+import io
 import json
 import os
 import pwd
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import secrets
 import shutil
@@ -22,6 +24,7 @@ import sys
 import tarfile
 import tempfile
 import time
+import zlib
 from datetime import datetime, timezone
 from urllib.request import urlopen
 from urllib.error import HTTPError, URLError
@@ -43,6 +46,10 @@ SERVICE_USER = "vmiss-monitor"
 SERVICE_GROUP = "vmiss-monitor"
 INSTALLER_URL = "https://raw.githubusercontent.com/xhpx7301/host-watch/main/install.sh"
 INSTALLER_FALLBACK_URL = "https://github.com/xhpx7301/host-watch/raw/refs/heads/main/install.sh"
+MAX_BACKUP_UPLOAD = 20 * 1024 * 1024
+MAX_BACKUP_EXPANDED = 64 * 1024 * 1024
+MAX_BACKUP_REQUEST = (MAX_BACKUP_UPLOAD + 2) // 3 * 4 + 4096
+RESTORE_DATA_FILES = ("config.json", "state.json", "state-seckill.json", "status.json", "catalog.json", "exchange-rates.json")
 
 
 def run(*args: str) -> None:
@@ -188,6 +195,123 @@ def backup_for_download() -> dict:
         return {"name": target.name, "content": encoded}
     finally:
         target.unlink(missing_ok=True)
+
+
+def validate_restore_config(value: dict) -> dict:
+    """Validate using the installed application's dependencies, never archive code."""
+    value = {**value, "enabled": False}
+    result = subprocess.run(
+        [str(INSTALL_DIR / ".venv/bin/python"), "-I", "-c",
+         "import json,sys; sys.path.insert(0,sys.argv[1]); from admin import validate_config; "
+         "print(json.dumps(validate_config(json.load(sys.stdin)),ensure_ascii=False))", str(INSTALL_DIR)],
+        input=json.dumps(value, ensure_ascii=False), capture_output=True, text=True, timeout=30, check=False)
+    if result.returncode:
+        raise ValueError("备份中的商品配置无法通过当前版本校验，请检查备份文件或先更新 HostWatch")
+    return json.loads(result.stdout)
+
+
+def read_restore_archive(content: str) -> tuple[dict, dict | None]:
+    if not isinstance(content, str) or not content or len(content) > MAX_BACKUP_REQUEST - 4096:
+        raise ValueError("导入备份文件必须为不超过 20 MB 的 tar.gz 文件")
+    try:
+        raw = base64.b64decode(content, validate=True)
+    except ValueError:
+        raise ValueError("备份内容编码无效") from None
+    if not raw or len(raw) > MAX_BACKUP_UPLOAD:
+        raise ValueError("导入备份文件必须为不超过 20 MB 的 tar.gz 文件")
+    allowed = {str(DATA_DIR / name).lstrip("/"): name for name in RESTORE_DATA_FILES}
+    allowed[str(BACKUP_SETTINGS).lstrip("/")] = "backup_schedule"
+    contents, total, count = {}, 0, 0
+    try:
+        # Bound actual decompression (including PAX metadata) and verify gzip's
+        # checksum before parsing tar headers or changing any server data.
+        with tempfile.TemporaryFile() as unpacked:
+            expanded = 0
+            with gzip.GzipFile(fileobj=io.BytesIO(raw)) as compressed:
+                while chunk := compressed.read(1024 * 1024):
+                    expanded += len(chunk)
+                    if expanded > MAX_BACKUP_EXPANDED:
+                        raise ValueError("备份解压内容过大，无法导入")
+                    unpacked.write(chunk)
+            unpacked.seek(0)
+            # Never extract archive paths, permissions, users, programs or services.
+            with tarfile.open(fileobj=unpacked, mode="r:") as archive:
+                for member in archive:
+                    count += 1
+                    total += member.size
+                    path = PurePosixPath(member.name)
+                    if path.is_absolute() or ".." in path.parts or "\\" in member.name:
+                        raise ValueError("备份含不安全的文件路径")
+                    if member.size < 0 or count > 5000 or total > MAX_BACKUP_EXPANDED:
+                        raise ValueError("备份解压内容过大，无法导入")
+                    name = allowed.get(str(path))
+                    if name is None:
+                        continue
+                    if not member.isfile() or member.issparse() or name in contents:
+                        raise ValueError("备份数据文件必须为唯一的普通文件")
+                    stream = archive.extractfile(member)
+                    value = json.loads(stream.read().decode("utf-8"))
+                    if not isinstance(value, dict):
+                        raise ValueError("备份数据文件必须为 JSON 对象")
+                    contents[name] = value
+    except (tarfile.TarError, EOFError, OSError, zlib.error, UnicodeError, json.JSONDecodeError):
+        raise ValueError("备份文件损坏或不是有效的 HostWatch tar.gz 备份") from None
+    if "config.json" not in contents:
+        raise ValueError("备份缺少 HostWatch 商品配置，无法导入")
+    contents["config.json"] = validate_restore_config(contents["config.json"])
+    schedule = contents.pop("backup_schedule", None)
+    if schedule is not None:
+        schedule = normalize_backup_schedule(schedule)
+    return contents, schedule
+
+
+def restore_backup(payload: dict) -> dict:
+    contents, schedule = read_restore_archive(payload.get("content"))
+    if DATA_DIR.is_symlink() or not DATA_DIR.is_dir():
+        raise ValueError("数据目录无效，无法导入备份")
+    targets = [DATA_DIR / name for name in RESTORE_DATA_FILES]
+    if schedule is not None:
+        targets.append(BACKUP_SETTINGS)
+    for path in targets:
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError(f"拒绝恢复非普通文件：{path}")
+    owner = pwd.getpwnam(SERVICE_USER).pw_uid
+    group = grp.getgrnam(SERVICE_GROUP).gr_gid
+    previous_schedule = read_backup_schedule() if schedule is not None else None
+    was_active = _systemd_state(MONITOR) == "active"
+    # Quiesce the monitor before taking the rollback snapshot or changing data.
+    run("systemctl", "stop", MONITOR)
+    snapshot = None
+    changed = False
+    try:
+        originals = {path: path.read_text(encoding="utf-8") if path.exists() else None for path in targets}
+        snapshot = backup()
+        changed = True
+        for name in RESTORE_DATA_FILES:
+            value = contents.get(name, {})
+            if name == "status.json":
+                value = {**value, "state": "paused", "message": "备份已导入，监控已暂停，请确认配置后启动。"}
+            atomic_write(DATA_DIR / name, json.dumps(value, ensure_ascii=False) + "\n", mode=0o600, owner=owner, group=group)
+        if schedule is not None:
+            save_backup_schedule(schedule)
+        run("systemctl", "disable", MONITOR)
+    except Exception as exc:
+        try:
+            if changed:
+                for path, original in originals.items():
+                    if original is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        atomic_write(path, original, mode=0o600, owner=owner if path.parent == DATA_DIR else 0,
+                                     group=group if path.parent == DATA_DIR else None)
+                if previous_schedule is not None:
+                    apply_backup_schedule(previous_schedule)
+            if was_active:
+                run("systemctl", "start", MONITOR)
+        except Exception:
+            raise ValueError(f"导入失败且自动回退未完成，请检查服务日志；恢复前备份：{snapshot or '未生成'}") from None
+        raise ValueError(f"导入失败，已保留或恢复原数据：{exc}") from None
+    return {"ok": True, "message": "备份已导入，监控已暂停，请确认配置后手动启动。", "rollback_path": str(snapshot)}
 
 
 def normalize_backup_schedule(value: object) -> dict:
@@ -600,7 +724,9 @@ def web_action(payload: dict) -> dict:
         return {"ok": True, "message": f"自动备份完成：{path.name}", "path": str(path), "storage": str(BACKUP_DIR)}
     if action == "backup-download":
         archive = backup_for_download()
-        return {"ok": True, "message": "备份已准备下载。", **archive}
+        return {"ok": True, "message": "备份已准备导出。", **archive}
+    if action == "backup-import":
+        return restore_backup(payload)
     if action == "backup-schedule":
         return save_backup_schedule(payload)
     if action == "update":
@@ -770,8 +896,11 @@ def main() -> int:
             parser.error("已有管理菜单或网页操作正在运行，请稍后重试")
         try:
             if args.command == "web-action":
-                payload = json.loads(sys.stdin.read(16_385))
-                if not isinstance(payload, dict) or len(json.dumps(payload)) > 16_384:
+                raw = sys.stdin.read(MAX_BACKUP_REQUEST + 1)
+                if len(raw) > MAX_BACKUP_REQUEST:
+                    raise ValueError("管理请求过大")
+                payload = json.loads(raw)
+                if not isinstance(payload, dict) or (payload.get("action") != "backup-import" and len(json.dumps(payload)) > 16_384):
                     raise ValueError("管理请求无效或过大")
                 print(json.dumps(web_action(payload), ensure_ascii=False))
             elif args.command == "web-update-worker":

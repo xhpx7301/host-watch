@@ -127,6 +127,60 @@ class AdminAPITests(unittest.TestCase):
         self.assertTrue(json.loads(body)["ok"])
         manager.assert_called_once_with(payload)
 
+    def upload_backup(self, content=b"\x1f\x8bfixture", headers=None):
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port)
+        self.addCleanup(connection.close)
+        connection.request("POST", "/api/manage/backup-import", content,
+                           {"Content-Type": "application/gzip", **(headers or {})})
+        response = connection.getresponse()
+        return response.status, response.read()
+
+    def test_backup_import_forwards_archive_to_manager(self):
+        # Archives can exceed the ordinary 64 KiB configuration body limit.
+        content = b"\x1f\x8b" + b"fixture" * 12_000
+        with patch.object(admin, "manager_action", return_value={"ok": True, "rollback_path": "/var/backups/before.tar.gz"}) as manager:
+            code, body = self.upload_backup(content)
+        self.assertEqual(code, 200)
+        self.assertTrue(json.loads(body)["ok"])
+        manager.assert_called_once_with({"action": "backup-import", "content": base64.b64encode(content).decode()})
+
+    def test_backup_import_rejects_empty_invalid_or_oversized_upload(self):
+        cases = [(b"", {}, 413), (b"not gzip", {}, 400),
+                 (b"", {"Content-Length": str(admin.MAX_BACKUP_UPLOAD + 1)}, 413)]
+        with patch.object(admin, "manager_action") as manager:
+            for content, headers, expected in cases:
+                with self.subTest(headers=headers, content=content):
+                    code, _ = self.upload_backup(content, headers)
+                    self.assertEqual(code, expected)
+        manager.assert_not_called()
+
+    def test_backup_import_requires_authentication_and_same_origin(self):
+        with patch.object(admin, "manager_action") as manager:
+            with patch.object(admin, "authorized", return_value=False):
+                code, _ = self.upload_backup()
+                self.assertEqual(code, 401)
+            for headers, expected in [({"Origin": "https://evil.example"}, 403),
+                                      ({"Sec-Fetch-Site": "cross-site"}, 403),
+                                      ({"Content-Type": "application/json"}, 415)]:
+                code, _ = self.upload_backup(headers=headers)
+                self.assertEqual(code, expected)
+        manager.assert_not_called()
+
+    def test_backup_import_refuses_running_tasks(self):
+        task = Mock()
+        task.snapshot.return_value = {"pending": True}
+        with patch.dict(admin.SECKILL_TASKS, {"running": task}, clear=True), patch.object(admin, "manager_action") as manager:
+            code, body = self.upload_backup()
+        self.assertEqual(code, 400)
+        self.assertIn("请先停止", json.loads(body)["error"])
+        manager.assert_not_called()
+
+    def test_json_management_cannot_bypass_backup_upload_checks(self):
+        with patch.object(admin, "manager_action") as manager:
+            code, _ = self.request("/api/manage", {"action": "backup-import", "content": "YQ=="})
+        self.assertEqual(code, 400)
+        manager.assert_not_called()
+
     def test_browser_health_uses_unsaved_endpoint_without_config_mutation(self):
         response = unittest.mock.Mock(ok=True)
         response.json.return_value = {"msg": "FlareSolverr is ready!", "version": "3.test"}

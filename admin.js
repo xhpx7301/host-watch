@@ -391,7 +391,7 @@ async function performManagementAction(action, extra = {}) {
   }
 }
 
-async function downloadManagementBackup() {
+async function exportManagementBackup() {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 40_000);
   try {
@@ -420,11 +420,32 @@ async function downloadManagementBackup() {
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-    setMessage("备份已下载到当前浏览器。", "success");
+    setMessage("备份已导出，通过当前浏览器保存到本地。", "success");
   } catch (error) {
-    if (controller.signal.aborted) throw new Error("备份下载超时，请刷新状态后重试。");
+    if (controller.signal.aborted) throw new Error("备份导出超时，请刷新状态后重试。");
     throw error;
   } finally { clearTimeout(timer); }
+}
+
+async function importManagementBackup(file) {
+  if (!file.name.toLowerCase().endsWith(".tar.gz") || !file.size || file.size > 20 * 1024 * 1024) {
+    setMessage("请选择不超过 20 MB 的 HostWatch .tar.gz 备份文件。", "error"); return;
+  }
+  const signature = new Uint8Array(await file.slice(0, 2).arrayBuffer());
+  if (signature[0] !== 0x1f || signature[1] !== 0x8b) { setMessage("文件不是有效的 gzip 备份。", "error"); return; }
+  const draftNote = hasUnsavedChanges() ? "当前页面未保存的修改将被替换。\n" : "";
+  if (!window.confirm(`确认导入备份“${file.name}”？\n${draftNote}将恢复商品配置、库存记录和备份计划，保留当前管理员账号、访问设置及程序版本。\n导入前自动备份当前数据，完成后暂停监控，请确认配置后手动启动。`)) return;
+  await runAction(document.querySelector("#manage-import-backup"), "导入中…", "正在校验备份并恢复数据，请勿关闭页面…", async () => {
+    const result = await requestJSON("/api/manage/backup-import", {
+      method: "POST", headers: { "Content-Type": "application/gzip" }, body: file, timeoutMs: 150_000,
+    });
+    document.querySelector("#manage-task-status").textContent = `${result.message} 恢复前备份：${result.rollback_path || "请查看最近备份"}`;
+    // Reload imported data so a stale browser draft cannot overwrite the restore.
+    backupScheduleDraft = null;
+    try { await loadConfig(); await refreshManagement(); await loadStatus(); }
+    catch (error) { setMessage(`备份已导入，但页面刷新失败：${error.message} 请重新载入页面。`, "error"); return; }
+    setMessage(result.message, "success");
+  });
 }
 
 function pollUpdateStatus() {
@@ -452,6 +473,16 @@ function pollUpdateStatus() {
 }
 
 function bindManagementActions() {
+  const importFile = document.querySelector("#manage-import-backup-file");
+  document.querySelector("#manage-import-backup").addEventListener("click", () => { importFile.value = ""; importFile.click(); });
+  importFile.addEventListener("change", async () => {
+    const file = importFile.files?.[0];
+    if (file) {
+      try { await importManagementBackup(file); }
+      catch (error) { setMessage(error.message, "error"); }
+    }
+    importFile.value = "";
+  });
   document.querySelector("#manage-auto-backup").addEventListener("click", () => { if (!backupScheduleDraft) return; backupScheduleDraft.enabled = !backupScheduleDraft.enabled; renderBackupSchedule(); });
   document.querySelector("#manage-backup-time").addEventListener("input", event => { if (!backupScheduleDraft) return; backupScheduleDraft.time = event.target.value; renderBackupSchedule(); });
   document.querySelector("#manage-backup-schedule-save").addEventListener("click", event => {
@@ -472,11 +503,11 @@ function bindManagementActions() {
   }));
   for (const [id, action, label, message] of [
     ["manage-restart-admin", "admin-restart", "安排中…", "正在安排管理页服务重启…"],
-    ["manage-backup", "backup-download", "准备中…", "正在准备浏览器下载备份…"],
+    ["manage-backup", "backup-download", "导出中…", "正在打包并导出备份…"],
     ["manage-update", "update", "启动中…", "正在启动 HostWatch 更新任务…"],
   ]) {
     document.querySelector(`#${id}`).addEventListener("click", (event) => {
-      const operation = action === "backup-download" ? downloadManagementBackup : () => performManagementAction(action);
+      const operation = action === "backup-download" ? exportManagementBackup : () => performManagementAction(action);
       runAction(event.currentTarget, label, message, operation);
     });
   }
