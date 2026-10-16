@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import ipaddress
+import base64
+import json
+import shlex
 import time
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -34,8 +37,14 @@ def normalize(value: object) -> dict:
             raise ValueError("出口节点必须是对象")
         node_id = str(node.get("id", "")).strip()
         name = str(node.get("name", node_id)).strip()
-        proxy_url = _https_url(node.get("proxy_url", ""), f"出口节点 {name or node_id} 的代理地址", allow_http=True)
-        health_url = _https_url(node.get("health_url", ""), f"出口节点 {name or node_id} 的健康检查地址", allow_http=True)
+        pending = node.get("pending_registration", False)
+        if not isinstance(pending, bool):
+            raise ValueError("节点待安装状态必须是布尔值")
+        proxy_url = "" if pending and not node.get("proxy_url") else _https_url(node.get("proxy_url", ""), f"出口节点 {name or node_id} 的代理地址", allow_http=True)
+        health_url = "" if pending and not node.get("health_url") else _https_url(node.get("health_url", ""), f"出口节点 {name or node_id} 的健康检查地址", allow_http=True)
+        port = node.get("listen_port", urlsplit(proxy_url).port or 8787)
+        if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+            raise ValueError("节点监听端口必须是 1–65535 的整数")
         token = str(node.get("token", ""))
         public_ip = str(node.get("public_ip", "")).strip()
         if not node_id or len(node_id) > 64 or not all(char.isalnum() or char in "_-" for char in node_id) or node_id in seen:
@@ -53,12 +62,48 @@ def normalize(value: object) -> dict:
         seen.add(node_id)
         result.append({"id": node_id, "name": name, "proxy_url": proxy_url, "health_url": health_url,
             "token": token, "public_ip": public_ip, "enabled": enabled,
+            "pending_registration": pending, "listen_port": port,
             "last_seen": str(node.get("last_seen", ""))[:80], "last_error": str(node.get("last_error", ""))[:240]})
     routes = value.get("routes", {})
     if not isinstance(routes, dict) or any(str(provider) not in PROVIDERS or (node_id and node_id not in seen) for provider, node_id in routes.items()):
         raise ValueError("出口路由必须为支持商家到节点 ID 的映射")
     routes = {str(provider): str(node_id) for provider, node_id in routes.items() if node_id}
     return {"nodes": result, "routes": routes}
+
+
+def installation_command(node: dict, register_url: str = "") -> dict:
+    """Build a POSIX shell command; credentials are data, never shell syntax."""
+    if register_url:
+        register_url = _https_url(register_url, "主服务回报地址", allow_http=True)
+        host = urlsplit(register_url).hostname
+        local = host in {"localhost", "localhost.localdomain"}
+        try:
+            local = local or ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            pass
+        if local:
+            register_url = ""
+    if not node.get("token"):
+        raise ValueError("请先设置节点代理令牌")
+    settings = {"EGRESS_NODE_ID": node["id"], "EGRESS_NODE_NAME": node["name"],
+                "EGRESS_TOKEN": node["token"], "EGRESS_LISTEN_HOST": "0.0.0.0",
+                "EGRESS_LISTEN_PORT": node.get("listen_port", 8787), "EGRESS_REGISTER_URL": register_url}
+    encoded = base64.b64encode(json.dumps(settings, ensure_ascii=False).encode()).decode()
+    script_url = "https://raw.githubusercontent.com/xhpx7301/host-watch/main/install-egress.sh"
+    bootstrap = (
+        "set -eu; "
+        "if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then "
+        "if [ \"$(id -u)\" -ne 0 ]; then echo '请使用 root 执行安装命令。' >&2; exit 1; fi; "
+        "if command -v apt-get >/dev/null 2>&1; then apt-get update; apt-get install -y ca-certificates curl; "
+        "elif command -v apk >/dev/null 2>&1; then apk add --no-cache ca-certificates curl; "
+        "else echo '仅支持 Debian 和 Alpine。' >&2; exit 1; fi; fi; "
+        'installer=$(mktemp); trap \'rm -f "$installer"\' EXIT HUP INT TERM; '
+        f'if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 20 --max-time 120 {script_url} -o "$installer"; '
+        f'else wget -T 120 -O "$installer" {script_url}; fi; '
+        'sh "$installer" "$1"'
+    )
+    return {"command": "sh -c " + shlex.quote(bootstrap) + " sh " + shlex.quote(encoded),
+            "auto_register": bool(register_url), "register_url": register_url}
 
 
 def public(value: object) -> dict:

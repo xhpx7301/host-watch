@@ -6,6 +6,7 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -1095,17 +1096,19 @@ def current_config() -> dict:
 
 
 def register_egress_node(payload: dict, authorization: str = "") -> dict:
-    expected = os.getenv("EGRESS_REGISTER_TOKEN", "").strip()
-    supplied = authorization.removeprefix("Bearer ").strip()
-    if not expected or not hmac.compare_digest(supplied, expected):
-        raise ValueError("出口节点注册令牌无效")
     if not isinstance(payload, dict):
         raise ValueError("出口节点注册内容无效")
     current = current_config()
     node_id = str(payload.get("node_id", "")).strip()
-    node = {"id": node_id, "name": payload.get("name", node_id), "proxy_url": payload.get("proxy_url", ""),
-        "health_url": payload.get("health_url", ""), "token": payload.get("token", ""), "public_ip": payload.get("public_ip", ""),
-        "enabled": True, "last_seen": datetime.now().astimezone().isoformat(timespec="seconds"), "last_error": ""}
+    existing = next((item for item in current["egress"]["nodes"] if item["id"] == node_id), None)
+    expected = existing.get("token", "") if existing else os.getenv("EGRESS_REGISTER_TOKEN", "").strip()
+    supplied = authorization.removeprefix("Bearer ").strip()
+    if not authorization.startswith("Bearer ") or not expected or not hmac.compare_digest(supplied.encode(), expected.encode()):
+        raise ValueError("出口节点注册令牌无效")
+    node = {**(existing or {}), "id": node_id, "name": existing["name"] if existing else payload.get("name", node_id), "proxy_url": payload.get("proxy_url", ""),
+        "health_url": payload.get("health_url", ""), "token": existing["token"] if existing else payload.get("token", ""), "public_ip": payload.get("public_ip", ""),
+        "enabled": existing["enabled"] if existing else True, "pending_registration": False,
+        "last_seen": datetime.now().astimezone().isoformat(timespec="seconds"), "last_error": ""}
     nodes = [item for item in current.get("egress", {}).get("nodes", []) if item["id"] != node_id]
     nodes.append(node)
     current["egress"] = egress.normalize({"nodes": nodes, "routes": current.get("egress", {}).get("routes", {})})
@@ -1365,11 +1368,16 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
                 self._send(415, "application/json; charset=utf-8", b'{"error":"Content-Type must be application/json"}'); return
+            if not MUTATION_LOCK.acquire(blocking=False):
+                self._send(409, "application/json; charset=utf-8", b'{"error":"configuration busy"}'); return
             try:
-                result = register_egress_node(request_body(self), self.headers.get("Authorization", ""))
-                self._send(200, "application/json; charset=utf-8", json.dumps(result, ensure_ascii=False).encode("utf-8"))
-            except (OSError, ValueError, json.JSONDecodeError) as exc:
-                self._send(400, "application/json; charset=utf-8", json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"))
+                try:
+                    result = register_egress_node(request_body(self), self.headers.get("Authorization", ""))
+                    self._send(200, "application/json; charset=utf-8", json.dumps(result, ensure_ascii=False).encode("utf-8"))
+                except (OSError, ValueError, json.JSONDecodeError) as exc:
+                    self._send(400, "application/json; charset=utf-8", json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"))
+            finally:
+                MUTATION_LOCK.release()
             return
         if not self._guard():
             return
@@ -1396,11 +1404,31 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if self.path not in {"/api/config", "/api/telegram/test", "/api/manage", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/egress/probe"}:
+        if self.path not in {"/api/config", "/api/telegram/test", "/api/manage", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
             self.send_error(404)
             return
         try:
             submitted = request_body(self)
+            if self.path == "/api/egress/install-command":
+                current = current_config()
+                if not isinstance(submitted.get("node"), dict):
+                    raise ValueError("节点配置必须是 JSON 对象")
+                node = dict(submitted["node"])
+                existing = next((item for item in current["egress"]["nodes"] if item["id"] == node.get("id")), {})
+                node["token"] = node.get("token") or existing.get("token") or secrets.token_urlsafe(32)
+                # A stale browser draft must not undo a completed registration.
+                if existing and not existing.get("pending_registration") and node.get("pending_registration"):
+                    node.update({key: existing[key] for key in ("proxy_url", "health_url", "public_ip", "last_seen", "pending_registration")})
+                node = egress.normalize({"nodes": [node]})["nodes"][0]
+                output = egress.installation_command(node, str(submitted.get("register_url", "")))
+                nodes = [item for item in current["egress"]["nodes"] if item["id"] != node["id"]] + [node]
+                current["egress"] = egress.normalize({"nodes": nodes, "routes": current["egress"]["routes"]})
+                save_config(current)
+                output["node"] = egress.public({"nodes": [node]})["nodes"][0]
+                self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode()); return
+            if self.path == "/api/egress/import":
+                result = register_egress_node(submitted, "Bearer " + str(submitted.get("token", "")))
+                self._send(200, "application/json; charset=utf-8", json.dumps({**result, "egress": egress.public(current_config()["egress"])}, ensure_ascii=False).encode()); return
             if self.path in {"/api/catalog/refresh", "/api/catalog/stop"}:
                 try:
                     output = CATALOG.stop() if self.path.endswith("/stop") else CATALOG.refresh(submitted.get("provider"), submitted.get("scope", ""))
@@ -1493,6 +1521,9 @@ class Handler(BaseHTTPRequestHandler):
                 node_id = str(node.get("id", "")).strip()
                 if not node.get("token") and node_id in current_nodes:
                     node["token"] = current_nodes[node_id].get("token", "")
+                existing = current_nodes.get(node_id, {})
+                if existing and not existing.get("pending_registration") and node.get("pending_registration"):
+                    node.update({key: existing[key] for key in ("proxy_url", "health_url", "public_ip", "last_seen", "pending_registration")})
                 merged_nodes.append(node)
             submitted["egress"] = {**submitted_egress, "nodes": merged_nodes}
             submitted_seckill = submitted.get("vps_seckill", current["vps_seckill"])

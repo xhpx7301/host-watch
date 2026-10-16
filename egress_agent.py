@@ -8,26 +8,35 @@ from __future__ import annotations
 
 import base64
 import json
+import ipaddress
+import hmac
 import os
 import select
 import socket
 import socketserver
 import threading
 import time
+import sys
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 import requests
 
 
-NODE_ID = os.getenv("EGRESS_NODE_ID", "egress-node")
-TOKEN = os.getenv("EGRESS_TOKEN", "")
-PUBLIC_IP = os.getenv("EGRESS_PUBLIC_IP", "")
-REGISTER_URL = os.getenv("EGRESS_REGISTER_URL", "")
-REGISTER_TOKEN = os.getenv("EGRESS_REGISTER_TOKEN", TOKEN)
-LISTEN_HOST = os.getenv("EGRESS_LISTEN_HOST", "0.0.0.0")
-LISTEN_PORT = int(os.getenv("EGRESS_LISTEN_PORT", "8787"))
-NODE_NAME = os.getenv("EGRESS_NODE_NAME", NODE_ID)
+CONFIG = json.loads(Path(os.environ["EGRESS_CONFIG"]).read_text(encoding="utf-8")) if os.getenv("EGRESS_CONFIG") else {}
+def setting(key, default=""):
+    return os.getenv(key, CONFIG.get(key, default))
+
+NODE_ID = setting("EGRESS_NODE_ID", "egress-node")
+TOKEN = setting("EGRESS_TOKEN")
+PUBLIC_IP = setting("EGRESS_PUBLIC_IP")
+REGISTER_URL = setting("EGRESS_REGISTER_URL")
+REGISTER_TOKEN = setting("EGRESS_REGISTER_TOKEN", TOKEN)
+LISTEN_HOST = setting("EGRESS_LISTEN_HOST", "0.0.0.0")
+LISTEN_PORT = int(setting("EGRESS_LISTEN_PORT", "8787"))
+NODE_NAME = setting("EGRESS_NODE_NAME", NODE_ID)
+_ip_cache = (0, "")
 
 
 def auth_ok(handler) -> bool:
@@ -38,21 +47,36 @@ def auth_ok(handler) -> bool:
         username, _ = base64.b64decode(value[6:], validate=True).decode().split(":", 1)
     except (ValueError, UnicodeError):
         return False
-    return bool(TOKEN) and username == TOKEN
+    return bool(TOKEN) and hmac.compare_digest(username.encode(), TOKEN.encode())
 
 
 def public_ip() -> str:
+    global _ip_cache
     if PUBLIC_IP:
-        return PUBLIC_IP
+        return str(ipaddress.ip_address(PUBLIC_IP))
+    if time.monotonic() - _ip_cache[0] < 300 and _ip_cache[1]:
+        return _ip_cache[1]
     for endpoint in ("https://api.ipify.org", "https://ifconfig.me/ip"):
         try:
             response = requests.get(endpoint, timeout=(3, 5))
-            value = response.text.strip()
-            if value:
-                return value
-        except requests.RequestException:
+            response.raise_for_status()
+            value = str(ipaddress.ip_address(response.text.strip()))
+            _ip_cache = (time.monotonic(), value)
+            return value
+        except (requests.RequestException, ValueError):
             continue
-    return "unknown"
+    return ""
+
+
+def connection_info() -> dict:
+    ip = public_ip()
+    host = setting("EGRESS_PUBLIC_HOST").strip() or ip
+    if not host:
+        raise ValueError("公网 IP 暂未识别，将稍后重试")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return {"node_id": NODE_ID, "name": NODE_NAME, "public_ip": ip,
+            "proxy_url": f"http://{host}:{LISTEN_PORT}", "health_url": f"http://{host}:{LISTEN_PORT}/health", "token": TOKEN}
 
 
 def relay(left: socket.socket, right: socket.socket) -> None:
@@ -93,7 +117,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            if self.headers.get("Authorization", "") != f"Bearer {TOKEN}":
+            if not TOKEN or not hmac.compare_digest(self.headers.get("Authorization", "").encode(), f"Bearer {TOKEN}".encode()):
                 self.send_response(401); self.send_header("Content-Length", "0"); self.end_headers(); return
             body = json.dumps({"ok": True, "node_id": NODE_ID, "name": NODE_NAME, "public_ip": public_ip(), "checked_at": time.time()}).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body); return
@@ -150,12 +174,11 @@ class Server(ThreadingHTTPServer):
 def register_once():
     if not REGISTER_URL:
         return
-    public_host = os.getenv("EGRESS_PUBLIC_HOST", "").strip() or public_ip()
-    payload = {"node_id": NODE_ID, "name": NODE_NAME, "public_ip": public_ip(), "proxy_url": f"http://{public_host}:{LISTEN_PORT}", "health_url": f"http://{public_host}:{LISTEN_PORT}/health", "token": TOKEN}
     try:
+        payload = connection_info()
         requests.post(REGISTER_URL.rstrip("/") + "/api/egress/register", json=payload, headers={"Authorization": f"Bearer {REGISTER_TOKEN}"}, timeout=(5, 10)).raise_for_status()
-    except requests.RequestException:
-        pass
+    except (requests.RequestException, ValueError):
+        print("出口节点回报暂未成功，30 秒后重试；也可在管理页回填安装结果。", flush=True)
 
 
 def main():
@@ -172,4 +195,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:] == ["--connection-info"]:
+        print(json.dumps(connection_info(), ensure_ascii=False))
+    else:
+        main()

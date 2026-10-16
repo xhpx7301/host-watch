@@ -340,6 +340,16 @@ sudo journalctl -u vmiss-monitor.service -n 50 --no-pager
 
 ## 运维
 
+### Debian / Alpine 出口节点一键安装
+
+在“网页请求 → 出口节点”点击“添加节点”，即可获得节点 ID、名称、8787 监听端口等默认值。点击“一键复制安装命令”会保存当前节点并生成随机代理令牌，其他栏目的未保存草稿保持原样；无需手动修改默认配置。将命令在子服务器以 root 执行（普通用户已配置 sudo 时也可执行）。脚本支持 Debian 12/13 的 systemd 和 Alpine 的 OpenRC，自动安装 Python 和 requests，创建专用服务用户，并设置开机启动。
+
+安装后自动识别子服务器公网 IP，并以该节点的独立令牌回报当前管理页地址；点击“刷新节点”即可获取代理地址和健康检查地址，然后在“商家出口路由”选择节点并保存配置。主服务器必须能够访问子服务器的监听端口（默认 TCP 8787）；节点只有完成连接信息回填后才能用于请求，未就绪或失效时不会回退主服务器直连。
+
+如果管理页通过 `127.0.0.1` / `localhost` SSH 隧道访问，安装命令会自动关闭远程回报。复制安装完成后终端输出的 JSON，粘贴到该节点的“回填安装结果”并提交，即可自动设置地址和 IP，无需手动编辑字段。公网管理地址回报失败时也可使用此入口。节点未被复制命令保存、已删除或令牌不匹配时，安装结果不会被接受。
+
+子服务器程序安装在 `/opt/hostwatch-egress/`，配置和令牌保存在 `/etc/hostwatch-egress.json`（仅 root 和节点服务用户可读取）。服务名称为 `hostwatch-egress-agent`：Debian 使用 `systemctl status hostwatch-egress-agent` / `journalctl -u hostwatch-egress-agent`；Alpine 使用 `rc-service hostwatch-egress-agent status`，日志位于 `/var/log/hostwatch-egress.log`。重复执行安装命令会更新并重启同一服务，不会重复创建节点。安装命令和回填 JSON 包含该节点令牌。
+
 ```sh
 sudo systemctl status vmiss-monitor-admin.service vmiss-monitor.service
 sudo journalctl -u vmiss-monitor.service -f

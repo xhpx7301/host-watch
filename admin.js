@@ -1860,15 +1860,73 @@ function renderOverviewRecent() {
 }
 
 const egressProviders = [["vmiss", "VMISS"], ["vps_soy", "VPS.SOY"], ["akile", "Akile"], ["isvoro", "Isvoro"], ["dmit", "DMIT"], ["bwh", "搬瓦工"], ["html", "其他商家 / 自定义网页"]];
+const egressInstallCommands = new Map();
 function egressNodes() { return config.egress?.nodes || (config.egress = { nodes: [], routes: {} }).nodes; }
+function rememberSavedEgressNode(node) {
+  if (!savedConfig) return;
+  const saved = JSON.parse(savedConfig);
+  saved.egress ||= { nodes: [], routes: {} };
+  const index = saved.egress.nodes.findIndex(item => item.id === node.id);
+  if (index < 0) saved.egress.nodes.push({ ...node });
+  else saved.egress.nodes[index] = { ...node };
+  savedConfig = JSON.stringify(saved);
+}
+function mergeEgressStatus(fresh) {
+  for (const remote of fresh.nodes || []) {
+    const local = egressNodes().find(node => node.id === remote.id);
+    if (!local) continue;
+    const previous = savedConfig ? JSON.parse(savedConfig).egress?.nodes.find(node => node.id === remote.id) : null;
+    const status = Object.fromEntries(["proxy_url", "health_url", "public_ip", "last_seen", "last_error", "pending_registration"].map(key => [key, remote[key]]));
+    for (const [key, value] of Object.entries(status)) {
+      if (!["proxy_url", "health_url"].includes(key) || local.pending_registration || local[key] === previous?.[key]) local[key] = value;
+    }
+    if (savedConfig) {
+      const saved = JSON.parse(savedConfig).egress?.nodes.find(node => node.id === remote.id);
+      if (saved) rememberSavedEgressNode({ ...saved, ...status });
+    }
+  }
+}
+async function copyEgressCommand(node) {
+  let result;
+  await runAction(null, "", "正在生成安装命令并保存此节点的配置…", async () => {
+    result = await requestJSON("/api/egress/install-command", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ node, register_url: location.origin }) });
+    Object.assign(node, result.node); rememberSavedEgressNode(result.node);
+    egressInstallCommands.set(node.id, result); renderEgress(); updateDraftState();
+  }, false);
+  if (!result) return;
+  try { await navigator.clipboard.writeText(result.command); }
+  catch {
+    const input = document.querySelector(`[data-egress-command="${CSS.escape(node.id)}"]`);
+    input.focus(); input.select();
+    if (!document.execCommand("copy")) { setMessage("安装命令已生成，请在命令框中手动复制。", "pending"); return; }
+  }
+  setMessage(result.auto_register ? "安装命令已复制。在子服务器执行后，点击“刷新节点”获取地址。" : "安装命令已复制。当前通过本地地址访问，请执行后回填终端输出的 JSON。", "success");
+}
 function renderEgress() {
   const nodes = egressNodes(), target = document.querySelector("#egress-nodes"); target.replaceChildren();
-  if (!nodes.length) target.append(text("p", "尚未配置出口节点。请在子服务器运行 egress_agent.py 后添加其代理和健康检查地址。", "empty"));
+  if (!nodes.length) target.append(text("p", "点击“添加节点”生成默认配置，再一键复制命令到 Debian / Alpine 子服务器安装。", "empty"));
   nodes.forEach(node => {
-    const card = text("article", "", "egress-node"), head = text("div", "", "egress-node-head"); head.append(text("strong", node.name || node.id || "未命名节点"), text("small", node.public_ip || "公网 IP 未检查", "subtle")); card.append(head);
+    const card = text("article", "", "egress-node"), head = text("div", "", "egress-node-head"); head.append(text("strong", node.name || node.id || "未命名节点"), text("small", node.pending_registration ? "等待安装回报" : node.public_ip || "公网 IP 未检查", "subtle")); card.append(head);
+    const setup = text("div", "", "egress-setup"), install = text("button", "一键复制安装命令", "primary egress-install-copy"); install.type = "button"; install.disabled = actionRunning;
+    install.addEventListener("click", () => copyEgressCommand(node));
+    setup.append(install, text("p", "支持 Debian / Alpine，默认端口 8787，节点令牌自动生成。复制命令时仅保存此节点，其他栏目草稿保留；在子服务器以 root 执行。", "hint"));
+    const command = document.createElement("textarea"); command.className = "egress-command"; command.dataset.egressCommand = node.id; command.rows = 3; command.readOnly = true; command.setAttribute("aria-label", `${node.name} 安装命令`); command.value = egressInstallCommands.get(node.id)?.command || ""; command.placeholder = "点击上方按钮，自动生成并复制安装命令，无需修改下方默认配置。"; setup.append(command);
+    const registration = egressInstallCommands.get(node.id);
+    if (registration) setup.append(text("p", registration.auto_register ? `自动回报至 ${registration.register_url}；安装后点击“刷新节点”。` : "当前主服务地址仅本机可访问。安装后将终端输出的 JSON 粘贴到“回填安装结果”，即可自动填入 IP 和连接地址。", "hint"));
+    const fallback = document.createElement("details"); fallback.className = "egress-import"; fallback.append(text("summary", "回填安装结果（SSH 隧道或自动回报不可用时）"));
+    const info = document.createElement("textarea"); info.rows = 3; info.placeholder = "粘贴子服务器安装完成后输出的 JSON"; info.setAttribute("aria-label", `${node.name} 安装结果`);
+    const importButton = text("button", "回填安装结果"); importButton.type = "button";
+    importButton.addEventListener("click", () => runAction(importButton, "回填中…", "正在回填节点安装结果…", async () => {
+      let payload; try { payload = JSON.parse(info.value); } catch { throw new Error("请粘贴完整的安装结果 JSON。"); }
+      if (payload?.node_id !== node.id) throw new Error("安装结果的节点 ID 与此节点不一致。");
+      const result = await requestJSON("/api/egress/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      mergeEgressStatus(result.egress); renderEgress(); updateDraftState(); setMessage("节点连接信息已回填并保存，可检查出口 IP 后绑定商家。", "success");
+    }));
+    fallback.append(info, importButton); setup.append(fallback); card.append(setup);
     const grid = text("div", "", "form-grid");
-    [["节点 ID", "id", "egress-1"], ["节点名称", "name", "香港出口"], ["代理地址", "proxy_url", "http://1.2.3.4:8787"], ["健康检查地址", "health_url", "http://1.2.3.4:8787/health"]].forEach(([label, key, placeholder]) => { const input = document.createElement("input"); input.value = node[key] || ""; input.placeholder = placeholder; input.disabled = key === "id" && Boolean(node.id); input.addEventListener("input", () => { node[key] = input.value.trim(); updateDraftState(); }); const labelNode = document.createElement("label"); labelNode.append(text("span", label), input); grid.append(labelNode); });
-    const token = document.createElement("input"); token.type = "password"; token.autocomplete = "new-password"; token.placeholder = node.token_configured ? "已配置，留空保持不变" : "与子服务器 EGRESS_TOKEN 相同"; token.addEventListener("input", () => { node.token = token.value; updateDraftState(); }); const tokenLabel = document.createElement("label"); tokenLabel.append(text("span", "代理令牌"), token); grid.append(tokenLabel);
+    [["节点 ID", "id", "自动生成"], ["节点名称", "name", "出口节点"], ["代理地址", "proxy_url", "安装后自动回填"], ["健康检查地址", "health_url", "安装后自动回填"]].forEach(([label, key, placeholder]) => { const input = document.createElement("input"); input.value = node[key] || ""; input.placeholder = placeholder; input.disabled = key === "id" && Boolean(node.id); input.addEventListener("input", () => { node[key] = input.value.trim(); updateDraftState(); }); const labelNode = document.createElement("label"); labelNode.append(text("span", label), input); grid.append(labelNode); });
+    const port = document.createElement("input"); port.type = "number"; port.min = "1"; port.max = "65535"; port.value = node.listen_port || 8787; port.addEventListener("input", () => { node.listen_port = Number(port.value); updateDraftState(); }); const portLabel = document.createElement("label"); portLabel.append(text("span", "节点监听端口"), port); grid.append(portLabel);
+    const token = document.createElement("input"); token.type = "password"; token.autocomplete = "new-password"; token.placeholder = node.token_configured ? "已配置，留空保持不变" : "复制安装命令时自动生成"; token.addEventListener("input", () => { node.token = token.value; updateDraftState(); }); const tokenLabel = document.createElement("label"); tokenLabel.append(text("span", "代理令牌"), token); grid.append(tokenLabel);
     const enabledLabel = settingButton("出口节点", node.enabled !== false, value => { node.enabled = value; }, ["已停用", "已启用"]);
     const probe = text("button", "检查出口 IP"); probe.type = "button"; probe.addEventListener("click", async () => { try { const result = await requestJSON("/api/egress/probe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ node_id: node.id }) }); node.public_ip = result.public_ip; node.last_error = ""; renderEgress(); setMessage(`${node.name} 出口检查成功：${result.public_ip}`, "success"); } catch (error) { node.last_error = error.message; renderEgress(); setMessage(error.message, "error"); } });
     const remove = text("button", "移除节点", "danger"); remove.type = "button"; remove.addEventListener("click", () => { const index = egressNodes().indexOf(node); if (index >= 0) egressNodes().splice(index, 1); Object.keys(config.egress.routes || {}).forEach(provider => { if (config.egress.routes[provider] === node.id) delete config.egress.routes[provider]; }); renderEgress(); updateDraftState(); });
@@ -1879,8 +1937,8 @@ function renderEgress() {
   document.querySelector("#egress-status").textContent = nodes.length ? `${nodes.length} 个出口节点；已绑定 ${Object.keys(config.egress?.routes || {}).length} 个商家。未绑定商家继续使用主服务器直连。` : "尚未配置出口节点。";
 }
 function collectEgress() { return { nodes: egressNodes().map(node => ({ ...node })), routes: { ...(config.egress?.routes || {}) } }; }
-document.querySelector("#egress-add-node").addEventListener("click", () => { egressNodes().push({ id: `egress-${Date.now()}`, name: "", proxy_url: "", health_url: "", token: "", enabled: true }); renderEgress(); updateDraftState(); });
-document.querySelector("#egress-refresh").addEventListener("click", async () => { try { config.egress = await requestJSON("/api/egress"); renderEgress(); setMessage("出口节点状态已刷新。", "success"); } catch (error) { setMessage(error.message, "error"); } });
+document.querySelector("#egress-add-node").addEventListener("click", () => { const node = { id: `egress-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name: `出口节点 ${egressNodes().length + 1}`, proxy_url: "", health_url: "", token: "", listen_port: 8787, pending_registration: true, enabled: true }; egressNodes().push(node); renderEgress(); updateDraftState(); document.querySelector("#egress-nodes").lastElementChild.scrollIntoView({ behavior: "smooth", block: "nearest" }); });
+document.querySelector("#egress-refresh").addEventListener("click", async () => { try { mergeEgressStatus(await requestJSON("/api/egress")); renderEgress(); updateDraftState(); setMessage("出口节点状态已刷新，其他未保存修改已保留。", "success"); } catch (error) { setMessage(error.message, "error"); } });
 
 let vpsSeckillTask = null;
 let vpsSeckillPoll = null;
@@ -1947,7 +2005,7 @@ function collectVpsSeckill() {
   return { enabled: seckillItems().some(item => item.enabled !== false), mode: document.querySelector("#vps-seckill-mode")?.value || "manual", interval_seconds: Number(document.querySelector("#vps-seckill-interval")?.value || 5), items: seckillItems().map(item => ({ ...item })), accounts: seckillAccounts().map(account => ({ ...account })) };
 }
 function renderVpsSeckillTask() {
-  document.querySelectorAll("#page-seckill .option-button, .seckill-item .danger, .seckill-account .danger, #egress-nodes .option-button").forEach(button => { button.disabled = actionRunning; });
+  document.querySelectorAll("#page-seckill .option-button, .seckill-item .danger, .seckill-account .danger, #egress-nodes .option-button, #egress-nodes .egress-install-copy").forEach(button => { button.disabled = actionRunning; });
   document.querySelector("#vps-seckill-delete-all").disabled = actionRunning || !seckillItems().length;
   document.querySelector("#vps-seckill-delete-all-accounts").disabled = actionRunning || !seckillAccounts().length;
   const state = document.querySelector("#seckill-task-state"), start = document.querySelector("#vps-seckill-start"), stop = document.querySelector("#vps-seckill-stop");
