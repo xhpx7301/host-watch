@@ -25,6 +25,7 @@ const blockedHelpNode = document.querySelector("#blocked-help");
 let lastStatus = null;
 const toastNode = document.querySelector("#toast");
 let toastTimer;
+const TOAST_TIMEOUT_MS = 30_000;
 let actionRunning = false;
 let updateUnit = sessionStorage.getItem("hostwatch-update-unit") || "";
 const UPDATE_RELOAD_KEY = "hostwatch-update-reload-at";
@@ -151,8 +152,9 @@ function setMessage(message, kind = "", notify = true) {
   toastNode.hidden = false;
   document.querySelector("#toast-label").textContent = ({ pending: "操作提示", success: "操作成功", error: "操作失败" })[kind] || "操作提示";
   document.querySelector("#toast-message").textContent = message;
-  // Routine success feedback stays in the toast; errors also remain inline.
-  if (kind === "success") toastTimer = setTimeout(() => { toastNode.hidden = true; }, 6500);
+  // Keep every operation result visible long enough to read, then dismiss it
+  // automatically so a stale error cannot remain over the page indefinitely.
+  toastTimer = setTimeout(() => { toastNode.hidden = true; }, TOAST_TIMEOUT_MS);
 }
 
 document.querySelector("#toast-close").addEventListener("click", () => {
