@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 from admin import default_config, effective_telegram, normalize_cloudscraper, normalize_vps_soy_url, validate_config
 from affiliates import affiliate_purchase_url
 from notifications import purchase_button, stock_message
+import egress
 
 
 ROOT = Path(__file__).resolve().parent
@@ -211,6 +212,9 @@ def fetch_with_cloudscraper(url: str, expected_host: str, fetcher: dict | None =
     except ImportError:
         raise RequestServiceError("cloudscraper 依赖未安装或不完整，请通过“更新 HostWatch”安装依赖后重试") from None
     def request(scraper):
+        proxy = (fetcher or {}).get("egress_proxy_url", "")
+        if proxy:
+            scraper.proxies = {"http": proxy, "https": proxy}
         response = scraper.get(url, timeout=(options["connect_timeout_seconds"], options["read_timeout_seconds"]), allow_redirects=True)
         result = _validate_page_response(response.status_code, response.text, response.url, expected_host, getattr(response, "headers", {}))
         if diagnostics is not None:
@@ -310,12 +314,13 @@ def _fetch_with_flaresolverr(session: requests.Session, url: str, fetcher: dict,
         request["session"] = fetcher["_test_browser_session"]
     if wait:
         request["waitInSeconds"] = wait
+    if fetcher.get("egress_proxy_url"):
+        request["proxy"] = fetcher["egress_proxy_url"]
     try:
-        response = session.post(
-            endpoint,
-            json=request,
-            timeout=(10, timeout_seconds + wait + 15),
-        )
+        request_kwargs = {"json": request, "timeout": (10, timeout_seconds + wait + 15)}
+        if fetcher.get("egress_proxy_url"):
+            request_kwargs["proxies"] = {}
+        response = session.post(endpoint, **request_kwargs)
         payload = response.json()
     except requests.Timeout:
         raise RequestServiceError("FlareSolverr 请求超时；请检查服务器资源、目标站点验证和超时设置") from None
@@ -356,10 +361,15 @@ def product_fetcher(fetcher: dict | None, item: dict) -> dict:
     mode = result.get("provider_modes", {}).get(item.get("adapter", "html"), item.get("request_mode", "inherit"))
     if mode != "inherit":
         result["mode"] = mode
+    node = egress.resolve(result.get("egress", {}), item.get("adapter", "html"), str(item.get("egress_node_id", ""))) if result.get("egress") else None
+    if node:
+        result["egress_proxy_url"] = egress.connect_url(node)
+        result["egress_node_id"] = node["id"]
     return result
 
 
 def fetch_page(session: requests.Session, url: str, fetcher: dict | None, expected_host: str) -> tuple[str, str]:
+    egress.apply_session(session, fetcher)
     if (fetcher or {}).get("mode") == "cloudscraper":
         return fetch_with_cloudscraper(url, expected_host, fetcher)
     if (fetcher or {}).get("mode") == "flaresolverr":

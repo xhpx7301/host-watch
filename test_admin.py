@@ -1,4 +1,5 @@
 import http.client
+import base64
 import json
 import os
 from pathlib import Path
@@ -85,6 +86,19 @@ class AdminAPITests(unittest.TestCase):
             status, _ = self.request("/api/manage", {"action": "update"})
         self.assertEqual(status, 401)
         manager.assert_not_called()
+
+    def test_management_backup_download_returns_archive_attachment(self):
+        archive = b"backup bytes"
+        payload = {
+            "ok": True,
+            "name": "host-watch-20261016-120000-abcd.tar.gz",
+            "content": base64.b64encode(archive).decode("ascii"),
+        }
+        with patch.object(admin, "manager_action", return_value=payload) as manager:
+            status, body = self.request("/api/manage", {"action": "backup-download"})
+        self.assertEqual(status, 200)
+        self.assertEqual(body, archive)
+        manager.assert_called_once_with({"action": "backup-download"})
 
     def test_browser_health_uses_unsaved_endpoint_without_config_mutation(self):
         response = unittest.mock.Mock(ok=True)

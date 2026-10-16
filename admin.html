@@ -33,6 +33,8 @@
     .page-nav svg { flex-shrink:0; width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
     .sidebar-note { display:flex; align-items:center; gap:7px; margin-top:auto; padding:28px 10px 0; color:var(--muted); font-size:11px; }
     .sidebar-note-dot { width:6px; height:6px; border-radius:50%; background:#b8c5c0; }
+    .mobile-nav-toggle,.mobile-nav-close { display:none; }
+    .mobile-nav-scrim { display:none; }
     .workspace { display:flex; flex-direction:column; width:100%; min-width:0; min-height:100vh; max-width:1880px; margin:0 auto; padding:20px 24px 16px; }
     .page-heading { min-width:0; }
     .page-heading .eyebrow { display:none; margin:0 0 6px; color:#8a969e; font-size:10px; letter-spacing:2px; }
@@ -372,7 +374,9 @@
     .overview-table th,.overview-table td { padding:10px 12px; border-bottom:1px solid var(--line); }
     .overview-table tbody tr:last-child td { border-bottom:0; }
     .overview-table td small { display:block; margin-top:2px; color:var(--muted); font-size:11px; }
-    .overview-table .overview-price { min-width:110px; color:var(--blue); text-align:center; vertical-align:middle; }
+    .overview-table th:nth-child(3) { width:21%; text-align:left; }
+    .overview-table .overview-price { width:21%; min-width:110px; color:var(--blue); text-align:left; vertical-align:middle; }
+    .overview-table .overview-price .price-stack { align-items:flex-start; }
     .overview-table .price-pending { color:var(--muted); font-weight:600; white-space:nowrap; }
     .membership-tag { display:inline-flex; align-items:center; padding:2px 6px; border-radius:4px; margin:2px; color:var(--blue); background:var(--blue-soft); font-size:11px; white-space:nowrap; }
     .membership-tag.notify { color:var(--purple); background:var(--purple-soft); }
@@ -431,6 +435,21 @@
     .seckill-panel { margin-top:18px; padding:14px; border:1px solid #f0d9b5; border-radius:8px; background:#fffcf6; }
     .seckill-panel .section-head { margin-bottom:10px; flex-wrap:wrap; }
     .campaign-list { display:grid; gap:10px; }
+    .vps-seckill-panel { background:#f7faff; border-color:#cbd9f5; }
+    .seckill-items,.seckill-accounts { display:grid; gap:10px; }
+    .seckill-item,.seckill-account { padding:12px; border:1px solid var(--line); border-radius:7px; background:#fff; }
+    .seckill-item-head { display:flex; flex-wrap:wrap; gap:8px; align-items:baseline; justify-content:space-between; }
+    .seckill-item .form-grid,.seckill-account .form-grid { margin-top:10px; }
+    .seckill-item .form-grid label,.seckill-account .form-grid label { min-width:0; }
+    .check-label { display:inline-flex; flex-direction:row; align-items:center; gap:6px; width:auto; }
+    .seckill-logs { min-height:120px; max-height:360px; margin:0; padding:12px; overflow:auto; border:1px solid #2f4058; border-radius:6px; color:#e8eef8; background:#1f2937; font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; }
+    .egress-panel { margin-top:18px; padding:14px; border:1px solid #cbd9f5; border-radius:8px; background:#f7faff; }
+    .egress-nodes { display:grid; gap:10px; }
+    .egress-node { padding:12px; border:1px solid var(--line); border-radius:7px; background:#fff; }
+    .egress-node .form-grid { margin-top:10px; }
+    .egress-node-head { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+    .egress-routes { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px 16px; margin-top:12px; }
+    @media(max-width:520px) { .egress-routes { grid-template-columns:1fr; } }
     .campaign-card { min-width:0; padding:12px; border:1px solid var(--line); border-radius:7px; background:white; overflow-wrap:anywhere; }
     .campaign-card .buy-link { display:inline-flex; padding:5px 10px; border-radius:5px; background:var(--purple-soft); color:var(--purple); text-decoration:none; }
     .campaign-card h3 { margin:0 0 5px; font-size:13px; }
@@ -456,14 +475,30 @@
     .affiliate-card { padding:14px; }
     @media(min-width:781px) and (max-width:1100px) { .workspace { padding:20px; } }
     @media(max-width:780px) {
-      .workspace { padding:16px 12px 12px; } .sidebar { padding:10px 12px 0; }
+      body.mobile-nav-open { overflow:hidden; }
+      .workspace { padding:16px 12px 12px; }
+      .sidebar { position:fixed; inset:0 auto 0 0; z-index:40; width:min(320px,78vw); height:100dvh; padding:18px 14px; border-right:1px solid var(--line); border-bottom:0; box-shadow:12px 0 30px rgba(25,43,42,.16); transform:translateX(-105%); transition:transform .22s ease; }
+      body.mobile-nav-open .sidebar { transform:translateX(0); }
+      .sidebar .brand { padding:0 42px 18px 4px; border-bottom:1px solid var(--line); }
+      .nav-label,.sidebar-note { display:block; }
+      .nav-label { margin:24px 10px 10px; }
+      .page-nav { display:grid; gap:4px; overflow:visible; padding:0; }
+      .page-nav a { min-height:44px; padding:10px 12px; gap:10px; font-size:14px; }
+      .page-nav svg { width:18px; height:18px; }
+      .sidebar-note { margin-top:auto; padding:18px 10px 0; border-top:1px solid var(--line); }
+      .mobile-nav-close { position:absolute; top:16px; right:12px; display:inline-flex; width:38px; min-height:38px; padding:8px; border:0; color:var(--muted); background:transparent; }
+      .mobile-nav-close:hover:not(:disabled) { color:var(--ink); background:var(--canvas); }
+      .mobile-nav-close svg,.mobile-nav-toggle svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+      .mobile-nav-toggle { position:absolute; top:0; left:0; z-index:1; display:inline-flex; width:40px; min-height:40px; padding:8px; border-color:var(--line); color:var(--ink); background:var(--paper); }
+      .mobile-nav-toggle:hover:not(:disabled) { color:var(--blue); background:var(--blue-soft); }
+      .mobile-nav-scrim { position:fixed; inset:0; z-index:30; display:block; width:100%; height:100%; padding:0; border:0; border-radius:0; background:rgba(22,31,45,.42); cursor:pointer; }
+      .topbar { position:relative; padding-left:52px; }
       .page-heading h1 { font-size:22px; } .brand strong { font-size:18px; }
       .topbar { gap:10px; padding-bottom:12px; } .exchange-rates { min-width:0; max-width:100%; text-align:left; } .exchange-rate-list { justify-content:start; justify-items:start; } .header-status { gap:6px 10px; justify-content:flex-start; max-width:100%; }
       .header-status #last-checked { text-align:left; } .page-stage { padding-top:12px; }
       .overview-item { min-height:112px; padding:12px; } .overview-value { font-size:24px; }
       .overview-note { font-size:11px; } #overview-state { font-size:14px; }
       .panel-card > .section-body,#page-overview > .section { padding:12px; }
-      .page-nav a { min-height:36px; padding:7px 10px; }
       .overview-item::after { width:22px; height:22px; top:10px; right:10px; }
       .toast { bottom:120px; }
     }
@@ -482,12 +517,14 @@
 <main class="shell">
   <aside class="sidebar" aria-label="HostWatch 导航">
     <div class="brand"><span class="brand-mark" aria-hidden="true">H</span><div><strong>HostWatch</strong><p>自托管商品库存监控</p></div></div>
+    <button id="mobile-nav-close" class="mobile-nav-close" type="button" aria-label="关闭导航" title="关闭导航"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
     <p class="nav-label">控制台</p>
     <nav class="page-nav" aria-label="主要栏目">
       <a href="#overview" data-page-link="overview" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>运行概览</a>
       <a href="#monitor" data-page-link="monitor"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4M6 11h3l2-4 3 7 2-3h2"/></svg>VPS 库存监控</a>
       <a href="#notifications" data-page-link="notifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>VPS 库存通知</a>
       <a href="#catalog" data-page-link="catalog"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12M15 9v12"/></svg>VPS 库存大盘</a>
+      <a href="#seckill" data-page-link="seckill"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 9-12h-7l1-8Z"/></svg>VPS 秒杀</a>
       <a href="#requests" data-page-link="requests"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></svg>网页请求</a>
       <a href="#affiliates" data-page-link="affiliates"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 13 4-4m-6 7-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 1 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0"/></svg>AFF 管理</a>
       <a href="#telegram" data-page-link="telegram"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-6 18-4-8-8-4 18-6Zm-10 10L21 3"/></svg>Telegram 通知</a>
@@ -495,8 +532,10 @@
     </nav>
     <div class="sidebar-note"><span class="sidebar-note-dot" aria-hidden="true"></span>库存提醒 · 快速人工下单</div>
   </aside>
+  <button id="mobile-nav-scrim" class="mobile-nav-scrim" type="button" aria-label="关闭导航" hidden></button>
   <div class="workspace">
   <header class="topbar">
+    <button id="mobile-nav-toggle" class="mobile-nav-toggle" type="button" aria-label="打开导航" aria-expanded="false" aria-controls="mobile-nav-close" title="打开导航"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
     <div class="page-heading"><p class="eyebrow">HOSTWATCH / CONSOLE</p><h1 id="page-title" tabindex="-1">运行概览</h1><p id="page-description">查看监控服务、商品库存与最近检查结果。</p></div>
     <div id="exchange-rates" class="exchange-rates" role="status" aria-live="polite"><span id="exchange-time" class="exchange-time">当前时间读取中</span><span id="exchange-rate-note" class="exchange-rate-note">汇率读取中</span><div id="exchange-rate-list" class="exchange-rate-list"></div></div>
     <div class="header-status"><span id="header-monitor-state" class="state" role="status" aria-live="polite">读取服务状态中</span><div class="status-line"><span id="state" class="state">状态读取中</span><button id="refresh-status" type="button" title="刷新状态">刷新状态</button></div><span id="last-checked" class="subtle"></span></div>
@@ -514,7 +553,7 @@
   </section>
 
   <section class="section">
-    <div class="section-head overview-recent-head"><div><h2>关注商品 · 最近库存</h2><p>显示最近读取的库存，暂停后保留历史结果。</p></div><div class="actions"><button type="button" id="overview-open-catalog">浏览大盘</button><button type="button" id="overview-open-monitor">我的监控</button><button type="button" id="overview-open-notifications">我的通知</button><button id="open-products" type="button">＋ 自定义商品</button></div></div>
+    <div class="section-head overview-recent-head"><div><h2>关注商品 · 最近库存</h2><p>显示最近读取的库存，暂停后保留历史结果。</p></div><div class="actions"><button type="button" id="overview-open-catalog">浏览大盘</button><button type="button" id="overview-open-monitor">我的监控</button><button type="button" id="overview-open-notifications">我的通知</button><button type="button" id="overview-open-seckill">VPS 秒杀</button><button id="open-products" type="button">＋ 自定义商品</button></div></div>
     <div id="overview-recent"></div>
   </section>
   </div>
@@ -534,8 +573,22 @@
       </div>
       <div class="catalog-pagination"><span id="catalog-page-label" class="subtle"></span><div class="actions"><button id="catalog-prev" type="button" disabled>上一页</button><button id="catalog-next" type="button" disabled>下一页</button></div></div>
     </div>
-    <div class="catalog-reminders"><div><h2>已关注 / 通知 <span id="catalog-watch-count">0</span></h2><p id="catalog-reminder-note" class="hint">加入后点击底部“保存配置”，再开始监控。</p></div><button id="catalog-open-products" type="button">查看 VPS 库存监控</button></div>
+    <div class="catalog-reminders"><div><h2>已关注 / 通知 <span id="catalog-watch-count">0</span></h2><p id="catalog-reminder-note" class="hint">加入后点击底部“保存配置”，再开始监控。</p></div><div class="actions"><button id="catalog-open-products" type="button">查看 VPS 库存监控</button><button id="catalog-open-seckill" type="button">配置 VPS 秒杀</button></div></div>
     <p class="hint">大盘分类自动刷新仅在此栏目打开且页面可见时运行，使用已保存的商家请求方式；可随时停止。全部公开套餐会读取多个分类，仅支持手动刷新，建议偶尔用于发现新套餐。关闭网页后，已保存的监控和通知商品仍会在服务器检查，只有通知列表会通过 Telegram 提醒。大盘刷新不发送通知，也不改动提醒历史。外币价格下方的人民币金额为参考折算值，实际价格与购买资格以商家下单页为准。</p>
+  </section>
+
+  <section class="page-panel panel-card" id="page-seckill" data-page="seckill" aria-labelledby="page-title" hidden>
+    <div class="section-body">
+      <div class="section-head"><div><h2>VPS 秒杀</h2><p>从库存大盘、库存监控或库存通知加入商品。下架商品仍可保留目标链接，恢复上架后继续检查。</p></div><span id="seckill-task-state" class="state">未运行</span></div>
+      <div class="seckill-panel vps-seckill-panel">
+        <div class="section-head"><div><h3>执行模式</h3><p>极速模式高频检查，精准模式按商品条件检查，手动模式只检查一次并准备购买链接。</p></div><div class="actions"><button id="vps-seckill-start" type="button" class="primary">启动秒杀</button><button id="vps-seckill-stop" type="button" class="danger" hidden>暂停秒杀</button></div></div>
+        <div class="form-grid"><label>模式<select id="vps-seckill-mode"><option value="rapid">极速秒杀（自动）</option><option value="precise">精准秒杀（自动）</option><option value="manual">手动秒杀</option></select></label><label>检查间隔（秒）<input id="vps-seckill-interval" type="number" min="1" max="3600" step="1"></label></div>
+        <p class="hint">自动模式只有同时勾选商品“自动提交”、账户“允许自动下单”并填写商品提交地址时才会发送下单请求；否则发现有货后仅记录并提供购买链接。</p>
+      </div>
+      <div class="seckill-panel"><div class="section-head"><div><h3>秒杀商品</h3><p>商品来源于已保存的库存监控 / 通知列表；优惠码按商品保存。</p></div><button id="vps-seckill-add-all" type="button">加入全部关注商品</button></div><div id="vps-seckill-items" class="seckill-items"></div></div>
+      <div class="seckill-panel"><div class="section-head"><div><h3>网站账户</h3><p>密码只在保存时提交，页面读取时不会回显。</p></div><button id="vps-seckill-add-account" type="button">添加账户</button></div><div id="vps-seckill-accounts" class="seckill-accounts"></div></div>
+      <div class="seckill-panel"><div class="section-head"><div><h3>执行日志</h3><p id="vps-seckill-log-note">尚未启动秒杀任务。</p></div><button id="vps-seckill-clear-log" type="button">清空显示</button></div><pre id="vps-seckill-logs" class="seckill-logs" aria-live="polite">暂无日志</pre></div>
+    </div>
   </section>
 
   <section class="page-panel panel-card" id="page-monitor" data-page="monitor" aria-labelledby="page-title" hidden>
@@ -621,10 +674,12 @@
 
   <section class="page-panel panel-card" id="page-requests" data-page="requests" aria-labelledby="page-title" hidden>
     <div class="section-body">
+    <div class="section-head"><div><h2>网页请求</h2><p>设置各商家请求方式，配置轻量请求与浏览器请求，测试访问效果。</p></div><button id="requests-open-seckill" type="button">打开 VPS 秒杀</button></div>
     <div class="form-grid">
       <label>全局请求方式<select id="fetcher-mode"><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label>
     </div>
     <h2 class="monitor-settings-title">各商家监控请求方式</h2><p class="hint">用于后台自动监控和“测试通知”，保存后统一应用到该商家所有商品。选择“跟随全局”使用上方全局方式。库存大盘刷新同样使用已保存的商家请求方式。</p><div class="form-grid" id="provider-request-modes"><label>VMISS<select data-provider-mode="vmiss"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>VPS.SOY<select data-provider-mode="vps_soy"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>Akile<select data-provider-mode="akile"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>Isvoro<select data-provider-mode="isvoro"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>DMIT<select data-provider-mode="dmit"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>搬瓦工<select data-provider-mode="bwh"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>其他商家 / 自定义网页<select data-provider-mode="html"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label></div><p id="provider-request-note" class="hint" aria-live="polite"></p>
+    <div class="egress-panel"><div class="section-head"><div><h2>出口节点</h2><p>把子服务器运行的 egress agent 加入这里，再按商家绑定出口。绑定后代理失效会停止请求，不回退主服务器直连。</p></div><div class="actions"><button id="egress-add-node" type="button">添加节点</button><button id="egress-refresh" type="button">刷新节点</button></div></div><div id="egress-nodes" class="egress-nodes"></div><h3>商家出口路由</h3><div id="egress-routes" class="egress-routes"></div><p id="egress-status" class="hint" aria-live="polite">尚未配置出口节点。</p></div>
     <p id="fetcher-status" class="hint">普通 HTTPS 请求已启用。</p>
     <p class="hint">1 核 1GB 等小内存服务器建议优先使用普通 HTTPS 或 cloudscraper；需要浏览器渲染时再为对应商家选择 FlareSolverr。</p>
     <div class="request-tool cloudscraper">
@@ -672,7 +727,7 @@
       <div class="manage-actions">
       <button id="manage-refresh" type="button">刷新状态</button>
       <button id="manage-restart-admin" type="button">重启管理页</button>
-      <button id="manage-backup" type="button">立即备份</button>
+      <button id="manage-backup" type="button">下载备份</button>
       <button id="manage-update" type="button" class="primary">更新 HostWatch</button>
       </div>
     </div>
@@ -695,7 +750,7 @@
     <div class="manage-block manage-records">
       <div class="manage-record-grid">
         <div><div class="manage-section-head"><div><h3>最近日志</h3><p>监控和管理服务的最近记录。</p></div></div><div class="manage-actions"><button id="manage-load-logs" type="button">载入日志</button></div><pre id="manage-logs" class="manage-logs">点击“载入日志”查看最近记录。</pre></div>
-        <div><div class="manage-section-head"><div><h3>最近备份</h3><p>更新前自动备份，凭据仅限管理员访问。</p></div></div><div id="manage-backups" class="manage-users"><span>读取中</span></div></div>
+        <div><div class="manage-section-head"><div><h3>最近备份</h3><p>更新前自动备份保存到服务器硬盘；手动备份会下载到当前浏览器。</p></div></div><p id="manage-backup-storage" class="hint">自动备份存储位置：读取中</p><div id="manage-backups" class="manage-users"><span>读取中</span></div></div>
       </div>
     </div>
     </div>

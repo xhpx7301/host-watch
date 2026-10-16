@@ -10,6 +10,8 @@ let config = {
   notify_order: [],
   fetcher: { mode: "requests", flaresolverr_url: "http://127.0.0.1:8191/v1", timeout_seconds: 60 },
   telegram: {},
+  egress: { nodes: [], routes: {} },
+  vps_seckill: { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] },
   products: [],
 };
 const editorNode = document.querySelector("#product-editors");
@@ -41,6 +43,7 @@ const cloudscraperTestId = "cloudscraper-probe";
 const pages = {
   overview: { title: "运行概览", description: "查看监控服务、商品库存与最近检查结果。" },
   catalog: { title: "VPS 库存大盘", description: "浏览商家全部公开套餐或地区分类，选择你关心的 VPS 加入补货提醒。" },
+  seckill: { title: "VPS 秒杀", description: "从库存监控或库存通知选择商品，配置优惠码和账户后执行秒杀。" },
   monitor: { title: "VPS 库存监控", description: "集中查看你关注的 VPS，查看库存与配置、编辑备注和线路，直接购买，不发送通知。" },
   notifications: { title: "VPS 库存通知", description: "选择需要 Telegram 库存提醒的商品，管理通知和测试。" },
   affiliates: { title: "AFF 管理", description: "统一管理各商家推广码，保存后应用到新的购买入口。" },
@@ -49,6 +52,30 @@ const pages = {
   management: { title: "管理员管理", description: "管理服务与账号，查看日志、备份及更新程序。" },
 };
 let currentPage = null;
+const mobileNavToggle = document.querySelector("#mobile-nav-toggle");
+const mobileNavClose = document.querySelector("#mobile-nav-close");
+const mobileNavScrim = document.querySelector("#mobile-nav-scrim");
+
+function setMobileNav(open, restoreFocus = true) {
+  if (!mobileNavToggle || !mobileNavClose || !mobileNavScrim) return;
+  document.body.classList.toggle("mobile-nav-open", open);
+  mobileNavToggle.setAttribute("aria-expanded", String(open));
+  mobileNavToggle.setAttribute("aria-label", open ? "导航已打开" : "打开导航");
+  mobileNavToggle.title = open ? "导航已打开" : "打开导航";
+  mobileNavScrim.hidden = !open;
+  if (open) mobileNavClose.focus({ preventScroll: true });
+  else if (restoreFocus) mobileNavToggle.focus({ preventScroll: true });
+}
+
+mobileNavToggle?.addEventListener("click", () => setMobileNav(true));
+mobileNavClose?.addEventListener("click", () => setMobileNav(false));
+mobileNavScrim?.addEventListener("click", () => setMobileNav(false));
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && document.body.classList.contains("mobile-nav-open")) setMobileNav(false);
+});
+window.addEventListener("resize", () => {
+  if (window.innerWidth > 780 && document.body.classList.contains("mobile-nav-open")) setMobileNav(false, false);
+});
 
 function navigatePage(name, { history = true, focus = true } = {}) {
   if (name === "products") { navigatePage("notifications", { history, focus }); openAdvancedProducts(); return; }
@@ -81,6 +108,7 @@ document.querySelectorAll("[data-page-link]").forEach((link) => {
     if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button !== 0) return;
     event.preventDefault();
     navigatePage(link.dataset.pageLink);
+    if (document.body.classList.contains("mobile-nav-open")) setMobileNav(false);
   });
 });
 window.addEventListener("hashchange", () => navigatePage(location.hash.slice(1), { history: false }));
@@ -237,6 +265,7 @@ async function refreshManagement() {
   adminState.className = `state ${serviceTone(state.admin.active)}`;
   managementUsers = state.users;
   renderManagementUsers();
+  document.querySelector("#manage-backup-storage").textContent = `自动备份存储位置：${state.backup_dir || "服务器备份目录未返回"}`;
   const backups = document.querySelector("#manage-backups");
   backups.replaceChildren(...(state.backups.length ? state.backups.map((item) => text("span", `${item.name} · ${formatBytes(item.size)}`)) : [text("span", "暂无备份")]));
   if (updateUnit) await refreshUpdateStatus();
@@ -322,6 +351,39 @@ async function performManagementAction(action, extra = {}) {
   }
 }
 
+async function downloadManagementBackup() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 40_000);
+  try {
+    const response = await fetch("/api/manage", {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "backup-download" }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      let detail = `请求失败（HTTP ${response.status}）`;
+      try { detail = (await response.json()).error || detail; } catch {}
+      throw new Error(detail);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const filename = disposition.match(/filename="([^"]+)"/)?.[1] || "host-watch-backup.tar.gz";
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    setMessage("备份已下载到当前浏览器。", "success");
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error("备份下载超时，请刷新状态后重试。");
+    throw error;
+  } finally { clearTimeout(timer); }
+}
+
 function pollUpdateStatus() {
   let polling = false;
   const timer = setInterval(async () => {
@@ -353,11 +415,12 @@ function bindManagementActions() {
   }));
   for (const [id, action, label, message] of [
     ["manage-restart-admin", "admin-restart", "安排中…", "正在安排管理页服务重启…"],
-    ["manage-backup", "backup", "备份中…", "正在备份程序和配置…"],
+    ["manage-backup", "backup-download", "准备中…", "正在准备浏览器下载备份…"],
     ["manage-update", "update", "启动中…", "正在启动 HostWatch 更新任务…"],
   ]) {
     document.querySelector(`#${id}`).addEventListener("click", (event) => {
-      runAction(event.currentTarget, label, message, () => performManagementAction(action));
+      const operation = action === "backup-download" ? downloadManagementBackup : () => performManagementAction(action);
+      runAction(event.currentTarget, label, message, operation);
     });
   }
   document.querySelector("#manage-load-logs").addEventListener("click", (event) => runAction(event.currentTarget, "载入中…", "正在读取最近服务日志…", async () => {
@@ -1657,9 +1720,10 @@ function renderProductList() {
     const notifyActive = membership(item, "notify");
     const notify = text("button", notifyActive ? "✓ 已加入库存通知" : "＋ 加入库存通知", "membership-toggle membership-notify"); notify.type = "button"; notify.disabled = actionRunning || notifyActive; notify.setAttribute("aria-pressed", String(notifyActive));
     notify.addEventListener("click", () => { setMembership(item, "notify", true); renderProducts(); updateDraftState(); setMessage("已加入库存通知，保存配置后生效。", "pending"); });
+    const seckill = text("button", "加入 VPS 秒杀", "membership-toggle"); seckill.type = "button"; seckill.disabled = actionRunning; seckill.addEventListener("click", () => addToVpsSeckill(item));
     const remove = text("button", "移出监控", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.addEventListener("click", () => { setMembership(item, "watch", false); renderProducts(); updateDraftState(); setMessage("已移出库存监控，通知选择保持原样，请保存配置。", "pending"); });
-    actions.append(moreActions(`watch-${item.id}`, item.name, [notify, remove])); cell().append(actions); body.append(row);
+    actions.append(moreActions(`watch-${item.id}`, item.name, [notify, seckill, remove])); cell().append(actions); body.append(row);
   }
   table.append(head, body); wrap.append(table); listNode.replaceChildren(wrap);
   renderCompareBar();
@@ -1716,12 +1780,13 @@ function renderNotificationList() {
     const raw = p.url || item.purchase_url;
     if (raw && /^https:\/\//i.test(raw)) { const link = text("a", "直接购买", "buy-link"); link.href = affiliatePurchaseURL(raw, item.adapter, item); link.target = "_blank"; link.rel = "noopener noreferrer"; actions.append(link); }
     const test = text("button", "测试通知", "product-test"); test.type = "button"; test.addEventListener("click", () => testProduct(item.id));
+    const seckill = text("button", "加入 VPS 秒杀", "membership-toggle"); seckill.type = "button"; seckill.addEventListener("click", () => addToVpsSeckill(item));
     const stop = text("button", "停止测试", "product-test-stop danger"); stop.type = "button"; stop.addEventListener("click", stopProductTest);
     const edit = text("button", "编辑商品"); edit.type = "button"; edit.disabled = actionRunning;
     edit.addEventListener("click", () => { openProducts.add(item.id); renderProducts(); openAdvancedProducts(); editorNode.querySelector(`[data-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }); });
     const remove = text("button", "移出通知", "danger product-remove"); remove.type = "button";
     remove.addEventListener("click", () => { if (actionRunning) return; setMembership(item, "notify", false); renderProducts(); updateDraftState(); setMessage("已移出库存通知，库存监控选择保留，请保存配置。", "pending"); });
-    actions.append(test, stop, moreActions(`notify-${item.id}`, item.name, [edit, remove])); cell().append(actions); body.append(row);
+    actions.append(test, stop, moreActions(`notify-${item.id}`, item.name, [seckill, edit, remove])); cell().append(actions); body.append(row);
     const resultRow = text("tr", "", "notification-result-row"), resultCell = document.createElement("td"); resultCell.colSpan = 8;
     resultCell.append(text("div", "", "product-test-result")); resultRow.append(resultCell); body.append(resultRow); table.append(body);
   }
@@ -1769,6 +1834,96 @@ function renderOverviewRecent() {
   }); table.append(body); wrap.append(table); target.replaceChildren(wrap);
 }
 
+const egressProviders = [["vmiss", "VMISS"], ["vps_soy", "VPS.SOY"], ["akile", "Akile"], ["isvoro", "Isvoro"], ["dmit", "DMIT"], ["bwh", "搬瓦工"], ["html", "其他商家 / 自定义网页"]];
+function egressNodes() { return config.egress?.nodes || (config.egress = { nodes: [], routes: {} }).nodes; }
+function renderEgress() {
+  const nodes = egressNodes(), target = document.querySelector("#egress-nodes"); target.replaceChildren();
+  if (!nodes.length) target.append(text("p", "尚未配置出口节点。请在子服务器运行 egress_agent.py 后添加其代理和健康检查地址。", "empty"));
+  nodes.forEach(node => {
+    const card = text("article", "", "egress-node"), head = text("div", "", "egress-node-head"); head.append(text("strong", node.name || node.id || "未命名节点"), text("small", node.public_ip || "公网 IP 未检查", "subtle")); card.append(head);
+    const grid = text("div", "", "form-grid");
+    [["节点 ID", "id", "egress-1"], ["节点名称", "name", "香港出口"], ["代理地址", "proxy_url", "http://1.2.3.4:8787"], ["健康检查地址", "health_url", "http://1.2.3.4:8787/health"]].forEach(([label, key, placeholder]) => { const input = document.createElement("input"); input.value = node[key] || ""; input.placeholder = placeholder; input.disabled = key === "id" && Boolean(node.id); input.addEventListener("input", () => { node[key] = input.value.trim(); updateDraftState(); }); const labelNode = document.createElement("label"); labelNode.append(text("span", label), input); grid.append(labelNode); });
+    const token = document.createElement("input"); token.type = "password"; token.autocomplete = "new-password"; token.placeholder = node.token_configured ? "已配置，留空保持不变" : "与子服务器 EGRESS_TOKEN 相同"; token.addEventListener("input", () => { node.token = token.value; updateDraftState(); }); const tokenLabel = document.createElement("label"); tokenLabel.append(text("span", "代理令牌"), token); grid.append(tokenLabel);
+    const enabled = document.createElement("input"); enabled.type = "checkbox"; enabled.checked = node.enabled !== false; enabled.addEventListener("change", () => { node.enabled = enabled.checked; updateDraftState(); }); const enabledLabel = text("label", "", "check-label"); enabledLabel.append(enabled, text("span", "启用节点"));
+    const probe = text("button", "检查出口 IP"); probe.type = "button"; probe.addEventListener("click", async () => { try { const result = await requestJSON("/api/egress/probe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ node_id: node.id }) }); node.public_ip = result.public_ip; node.last_error = ""; renderEgress(); setMessage(`${node.name} 出口检查成功：${result.public_ip}`, "success"); } catch (error) { node.last_error = error.message; renderEgress(); setMessage(error.message, "error"); } });
+    const remove = text("button", "移除节点", "danger"); remove.type = "button"; remove.addEventListener("click", () => { const index = egressNodes().indexOf(node); if (index >= 0) egressNodes().splice(index, 1); Object.keys(config.egress.routes || {}).forEach(provider => { if (config.egress.routes[provider] === node.id) delete config.egress.routes[provider]; }); renderEgress(); updateDraftState(); });
+    const actions = text("div", "", "actions"); actions.append(enabledLabel, probe, remove); card.append(grid, actions); if (node.last_error) card.append(text("p", node.last_error, "error")); target.append(card);
+  });
+  const routes = document.querySelector("#egress-routes"); routes.replaceChildren(); const options = [new Option("主服务器直连", "")]; nodes.forEach(node => options.push(new Option(`${node.name} · ${node.public_ip || "未检查"}`, node.id)));
+  egressProviders.forEach(([id, label]) => { const select = document.createElement("select"); select.replaceChildren(...options.map(option => option.cloneNode(true))); select.value = config.egress?.routes?.[id] || ""; select.addEventListener("change", () => { config.egress.routes[id] = select.value; if (!select.value) delete config.egress.routes[id]; updateDraftState(); }); const node = document.createElement("label"); node.append(text("span", label), select); routes.append(node); });
+  document.querySelector("#egress-status").textContent = nodes.length ? `${nodes.length} 个出口节点；已绑定 ${Object.keys(config.egress?.routes || {}).length} 个商家。未绑定商家继续使用主服务器直连。` : "尚未配置出口节点。";
+}
+function collectEgress() { return { nodes: egressNodes().map(node => ({ ...node })), routes: { ...(config.egress?.routes || {}) } }; }
+document.querySelector("#egress-add-node").addEventListener("click", () => { egressNodes().push({ id: `egress-${Date.now()}`, name: "", proxy_url: "", health_url: "", token: "", enabled: true }); renderEgress(); updateDraftState(); });
+document.querySelector("#egress-refresh").addEventListener("click", async () => { try { config.egress = await requestJSON("/api/egress"); renderEgress(); setMessage("出口节点状态已刷新。", "success"); } catch (error) { setMessage(error.message, "error"); } });
+
+let vpsSeckillTask = null;
+let vpsSeckillPoll = null;
+function seckillItemId() { return `seckill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; }
+function seckillItems() { return config.vps_seckill?.items || (config.vps_seckill = { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] }).items; }
+function seckillAccounts() { return config.vps_seckill?.accounts || (config.vps_seckill.accounts = []); }
+function seckillProducts() { return config.products.filter(item => membership(item, "watch") || membership(item, "notify")); }
+function addToVpsSeckill(product) {
+  if (!product) return;
+  const items = seckillItems();
+  if (!items.some(item => item.product_id === product.id)) items.push({ id: product.id, product_id: product.id, label: product.name, coupon_code: "", target_url: product.purchase_url || product.snapshot?.url || "", submit_url: "", account_id: "", egress_node_id: "", enabled: true, auto_submit: false });
+  navigatePage("seckill"); renderVpsSeckill(); updateDraftState(); setMessage(`${product.name} 已加入 VPS 秒杀，保存配置后可启动。`, "pending");
+}
+function renderVpsSeckill() {
+  const value = config.vps_seckill || { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] };
+  document.querySelector("#vps-seckill-mode").value = value.mode || "manual";
+  document.querySelector("#vps-seckill-interval").value = value.interval_seconds || 5;
+  const accountOptions = [new Option("不绑定账户", "")];
+  seckillAccounts().forEach(account => accountOptions.push(new Option(`${account.name}${account.password_configured ? " · 已保存密码" : ""}`, account.id)));
+  const itemTarget = document.querySelector("#vps-seckill-items"); itemTarget.replaceChildren();
+  const products = new Map(config.products.map(item => [item.id, item]));
+  if (!seckillItems().length) itemTarget.append(text("p", "还没有秒杀商品，请从库存大盘、库存监控或库存通知加入。", "empty"));
+  seckillItems().forEach(item => {
+    const product = products.get(item.product_id), card = text("article", "", "seckill-item"); card.dataset.id = item.id;
+    const title = text("strong", product?.name || item.label || item.product_id || "已下架商品");
+    const head = text("div", "", "seckill-item-head"); head.append(title, text("small", product ? `${product.provider} · ${item.product_id}` : "商品已下架，保留秒杀配置", "subtle")); card.append(head);
+    const grid = text("div", "", "form-grid");
+    const coupon = document.createElement("input"); coupon.value = item.coupon_code || ""; coupon.maxLength = 256; coupon.placeholder = "可选专属优惠码"; coupon.addEventListener("input", () => { item.coupon_code = coupon.value; updateDraftState(); });
+    const account = document.createElement("select"); account.replaceChildren(...accountOptions.map(option => option.cloneNode(true))); account.value = item.account_id || ""; account.addEventListener("change", () => { item.account_id = account.value; updateDraftState(); });
+    const egressSelect = document.createElement("select"); const egressOptions = [new Option("主服务器直连", "")]; egressNodes().forEach(node => egressOptions.push(new Option(node.name || node.id, node.id))); egressSelect.replaceChildren(...egressOptions); egressSelect.value = item.egress_node_id || ""; egressSelect.addEventListener("change", () => { item.egress_node_id = egressSelect.value; updateDraftState(); });
+    const target = document.createElement("input"); target.type = "url"; target.value = item.target_url || product?.purchase_url || ""; target.placeholder = "下架商品目标购买链接（可选）"; target.addEventListener("input", () => { item.target_url = target.value; updateDraftState(); });
+    const submit = document.createElement("input"); submit.type = "url"; submit.value = item.submit_url || ""; submit.placeholder = "自动提交地址（可选）"; submit.addEventListener("input", () => { item.submit_url = submit.value; updateDraftState(); });
+    [["优惠码", coupon], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target], ["自动提交地址", submit]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
+    const enabled = document.createElement("input"); enabled.type = "checkbox"; enabled.checked = item.enabled !== false; enabled.addEventListener("change", () => { item.enabled = enabled.checked; updateDraftState(); });
+    const auto = document.createElement("input"); auto.type = "checkbox"; auto.checked = Boolean(item.auto_submit); auto.addEventListener("change", () => { item.auto_submit = auto.checked; updateDraftState(); });
+    const flags = text("div", "", "actions"); flags.append(text("label", "", "check-label")); flags.firstChild.append(enabled, text("span", "启用")); const autoLabel = text("label", "", "check-label"); autoLabel.append(auto, text("span", "允许自动提交")); flags.append(autoLabel);
+    const remove = text("button", "移除", "danger"); remove.type = "button"; remove.addEventListener("click", () => { const index = seckillItems().indexOf(item); if (index >= 0) seckillItems().splice(index, 1); renderVpsSeckill(); updateDraftState(); }); flags.append(remove); card.append(grid, flags); itemTarget.append(card);
+  });
+  const accountTarget = document.querySelector("#vps-seckill-accounts"); accountTarget.replaceChildren();
+  if (!seckillAccounts().length) accountTarget.append(text("p", "尚未配置网站账户。手动秒杀不需要账户。", "empty"));
+  seckillAccounts().forEach(account => {
+    const card = text("article", "", "seckill-account"), grid = text("div", "", "form-grid");
+    const fields = [["账户名称", "name", "账户名称"], ["商家", "provider", "商家名称"], ["用户名", "username", "登录用户名"], ["登录地址", "login_url", "https://…"]];
+    fields.forEach(([label, key, placeholder]) => { const input = document.createElement("input"); input.value = account[key] || ""; input.placeholder = placeholder; input.addEventListener("input", () => { account[key] = input.value; updateDraftState(); }); const node = document.createElement("label"); node.append(text("span", label), input); grid.append(node); });
+    const password = document.createElement("input"); password.type = "password"; password.autocomplete = "new-password"; password.placeholder = account.password_configured ? "已保存，留空保持不变" : "登录密码"; password.addEventListener("input", () => { account.password = password.value; account.password_configured = Boolean(password.value) || account.password_configured; updateDraftState(); }); const passwordLabel = document.createElement("label"); passwordLabel.append(text("span", "密码"), password); grid.append(passwordLabel);
+    const auto = document.createElement("input"); auto.type = "checkbox"; auto.checked = Boolean(account.auto_submit); auto.addEventListener("change", () => { account.auto_submit = auto.checked; updateDraftState(); }); const autoLabel = text("label", "", "check-label"); autoLabel.append(auto, text("span", "允许自动下单"));
+    const remove = text("button", "移除账户", "danger"); remove.type = "button"; remove.addEventListener("click", () => { const index = seckillAccounts().indexOf(account); if (index >= 0) seckillAccounts().splice(index, 1); renderVpsSeckill(); updateDraftState(); });
+    card.append(grid, text("div", "", "actions")); card.lastChild.append(autoLabel, remove); accountTarget.append(card);
+  });
+  renderVpsSeckillTask();
+}
+function collectVpsSeckill() {
+  return { enabled: seckillItems().some(item => item.enabled !== false), mode: document.querySelector("#vps-seckill-mode")?.value || "manual", interval_seconds: Number(document.querySelector("#vps-seckill-interval")?.value || 5), items: seckillItems().map(item => ({ ...item })), accounts: seckillAccounts().map(account => ({ ...account })) };
+}
+function renderVpsSeckillTask() {
+  const state = document.querySelector("#seckill-task-state"), start = document.querySelector("#vps-seckill-start"), stop = document.querySelector("#vps-seckill-stop");
+  const running = vpsSeckillTask && vpsSeckillTask.pending !== false; state.textContent = running ? "执行中" : vpsSeckillTask ? (vpsSeckillTask.cancelled ? "已暂停" : "已完成") : "未运行"; state.className = `state ${running ? "pending" : vpsSeckillTask?.cancelled ? "error" : vpsSeckillTask ? "ok" : ""}`; start.disabled = Boolean(running) || actionRunning; stop.hidden = !running; stop.disabled = !running;
+  const logs = vpsSeckillTask?.logs || []; document.querySelector("#vps-seckill-logs").textContent = logs.length ? logs.map(log => `[${new Date(log.at).toLocaleString()}] ${log.message}`).join("\n") : "暂无日志"; document.querySelector("#vps-seckill-log-note").textContent = vpsSeckillTask ? `${vpsSeckillTask.mode || ""} · ${logs.length} 条日志` : "尚未启动秒杀任务。";
+}
+async function pollVpsSeckill(taskId) { clearInterval(vpsSeckillPoll); vpsSeckillPoll = setInterval(async () => { try { vpsSeckillTask = await requestJSON(`/api/seckill/status/${encodeURIComponent(taskId)}`); renderVpsSeckillTask(); if (!vpsSeckillTask.pending) clearInterval(vpsSeckillPoll); } catch { clearInterval(vpsSeckillPoll); } }, 1000); }
+document.querySelector("#vps-seckill-start").addEventListener("click", async event => { if (hasUnsavedChanges()) { setMessage("请先点击底部“保存配置”，再启动 VPS 秒杀。", "error"); return; } try { const taskId = `seckill-${Date.now()}-${Math.random().toString(36).slice(2, 18)}`; vpsSeckillTask = await requestJSON("/api/seckill/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: taskId, mode: document.querySelector("#vps-seckill-mode").value }) }); renderVpsSeckillTask(); pollVpsSeckill(taskId); setMessage("VPS 秒杀任务已启动。", "success"); } catch (error) { setMessage(error.message, "error"); } });
+document.querySelector("#vps-seckill-stop").addEventListener("click", async () => { if (!vpsSeckillTask?.task_id) return; try { vpsSeckillTask = await requestJSON("/api/seckill/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: vpsSeckillTask.task_id }) }); renderVpsSeckillTask(); } catch (error) { setMessage(error.message, "error"); } });
+document.querySelector("#vps-seckill-add-all").addEventListener("click", () => { seckillProducts().forEach(add => { if (!seckillItems().some(item => item.product_id === add.id)) seckillItems().push({ id: add.id, product_id: add.id, label: add.name, coupon_code: "", target_url: add.purchase_url || add.snapshot?.url || "", submit_url: "", account_id: "", egress_node_id: "", enabled: true, auto_submit: false }); }); renderVpsSeckill(); updateDraftState(); setMessage("已加入全部关注商品，请保存配置。", "pending"); });
+document.querySelector("#vps-seckill-add-account").addEventListener("click", () => { seckillAccounts().push({ id: `account-${Date.now()}`, name: "", provider: "", username: "", password: "", login_url: "", auto_submit: false }); renderVpsSeckill(); updateDraftState(); });
+document.querySelector("#vps-seckill-clear-log").addEventListener("click", () => { if (vpsSeckillTask) { vpsSeckillTask.logs = []; renderVpsSeckillTask(); } });
+document.querySelector("#vps-seckill-mode").addEventListener("change", updateDraftState);
+document.querySelector("#vps-seckill-interval").addEventListener("input", updateDraftState);
+
 function renderMonitorState() {
   const active = monitorService?.active;
   const transitionTimedOut = monitorService?.transition_timeout;
@@ -1814,6 +1969,8 @@ function collectConfig(enabled = config.enabled) {
     isvoro_seckill: optionPressed("isvoro-seckill"),
     fetcher: { provider_modes: collectProviderModes(), mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value), wait_seconds: Number(document.querySelector("#fetcher-wait").value), cloudscraper: { connect_timeout_seconds: Number(document.querySelector("#cloudscraper-connect-timeout").value), read_timeout_seconds: Number(document.querySelector("#cloudscraper-read-timeout").value), challenge_delay_seconds: Number(document.querySelector("#cloudscraper-challenge-delay").value) } },
     telegram: { bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim(), disabled: optionPressed("telegram-disabled"), clear: optionPressed("telegram-clear") },
+    egress: collectEgress(),
+    vps_seckill: collectVpsSeckill(),
     products: config.products.map((item) => ({ ...item })),
   };
 }
@@ -1913,6 +2070,8 @@ function applyConfig(value) {
   document.querySelector("#telegram-status").textContent = telegram.configured ? "Telegram 已配置（token 不会回显）。" : (telegram.disabled ? "Telegram 已停用。" : "Telegram 尚未完整配置。");
   document.querySelector("#telegram-chats").replaceChildren();
   renderProducts();
+  renderEgress();
+  renderVpsSeckill();
   savedConfig = JSON.stringify(collectConfig());
   updateDraftState();
   renderMonitorState();
@@ -1981,6 +2140,10 @@ document.querySelector("#open-products").addEventListener("click", () => {
 document.querySelector("#overview-open-catalog").addEventListener("click", () => navigatePage("catalog"));
 document.querySelector("#overview-open-monitor").addEventListener("click", () => navigatePage("monitor"));
 document.querySelector("#overview-open-notifications").addEventListener("click", () => navigatePage("notifications"));
+document.querySelector("#overview-open-seckill").addEventListener("click", () => navigatePage("seckill"));
+document.querySelector("#catalog-open-seckill").addEventListener("click", () => navigatePage("seckill"));
+document.querySelector("#requests-open-seckill").addEventListener("click", () => navigatePage("seckill"));
+window.addEventListener("hostwatch-add-seckill", event => addToVpsSeckill(event.detail));
 document.querySelector("#notification-browse").addEventListener("click", () => navigatePage("catalog"));
 document.querySelector("#watchlist-browse").addEventListener("click", () => navigatePage("catalog"));
 for (const id of ["watchlist-search", "watchlist-provider", "watchlist-stock"]) document.getElementById(id).addEventListener(id === "watchlist-search" ? "input" : "change", () => {

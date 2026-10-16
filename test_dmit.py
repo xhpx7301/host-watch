@@ -93,6 +93,13 @@ class DMITCurrentPricingTests(unittest.TestCase):
         with patch("monitor.fetch_page", return_value=(pricing_card(pid="999"), dmit.PRICING_URL)), self.assertRaisesRegex(monitor.MonitorError, "PID.*不一致"):
             monitor.inspect_product(Mock(), watched, {})
 
+    def test_purchase_page_sold_out_overrides_pricing_page_order_button(self):
+        sold_page = "<h1>缺貨中</h1><p>很抱歉，本產品目前處於缺貨中。</p>"
+        purchase_url = "https://www.dmit.io/cart.php?a=add&pid=253"
+        with patch("monitor.fetch_page", side_effect=[(pricing_card(), dmit.PRICING_URL), (sold_page, purchase_url)]):
+            product = monitor.inspect_product(Mock(), item("253", plan_key="LAX:AS3:PREMIUM:TINY"), {"mode": "requests"})
+        self.assertEqual(product.available, 0)
+
 
 class DMITParsingTests(unittest.TestCase):
     def test_quantity_and_clean_metadata(self):
@@ -230,7 +237,7 @@ class DMITIntegrationTests(unittest.TestCase):
             send.assert_not_called()
             fetch.return_value = (card(stock="5 Available") + card("228", stock="2 Available"), dmit.PRICING_URL)
             monitor.check_once(Mock(), config, state, status, "token", "123")
-            self.assertEqual(fetch.call_count, 2)
+            self.assertEqual(fetch.call_count, 4)
             send.assert_called_once()
             message = send.call_args.kwargs
             self.assertIn("DMIT", message["text"])

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 from collections.abc import Callable
 import fcntl
 import getpass
@@ -172,6 +173,16 @@ def backup() -> Path:
         raise
     print(f"备份已保存：{target}（仅 root 可访问，包含凭据，请妥善保管）")
     return target
+
+
+def backup_for_download() -> dict:
+    """Create a one-time archive for the authenticated browser download."""
+    target = backup()
+    try:
+        encoded = base64.b64encode(target.read_bytes()).decode("ascii")
+        return {"name": target.name, "content": encoded}
+    finally:
+        target.unlink(missing_ok=True)
 
 
 def download_installer() -> bytes:
@@ -458,7 +469,8 @@ def web_action(payload: dict) -> dict:
             for path in sorted(BACKUP_DIR.glob("host-watch-*.tar.gz"), key=lambda item: item.stat().st_mtime, reverse=True)[:20]:
                 if path.is_file() and not path.is_symlink():
                     backups.append({"name": path.name, "size": path.stat().st_size, "modified": int(path.stat().st_mtime)})
-        return {"monitor": unit_state(MONITOR), "admin": unit_state(ADMIN), "users": sorted(users), "backups": backups}
+        return {"monitor": unit_state(MONITOR), "admin": unit_state(ADMIN), "users": sorted(users),
+                "backups": backups, "backup_dir": str(BACKUP_DIR)}
     if action == "logs":
         result = subprocess.run(["journalctl", "--no-pager", "-o", "short-iso", "-u", MONITOR, "-u", ADMIN, "-n", "100"], text=True, capture_output=True, check=False, timeout=15)
         if result.returncode:
@@ -476,7 +488,10 @@ def web_action(payload: dict) -> dict:
         return {"ok": True, "message": "监控服务操作已完成。"}
     if action == "backup":
         path = backup()
-        return {"ok": True, "message": f"备份完成：{path.name}"}
+        return {"ok": True, "message": f"自动备份完成：{path.name}", "path": str(path), "storage": str(BACKUP_DIR)}
+    if action == "backup-download":
+        archive = backup_for_download()
+        return {"ok": True, "message": "备份已准备下载。", **archive}
     if action == "update":
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         unit = f"host-watch-web-update-{stamp}-{secrets.token_hex(4)}.service"

@@ -1,3 +1,4 @@
+import base64
 import json
 from pathlib import Path
 import subprocess
@@ -137,6 +138,19 @@ class ManagementTests(unittest.TestCase):
         self.assertRegex(result["update_unit"], r"^host-watch-web-update-[0-9]{14}-[0-9a-f]{8}\.service$")
         self.assertEqual(run.call_args.args[0], "systemd-run")
         self.assertEqual(run.call_args.args[-1], "web-update-worker")
+
+    def test_browser_backup_is_removed_after_reading_archive(self):
+        archive = self.directory / "host-watch-20261016-120000-abcd.tar.gz"
+        archive.write_bytes(b"backup bytes")
+        with patch.object(self.manage, "backup", return_value=archive):
+            result = self.manage.backup_for_download()
+        self.assertEqual(base64.b64decode(result["content"]), b"backup bytes")
+        self.assertFalse(archive.exists())
+
+    def test_web_backup_download_returns_one_time_archive(self):
+        with patch.object(self.manage, "backup_for_download", return_value={"name": "backup.tar.gz", "content": "Yg=="}):
+            result = self.manage.web_action({"action": "backup-download"})
+        self.assertEqual(result["content"], "Yg==")
 
     def test_web_start_stop_persists_enabled_state_with_service_owner(self):
         config = self.directory / "config.json"

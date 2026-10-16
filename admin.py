@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hmac
 import ipaddress
 import json
 import os
@@ -22,6 +24,7 @@ from auth import DEFAULT_USERS_PATH, authentication_required, authorized, users_
 from catalog import CatalogBusy, CatalogService
 from affiliates import DEFAULT_AFFILIATES, PROVIDERS, affiliate_purchase_url, normalize_affiliate_notes, normalize_affiliates, normalize_merchant_order
 from notifications import purchase_button, stock_message
+import egress
 
 
 ROOT = Path(__file__).resolve().parent
@@ -36,6 +39,9 @@ RATES_LOCK = threading.Lock()
 TEST_LOCK = threading.Lock()
 TEST_TASKS = {}
 STOPPED_TEST_IDS = {}
+SECKILL_LOCK = threading.Lock()
+SECKILL_TASKS = {}
+STOPPED_SECKILL_IDS = {}
 BROWSER_CLEANUP_SECONDS = 8
 BROWSER_CLEANUP_WARNING = "本地测试进程已结束，但未能确认 FlareSolverr 浏览器释放；请检查服务日志，必要时重启 FlareSolverr，避免继续启动浏览器测试"
 CATALOG = CatalogService(lambda: CONFIG_PATH.parent / "catalog.json", lambda: current_config()["fetcher"])
@@ -368,6 +374,133 @@ def stop_stock_test(task_id: str) -> dict:
     return task.snapshot()
 
 
+class SeckillTask:
+    def __init__(self, task_id: str, config: dict, mode: str):
+        self.id = task_id
+        self.config = config
+        self.mode = mode
+        self.started = time.monotonic()
+        self.cancelled = threading.Event()
+        self.done = threading.Event()
+        self.lock = threading.Lock()
+        self.logs = []
+        self.output = {"task_id": task_id, "pending": True, "mode": mode, "logs": self.logs, "items": []}
+
+    def log(self, message: str, level: str = "info", item: dict | None = None) -> None:
+        entry = {"at": datetime.now().astimezone().isoformat(timespec="seconds"), "level": level, "message": message}
+        if item:
+            entry["item_id"] = item.get("id", "")
+        with self.lock:
+            self.logs.append(entry)
+            del self.logs[:-200]
+            self.output["logs"] = list(self.logs)
+
+    def snapshot(self) -> dict:
+        with self.lock:
+            return {**self.output, "logs": list(self.logs), "stopping": self.cancelled.is_set() and not self.done.is_set()}
+
+    def cancel(self) -> None:
+        self.cancelled.set()
+
+    def _submit(self, session, item, account, url):
+        if not item.get("submit_url") or not item.get("auto_submit") or not account or not account.get("auto_submit"):
+            self.log(f"检测到库存，已准备购买链接：{url}；未执行自动提交，请确认条目勾选自动下单并填写提交地址", "ready", item)
+            return {"status": "ready", "url": url}
+        payload = {"username": account.get("username", ""), "password": account.get("password", ""), "coupon": item.get("coupon_code", "")}
+        if account.get("login_url"):
+            login = session.post(account["login_url"], data={"username": payload["username"], "password": payload["password"]}, timeout=(5, 20), allow_redirects=True)
+            if not login.ok:
+                raise ValueError(f"账户登录返回 HTTP {login.status_code}")
+        response = session.post(item["submit_url"], data=payload, timeout=(5, 20), allow_redirects=True)
+        if not response.ok:
+            raise ValueError(f"自动提交返回 HTTP {response.status_code}")
+        self.log(f"自动提交请求已发送：HTTP {response.status_code}，请到商家账户核对订单和支付状态", "success", item)
+        return {"status": "submitted", "url": response.url, "status_code": response.status_code}
+
+    def run(self) -> None:
+        from monitor import inspect_product, product_fetcher
+        products = {str(item.get("id")): item for item in self.config.get("products", [])}
+        seckill = self.config.get("vps_seckill", {})
+        accounts = {str(item.get("id")): item for item in seckill.get("accounts", [])}
+        items = [item for item in seckill.get("items", []) if item.get("enabled", True)]
+        self.log(f"秒杀任务已启动：{self.mode_label()}，共 {len(items)} 个商品")
+        try:
+            with requests.Session() as session:
+                session.headers["User-Agent"] = "HostWatch/1.0 (VPS seckill)"
+                round_no = 0
+                while not self.cancelled.is_set():
+                    round_no += 1
+                    ready = []
+                    for item in items:
+                        if self.cancelled.is_set():
+                            break
+                        product = products.get(item.get("product_id"))
+                        account = accounts.get(item.get("account_id"))
+                        result = None
+                        try:
+                            if product:
+                                routed_product = {**product, "egress_node_id": item.get("egress_node_id", "")}
+                                result = inspect_product(session, routed_product, product_fetcher(self.config.get("fetcher"), routed_product))
+                                available = isinstance(result.available, int) and result.available > 0
+                                url = result.url or item.get("target_url", "")
+                            else:
+                                available, url = False, item.get("target_url", "")
+                                if not url:
+                                    raise ValueError("商品已下架且没有保存目标链接")
+                            self.log(f"第 {round_no} 轮：{item.get('label') or item.get('product_id')} · {'有货' if available else '缺货/未知'}", "info", item)
+                            if available:
+                                ready.append(self._submit(session, item, account, url))
+                                if self.mode == "manual" or ready[-1].get("status") == "submitted":
+                                    self.cancelled.set()
+                        except Exception as exc:
+                            self.log(f"第 {round_no} 轮检查失败：{exc}", "error", item)
+                    with self.lock:
+                        self.output["items"] = ready
+                        self.output["round"] = round_no
+                    if self.mode == "manual" or self.cancelled.is_set():
+                        break
+                    self.cancelled.wait(seckill.get("interval_seconds", 5))
+        finally:
+            with self.lock:
+                self.output.update(pending=False, cancelled=self.cancelled.is_set() and not self.output.get("items"), checked_at=datetime.now().astimezone().isoformat(timespec="seconds"), duration_seconds=round(time.monotonic() - self.started, 1))
+                self.done.set()
+            self.log("秒杀任务已停止" if self.output.get("cancelled") else "秒杀任务已完成")
+
+    def mode_label(self):
+        return {"rapid": "极速秒杀（自动）", "precise": "精准秒杀（自动）", "manual": "手动秒杀"}.get(self.mode, self.mode)
+
+
+def start_seckill(submitted: dict) -> dict:
+    task_id = str(submitted.get("task_id", ""))
+    if not re.fullmatch(r"[a-zA-Z0-9-]{16,64}", task_id):
+        raise ValueError("秒杀任务编号无效")
+    current = validate_config(current_config())
+    requested_mode = str(submitted.get("mode", current["vps_seckill"]["mode"])).strip().casefold()
+    if requested_mode not in {"rapid", "precise", "manual"}:
+        raise ValueError("秒杀模式无效")
+    if not current["vps_seckill"]["items"]:
+        raise ValueError("请先从库存监控或库存通知选择至少一个秒杀商品")
+    with SECKILL_LOCK:
+        if any(not task.done.is_set() for task in SECKILL_TASKS.values()):
+            raise ValueError("已有 VPS 秒杀任务正在执行，请先停止")
+        task = SeckillTask(task_id, current, requested_mode)
+        SECKILL_TASKS[task_id] = task
+    threading.Thread(target=task.run, daemon=True).start()
+    return task.snapshot()
+
+
+def stop_seckill(task_id: str) -> dict:
+    if not re.fullmatch(r"[a-zA-Z0-9-]{16,64}", task_id):
+        raise ValueError("秒杀任务编号无效")
+    with SECKILL_LOCK:
+        task = SECKILL_TASKS.get(task_id)
+        if task is None:
+            STOPPED_SECKILL_IDS[task_id] = True
+            return {"task_id": task_id, "pending": False, "cancelled": True, "error": "秒杀任务已停止"}
+    task.cancel()
+    return task.snapshot()
+
+
 def default_config() -> dict:
     return {
         "enabled": False,
@@ -388,6 +521,8 @@ def default_config() -> dict:
             "cloudscraper": normalize_cloudscraper(None),
         },
         "telegram": {"bot_token": "", "chat_id": "", "disabled": False},
+        "egress": {"nodes": [], "routes": {}},
+        "vps_seckill": {"enabled": False, "mode": "manual", "interval_seconds": 5, "items": [], "accounts": []},
         "products": [],
     }
 
@@ -534,6 +669,11 @@ def public_config(value: dict) -> dict:
         "chat_id": stored_chat_id,
         "disabled": normalized["telegram"]["disabled"],
     }
+    for account in normalized["vps_seckill"]["accounts"]:
+        account["password"] = ""
+        account["password_configured"] = bool(account.get("password_configured"))
+    normalized["egress"] = egress.public(normalized.get("egress", {}))
+    normalized["fetcher"]["egress"] = normalized["egress"]
     return normalized
 
 
@@ -555,6 +695,91 @@ def normalize_vps_soy_url(value: object) -> str:
     if any(key in {"action", "pid"} for key, _ in query):
         raise ValueError("VPS.SOY 请填写带 fid、gid 的商品分类页，不要填写含 action 或 pid 的下单链接")
     return "https://www.vps.soy/cart" + ("?" + urlencode(sorted(query)) if query else "")
+
+
+def normalize_seckill(value: object, product_ids: set[str]) -> dict:
+    """Validate the VPS seckill draft without making any order request."""
+    if value is None:
+        value = {}
+    if not isinstance(value, dict):
+        raise ValueError("VPS 秒杀配置必须是对象")
+    enabled = value.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError("VPS 秒杀启用状态必须是布尔值")
+    mode = str(value.get("mode", "manual")).strip().casefold()
+    if mode not in {"rapid", "precise", "manual"}:
+        raise ValueError("VPS 秒杀模式必须是 rapid、precise 或 manual")
+    interval = value.get("interval_seconds", 1 if mode == "rapid" else 5)
+    if type(interval) is not int or not 1 <= interval <= 3600:
+        raise ValueError("VPS 秒杀检查间隔必须是 1 到 3600 秒的整数")
+    accounts = value.get("accounts", [])
+    if not isinstance(accounts, list) or len(accounts) > 50:
+        raise ValueError("VPS 秒杀账户最多 50 个")
+    normalized_accounts, account_ids = [], set()
+    for account in accounts:
+        if not isinstance(account, dict):
+            raise ValueError("VPS 秒杀账户配置必须是对象")
+        account_id = str(account.get("id", "")).strip()
+        name = str(account.get("name", account_id)).strip()
+        provider = str(account.get("provider", "")).strip()
+        username = str(account.get("username", "")).strip()
+        password = str(account.get("password", ""))
+        login_url = str(account.get("login_url", "")).strip()
+        for key in ("auto_submit",):
+            if key in account and not isinstance(account[key], bool):
+                raise ValueError(f"VPS 秒杀账户 {name or account_id} 的 {key} 必须是布尔值")
+        if not account_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", account_id) or account_id in account_ids:
+            raise ValueError("VPS 秒杀账户 ID 必须唯一且只包含字母、数字、下划线或短横线")
+        if not name or len(name) > 120 or len(provider) > 80 or len(username) > 256 or len(password) > 512:
+            raise ValueError("VPS 秒杀账户字段长度无效")
+        if login_url:
+            parsed = urlsplit(login_url)
+            if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
+                raise ValueError(f"VPS 秒杀账户 {name} 的登录地址必须是 HTTPS URL")
+        account_ids.add(account_id)
+        normalized_accounts.append({"id": account_id, "name": name, "provider": provider, "username": username,
+            "password": password, "login_url": login_url, "auto_submit": bool(account.get("auto_submit", False)),
+            "password_configured": bool(password) or bool(account.get("password_configured", False))})
+    items = value.get("items", [])
+    if not isinstance(items, list) or len(items) > 100:
+        raise ValueError("VPS 秒杀商品最多 100 项")
+    normalized_items, item_ids = [], set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError("VPS 秒杀商品配置必须是对象")
+        item_id = str(item.get("id", item.get("product_id", ""))).strip()
+        product_id = str(item.get("product_id", "")).strip()
+        if not item_id or item_id in item_ids or len(item_id) > 128:
+            raise ValueError("VPS 秒杀商品 ID 必须唯一")
+        if not product_id or product_id not in product_ids:
+            # Keep the entry when a product is removed from the live catalog, but
+            # require a saved target URL so a manual task can still open it.
+            product_id = product_id[:128]
+        coupon = str(item.get("coupon_code", "")).strip()
+        target_url = str(item.get("target_url", "")).strip()
+        submit_url = str(item.get("submit_url", "")).strip()
+        if not product_id and not target_url:
+            raise ValueError(f"VPS 秒杀商品 {item_id} 需要关联商品或填写目标购买链接")
+        for label, url in (("目标", target_url), ("提交", submit_url)):
+            if url:
+                parsed = urlsplit(url)
+                if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
+                    raise ValueError(f"VPS 秒杀{label}地址必须是 HTTPS URL")
+        account_id = str(item.get("account_id", "")).strip()
+        egress_node_id = str(item.get("egress_node_id", "")).strip()
+        for key in ("enabled", "auto_submit"):
+            if key in item and not isinstance(item[key], bool):
+                raise ValueError(f"VPS 秒杀商品 {item_id} 的 {key} 必须是布尔值")
+        if account_id and account_id not in account_ids:
+            raise ValueError(f"VPS 秒杀商品 {item_id} 绑定的账户不存在")
+        item_ids.add(item_id)
+        normalized_items.append({"id": item_id, "product_id": product_id, "coupon_code": coupon[:256],
+            "target_url": target_url, "submit_url": submit_url, "account_id": account_id,
+            "egress_node_id": egress_node_id[:64],
+            "enabled": bool(item.get("enabled", True)), "auto_submit": bool(item.get("auto_submit", False)),
+            "label": str(item.get("label", ""))[:160]})
+    return {"enabled": enabled, "mode": mode, "interval_seconds": interval,
+        "items": normalized_items, "accounts": normalized_accounts}
 
 
 def validate_config(value: object) -> dict:
@@ -769,6 +994,8 @@ def validate_config(value: object) -> dict:
         raise ValueError("启用监控前至少启用一个产品")
     fetcher = normalize_fetcher(value.get("fetcher", {}))
     telegram = normalize_telegram(value.get("telegram", {}))
+    egress_config = egress.normalize(value.get("egress", {}))
+    vps_seckill = normalize_seckill(value.get("vps_seckill", {}), seen_ids)
     product_orders = {}
     for key in ("watch_order", "notify_order"):
         order = value.get(key, [])
@@ -785,8 +1012,10 @@ def validate_config(value: object) -> dict:
         "affiliate_notes": affiliate_notes,
         "merchant_order": merchant_order,
         **product_orders,
-        "fetcher": fetcher,
+        "fetcher": {**fetcher, "egress": egress_config},
         "telegram": telegram,
+        "egress": egress_config,
+        "vps_seckill": vps_seckill,
         "products": normalized,
     }
 
@@ -863,6 +1092,25 @@ def telegram_chats(token: str) -> list[dict]:
 def current_config() -> dict:
     raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else default_config()
     return validate_config(raw)
+
+
+def register_egress_node(payload: dict, authorization: str = "") -> dict:
+    expected = os.getenv("EGRESS_REGISTER_TOKEN", "").strip()
+    supplied = authorization.removeprefix("Bearer ").strip()
+    if not expected or not hmac.compare_digest(supplied, expected):
+        raise ValueError("出口节点注册令牌无效")
+    if not isinstance(payload, dict):
+        raise ValueError("出口节点注册内容无效")
+    current = current_config()
+    node_id = str(payload.get("node_id", "")).strip()
+    node = {"id": node_id, "name": payload.get("name", node_id), "proxy_url": payload.get("proxy_url", ""),
+        "health_url": payload.get("health_url", ""), "token": payload.get("token", ""), "public_ip": payload.get("public_ip", ""),
+        "enabled": True, "last_seen": datetime.now().astimezone().isoformat(timespec="seconds"), "last_error": ""}
+    nodes = [item for item in current.get("egress", {}).get("nodes", []) if item["id"] != node_id]
+    nodes.append(node)
+    current["egress"] = egress.normalize({"nodes": nodes, "routes": current.get("egress", {}).get("routes", {})})
+    save_config(current)
+    return {"ok": True, "node_id": node_id, "public_ip": node["public_ip"]}
 
 
 def telegram_credentials(token_override: str = "", chat_id_override: str = "") -> tuple[str, str]:
@@ -1007,6 +1255,16 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_download(self, filename: str, body: bytes) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "application/gzip")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self) -> None:
         if not self._guard():
             return
@@ -1021,6 +1279,12 @@ class Handler(BaseHTTPRequestHandler):
             except (OSError, ValueError, json.JSONDecodeError) as exc:
                 self._send(500, "application/json; charset=utf-8", json.dumps({"error": f"配置文件无法读取：{exc}"}, ensure_ascii=False).encode("utf-8"))
                 return
+            self._send(200, "application/json; charset=utf-8", data)
+        elif self.path == "/api/egress":
+            try:
+                data = json.dumps(public_config(json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else default_config()).get("egress", {"nodes": [], "routes": {}}), ensure_ascii=False).encode("utf-8")
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                self._send(500, "application/json; charset=utf-8", json.dumps({"error": f"出口节点配置无法读取：{exc}"}, ensure_ascii=False).encode("utf-8")); return
             self._send(200, "application/json; charset=utf-8", data)
         elif self.path == "/api/rates":
             self._send(200, "application/json; charset=utf-8", json.dumps(exchange_rates(), ensure_ascii=False).encode("utf-8"))
@@ -1073,6 +1337,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, "application/json; charset=utf-8", b'{"error":"Test task not found"}')
                 return
             self._send(200, "application/json; charset=utf-8", json.dumps(task.snapshot(), ensure_ascii=False).encode("utf-8"))
+        elif self.path.startswith("/api/seckill/status/"):
+            task_id = self.path.rsplit("/", 1)[-1]
+            with SECKILL_LOCK:
+                task = SECKILL_TASKS.get(task_id)
+            if task is None:
+                self._send(404, "application/json; charset=utf-8", b'{"error":"Seckill task not found"}')
+                return
+            self._send(200, "application/json; charset=utf-8", json.dumps(task.snapshot(), ensure_ascii=False).encode("utf-8"))
         elif self.path == "/api/telegram/chats":
             try:
                 token, _ = telegram_credentials()
@@ -1088,6 +1360,17 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self) -> None:
+        if self.path == "/api/egress/register":
+            if not self._secure():
+                return
+            if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+                self._send(415, "application/json; charset=utf-8", b'{"error":"Content-Type must be application/json"}'); return
+            try:
+                result = register_egress_node(request_body(self), self.headers.get("Authorization", ""))
+                self._send(200, "application/json; charset=utf-8", json.dumps(result, ensure_ascii=False).encode("utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                self._send(400, "application/json; charset=utf-8", json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"))
+            return
         if not self._guard():
             return
         if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
@@ -1101,7 +1384,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(403)
             return
         # Stopping and polling tests must never wait behind config/service locks.
-        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop"}:
+        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/egress/probe"}:
             self._post_action()
             return
         if not MUTATION_LOCK.acquire(blocking=False):
@@ -1113,7 +1396,7 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if self.path not in {"/api/config", "/api/telegram/test", "/api/manage", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop"}:
+        if self.path not in {"/api/config", "/api/telegram/test", "/api/manage", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/egress/probe"}:
             self.send_error(404)
             return
         try:
@@ -1136,6 +1419,28 @@ class Handler(BaseHTTPRequestHandler):
                 output = start_stock_test(submitted)
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
+            if self.path == "/api/seckill/start":
+                output = start_seckill(submitted)
+                self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
+                return
+            if self.path == "/api/seckill/stop":
+                output = stop_seckill(str(submitted.get("task_id", "")))
+                self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
+                return
+            if self.path == "/api/egress/probe":
+                node_id = str(submitted.get("node_id", "")).strip()
+                current = current_config()
+                node = next((item for item in current["egress"]["nodes"] if item["id"] == node_id), None)
+                if not node:
+                    raise ValueError("出口节点不存在")
+                try:
+                    result = egress.probe(node)
+                    node.update(public_ip=result["public_ip"], last_seen=datetime.now().astimezone().isoformat(timespec="seconds"), last_error="")
+                except (OSError, ValueError, requests.RequestException) as exc:
+                    node["last_error"] = str(exc)[:240]
+                    raise ValueError(f"出口节点检查失败：{exc}") from None
+                save_config(current)
+                self._send(200, "application/json; charset=utf-8", json.dumps({"ok": True, **result}, ensure_ascii=False).encode("utf-8")); return
             if self.path == "/api/fetcher/test":
                 fetcher = normalize_fetcher(submitted)
                 data = json.dumps(flaresolverr_health(fetcher["flaresolverr_url"]), ensure_ascii=False).encode("utf-8")
@@ -1146,7 +1451,21 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("当前使用自定义账号文件，请使用终端管理该文件中的管理员")
                 if submitted.get("action") == "monitor-start":
                     validate_config({**current_config(), "enabled": True})
-                data = json.dumps(manager_action(submitted), ensure_ascii=False).encode("utf-8")
+                result = manager_action(submitted)
+                if submitted.get("action") == "backup-download":
+                    filename = result.get("name", "host-watch-backup.tar.gz")
+                    if not isinstance(filename, str) or not re.fullmatch(r"host-watch-[0-9]{8}-[0-9]{6}-[0-9a-f]+\.tar\.gz", filename):
+                        raise ValueError("备份文件名无效")
+                    encoded = result.get("content", "")
+                    if not isinstance(encoded, str) or not encoded:
+                        raise ValueError("备份内容为空")
+                    try:
+                        archive = base64.b64decode(encoded, validate=True)
+                    except (ValueError, TypeError):
+                        raise ValueError("备份内容无效") from None
+                    self._send_download(filename, archive)
+                    return
+                data = json.dumps(result, ensure_ascii=False).encode("utf-8")
                 self._send(200, "application/json; charset=utf-8", data)
                 return
             if self.path == "/api/telegram/test":
@@ -1162,6 +1481,35 @@ class Handler(BaseHTTPRequestHandler):
 
             current_raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else default_config()
             current = validate_config(current_raw)
+            submitted_egress = submitted.get("egress", current.get("egress", {"nodes": [], "routes": {}}))
+            if not isinstance(submitted_egress, dict):
+                raise ValueError("出口节点配置必须是对象")
+            current_nodes = {item["id"]: item for item in current.get("egress", {}).get("nodes", [])}
+            merged_nodes = []
+            for node in submitted_egress.get("nodes", []):
+                if not isinstance(node, dict):
+                    continue
+                node = dict(node)
+                node_id = str(node.get("id", "")).strip()
+                if not node.get("token") and node_id in current_nodes:
+                    node["token"] = current_nodes[node_id].get("token", "")
+                merged_nodes.append(node)
+            submitted["egress"] = {**submitted_egress, "nodes": merged_nodes}
+            submitted_seckill = submitted.get("vps_seckill", current["vps_seckill"])
+            if not isinstance(submitted_seckill, dict):
+                raise ValueError("VPS 秒杀配置必须是对象")
+            current_accounts = {item["id"]: item for item in current["vps_seckill"]["accounts"]}
+            merged_accounts = []
+            for account in submitted_seckill.get("accounts", []):
+                if not isinstance(account, dict):
+                    continue
+                account = dict(account)
+                account_id = str(account.get("id", "")).strip()
+                if not account.get("password") and account_id in current_accounts:
+                    account["password"] = current_accounts[account_id].get("password", "")
+                merged_accounts.append(account)
+            submitted_seckill["accounts"] = merged_accounts
+            submitted["vps_seckill"] = submitted_seckill
             submitted_telegram = submitted.get("telegram", {})
             if not isinstance(submitted_telegram, dict):
                 raise ValueError("Telegram 配置必须是对象")

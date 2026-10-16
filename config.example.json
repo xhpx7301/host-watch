@@ -29,6 +29,13 @@
     "chat_id": "",
     "disabled": false
   },
+  "vps_seckill": {
+    "enabled": false,
+    "mode": "manual",
+    "interval_seconds": 5,
+    "items": [],
+    "accounts": []
+  },
   "products": [],
   "affiliates": {
     "vmiss": "5340",

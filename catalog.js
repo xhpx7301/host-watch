@@ -114,6 +114,9 @@
         button.addEventListener("click", () => setReminders([row], !active, type));
         actions.append(button);
       }
+      const seckill = text("button", "加入 VPS 秒杀", "reminder-action"); seckill.type = "button"; seckill.disabled = actionRunning;
+      seckill.addEventListener("click", () => window.dispatchEvent(new CustomEvent("hostwatch-add-seckill", { detail: item || row.watch })));
+      actions.append(seckill);
       actions.append(text("small", reminderLabel(row)));
       if (row.purchase_url) {
         const url = new URL(row.purchase_url);

@@ -1,4 +1,4 @@
-"""Read DMIT's public pricing/category cards without visiting cart mutation URLs."""
+"""Read DMIT pricing/category cards and verify candidates at the purchase result."""
 from __future__ import annotations
 
 import re
@@ -10,6 +10,14 @@ PRICING_URL = "https://www.dmit.io/pages/pricing"
 HOST = "www.dmit.io"
 REGIONS = {"LAX": "美国 · 洛杉矶", "HKG": "中国香港", "TYO": "日本 · 东京", "SJC": "美国 · 圣何塞"}
 PLAN_KEY_PATTERN = r"[A-Z0-9]{2,10}:[A-Z0-9]{2,10}:[A-Z0-9]{2,20}:[A-Z0-9_. -]{1,100}"
+PURCHASE_SOLD_PATTERN = re.compile(
+    r"out\s+of\s+stock|sold\s*out|currently\s+unavailable|\b(?:no|not)\s+available\b|unavailable|缺货|缺貨|售罄|售完|無貨|无货|暂时缺货|暫時缺貨",
+    re.I,
+)
+PURCHASE_AVAILABLE_PATTERN = re.compile(
+    r"\b(?:in\s+stock|available|configure|continue|checkout|add\s+to\s+cart|order\s+summary|product\s+configuration)\b|有货|有貨|现货|現貨|加入购物车|加入購物車|立即购买|立即購買|继续|繼續|结账|結帳|订单摘要|訂單摘要",
+    re.I,
+)
 
 
 def pricing_cards(soup, page_url: str) -> list[dict]:
@@ -103,6 +111,52 @@ def link_pid(href: str, base: str) -> str:
     if url.path != "/cart.php" or query.get("a") != ["add"] or len(values) != 1:
         return ""
     return values[0] if re.fullmatch(r"[1-9][0-9]{0,9}", values[0]) else ""
+
+
+def purchase_status(body: str, final_url: str, pid: str) -> int:
+    """Confirm the add-to-cart result instead of trusting the pricing button."""
+    from monitor import MonitorError, SiteBlocked, _blocked_body
+    if _blocked_body(body):
+        raise SiteBlocked("DMIT 购买页返回安全验证页，未更新库存")
+    parsed = urlsplit(final_url)
+    if parsed.scheme != "https" or parsed.hostname != HOST:
+        raise MonitorError("DMIT 购买页重定向离开 www.dmit.io，未更新库存")
+    page_text = text(BeautifulSoup(body, "html.parser"))
+    if PURCHASE_SOLD_PATTERN.search(page_text):
+        return 0
+
+    # Some DMIT responses redirect back to the pricing page. If it still
+    # contains the exact PID, use that card's state as the fallback signal.
+    soup = BeautifulSoup(body, "html.parser")
+    if soup.select_one(".plan-group .plan-card"):
+        rows = pricing_cards(soup, final_url)
+        matches = [row for row in rows if row.get("pid") == pid]
+        if len(matches) == 1 and type(matches[0].get("available")) is int and matches[0]["available"] >= 0:
+            return int(matches[0]["available"])
+
+    query = parse_qs(parsed.query)
+    cart_page = parsed.path == "/cart.php" and query.get("a") in (["add"], ["confproduct"], ["checkout"])
+    if cart_page and PURCHASE_AVAILABLE_PATTERN.search(page_text):
+        return 1
+    if parsed.path != "/cart.php":
+        try:
+            rows = parse_cards(body, final_url)
+        except (MonitorError, SiteBlocked):
+            rows = []
+        matches = [row for row in rows if row.get("pid") == pid]
+        if len(matches) == 1 and type(matches[0].get("available")) is int and matches[0]["available"] >= 0:
+            return int(matches[0]["available"])
+    raise MonitorError("DMIT 购买页未明确返回有货或缺货状态，未更新库存")
+
+
+def fetch_purchase_page(session, url: str, fetcher: dict):
+    """Keep a cart-action response from changing the shared request session."""
+    from monitor import fetch_page
+    if fetcher.get("mode", "requests") != "requests":
+        return fetch_page(session, url, fetcher, HOST)
+    import requests
+    with requests.Session() as isolated:
+        return fetch_page(isolated, url, fetcher, HOST)
 
 
 def metadata(card, name: str) -> dict:
@@ -242,7 +296,15 @@ def inspect(session, item: dict, fetcher: dict, cache: dict | None = None):
         raise MonitorError("DMIT 套餐 PID 与已保存配置不一致，请核对后重新添加商品")
     if row["available"] is None:
         raise MonitorError("DMIT " + row["error"])
-    return Product("dmit:" + (row.get("plan_key") or row["pid"]), row["name"], row["available"], row["purchase_url"], vendor="DMIT", stock_mode=row["stock_mode"], catalog_url=url, **{k: row[k] for k in ("region", "specs", "traffic", "price")})
+    available = row["available"]
+    if available > 0:
+        purchase_key = ("purchase", row["purchase_url"], fetcher.get("mode", "requests"))
+        if purchase_key not in cache:
+            body, final = fetch_purchase_page(session, row["purchase_url"], fetcher)
+            cache[purchase_key] = purchase_status(body, final, row["pid"])
+        if cache[purchase_key] == 0:
+            available = 0
+    return Product("dmit:" + (row.get("plan_key") or row["pid"]), row["name"], available, row["purchase_url"], vendor="DMIT", stock_mode=row["stock_mode"], catalog_url=url, **{k: row[k] for k in ("region", "specs", "traffic", "price")})
 
 
 def directory(session, scope: str, fetcher: dict) -> tuple[list, str, list]:
