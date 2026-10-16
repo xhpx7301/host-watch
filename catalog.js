@@ -182,9 +182,9 @@
     if (effectiveRoute.error) hints.push(effectiveRoute.error);
     if (busy && task.provider === provider && task.route) hints.push(`本次刷新使用：${requestRouteLabel(task.route)}。执行期间修改设置将在下次刷新生效。`);
     if (data?.fetched_at) {
-      const sameRoute = data.route && ["mode", "node_id", "public_ip"].every(key => data.route[key] === effectiveRoute[key]);
+      const sameRoute = data.route && ["mode", "node_id", "public_ip", ...(effectiveRoute.mode === "flaresolverr" ? ["timeout_seconds", "wait_seconds", "disable_media"] : [])].every(key => data.route[key] === effectiveRoute[key]);
       if (!data.route) hints.push("此历史快照未记录出口，请刷新以核对当前线路。");
-      else if (!sameRoute) hints.push(`当前展示的是历史快照，采集设置：${requestRouteLabel(data.route)}。请刷新后核对新出口的结果。`);
+      else if (!sameRoute) hints.push(`当前展示的是历史快照，采集设置：${requestRouteLabel(data.route)}。请刷新后核对当前读取设置的结果。`);
     }
     routeHint.textContent = hints.join(" ");
     routeHint.className = `hint${effectiveRoute.error ? " error" : changed ? " stale" : ""}`;

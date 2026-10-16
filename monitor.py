@@ -397,11 +397,21 @@ def _fetch_with_flaresolverr(session: requests.Session, url: str, fetcher: dict,
 
 def product_fetcher(fetcher: dict | None, item: dict) -> dict:
     result = dict(fetcher or {"mode": "requests"})
+    # A resolved fetcher may be reused for another merchant or resolved again
+    # inside a worker. Always start from its original shared browser defaults.
+    defaults = result.pop("_flaresolverr_defaults", None)
+    if defaults is not None:
+        result.update(defaults)
+    base_mode = result.get("mode", "requests")
     # An explicit merchant policy also overrides old per-product choices.
     # Missing policies preserve legacy configurations until the user unifies them.
     mode = result.get("provider_modes", {}).get(item.get("adapter", "html"), item.get("request_mode", "inherit"))
     if mode != "inherit":
         result["mode"] = mode
+    override = result.get("provider_flaresolverr", {}).get(item.get("adapter", "html"))
+    if result.get("mode") == "flaresolverr" and override is not None:
+        result["_flaresolverr_defaults"] = {"mode": base_mode, **{key: result.get(key, default) for key, default in (("timeout_seconds", 60), ("wait_seconds", 0), ("disable_media", False))}}
+        result.update(override)
     if "egress" in result:
         result.pop("egress_proxy_url", None)
         result.pop("egress_node_id", None)
@@ -425,7 +435,9 @@ def fetcher_route(fetcher: dict | None, item: dict) -> dict:
     route = {"mode": settings.get("mode", "requests") if mode == "inherit" else mode,
              "node_id": node_id, "node_name": node.get("name", node_id), "public_ip": node.get("public_ip", ""), "error": ""}
     try:
-        product_fetcher(settings, item)
+        resolved = product_fetcher(settings, item)
+        if resolved.get("mode") == "flaresolverr":
+            route.update({key: resolved.get(key, default) for key, default in (("timeout_seconds", 60), ("wait_seconds", 0), ("disable_media", False))})
     except MonitorError as exc:
         route["error"] = str(exc)
     return route

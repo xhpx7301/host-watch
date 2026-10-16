@@ -29,6 +29,7 @@ let backupScheduleSaved = null;
 let backupScheduleRuntime = null;
 let monitorService = null;
 let savedConfig = null;
+const providerFlareDraft = new Map();
 let serviceRefreshTimer, serviceRefreshPending = false;
 let serviceTransitionStartedAt = 0;
 let exchangeRateData = null;
@@ -1179,13 +1180,16 @@ const merchantNames = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", isvo
 function requestRouteLabel(route) {
   if (!route) return "出口信息尚未确认";
   const method = { requests: "HTTP", cloudscraper: "cloudscraper", flaresolverr: "FlareSolverr 浏览器" }[route.mode] || route.mode;
-  return `${method} · ${route.node_id ? `${route.node_name || route.node_id}（${route.public_ip || "出口 IP 未检查"}）` : "主服务器直连"}`;
+  const parameters = route.mode === "flaresolverr" && Number.isInteger(route.timeout_seconds) ? ` · 超时 ${route.timeout_seconds} 秒 / 等待 ${route.wait_seconds} 秒 / ${route.disable_media ? "轻量加载" : "完整加载"}` : "";
+  return `${method} · ${route.node_id ? `${route.node_name || route.node_id}（${route.public_ip || "出口 IP 未检查"}）` : "主服务器直连"}${parameters}`;
 }
 function merchantRequestPolicy(value, provider) {
   const fetcher = value?.fetcher || {}, routes = value?.egress || {};
   const id = routes.routes?.[provider] || "", node = routes.nodes?.find(row => row.id === id);
   const mode = fetcher.provider_modes?.[provider];
-  return { mode: mode && mode !== "inherit" ? mode : fetcher.mode || "requests", node_id: id,
+  const effectiveMode = mode && mode !== "inherit" ? mode : fetcher.mode || "requests";
+  const parameters = effectiveMode === "flaresolverr" ? Object.fromEntries(["timeout_seconds", "wait_seconds", "disable_media"].map(key => [key, fetcher.provider_flaresolverr?.[provider]?.[key] ?? fetcher[key]])) : {};
+  return { mode: effectiveMode, ...parameters, node_id: id,
     node_name: node?.name || id, public_ip: node?.public_ip || "",
     error: id && node?.enabled === false ? "绑定的出口节点已停用，请启用并保存后再刷新。" : id && !node?.proxy_url ? "绑定的出口节点尚未完成安装回报。" : "" };
 }
@@ -1195,7 +1199,7 @@ function merchantRequestChanged(provider) {
     const policy = merchantRequestPolicy(value, provider), fetcher = value.fetcher || {};
     const node = value.egress?.nodes?.find(row => row.id === policy.node_id);
     return [policy, node?.proxy_url, node?.enabled, node?.token, node?.token_configured,
-      policy.mode === "flaresolverr" ? [fetcher.flaresolverr_url, fetcher.timeout_seconds, fetcher.wait_seconds, Boolean(fetcher.disable_media)] : policy.mode === "cloudscraper" ? fetcher.cloudscraper : null];
+      policy.mode === "flaresolverr" ? [fetcher.flaresolverr_url, ...["timeout_seconds", "wait_seconds", "disable_media"].map(key => fetcher.provider_flaresolverr?.[provider]?.[key] ?? fetcher[key])] : policy.mode === "cloudscraper" ? fetcher.cloudscraper : null];
   };
   return JSON.stringify(relevant(collectConfig())) !== JSON.stringify(relevant(JSON.parse(savedConfig)));
 }
@@ -2274,7 +2278,7 @@ function collectConfig(enabled = config.enabled) {
     notify_order: config.notify_order || [],
     notify_current_stock_on_start: optionPressed("notify-current"),
     isvoro_seckill: optionPressed("isvoro-seckill"),
-    fetcher: { provider_modes: collectProviderModes(), mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value), wait_seconds: Number(document.querySelector("#fetcher-wait").value), disable_media: optionPressed("flaresolverr-light"), cloudscraper: { connect_timeout_seconds: Number(document.querySelector("#cloudscraper-connect-timeout").value), read_timeout_seconds: Number(document.querySelector("#cloudscraper-read-timeout").value), challenge_delay_seconds: Number(document.querySelector("#cloudscraper-challenge-delay").value) } },
+    fetcher: { provider_modes: collectProviderModes(), provider_flaresolverr: Object.fromEntries([...providerFlareDraft].map(([provider, options]) => [provider, { ...options }])), mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value), wait_seconds: Number(document.querySelector("#fetcher-wait").value), disable_media: optionPressed("flaresolverr-light"), cloudscraper: { connect_timeout_seconds: Number(document.querySelector("#cloudscraper-connect-timeout").value), read_timeout_seconds: Number(document.querySelector("#cloudscraper-read-timeout").value), challenge_delay_seconds: Number(document.querySelector("#cloudscraper-challenge-delay").value) } },
     telegram: { bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim(), disabled: optionPressed("telegram-disabled"), clear: optionPressed("telegram-clear") },
     egress: collectEgress(),
     vps_seckill: collectVpsSeckill(),
@@ -2294,6 +2298,7 @@ function intervalLabel(seconds) {
 
 function updateDraftState() {
   if (savedConfig === null) return;
+  syncProviderFlareSettings();
   const dirty = hasUnsavedChanges();
   updateDiscardControl();
   const node = document.querySelector("#monitor-draft");
@@ -2332,6 +2337,49 @@ function applyProviderModes(fetcher) {
     select.value = explicit || (previous.length > 1 ? "legacy" : previous[0] || "inherit");
   }
 }
+function flareDefaults() {
+  return { timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value), wait_seconds: Number(document.querySelector("#fetcher-wait").value), disable_media: optionPressed("flaresolverr-light") };
+}
+function syncProviderFlareSettings() {
+  const modes = collectProviderModes(), defaults = flareDefaults();
+  for (const card of document.querySelectorAll("[data-provider-flare]")) {
+    card.querySelectorAll("input, button").forEach(control => { control.disabled = actionRunning; });
+    const provider = card.dataset.providerFlare, options = providerFlareDraft.get(provider) || defaults;
+    let mode = modes[provider];
+    if (mode === "inherit") mode = document.querySelector("#fetcher-mode").value;
+    const method = { requests: "普通 HTTPS", cloudscraper: "cloudscraper", flaresolverr: "FlareSolverr", legacy: "已有商品的请求方式" }[mode] || "全局请求方式";
+    card.querySelector(".provider-flare-status").textContent = `${providerFlareDraft.has(provider) ? "独立参数" : "跟随默认"}：超时 ${options.timeout_seconds} 秒 · 渲染等待 ${options.wait_seconds} 秒 · ${options.disable_media ? "轻量加载" : "完整加载"}。${mode === "flaresolverr" ? "当前商家使用 FlareSolverr。" : `当前使用${method}，上述参数在选择 FlareSolverr 后生效。`}`;
+  }
+}
+function renderProviderFlareSettings() {
+  const target = document.querySelector("#provider-flaresolverr-settings");
+  target.replaceChildren(...egressProviders.map(([provider, label]) => {
+    const card = text("article", "", "provider-flare-card"); card.dataset.providerFlare = provider;
+    const head = text("div", "", "provider-flare-head");
+    const independent = providerFlareDraft.has(provider);
+    const toggle = settingButton(`${label} 参数来源`, independent, enabled => {
+      if (enabled) providerFlareDraft.set(provider, flareDefaults());
+      else providerFlareDraft.delete(provider);
+      renderProviderFlareSettings();
+      target.querySelector(`[data-provider-flare="${provider}"] .provider-flare-source`).focus({ preventScroll: true });
+    }, ["跟随默认", "独立设置"]);
+    toggle.classList.add("provider-flare-source");
+    head.append(text("strong", label), toggle); card.append(head, text("p", "", "hint provider-flare-status"));
+    if (independent) {
+      const options = providerFlareDraft.get(provider), grid = text("div", "", "form-grid");
+      for (const [key, name, min, max] of [["timeout_seconds", "请求超时（秒）", 10, 180], ["wait_seconds", "渲染等待（秒）", 0, 30]]) {
+        const input = document.createElement("input"); input.type = "number"; input.min = min; input.max = max; input.step = "1"; input.value = options[key]; input.dataset.flareOption = key; input.disabled = actionRunning;
+        input.setAttribute("aria-label", `${label} ${name}`);
+        input.addEventListener("input", () => { options[key] = input.value === "" ? NaN : Number(input.value); updateDraftState(); });
+        const field = text("label", name); field.append(input); grid.append(field);
+      }
+      const light = settingButton(`${label} 轻量加载`, options.disable_media, enabled => { options.disable_media = enabled; }, ["完整加载", "已开启"]);
+      light.dataset.flareOption = "disable_media"; grid.append(light); card.append(grid);
+    }
+    return card;
+  }));
+  syncProviderFlareSettings();
+}
 function updateFetcherStatus() {
   const mode = document.querySelector("#fetcher-mode").value;
   const names = { requests: "普通 HTTPS 请求", flaresolverr: "FlareSolverr 浏览器请求", cloudscraper: "cloudscraper 请求" };
@@ -2364,11 +2412,14 @@ function applyConfig(value) {
   document.querySelector("#flaresolverr-timeout").value = fetcher.timeout_seconds || 60;
   document.querySelector("#fetcher-wait").value = fetcher.wait_seconds || 0;
   setOptionPressed("flaresolverr-light", Boolean(fetcher.disable_media));
+  providerFlareDraft.clear();
+  Object.entries(fetcher.provider_flaresolverr || {}).forEach(([provider, options]) => providerFlareDraft.set(provider, { ...options }));
   const cloud = fetcher.cloudscraper || {};
   document.querySelector("#cloudscraper-connect-timeout").value = cloud.connect_timeout_seconds ?? 10;
   document.querySelector("#cloudscraper-read-timeout").value = cloud.read_timeout_seconds ?? 25;
   document.querySelector("#cloudscraper-challenge-delay").value = cloud.challenge_delay_seconds ?? 5;
   applyProviderModes(fetcher);
+  renderProviderFlareSettings();
   updateFetcherStatus();
   const telegram = config.telegram || {};
   document.querySelector("#telegram-token").value = "";
@@ -2495,12 +2546,13 @@ document.querySelector("#refresh-status").addEventListener("click", (event) => r
   setMessage("监控状态已刷新；此次操作不会触发库存检查。", "success");
 }));
 document.querySelector("#fetcher-mode").addEventListener("change", updateFetcherStatus);
+window.addEventListener("hostwatch-action-change", syncProviderFlareSettings);
 document.querySelector("#flaresolverr-fast").addEventListener("click", () => {
   if (actionRunning) return;
   document.querySelector("#fetcher-wait").value = 0;
   setOptionPressed("flaresolverr-light", true);
   updateDraftState();
-  setMessage("已设置轻量加载和零额外渲染等待，点击底部保存配置后生效。", "pending");
+  setMessage("默认参数已设为轻量加载和零额外渲染等待，商家的独立参数继续保留；点击底部保存配置后生效。", "pending");
 });
 document.querySelector("#fetcher-test").addEventListener("click", (event) => runAction(event.currentTarget, "检测中…", "正在测试 FlareSolverr 服务连接，不访问商品网站…", async () => {
   const result = await requestJSON("/api/fetcher/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(collectConfig().fetcher) });
