@@ -1377,7 +1377,18 @@ class Handler(BaseHTTPRequestHandler):
             host = ""
         hosts = allowed_hosts()
         if host.casefold() not in hosts:
-            self.send_error(403)
+            message = "当前访问域名未加入管理页允许列表。反向代理已连接到 HostWatch，请在服务器终端运行 hw admin-domain 你的管理页域名，然后使用管理员账号登录。"
+            if self.path.startswith("/api/"):
+                self._send(403, "application/json; charset=utf-8", json.dumps({"error": message, "code": "admin_host_not_allowed"}, ensure_ascii=False).encode("utf-8"))
+            else:
+                body = ('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+                        '<title>管理页域名尚未配置 · HostWatch</title><style>body{font:16px/1.7 system-ui,sans-serif;background:#f6f8fc;color:#24334b;margin:0;padding:8vh 20px}'
+                        'main{max-width:640px;margin:auto;background:white;padding:28px;border:1px solid #dfe5ef;border-radius:16px}h1{font-size:24px}'
+                        'pre{background:#f0f3f8;padding:14px;white-space:pre-wrap;overflow-wrap:anywhere;border-radius:8px}</style>'
+                        '<main><p>HostWatch · HTTP 403</p><h1>管理页访问域名尚未配置</h1><p>' + message + '</p>'
+                        '<pre>hw admin-domain 你的管理页域名</pre><p>此命令会放行指定域名并重启管理页。尚无管理员时会生成 admin 和随机密码；已有账号保持不变。</p>'
+                        '<p>反向代理后端保持 http://127.0.0.1:8765。仅重启服务不会自动放行新域名。</p></main></html>')
+                self._send(403, "text/html; charset=utf-8", body.encode("utf-8"))
             return False
         return True
 

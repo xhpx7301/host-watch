@@ -10,12 +10,14 @@ import getpass
 import gzip
 import grp
 import io
+from ipaddress import ip_address
 import json
 import os
 import pwd
 from pathlib import Path, PurePosixPath
 import re
 import secrets
+import shlex
 import shutil
 import socket
 import ssl
@@ -28,6 +30,7 @@ import zlib
 from datetime import datetime, timezone
 from urllib.request import urlopen
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 
 from auth import DEFAULT_USERS_PATH, load_users, password_record, validate_username
 
@@ -35,6 +38,7 @@ from auth import DEFAULT_USERS_PATH, load_users, password_record, validate_usern
 INSTALL_DIR = Path("/opt/vmiss-monitor")
 DATA_DIR = Path("/var/lib/vmiss-monitor")
 ADMIN_ENV = Path("/etc/vmiss-monitor-admin.env")
+LEGACY_ENV = Path("/etc/vmiss-monitor.env")
 BACKUP_DIR = Path("/var/backups/stockwatch")
 BACKUP_SETTINGS = Path("/etc/hostwatch-backup.json")
 SYSTEMD_DIR = Path("/etc/systemd/system")
@@ -91,7 +95,7 @@ def save_accounts(users: dict) -> None:
     atomic_write(DEFAULT_USERS_PATH, json.dumps({"version": 1, "users": users}, ensure_ascii=False, indent=2) + "\n", group=group)
 
 
-def activate_accounts() -> None:
+def activate_accounts(restart: bool = True) -> None:
     """Select hashed accounts, preserving unrelated proxy/host configuration."""
     if ADMIN_ENV.is_symlink():
         raise ValueError("管理页环境文件不能是符号链接")
@@ -99,7 +103,84 @@ def activate_accounts() -> None:
     retained = [line for line in original.splitlines() if not re.match(r"^\s*(?:ADMIN_USERS_FILE|ADMIN_PASSWORD|ADMIN_USERNAME)\s*=", line)]
     retained.append(f"ADMIN_USERS_FILE={DEFAULT_USERS_PATH}")
     atomic_write(ADMIN_ENV, "\n".join(retained) + "\n", group=grp.getgrnam("vmiss-monitor").gr_gid)
+    if restart:
+        run("systemctl", "restart", ADMIN)
+
+
+def admin_environment() -> dict:
+    """Read the two EnvironmentFiles in the same order as the admin unit."""
+    values = {}
+    for path in (LEGACY_ENV, ADMIN_ENV):
+        if path.is_symlink():
+            raise ValueError(f"管理页环境文件不能是符号链接：{path}")
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            match = re.match(r"^\s*(ADMIN_[A-Z_]+)\s*=(.*)$", line)
+            if match:
+                values[match[1]] = " ".join(shlex.split(match[2], comments=False))
+    return values
+
+
+def initialize_admin(restart: bool = True) -> bool:
+    """Create unique initial credentials only when no authentication exists."""
+    environment = admin_environment()
+    configured_path = environment.get("ADMIN_USERS_FILE", "").strip()
+    if configured_path:
+        load_users(Path(configured_path))
+        print("已有管理员账号，保持原账号和密码。")
+        return False
+    if read_accounts():
+        print("已有管理员账号，保持原账号和密码。")
+        return False
+    if environment.get("ADMIN_PASSWORD"):
+        print("已有管理页密码，保持原认证设置。")
+        return False
+    password = secrets.token_urlsafe(24)
+    save_accounts({"admin": password_record(password)})
+    activate_accounts(restart=False)
+    print("已创建初始管理页管理员（密码仅显示本次，不以明文保存）：")
+    print("  用户名：admin")
+    print(f"  随机密码：{password}")
+    print("请保存上述密码；遗失可运行 hw passwd 重置 admin 的密码。")
+    if restart:
+        run("systemctl", "restart", ADMIN)
+    return True
+
+
+def normalize_admin_domain(value: str) -> str:
+    raw = value.strip()
+    if not raw or any(char.isspace() for char in raw) or "*" in raw or "\\" in raw:
+        raise ValueError("请填写精确访问域名，例如 hw.example.com，不允许通配符或空白")
+    parsed = urlsplit(raw if "://" in raw else "//" + raw)
+    if parsed.scheme not in {"", "http", "https"} or parsed.username is not None or parsed.password is not None or parsed.path not in {"", "/"} or parsed.query or parsed.fragment or not parsed.hostname:
+        raise ValueError("请填写域名或站点首页地址，不要包含账号、路径、查询参数或片段")
+    parsed.port  # Validate a supplied port even though Host matching ignores it.
+    host = parsed.hostname.rstrip(".").encode("idna").decode("ascii").casefold()
+    try:
+        return str(ip_address(host))
+    except ValueError:
+        if len(host) > 253 or any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) for label in host.split(".")):
+            raise ValueError("访问域名格式无效") from None
+    return host
+
+
+def configure_admin_domain(domain: str | None = None) -> None:
+    host = normalize_admin_domain(domain if domain is not None else input("管理页访问域名（例如 hw.example.com）："))
+    environment = admin_environment()
+    hosts = {"127.0.0.1", "localhost"}
+    for item in environment.get("ADMIN_ALLOWED_HOSTS", "").split(","):
+        if item.strip():
+            hosts.add(normalize_admin_domain(item))
+    hosts.add(host)
+    initialize_admin(restart=False)
+    original = ADMIN_ENV.read_text(encoding="utf-8") if ADMIN_ENV.exists() else ""
+    retained = [line for line in original.splitlines() if not re.match(r"^\s*ADMIN_ALLOWED_HOSTS\s*=", line)]
+    retained.append("ADMIN_ALLOWED_HOSTS=" + ",".join(sorted(hosts)))
+    atomic_write(ADMIN_ENV, "\n".join(retained) + "\n", group=grp.getgrnam(SERVICE_GROUP).gr_gid)
     run("systemctl", "restart", ADMIN)
+    print(f"已允许管理页域名：{host}，管理页服务已重启。")
+    print("反向代理后端保持 http://127.0.0.1:8765；浏览器使用 HTTPS 域名访问并输入管理员账号。")
 
 
 def ask_password() -> str:
@@ -807,6 +888,7 @@ def admin_service_menu() -> None:
     _submenu("管理页服务", {
         "1": ("重启管理页", lambda: run("systemctl", "restart", ADMIN)),
         "2": ("查看管理页和监控日志", lambda: run("journalctl", "--no-pager", "-u", MONITOR, "-u", ADMIN, "-n", "100")),
+        "3": ("设置管理页访问域名 / 修复域名 403", configure_admin_domain),
     })
 
 
@@ -824,6 +906,7 @@ def account_menu() -> None:
         "2": ("添加管理页用户", add_account),
         "3": ("修改用户密码", change_password),
         "4": ("删除管理页用户", delete_account),
+        "5": ("初始化缺失的管理员（已有账号保持不变）", initialize_admin),
     })
 
 
@@ -861,8 +944,11 @@ def menu() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="HostWatch Debian 管理菜单；用户指管理页账号。")
-    parser.add_argument("command", nargs="?", default="menu", choices=["menu", "status", "update", "backup", "users", "add-user", "passwd", "delete-user", "uninstall", "web-action", "web-update-worker", "scheduled-backup", "backup-schedule-apply"])
+    parser.add_argument("command", nargs="?", default="menu", choices=["menu", "status", "update", "backup", "users", "add-user", "passwd", "delete-user", "init-admin", "admin-domain", "uninstall", "web-action", "web-update-worker", "scheduled-backup", "backup-schedule-apply"])
+    parser.add_argument("domain", nargs="?", help="admin-domain 的访问域名，例如 hw.example.com")
     args = parser.parse_args()
+    if args.domain is not None and args.command != "admin-domain":
+        parser.error("只有 admin-domain 命令接受域名参数")
     if os.geteuid() != 0:
         parser.error("请使用 sudo hw 或切换至 root")
     release = {}
@@ -910,10 +996,12 @@ def main() -> int:
                     backup()
                 else:
                     print("自动备份已关闭，跳过本次任务。")
+            elif args.command == "admin-domain":
+                configure_admin_domain(args.domain)
             else:
                 actions = {"menu": menu, "status": service_status, "update": update, "backup": backup,
                            "users": list_accounts, "add-user": add_account, "passwd": change_password,
-                           "delete-user": delete_account, "uninstall": uninstall}
+                           "delete-user": delete_account, "init-admin": initialize_admin, "uninstall": uninstall}
                 actions[args.command]()
         except (OSError, ValueError, KeyError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             if args.command == "web-action":

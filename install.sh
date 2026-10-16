@@ -105,6 +105,10 @@ fi
 [[ ! -L "$ADMIN_ENV_FILE" ]] || fail "$ADMIN_ENV_FILE 不能是符号链接。"
 if [[ ! -e "$ADMIN_ENV_FILE" ]]; then
   install -o root -g "$SERVICE_GROUP" -m 0640 "$SOURCE_DIR/admin.env.example" "$ADMIN_ENV_FILE"
+  # Standard-library-only setup runs before dependency installation, so retrying
+  # a later pip failure preserves the credentials already displayed here.
+  # Do not restart units or reacquire an update parent's manager lock.
+  /usr/bin/python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import manage; manage.initialize_admin(restart=False)' "$INSTALL_DIR"
 else
   [[ -f "$ADMIN_ENV_FILE" && ! -L "$ADMIN_ENV_FILE" ]] || fail "$ADMIN_ENV_FILE 必须是普通文件。"
   chown "root:$SERVICE_GROUP" "$ADMIN_ENV_FILE"
@@ -137,5 +141,6 @@ log "Debian 管理菜单：hw（更新、服务管理、管理页用户管理；
 log "Telegram、厂商、商品和人工购买入口请在管理页配置。"
 log "网页请求设置支持普通 HTTPS、FlareSolverr 和 cloudscraper；默认普通请求，可按商家覆盖。服务连接可直接在网页测试。"
 log "管理页：在本地电脑运行 ssh -N -L 8765:127.0.0.1:8765 your-user@your-server，然后打开 http://127.0.0.1:8765"
-log "若使用反向代理域名，请设置 ADMIN_ALLOWED_HOSTS，并用 hw add-user 创建账号（也兼容原 ADMIN_PASSWORD）。"
+log "若使用反向代理域名，运行 hw admin-domain 你的域名，自动设置允许域名并检查管理员账号。"
+log "旧安装尚无管理员时可运行 hw init-admin；已有账号或密码不会被重置。"
 log "在管理页配置商品，可先单次测试；点击底部保存配置后，再开始监控。管理员管理区提供账号、日志、备份和更新操作。"

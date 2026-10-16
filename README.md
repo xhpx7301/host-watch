@@ -74,6 +74,8 @@ curl -fsSL https://raw.githubusercontent.com/xhpx7301/host-watch/main/install.sh
 
 脚本可重复执行用于升级，已有的 `/var/lib/vmiss-monitor/config.json`、`/etc/vmiss-monitor.env` 和 `/etc/vmiss-monitor-admin.env` 会保留。
 
+全新安装会自动创建管理页管理员 `admin`，使用每台服务器独立生成的随机密码，并在安装终端显示一次；认证文件仅保存密码哈希。请保存安装输出中的密码，遗失后可运行 `hw passwd` 重置。安装器保留已有账号、旧密码及自定义账号文件；旧版未配置账号的安装可运行 `hw init-admin` 补建，不会重置已有账号。
+
 项目已更名为 HostWatch，仓库名为 `host-watch`。为兼容已部署版本，继续沿用 `vmiss-monitor` 安装目录、系统用户和 systemd 服务名，以及 `/etc/stockwatch-users.json`、`/var/backups/stockwatch/` 等数据路径；菜单快捷命令改为 `hw`。
 
 ## Debian 管理菜单
@@ -96,6 +98,8 @@ hw users        # 列出管理页用户
 hw add-user     # 交互式添加用户
 hw passwd       # 交互式修改密码
 hw delete-user  # 交互式删除用户
+hw init-admin   # 尚无认证时创建 admin 和随机密码，已有账号保持不变
+hw admin-domain watch.example.com  # 放行访问域名、补建缺失账号并重启管理页
 hw uninstall   # 二次确认后从服务器完全删除 HostWatch
 ```
 
@@ -121,7 +125,15 @@ ssh -N -L 8765:127.0.0.1:8765 your-user@your-server
 
 ### 反向代理域名
 
-如果使用 Nginx、Caddy 或面板把 `host-watch.example.com` 转发到 `http://127.0.0.1:8765`，管理服务会因为 Host 校验返回 403。需要为管理服务设置允许的域名和 Basic Auth 密码：
+如果使用 Nginx、Caddy 或面板把 `host-watch.example.com` 转发到 `http://127.0.0.1:8765`，还需在 HostWatch 中允许该域名，否则管理服务会因为 Host 校验返回 403。DNS 正确、Caddy 已配置及管理页服务“运行中”均不代表访问域名已放行。运行：
+
+```sh
+hw admin-domain host-watch.example.com
+```
+
+命令将该域名加入 `/etc/vmiss-monitor-admin.env` 的 `ADMIN_ALLOWED_HOSTS`，保留本机及已有域名，检查认证并重启管理页。没有管理员时自动创建 `admin` 和随机密码并显示一次；已有账号、旧版密码或自定义账号文件保持原样。也可以通过 `hw → 管理页服务 → 设置管理页访问域名` 操作。迁移到新域名后在新服务器执行一次此命令；数据导入不会替你修改服务器域名或账号。
+
+然后打开 HTTPS 域名并输入管理员账号。新的 403 页面会区分域名未配置与登录认证，提示上述修复命令；不会自动信任任意 Host。也可手动配置允许域名和认证：
 
 ```sh
 sudoedit /etc/vmiss-monitor-admin.env
