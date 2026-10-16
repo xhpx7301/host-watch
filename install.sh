@@ -128,6 +128,7 @@ runuser -u "$SERVICE_USER" -- "$INSTALL_DIR/.venv/bin/python" -I -c \
 install -o root -g root -m 0644 "$SOURCE_DIR/vmiss-monitor.service" /etc/systemd/system/vmiss-monitor.service
 install -o root -g root -m 0644 "$SOURCE_DIR/vmiss-monitor-admin.service" /etc/systemd/system/vmiss-monitor-admin.service
 systemctl daemon-reload
+/usr/bin/python3 "$INSTALL_DIR/manage.py" backup-schedule-apply
 systemctl enable --now vmiss-monitor-admin.service
 systemctl restart vmiss-monitor-admin.service
 

@@ -24,6 +24,9 @@ let toastTimer;
 let actionRunning = false;
 let updateUnit = sessionStorage.getItem("hostwatch-update-unit") || "";
 let managementUsers = [];
+let backupScheduleDraft = null;
+let backupScheduleSaved = null;
+let backupScheduleRuntime = null;
 let monitorService = null;
 let savedConfig = null;
 let serviceRefreshTimer, serviceRefreshPending = false;
@@ -279,11 +282,35 @@ async function refreshManagement() {
   managementUsers = state.users;
   renderManagementUsers();
   document.querySelector("#manage-backup-storage").textContent = `自动备份存储位置：${state.backup_dir || "服务器备份目录未返回"}`;
+  const backupDirty = backupScheduleDraft && JSON.stringify(backupScheduleDraft) !== JSON.stringify(backupScheduleSaved);
+  backupScheduleRuntime = state.backup_schedule || null;
+  backupScheduleSaved = backupScheduleRuntime ? { enabled: backupScheduleRuntime.enabled, time: backupScheduleRuntime.time } : null;
+  if (!backupDirty) backupScheduleDraft = backupScheduleSaved ? { ...backupScheduleSaved } : null;
+  renderBackupSchedule();
   const backups = document.querySelector("#manage-backups");
   backups.replaceChildren(...(state.backups.length ? state.backups.map((item) => text("span", `${item.name} · ${formatBytes(item.size)}`)) : [text("span", "暂无备份")]));
   if (updateUnit) await refreshUpdateStatus();
   return state;
 }
+
+function renderBackupSchedule() {
+  const value = backupScheduleDraft || { enabled: false, time: "03:00" };
+  setOptionPressed("manage-auto-backup", value.enabled);
+  document.querySelector("#manage-auto-backup").disabled = actionRunning || !backupScheduleRuntime;
+  document.querySelector("#manage-backup-time").value = value.time;
+  document.querySelector("#manage-backup-time").disabled = actionRunning || !backupScheduleRuntime;
+  document.querySelector("#manage-backup-schedule-save").disabled = actionRunning || !backupScheduleRuntime || JSON.stringify(backupScheduleDraft) === JSON.stringify(backupScheduleSaved);
+  document.querySelector("#manage-backup-timezone").textContent = `服务器时区：${backupScheduleRuntime?.timezone || "尚未返回，请更新安装后刷新"}`;
+  const state = backupScheduleRuntime;
+  let note = "服务器尚未提供备份计划，请先更新 HostWatch 安装后刷新。";
+  if (state) {
+    note = state.error || (state.enabled ? (state.timer_active === "active" && state.timer_enabled === "enabled" ? `已启用，每天 ${state.time}；下次执行：${state.next_run && state.next_run !== "n/a" ? state.next_run : "等待定时器安排"}` : "计划已保存为开启，但定时器未正常运行，请检查服务日志。") : "每日自动备份已关闭。");
+    if (state.last_run && state.last_run !== "n/a") note += ` 上次触发：${state.last_run}；${state.backup_active === "activating" ? "正在备份" : state.last_result === "success" ? "执行成功" : state.last_result ? `执行异常（${state.last_result}），请载入日志检查` : "结果未知"}。`;
+  }
+  if (backupScheduleDraft && JSON.stringify(backupScheduleDraft) !== JSON.stringify(backupScheduleSaved)) note += " 有未保存的备份计划，请点击“保存备份计划”。";
+  document.querySelector("#manage-backup-schedule-status").textContent = note;
+}
+window.addEventListener("hostwatch-action-change", renderBackupSchedule);
 
 function serviceTone(active) {
   if (monitorService?.transition_timeout && ["activating", "deactivating"].includes(active)) return "error";
@@ -381,6 +408,9 @@ async function downloadManagementBackup() {
       throw new Error(detail);
     }
     const blob = await response.blob();
+    if (response.status !== 200 || blob.size === 0) throw new Error("服务器未返回有效备份文件，请刷新状态后重试。");
+    const signature = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
+    if (signature[0] !== 0x1f || signature[1] !== 0x8b) throw new Error("备份响应不是有效的 gzip 文件，请检查服务器或反向代理。");
     const disposition = response.headers.get("Content-Disposition") || "";
     const filename = disposition.match(/filename="([^"]+)"/)?.[1] || "host-watch-backup.tar.gz";
     const link = document.createElement("a");
@@ -422,6 +452,20 @@ function pollUpdateStatus() {
 }
 
 function bindManagementActions() {
+  document.querySelector("#manage-auto-backup").addEventListener("click", () => { if (!backupScheduleDraft) return; backupScheduleDraft.enabled = !backupScheduleDraft.enabled; renderBackupSchedule(); });
+  document.querySelector("#manage-backup-time").addEventListener("input", event => { if (!backupScheduleDraft) return; backupScheduleDraft.time = event.target.value; renderBackupSchedule(); });
+  document.querySelector("#manage-backup-schedule-save").addEventListener("click", event => {
+    if (!backupScheduleDraft || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(backupScheduleDraft.time)) { setMessage("请选择有效的每日备份时间。", "error"); return; }
+    runAction(event.currentTarget, "保存中…", "正在保存并应用服务器备份计划…", async () => {
+      const result = await managementRequest({ action: "backup-schedule", ...backupScheduleDraft });
+      const schedule = result.backup_schedule;
+      backupScheduleRuntime = schedule;
+      backupScheduleSaved = { enabled: schedule.enabled, time: schedule.time };
+      backupScheduleDraft = { ...backupScheduleSaved };
+      renderBackupSchedule();
+      setMessage(result.message || "备份计划已保存并生效。", "success");
+    });
+  });
   document.querySelector("#manage-refresh").addEventListener("click", (event) => runAction(event.currentTarget, "刷新中…", "正在读取服务器服务和账号状态…", async () => {
     await refreshManagement();
     setMessage("服务器服务、管理员账号和备份列表已刷新。", "success");

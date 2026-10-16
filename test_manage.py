@@ -84,7 +84,7 @@ class ManagementTests(unittest.TestCase):
         with patch.object(self.manage.shutil, "which", return_value="/usr/bin/docker"), patch.object(self.manage.subprocess, "run", side_effect=fake_run), patch("builtins.print") as output:
             self.manage.print_menu_status()
         line = output.call_args.args[0]
-        self.assertIn("服务 运行中", line)
+        self.assertIn("FlareSolverr 运行中", line)
         self.assertIn("监控 运行中", line)
         self.assertIn("管理页 已停止", line)
 
@@ -146,6 +146,107 @@ class ManagementTests(unittest.TestCase):
             result = self.manage.backup_for_download()
         self.assertEqual(base64.b64decode(result["content"]), b"backup bytes")
         self.assertFalse(archive.exists())
+
+    def test_backup_schedule_rejects_invalid_time_or_enabled_value(self):
+        with patch.object(self.manage, "run") as run:
+            for value in ({"enabled": "true", "time": "03:00"}, {"enabled": True, "time": "24:00"},
+                          {"enabled": True, "time": "03:60"}, {"enabled": True, "time": "3:00"},
+                          {"enabled": True, "time": "03:00\nExecStart=/bin/sh"}, {}, []):
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    self.manage.save_backup_schedule(value)
+            run.assert_not_called()
+
+    def test_backup_schedule_writes_daily_timer_and_preserves_on_reapply(self):
+        settings_path = self.directory / "schedule.json"
+        systemd = self.directory / "units"
+        systemd.mkdir()
+        with patch.object(self.manage, "BACKUP_SETTINGS", settings_path), patch.object(self.manage, "SYSTEMD_DIR", systemd), patch.object(self.manage, "run") as run, patch.object(self.manage, "backup_schedule_status", return_value={"enabled": True, "time": "04:25"}):
+            self.assertEqual(self.manage.read_backup_schedule(), {"enabled": False, "time": "03:00"})
+            result = self.manage.web_action({"action": "backup-schedule", "enabled": True, "time": "04:25"})
+            self.assertTrue(result["ok"])
+            self.assertEqual(json.loads(settings_path.read_text()), {"enabled": True, "time": "04:25"})
+            self.assertEqual(settings_path.stat().st_mode & 0o777, 0o600)
+            timer = (systemd / self.manage.BACKUP_TIMER).read_text()
+            self.assertIn("OnCalendar=*-*-* 04:25:00", timer)
+            self.assertIn("Persistent=true", timer)
+            self.assertIn(("systemctl", "restart", self.manage.BACKUP_TIMER), [call.args for call in run.call_args_list])
+            self.assertIn("manage.py scheduled-backup", (systemd / self.manage.BACKUP_SERVICE).read_text())
+            # The installer reapplies this file, without resetting the chosen time.
+            self.manage.apply_backup_schedule(self.manage.read_backup_schedule())
+            self.assertEqual((systemd / self.manage.BACKUP_TIMER).read_text(), timer)
+            self.manage.save_backup_schedule({"enabled": False, "time": "05:40"})
+            self.assertIn(("systemctl", "disable", "--now", self.manage.BACKUP_TIMER), [call.args for call in run.call_args_list])
+
+    def test_backup_schedule_failure_restores_saved_settings_and_timer(self):
+        settings_path = self.directory / "schedule.json"
+        settings_path.write_text(json.dumps({"enabled": True, "time": "02:15"}))
+        systemd = self.directory / "units"
+        systemd.mkdir()
+        failures = []
+        def failing_restart(*args):
+            if args == ("systemctl", "restart", self.manage.BACKUP_TIMER) and not failures:
+                failures.append(True)
+                raise subprocess.CalledProcessError(1, args)
+        with patch.object(self.manage, "BACKUP_SETTINGS", settings_path), patch.object(self.manage, "SYSTEMD_DIR", systemd), patch.object(self.manage, "run", side_effect=failing_restart):
+            with self.assertRaisesRegex(ValueError, "已恢复原计划"):
+                self.manage.save_backup_schedule({"enabled": True, "time": "06:30"})
+            self.assertEqual(json.loads(settings_path.read_text()), {"enabled": True, "time": "02:15"})
+            self.assertIn("OnCalendar=*-*-* 02:15:00", (systemd / self.manage.BACKUP_TIMER).read_text())
+
+    def test_backup_schedule_status_reports_next_run_and_timezone(self):
+        def fake_run(args, **kwargs):
+            if args[0] == "timedatectl":
+                return SimpleNamespace(returncode=0, stdout="Asia/Singapore\n")
+            if self.manage.BACKUP_TIMER in args:
+                return SimpleNamespace(returncode=0, stdout="ActiveState=active\nUnitFileState=enabled\nNextElapseUSecRealtime=Sat 2026-10-17 04:25:00 +08\nLastTriggerUSec=Fri 2026-10-16 04:25:00 +08\n")
+            return SimpleNamespace(returncode=0, stdout="Result=success\nActiveState=inactive\n")
+        with patch.object(self.manage, "read_backup_schedule", return_value={"enabled": True, "time": "04:25"}), patch.object(self.manage.subprocess, "run", side_effect=fake_run):
+            result = self.manage.backup_schedule_status()
+        self.assertIn("Asia/Singapore", result["timezone"])
+        self.assertIn("2026-10-17", result["next_run"])
+        self.assertEqual(result["last_result"], "success")
+
+    def test_corrupt_backup_schedule_does_not_break_management_status(self):
+        with patch.object(self.manage, "read_backup_schedule", side_effect=ValueError("invalid settings")), patch.object(self.manage.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout="")):
+            result = self.manage.backup_schedule_status()
+        self.assertIn("读取备份计划失败", result["error"])
+
+    def test_installer_reapplies_schedule_without_deadlocking_parent_update_lock(self):
+        (self.directory / "admin.py").write_text("")
+        with patch.object(self.manage, "INSTALL_DIR", self.directory), patch.object(self.manage.os, "geteuid", return_value=0), patch.object(self.manage.Path, "read_text", return_value='ID=debian\nVERSION_ID="12"\n'), patch.object(self.manage, "read_backup_schedule", return_value={"enabled": True, "time": "04:25"}), patch.object(self.manage, "apply_backup_schedule") as apply, patch.object(self.manage.os, "open", side_effect=AssertionError("must not reacquire parent lock")), patch.object(sys, "argv", ["manage.py", "backup-schedule-apply"]):
+            self.assertEqual(self.manage.main(), 0)
+            apply.assert_called_once_with({"enabled": True, "time": "04:25"})
+
+    def test_scheduled_worker_waits_for_manager_and_obeys_saved_enable_state(self):
+        (self.directory / "admin.py").write_text("")
+        original_open = self.manage.os.open
+        def open_lock(path, *args):
+            self.assertEqual(path, "/run/stockwatch-manager.lock")
+            return original_open(self.directory / "manager.lock", *args)
+        for enabled in (True, False):
+            with self.subTest(enabled=enabled), patch.object(self.manage, "INSTALL_DIR", self.directory), patch.object(self.manage.os, "geteuid", return_value=0), patch.object(self.manage.Path, "read_text", return_value='ID=debian\nVERSION_ID="12"\n'), patch.object(self.manage, "read_backup_schedule", return_value={"enabled": enabled, "time": "04:25"}), patch.object(self.manage, "backup") as backup, patch.object(self.manage.os, "open", side_effect=open_lock), patch.object(self.manage.fcntl, "flock") as flock, patch.object(sys, "argv", ["manage.py", "scheduled-backup"]):
+                self.assertEqual(self.manage.main(), 0)
+                self.assertEqual(flock.call_args.args[1], self.manage.fcntl.LOCK_EX)
+                self.assertEqual(backup.call_count, int(enabled))
+
+    def test_real_backup_archive_contains_schedule_and_uses_tempfile_name(self):
+        import tarfile
+        settings_path = self.directory / "schedule.json"
+        settings_path.write_text('{"enabled":true,"time":"04:25"}')
+        systemd = self.directory / "units"
+        systemd.mkdir()
+        (systemd / self.manage.BACKUP_TIMER).write_text("timer")
+        install = self.directory / "app"
+        install.mkdir()
+        data = self.directory / "data"
+        data.mkdir()
+        with patch.object(self.manage, "BACKUP_SETTINGS", settings_path), patch.object(self.manage, "SYSTEMD_DIR", systemd), patch.object(self.manage, "BACKUP_DIR", self.directory / "backups"), patch.object(self.manage, "INSTALL_DIR", install), patch.object(self.manage, "DATA_DIR", data), patch.object(self.manage, "ADMIN_ENV", self.directory / "absent"), patch.object(self.manage, "DEFAULT_USERS_PATH", self.directory / "no-users"):
+            archive = self.manage.backup()
+            self.assertRegex(archive.name, r"host-watch-[0-9]{8}-[0-9]{6}-[a-z0-9_]{8}\.tar\.gz")
+            with tarfile.open(archive) as contents:
+                self.assertIn(str(settings_path).lstrip("/"), contents.getnames())
+                self.assertIn(str(systemd / self.manage.BACKUP_TIMER).lstrip("/"), contents.getnames())
+            self.assertEqual(archive.stat().st_mode & 0o777, 0o600)
 
     def test_web_backup_download_returns_one_time_archive(self):
         with patch.object(self.manage, "backup_for_download", return_value={"name": "backup.tar.gz", "content": "Yg=="}):

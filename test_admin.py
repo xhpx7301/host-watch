@@ -100,6 +100,33 @@ class AdminAPITests(unittest.TestCase):
         self.assertEqual(body, archive)
         manager.assert_called_once_with({"action": "backup-download"})
 
+    def test_backup_download_accepts_real_tempfile_suffixes(self):
+        # The manager uses mkstemp, whose alphabet includes g-z and underscore.
+        for suffix in ("gz6n3_qw", "abcd", "1234abcd"):
+            with self.subTest(suffix=suffix):
+                payload = {"ok": True, "name": f"host-watch-20261016-063315-{suffix}.tar.gz",
+                    "content": base64.b64encode(b"archive bytes").decode("ascii")}
+                with patch.object(admin, "manager_action", return_value=payload):
+                    status, body = self.request("/api/manage", {"action": "backup-download"})
+                self.assertEqual(status, 200)
+                self.assertEqual(body, b"archive bytes")
+
+    def test_backup_download_still_rejects_unsafe_filenames(self):
+        for filename in ("../backup.tar.gz", "host-watch-20261016-063315-a\r\nBad: header.tar.gz",
+                         "host-watch-20261016-063315-../bad.tar.gz", "other.tar.gz"):
+            with self.subTest(filename=filename), patch.object(admin, "manager_action", return_value={"name": filename, "content": "Yg=="}):
+                status, body = self.request("/api/manage", {"action": "backup-download"})
+                self.assertEqual(status, 400)
+                self.assertIn("备份文件名无效", json.loads(body)["error"])
+
+    def test_backup_schedule_is_forwarded_without_toggling_monitor(self):
+        payload = {"action": "backup-schedule", "enabled": True, "time": "04:25"}
+        with patch.object(admin, "manager_action", return_value={"ok": True, "backup_schedule": payload}) as manager:
+            status, body = self.request("/api/manage", payload)
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["ok"])
+        manager.assert_called_once_with(payload)
+
     def test_browser_health_uses_unsaved_endpoint_without_config_mutation(self):
         response = unittest.mock.Mock(ok=True)
         response.json.return_value = {"msg": "FlareSolverr is ready!", "version": "3.test"}

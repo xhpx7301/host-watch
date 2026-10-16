@@ -33,6 +33,10 @@ INSTALL_DIR = Path("/opt/vmiss-monitor")
 DATA_DIR = Path("/var/lib/vmiss-monitor")
 ADMIN_ENV = Path("/etc/vmiss-monitor-admin.env")
 BACKUP_DIR = Path("/var/backups/stockwatch")
+BACKUP_SETTINGS = Path("/etc/hostwatch-backup.json")
+SYSTEMD_DIR = Path("/etc/systemd/system")
+BACKUP_TIMER = "hostwatch-backup.timer"
+BACKUP_SERVICE = "hostwatch-backup.service"
 MONITOR = "vmiss-monitor.service"
 ADMIN = "vmiss-monitor-admin.service"
 SERVICE_USER = "vmiss-monitor"
@@ -157,7 +161,8 @@ def backup() -> Path:
     fd, name = tempfile.mkstemp(prefix=f"host-watch-{timestamp}-", suffix=".tar.gz", dir=BACKUP_DIR)
     os.close(fd)
     target = Path(name)
-    paths = [DATA_DIR, Path("/etc/vmiss-monitor.env"), ADMIN_ENV, DEFAULT_USERS_PATH,
+    paths = [DATA_DIR, Path("/etc/vmiss-monitor.env"), ADMIN_ENV, DEFAULT_USERS_PATH, BACKUP_SETTINGS,
+             SYSTEMD_DIR / BACKUP_SERVICE, SYSTEMD_DIR / BACKUP_TIMER,
              Path("/etc/systemd/system") / MONITOR, Path("/etc/systemd/system") / ADMIN,
              Path("/etc/sudoers.d/host-watch-admin"), Path("/etc/tmpfiles.d/host-watch.conf"),
              Path("/usr/local/bin/host-watch"), Path("/usr/local/bin/stockwatch"), Path("/usr/local/bin/hw")]
@@ -183,6 +188,107 @@ def backup_for_download() -> dict:
         return {"name": target.name, "content": encoded}
     finally:
         target.unlink(missing_ok=True)
+
+
+def normalize_backup_schedule(value: object) -> dict:
+    if not isinstance(value, dict) or type(value.get("enabled")) is not bool:
+        raise ValueError("自动备份启用状态必须是布尔值")
+    clock_time = value.get("time")
+    if not isinstance(clock_time, str) or not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", clock_time):
+        raise ValueError("自动备份时间必须是 00:00 到 23:59，格式为 HH:MM")
+    return {"enabled": value["enabled"], "time": clock_time}
+
+
+def read_backup_schedule() -> dict:
+    if BACKUP_SETTINGS.is_symlink():
+        raise ValueError("备份计划文件不能是符号链接")
+    if not BACKUP_SETTINGS.exists():
+        return {"enabled": False, "time": "03:00"}
+    return normalize_backup_schedule(json.loads(BACKUP_SETTINGS.read_text(encoding="utf-8")))
+
+
+def apply_backup_schedule(settings: dict) -> None:
+    settings = normalize_backup_schedule(settings)
+    # All executable paths and unit names are fixed; only validated HH:MM is interpolated.
+    atomic_write(SYSTEMD_DIR / BACKUP_SERVICE, """[Unit]
+Description=HostWatch scheduled local backup
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/bin/python3 /opt/vmiss-monitor/manage.py scheduled-backup
+TimeoutStartSec=15min
+""", mode=0o644)
+    atomic_write(SYSTEMD_DIR / BACKUP_TIMER, f"""[Unit]
+Description=HostWatch daily backup schedule
+
+[Timer]
+OnCalendar=*-*-* {settings['time']}:00
+Persistent=true
+AccuracySec=1min
+Unit={BACKUP_SERVICE}
+
+[Install]
+WantedBy=timers.target
+""", mode=0o644)
+    run("systemctl", "daemon-reload")
+    if settings["enabled"]:
+        run("systemctl", "enable", BACKUP_TIMER)
+        run("systemctl", "restart", BACKUP_TIMER)
+    else:
+        run("systemctl", "disable", "--now", BACKUP_TIMER)
+
+
+def backup_schedule_status() -> dict:
+    error = ""
+    try:
+        settings = read_backup_schedule()
+    except (OSError, ValueError) as exc:
+        settings = {"enabled": False, "time": "03:00"}
+        error = f"读取备份计划失败：{exc}"
+    def properties(unit, keys):
+        try:
+            result = subprocess.run(["systemctl", "show", unit, *[f"--property={key}" for key in keys]],
+                text=True, capture_output=True, check=False, timeout=5)
+            return dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        except (OSError, subprocess.TimeoutExpired):
+            return {}
+    timer = properties(BACKUP_TIMER, ["ActiveState", "UnitFileState", "NextElapseUSecRealtime", "LastTriggerUSec"])
+    service = properties(BACKUP_SERVICE, ["Result", "ActiveState"])
+    local = datetime.now().astimezone()
+    zone = local.tzname() or "服务器本地时间"
+    try:
+        timezone_result = subprocess.run(["timedatectl", "show", "--property=Timezone", "--value"],
+            text=True, capture_output=True, check=False, timeout=5)
+        if timezone_result.returncode == 0 and timezone_result.stdout.strip():
+            zone = timezone_result.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return {**settings, "timezone": f"{zone} (UTC{local.strftime('%z')})", "error": error,
+        "timer_active": timer.get("ActiveState", "unknown"), "timer_enabled": timer.get("UnitFileState", "unknown"),
+        "next_run": timer.get("NextElapseUSecRealtime", ""), "last_run": timer.get("LastTriggerUSec", ""),
+        "last_result": service.get("Result", ""), "backup_active": service.get("ActiveState", "unknown")}
+
+
+def save_backup_schedule(payload: dict) -> dict:
+    settings = normalize_backup_schedule(payload)
+    previous = read_backup_schedule()
+    existed = BACKUP_SETTINGS.exists()
+    atomic_write(BACKUP_SETTINGS, json.dumps(settings) + "\n", mode=0o600)
+    try:
+        apply_backup_schedule(settings)
+    except (OSError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        try:
+            if existed:
+                atomic_write(BACKUP_SETTINGS, json.dumps(previous) + "\n", mode=0o600)
+            else:
+                BACKUP_SETTINGS.unlink(missing_ok=True)
+            apply_backup_schedule(previous)
+        except (OSError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            raise ValueError("备份计划应用失败，回退也未完成；请刷新状态并查看服务日志") from None
+        raise ValueError("备份计划应用失败，已恢复原计划；请检查 systemd 服务日志") from None
+    return {"ok": True, "message": "备份计划已保存并生效。", "backup_schedule": backup_schedule_status()}
 
 
 def download_installer() -> bytes:
@@ -409,10 +515,10 @@ def uninstall() -> bool:
         return False
 
     _validate_service_account()
-    for unit in (MONITOR, ADMIN):
+    for unit in (BACKUP_TIMER, BACKUP_SERVICE, MONITOR, ADMIN):
         subprocess.run(["systemctl", "disable", "--now", unit], check=False)
     still_running = [
-        unit for unit in (MONITOR, ADMIN)
+        unit for unit in (BACKUP_SERVICE, MONITOR, ADMIN)
         if subprocess.run(["systemctl", "is-active", "--quiet", unit], check=False).returncode == 0
     ]
     if still_running:
@@ -421,6 +527,9 @@ def uninstall() -> bool:
     for path in (
         Path("/etc/systemd/system") / MONITOR,
         Path("/etc/systemd/system") / ADMIN,
+        SYSTEMD_DIR / BACKUP_TIMER,
+        SYSTEMD_DIR / BACKUP_SERVICE,
+        BACKUP_SETTINGS,
         Path("/etc/sudoers.d/host-watch-admin"),
         Path("/etc/tmpfiles.d/host-watch.conf"),
         Path("/etc/vmiss-monitor.env"),
@@ -470,9 +579,9 @@ def web_action(payload: dict) -> dict:
                 if path.is_file() and not path.is_symlink():
                     backups.append({"name": path.name, "size": path.stat().st_size, "modified": int(path.stat().st_mtime)})
         return {"monitor": unit_state(MONITOR), "admin": unit_state(ADMIN), "users": sorted(users),
-                "backups": backups, "backup_dir": str(BACKUP_DIR)}
+                "backups": backups, "backup_dir": str(BACKUP_DIR), "backup_schedule": backup_schedule_status()}
     if action == "logs":
-        result = subprocess.run(["journalctl", "--no-pager", "-o", "short-iso", "-u", MONITOR, "-u", ADMIN, "-n", "100"], text=True, capture_output=True, check=False, timeout=15)
+        result = subprocess.run(["journalctl", "--no-pager", "-o", "short-iso", "-u", MONITOR, "-u", ADMIN, "-u", BACKUP_SERVICE, "-n", "100"], text=True, capture_output=True, check=False, timeout=15)
         if result.returncode:
             raise ValueError(result.stderr.strip()[:500] or "读取日志失败")
         return {"logs": result.stdout[-40_000:]}
@@ -492,6 +601,8 @@ def web_action(payload: dict) -> dict:
     if action == "backup-download":
         archive = backup_for_download()
         return {"ok": True, "message": "备份已准备下载。", **archive}
+    if action == "backup-schedule":
+        return save_backup_schedule(payload)
     if action == "update":
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         unit = f"host-watch-web-update-{stamp}-{secrets.token_hex(4)}.service"
@@ -624,7 +735,7 @@ def menu() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="HostWatch Debian 管理菜单；用户指管理页账号。")
-    parser.add_argument("command", nargs="?", default="menu", choices=["menu", "status", "update", "backup", "users", "add-user", "passwd", "delete-user", "uninstall", "web-action", "web-update-worker"])
+    parser.add_argument("command", nargs="?", default="menu", choices=["menu", "status", "update", "backup", "users", "add-user", "passwd", "delete-user", "uninstall", "web-action", "web-update-worker", "scheduled-backup", "backup-schedule-apply"])
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error("请使用 sudo hw 或切换至 root")
@@ -637,12 +748,21 @@ def main() -> int:
         parser.error("此菜单仅用于 Debian 12/13 系统")
     if not (INSTALL_DIR / "admin.py").is_file():
         parser.error("尚未安装 HostWatch，请先执行 README 中的一键安装")
+    # The installer may be a child of the update worker, which already holds the
+    # manager lock. Reapply persisted units without waiting on that parent's lock.
+    if args.command == "backup-schedule-apply":
+        try:
+            apply_backup_schedule(read_backup_schedule())
+            return 0
+        except (OSError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            print(f"恢复自动备份计划失败：{exc}")
+            return 1
     # Avoid two terminals racing an update/account mutation or overwriting users.
     lock_fd = os.open("/run/stockwatch-manager.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(lock_fd, "w", encoding="utf-8") as lock:
         os.fchmod(lock.fileno(), 0o600)
         try:
-            if args.command == "web-update-worker":
+            if args.command in {"web-update-worker", "scheduled-backup"}:
                 fcntl.flock(lock, fcntl.LOCK_EX)
             else:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -656,6 +776,11 @@ def main() -> int:
                 print(json.dumps(web_action(payload), ensure_ascii=False))
             elif args.command == "web-update-worker":
                 update()
+            elif args.command == "scheduled-backup":
+                if read_backup_schedule()["enabled"]:
+                    backup()
+                else:
+                    print("自动备份已关闭，跳过本次任务。")
             else:
                 actions = {"menu": menu, "status": service_status, "update": update, "backup": backup,
                            "users": list_accounts, "add-user": add_account, "passwd": change_password,

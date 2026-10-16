@@ -1616,7 +1616,7 @@ class Handler(BaseHTTPRequestHandler):
                 result = manager_action(submitted)
                 if submitted.get("action") == "backup-download":
                     filename = result.get("name", "host-watch-backup.tar.gz")
-                    if not isinstance(filename, str) or not re.fullmatch(r"host-watch-[0-9]{8}-[0-9]{6}-[0-9a-f]+\.tar\.gz", filename):
+                    if not isinstance(filename, str) or not re.fullmatch(r"host-watch-[0-9]{8}-[0-9]{6}-[a-z0-9_]{1,64}\.tar\.gz", filename):
                         raise ValueError("备份文件名无效")
                     encoded = result.get("content", "")
                     if not isinstance(encoded, str) or not encoded:
