@@ -198,8 +198,8 @@ def _validate_page_response(status_code: int, body: str, final_url: str, expecte
 def fetch_with_requests(session: requests.Session, url: str, expected_host: str = "app.vmiss.com") -> tuple[str, str]:
     try:
         response = session.get(url, timeout=(10, 25), allow_redirects=True)
-    except requests.exceptions.ProxyError:
-        raise MonitorError(f"通过出口节点访问 {expected_host} 失败；请检查节点服务、代理令牌和主服务器到节点端口的连通性") from None
+    except requests.exceptions.ProxyError as exc:
+        raise MonitorError(f"通过出口节点访问 {expected_host} 失败：{egress.proxy_error(exc)}") from None
     except requests.RequestException:
         raise MonitorError(f"访问 {expected_host} 商品页失败；请检查 DNS、TLS 和服务器网络") from None
     return _validate_page_response(response.status_code, response.text, response.url, expected_host, getattr(response, "headers", {}))
@@ -233,8 +233,8 @@ def fetch_with_cloudscraper(url: str, expected_host: str, fetcher: dict | None =
             return request(scraper)
     except CloudflareException:
         raise SiteBlocked(f"{expected_host} 的 Cloudflare 验证未通过或不受 cloudscraper 支持；请检查站点访问规则或调整请求方式") from None
-    except requests.exceptions.ProxyError:
-        raise MonitorError(f"cloudscraper 通过出口节点访问 {expected_host} 失败；请检查节点服务、代理令牌和端口连通性") from None
+    except requests.exceptions.ProxyError as exc:
+        raise MonitorError(f"cloudscraper 通过出口节点访问 {expected_host} 失败：{egress.proxy_error(exc)}") from None
     except requests.Timeout:
         raise MonitorError(f"cloudscraper 访问 {expected_host} 超时，请检查服务器网络或目标站点响应") from None
     except requests.RequestException:

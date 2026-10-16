@@ -2058,7 +2058,16 @@ function renderEgress() {
     const port = document.createElement("input"); port.type = "number"; port.min = "1"; port.max = "65535"; port.value = node.listen_port || 8787; port.addEventListener("input", () => { node.listen_port = Number(port.value); updateDraftState(); }); const portLabel = document.createElement("label"); portLabel.append(text("span", "节点监听端口"), port); grid.append(portLabel);
     const token = document.createElement("input"); token.type = "password"; token.autocomplete = "new-password"; token.placeholder = node.token_configured ? "已配置，留空保持不变" : "复制安装命令时自动生成"; token.addEventListener("input", () => { node.token = token.value; updateDraftState(); }); const tokenLabel = document.createElement("label"); tokenLabel.append(text("span", "代理令牌"), token); grid.append(tokenLabel);
     const enabledLabel = settingButton("出口节点", node.enabled !== false, value => { node.enabled = value; renderEgress(); }, ["已停用", "已启用"]);
-    const probe = text("button", "检查出口 IP"); probe.type = "button"; probe.addEventListener("click", async () => { try { const result = await requestJSON("/api/egress/probe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ node_id: node.id }) }); node.public_ip = result.public_ip; node.last_error = ""; renderEgress(); setMessage(`${node.name} 出口检查成功：${result.public_ip}`, "success"); } catch (error) { node.last_error = error.message; renderEgress(); setMessage(error.message, "error"); } });
+    const probe = text("button", "检查出口 IP"); probe.type = "button";
+    probe.addEventListener("click", async () => {
+      probe.disabled = true; probe.textContent = "验证代理中…";
+      try {
+        const result = await requestJSON("/api/egress/probe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ node_id: node.id }), timeoutMs: 65000 });
+        node.public_ip = result.public_ip; node.last_error = "";
+        setMessage(`${node.name} ${result.proxy_verified ? "HTTPS 代理验证成功，实际出口 IP" : "出口检查成功"}：${result.public_ip}`, "success");
+      } catch (error) { node.last_error = error.message; setMessage(error.message, "error"); }
+      finally { renderEgress(); }
+    });
     const remove = text("button", "移除节点", "danger"); remove.type = "button"; remove.addEventListener("click", () => { const index = egressNodes().indexOf(node); if (index >= 0) egressNodes().splice(index, 1); expandedEgressNodes.delete(node.id); Object.keys(config.egress.routes || {}).forEach(provider => { if (config.egress.routes[provider] === node.id) delete config.egress.routes[provider]; }); renderEgress(); updateDraftState(); });
     const actions = text("div", "", "actions egress-node-actions"); actions.append(enabledLabel, probe, remove); probe.disabled = remove.disabled = actionRunning; head.append(actions); body.append(grid); if (node.last_error) card.append(text("p", node.last_error, "error")); target.append(card);
   });

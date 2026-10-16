@@ -12,6 +12,7 @@ import requests
 
 
 PROVIDERS = {"vmiss", "vps_soy", "akile", "isvoro", "dmit", "bwh", "html"}
+IP_CHECK_URLS = ("https://api.ipify.org", "https://ifconfig.me/ip")
 
 
 def _https_url(value: object, label: str, allow_http: bool = False) -> str:
@@ -135,7 +136,9 @@ def connect_url(node: dict) -> str:
     parsed = urlsplit(node["proxy_url"])
     if not node.get("token"):
         raise RuntimeError(f"出口节点 {node['name']} 未配置代理令牌，已阻止主服务器直连")
-    return urlunsplit((parsed.scheme, f"{quote(node['token'], safe='')}@{parsed.netloc}", parsed.path, parsed.query, ""))
+    # requests discards both auth fields when password is None. The explicit
+    # empty password is required to generate Proxy-Authorization: Basic token:.
+    return urlunsplit((parsed.scheme, f"{quote(node['token'], safe='')}:@{parsed.netloc}", parsed.path, parsed.query, ""))
 
 
 def apply_session(session: requests.Session, fetcher: dict | None) -> None:
@@ -156,12 +159,56 @@ def browser_proxy(fetcher: dict) -> dict:
     return proxy
 
 
+def proxy_error(exc: requests.RequestException) -> str:
+    """Describe proxy failures without publishing credential-bearing URLs."""
+    message = str(exc)
+    if "407" in message:
+        return "代理认证失败（HTTP 407）；请重新复制此节点的安装命令，在子服务器执行以同步令牌"
+    if "502" in message:
+        return "节点无法连接目标站点（HTTP 502）；请检查子服务器的 DNS 和到目标站点的网络"
+    return "无法建立代理连接；请检查节点服务、代理令牌和主服务器到节点端口的连通性"
+
+
 def probe(node: dict, timeout: float = 8) -> dict:
     started = time.monotonic()
     headers = {"Authorization": f"Bearer {node['token']}"} if node.get("token") else {}
-    response = requests.get(node["health_url"], headers=headers, timeout=timeout)
-    response.raise_for_status()
-    payload = response.json()
-    if not isinstance(payload, dict) or payload.get("node_id") != node["id"] or not payload.get("public_ip"):
-        raise ValueError("出口节点健康响应无效")
-    return {"ok": True, "public_ip": str(payload["public_ip"]), "latency_ms": round((time.monotonic() - started) * 1000), "checked_at": time.time()}
+    with requests.Session() as session:
+        session.trust_env = False
+        try:
+            response = session.get(node["health_url"], headers=headers, timeout=timeout, allow_redirects=False)
+            response.raise_for_status()
+        except requests.HTTPError:
+            if response.status_code == 401:
+                raise ValueError("节点健康检查认证失败（HTTP 401）；请在子服务器重新执行此节点安装命令以同步令牌") from None
+            raise ValueError("节点健康检查返回错误状态，请检查节点服务和健康检查地址") from None
+        except requests.RequestException:
+            raise ValueError("无法访问节点健康检查；请检查节点服务、监听端口、防火墙和健康检查地址") from None
+        try:
+            payload = response.json()
+        except ValueError:
+            raise ValueError("出口节点健康检查未返回有效 JSON") from None
+        if not isinstance(payload, dict) or payload.get("node_id") != node["id"]:
+            raise ValueError("出口节点健康响应无效，节点 ID 不匹配")
+        try:
+            proxy = connect_url(node)
+        except RuntimeError as exc:
+            raise ValueError(str(exc)) from None
+        session.proxies = {"http": proxy, "https": proxy}
+        failure = ""
+        for endpoint in IP_CHECK_URLS:
+            try:
+                # This must use CONNECT + proxy auth + verified TLS, not /health.
+                response = session.get(endpoint, timeout=timeout, allow_redirects=False)
+                response.raise_for_status()
+                actual_ip = str(ipaddress.ip_address(response.text.strip()))
+                return {"ok": True, "public_ip": actual_ip, "reported_public_ip": str(payload.get("public_ip", "")),
+                        "proxy_verified": True, "latency_ms": round((time.monotonic() - started) * 1000), "checked_at": time.time()}
+            except requests.exceptions.ProxyError as exc:
+                raise ValueError("节点在线，但 HTTPS 代理验证失败：" + proxy_error(exc)) from None
+            except requests.exceptions.SSLError:
+                failure = "HTTPS 证书验证失败，请检查主服务器的 CA 证书和系统时间"
+            except requests.Timeout:
+                failure = "HTTPS 代理请求超时，请检查子服务器出站网络或 IP 检测站点可达性"
+            except (requests.RequestException, ValueError):
+                failure = "经代理读取公网 IP 失败，请检查子服务器出站网络或 IP 检测站点可达性"
+        raise ValueError("节点在线，但尚未验证 HTTPS 代理可用：" + failure)
