@@ -45,7 +45,7 @@ tar -xzf "$TEMP_DIR/source.tar.gz" -C "$TEMP_DIR"
 SOURCE_DIR="$(find "$TEMP_DIR" -mindepth 1 -maxdepth 1 -type d -name 'host-watch-*' -print -quit)"
 [[ -n "$SOURCE_DIR" ]] || fail "源码压缩包格式不正确。"
 
-for file in monitor.py admin.py catalog.py affiliates.py notifications.py stock_alerts.py seckill.py dmit.py bwh.py auth.py manage.py stockwatch.sh admin.html admin.js catalog.js requirements.txt config.example.json .env.example admin.env.example vmiss-monitor.service vmiss-monitor-admin.service host-watch-admin.sudoers install-flaresolverr.sh; do
+for file in monitor.py admin.py catalog.py affiliates.py notifications.py stock_alerts.py seckill.py egress.py dmit.py bwh.py auth.py manage.py stockwatch.sh admin.html admin.js catalog.js requirements.txt config.example.json .env.example admin.env.example vmiss-monitor.service vmiss-monitor-admin.service host-watch-admin.sudoers install-flaresolverr.sh; do
   [[ -f "$SOURCE_DIR/$file" ]] || fail "源码缺少必需文件：$file"
 done
 
@@ -61,7 +61,7 @@ install -d -o root -g root -m 0755 "$INSTALL_DIR"
 install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$DATA_DIR"
 [[ ! -L "$DATA_DIR/config.json" ]] || fail "$DATA_DIR/config.json 不能是符号链接。"
 install -o root -g root -m 0644 \
-  "$SOURCE_DIR/monitor.py" "$SOURCE_DIR/admin.py" "$SOURCE_DIR/catalog.py" "$SOURCE_DIR/affiliates.py" "$SOURCE_DIR/notifications.py" "$SOURCE_DIR/stock_alerts.py" "$SOURCE_DIR/seckill.py" "$SOURCE_DIR/dmit.py" "$SOURCE_DIR/bwh.py" "$SOURCE_DIR/auth.py" "$SOURCE_DIR/manage.py" "$SOURCE_DIR/admin.html" \
+  "$SOURCE_DIR/monitor.py" "$SOURCE_DIR/admin.py" "$SOURCE_DIR/catalog.py" "$SOURCE_DIR/affiliates.py" "$SOURCE_DIR/notifications.py" "$SOURCE_DIR/stock_alerts.py" "$SOURCE_DIR/seckill.py" "$SOURCE_DIR/egress.py" "$SOURCE_DIR/dmit.py" "$SOURCE_DIR/bwh.py" "$SOURCE_DIR/auth.py" "$SOURCE_DIR/manage.py" "$SOURCE_DIR/admin.html" \
   "$SOURCE_DIR/admin.js" "$SOURCE_DIR/catalog.js" "$SOURCE_DIR/requirements.txt" "$SOURCE_DIR/config.example.json" \
   "$SOURCE_DIR/.env.example" "$SOURCE_DIR/vmiss-monitor.service" \
   "$SOURCE_DIR/vmiss-monitor-admin.service" "$SOURCE_DIR/admin.env.example" "$SOURCE_DIR/host-watch-admin.sudoers" "$INSTALL_DIR/"
@@ -117,6 +117,13 @@ if [[ ! -x "$INSTALL_DIR/.venv/bin/python" ]]; then
   runuser -u "$SERVICE_USER" -- python3 -m venv "$INSTALL_DIR/.venv"
 fi
 runuser -u "$SERVICE_USER" -- "$INSTALL_DIR/.venv/bin/python" -m pip install --disable-pip-version-check -r "$INSTALL_DIR/requirements.txt"
+
+# Check the deployed files using the service account before restarting services.
+# Isolated mode prevents a caller's PYTHONPATH from hiding missing modules.
+log "正在校验已安装的管理页和监控程序。"
+runuser -u "$SERVICE_USER" -- "$INSTALL_DIR/.venv/bin/python" -I -c \
+  'import sys; sys.path.insert(0, sys.argv[1]); import admin, monitor, manage, stock_alerts, seckill, dmit, bwh' "$INSTALL_DIR" \
+  || fail "已安装程序的启动依赖校验失败；请检查上方 Python 错误，修复后重新运行 hw update。"
 
 install -o root -g root -m 0644 "$SOURCE_DIR/vmiss-monitor.service" /etc/systemd/system/vmiss-monitor.service
 install -o root -g root -m 0644 "$SOURCE_DIR/vmiss-monitor-admin.service" /etc/systemd/system/vmiss-monitor-admin.service

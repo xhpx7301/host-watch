@@ -1,10 +1,43 @@
 """Exercise dependency deployment with fake system commands; no Docker/root needed."""
 import os
 from pathlib import Path
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+
+
+class InstalledRuntimeTests(unittest.TestCase):
+    def test_installed_modules_import_without_repository_files(self):
+        root = Path(__file__).resolve().parent
+        installer = (root / "install.sh").read_text(encoding="utf-8")
+        block = re.search(
+            r'^install -o root -g root -m 0644 \\\n(.*?)"\$INSTALL_DIR/"',
+            installer, re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(block, "Cannot find application installation command")
+        filenames = re.findall(r'"\$SOURCE_DIR/([^"\n]+)"', block.group(1))
+        self.assertIn("admin.py", filenames)
+        self.assertIn("monitor.py", filenames)
+        with tempfile.TemporaryDirectory() as directory:
+            for filename in filenames:
+                shutil.copy2(root / filename, Path(directory) / filename)
+            modules = [Path(name).stem for name in filenames if name.endswith(".py")
+                       and (name != "manage.py" or sys.platform == "linux")]
+            # Isolated mode excludes PYTHONPATH and the checkout; only deployed
+            # files and installed third-party dependencies can satisfy imports.
+            result = subprocess.run(
+                [sys.executable, "-I", "-c",
+                 "import importlib, pathlib, sys; "
+                 "root = pathlib.Path(sys.argv[1]); sys.path.insert(0, str(root)); "
+                 "modules = [importlib.import_module(name) for name in sys.argv[2:]]; "
+                 "assert all(pathlib.Path(module.__file__).parent == root for module in modules)",
+                 directory, *modules],
+                cwd=directory, capture_output=True, text=True, timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 @unittest.skipUnless(sys.platform == "linux", "安装器使用 Bash")
