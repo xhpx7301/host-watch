@@ -38,7 +38,7 @@
     .workspace { display:flex; flex-direction:column; width:100%; min-width:0; min-height:100vh; max-width:1880px; margin:0 auto; padding:20px 24px 16px; }
     .page-heading { min-width:0; display:flex; align-items:baseline; gap:18px; }
     .page-heading .eyebrow { display:none; margin:0 0 6px; color:#8a969e; font-size:10px; letter-spacing:2px; }
-    .page-heading h1 { margin:0; font-size:24px; line-height:1.3; letter-spacing:-.8px; }
+    .page-heading h1 { margin:0; font-size:24px; line-height:1.3; letter-spacing:-.8px; white-space:nowrap; }
     .page-heading h1:focus { outline:none; }
     .page-heading p:last-child { margin:0; color:var(--muted); font-size:13px; }
     .header-status { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:8px 14px; max-width:530px; flex-shrink:0; }
@@ -211,6 +211,22 @@
     .manage-record-grid { display:grid; grid-template-columns:minmax(0,1.45fr) minmax(240px,.75fr); gap:28px; }
     .manage-record-grid > div + div { padding-left:28px; border-left:1px solid var(--line); }
     .manage-record-grid .manage-users { align-content:flex-start; }
+    .settings-card-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-top:16px; align-items:stretch; }
+    .settings-card { min-width:0; padding:16px; border:1px solid var(--line); border-radius:10px; background:#fbfcfe; }
+    .settings-card > .manage-block { margin:0; padding:0; border-top:0; }
+    .settings-card > .manage-section-head { margin-bottom:10px; }
+    .settings-card .manage-actions { margin:12px 0 0; }
+    .settings-card .hint { overflow-wrap:anywhere; }
+    .settings-card .form-grid { margin-top:12px; }
+    .settings-card .manage-form { margin:12px 0; }
+    .settings-card.telegram-card { background:#f7fbff; border-color:#cbd9f5; }
+    .settings-card.telegram-card .form-grid { align-items:end; }
+    .settings-card.telegram-card .chat-list { max-height:220px; overflow:auto; }
+    .settings-card.backup-card { background:#fffdf8; border-color:#eadfbe; }
+    .settings-card.backup-card .manage-users { margin-bottom:0; }
+    .settings-card.logs-card { grid-column:1/-1; background:#f8fafc; }
+    .settings-card.logs-card .manage-logs { max-height:260px; }
+    .settings-task-status { grid-column:1/-1; min-height:18px; margin:0; }
     .monitor-control { margin-bottom:18px; padding:14px; border:1px solid var(--line); border-radius:5px; background:var(--paper); }
     .monitor-control .state { font-size:16px; }
     .monitor-control p { margin:7px 0; }
@@ -275,7 +291,7 @@
     @media(max-width:520px) { .catalog-intro,.catalog-sync,.catalog-reminders { align-items:flex-start; flex-direction:column; } .catalog-browser { padding:14px; } .catalog-merchants { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); } .catalog-merchants button { min-width:0; } .catalog-filters { grid-template-columns:minmax(0,1fr); } .catalog-bulk .subtle { margin-right:0; } .catalog-table { min-width:0; } .catalog-table thead { display:none; } .catalog-table,.catalog-table tbody,.catalog-table tr,.catalog-table td { display:block; } .catalog-table tr { display:grid; grid-template-columns:52px minmax(0,1fr); padding:14px 10px; gap:8px; } .catalog-table tr + tr { border-top:1px solid var(--line); } .catalog-table td { grid-column:2; min-width:0 !important; max-width:none !important; width:auto !important; padding:0; border:0; } .catalog-table td:first-child { grid-column:1; grid-row:1; } .catalog-table td:nth-child(2) { grid-column:2; grid-row:1; } .catalog-table td:nth-child(4)::before { content:"配置："; } .catalog-table td:nth-child(5)::before { content:"价格："; color:var(--muted); font-weight:400; } .catalog-row-actions { display:flex; flex-wrap:wrap; align-items:center; } .catalog-pagination { flex-wrap:wrap; } }
     @media(max-width:1100px) { .shell { grid-template-columns:200px minmax(0,1fr); } .workspace { padding:26px 24px 20px; } .sidebar { padding-left:12px; padding-right:12px; } .overview { grid-template-columns:repeat(2,minmax(0,1fr)); } .product { grid-template-columns:1fr 1fr; gap:11px; } .product-name { grid-column:1/-1; } .product-actions { grid-column:1/-1; justify-content:flex-start; } .savebar { align-items:stretch; flex-direction:column; } .savebar .actions { justify-content:flex-end; } }
     @media(max-width:780px) { .shell { display:block; } .sidebar { position:sticky; z-index:5; height:auto; padding:14px 14px 0; border-right:0; border-bottom:1px solid var(--line); } .sidebar .brand { padding:0 4px 12px; } .brand strong { font-size:19px; } .brand p { font-size:11px; } .brand-mark { width:32px; height:32px; } .nav-label,.sidebar-note { display:none; } .page-nav { display:flex; gap:5px; overflow-x:auto; padding:2px 0 10px; scrollbar-width:thin; } .page-nav a { flex-shrink:0; min-height:40px; padding:9px 12px; gap:7px; font-size:12px; } .page-nav svg { width:16px; height:16px; } .workspace { min-height:calc(100vh - 119px); padding:22px 16px 16px; } .overview-item { min-height:130px; padding:16px; } .page-heading { display:block; } .page-heading p:last-child { margin-top:4px; } .page-heading h1 { font-size:25px; } .header-status { justify-items:start; } .topbar { display:flex; align-items:flex-start; flex-direction:column; gap:16px; } .header-status .status-line { justify-content:flex-start; } .page-stage { padding-top:20px; } .panel-card > .section-body,#page-overview > .section { padding:18px; } }
-    @media(max-width:780px) { .management-intro { flex-direction:column; gap:10px; } .manage-grid,.manage-record-grid { grid-template-columns:1fr; } .manage-record-grid > div + div { padding-left:0; padding-top:20px; border-top:1px solid var(--line); border-left:0; } .manage-form { grid-template-columns:1fr; } .manage-form label { width:100%; max-width:360px; } .manage-section-head { flex-direction:column; gap:8px; } .product-editor { scroll-margin-top:140px; } }
+    @media(max-width:780px) { .management-intro { flex-direction:column; gap:10px; } .manage-grid,.manage-record-grid,.settings-card-grid { grid-template-columns:1fr; } .manage-record-grid > div + div { padding-left:0; padding-top:20px; border-top:1px solid var(--line); border-left:0; } .manage-form { grid-template-columns:1fr; } .manage-form label { width:100%; max-width:360px; } .manage-section-head { flex-direction:column; gap:8px; } .product-editor { scroll-margin-top:140px; } }
     @media(max-width:520px) { .section-head { align-items:flex-start; flex-direction:column; } .status-line { justify-content:flex-start; } .form-grid { grid-template-columns:1fr; } .span-2 { grid-column:auto; } .overview { grid-template-columns:1fr; gap:10px; } .overview-item:first-child { grid-column:auto; } .overview-value { font-size:22px; } #overview-state { font-size:16px; } .savebar { bottom:8px; padding:12px; } .savebar .actions button { flex:1; padding:7px 8px; } .savebar .subtle { font-size:11px; } .merchant-add { width:100%; } }
     .watchlist-filters { display:flex; flex-wrap:wrap; gap:12px; margin:14px 0; }
     .watchlist-filters label { flex:0 1 220px; min-width:150px; }
@@ -605,8 +621,7 @@
       <a href="#seckill" data-page-link="seckill"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 9-12h-7l1-8Z"/></svg>VPS 补货抢购</a>
       <a href="#requests" data-page-link="requests"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></svg>网页请求</a>
       <a href="#affiliates" data-page-link="affiliates"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 13 4-4m-6 7-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 1 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0"/></svg>AFF 管理</a>
-      <a href="#telegram" data-page-link="telegram"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-6 18-4-8-8-4 18-6Zm-10 10L21 3"/></svg>Telegram 通知</a>
-      <a href="#management" data-page-link="management"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/></svg>管理员管理</a>
+      <a href="#settings" data-page-link="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 14 5.2l3-.1.8 2.9 2.5 1.7-1.4 2.7 1.4 2.7-2.5 1.7-.8 2.9-3-.1L12 21l-2-2.2-3 .1-.8-2.9-2.5-1.7 1.4-2.7-1.4-2.7 2.5-1.7.8-2.9 3 .1L12 3Z"/><circle cx="12" cy="12" r="3"/></svg>设置</a>
     </nav>
     <div class="sidebar-note"><span class="sidebar-note-dot" aria-hidden="true"></span>库存提醒 · 快速人工下单</div>
   </aside>
@@ -745,21 +760,6 @@
     </div>
   </section>
 
-  <section class="page-panel panel-card" id="page-telegram" data-page="telegram" aria-labelledby="page-title" hidden>
-    <div class="section-body">
-    <div class="form-grid">
-      <label>Bot token（保存后不会回显）<input id="telegram-token" type="password" autocomplete="new-password" placeholder="留空表示保持已保存的 token"></label>
-      <label>Chat ID 或频道用户名<input id="telegram-chat-id" autocomplete="off" placeholder="例如 -1001234567890 或 @my_channel"></label>
-      <button id="telegram-disabled" class="option-button" type="button" data-config-option data-on="已选择停用" data-off="未停用" aria-pressed="false" aria-label="暂时停用通知"><span>暂时停用通知</span><span data-option-state>未停用</span></button>
-      <button id="telegram-clear" class="option-button" type="button" data-config-option data-tone="danger" data-on="保存时清除" data-off="不清除" aria-pressed="false" aria-label="清除已保存的凭据" aria-describedby="telegram-options-note"><span>清除已保存的凭据</span><span data-option-state>不清除</span></button>
-    </div>
-    <p id="telegram-options-note" class="hint">点击按钮切换选择，再次点击取消；保存配置后生效。“清除已保存的凭据”仅在保存时执行，可先取消选择或点击“取消修改”。</p>
-    <p id="telegram-status" class="hint">Telegram 状态读取中</p>
-    <div class="actions" style="margin-top:10px"><button id="telegram-test" type="button">测试发送</button><button id="telegram-load-chats" type="button">读取最近聊天</button></div>
-    <div id="telegram-chats" class="chat-list" aria-live="polite"></div>
-    </div>
-  </section>
-
   <section class="page-panel panel-card" id="page-affiliates" data-page="affiliates" aria-labelledby="page-title" hidden>
     <div class="section-body"><h2>商家 AFF 推广设置</h2><p class="hint">填写推广码或该商家的完整推广链接，留空则使用普通商品入口；备注可记录 AFF 所属账号和推广比例。点击底部“保存配置”后，库存大盘、库存监控和新发出的 Telegram 商品入口统一使用新设置。已发送的历史消息不会更改。</p>
     <div class="affiliate-grid">
@@ -821,17 +821,18 @@
   </section>
 
 
-  <section class="page-panel panel-card" id="management-panel" data-page="management" aria-labelledby="page-title" hidden>
+  <section class="page-panel panel-card" id="settings-panel" data-page="settings" aria-labelledby="page-title" hidden>
     <div class="section-body">
     <div class="management-intro">
-      <div><span class="eyebrow">ADMIN CONSOLE</span><h2>服务器与账号管理</h2><p>集中查看服务运行情况，管理管理员账号、备份和 HostWatch 更新。</p></div>
+      <div><span class="eyebrow">HOSTWATCH SETTINGS</span><h2>设置</h2><p>集中管理服务、通知、备份和管理员账号。</p></div>
       <span class="management-secure">受保护操作</span>
     </div>
     <div class="manage-grid" aria-label="服务状态">
       <div class="manage-service"><span class="manage-service-icon">◉</span><div><span class="manage-service-label">HostWatch 服务</span><span id="manage-monitor-state" class="state">读取中</span><span id="manage-monitor-enabled" class="subtle"></span></div></div>
       <div class="manage-service"><span class="manage-service-icon">▣</span><div><span class="manage-service-label">管理页面服务</span><span id="manage-admin-state" class="state">读取中</span></div></div>
     </div>
-    <div class="manage-block manage-operations">
+    <div class="settings-card-grid">
+    <div class="settings-card manage-operations">
       <div class="manage-section-head"><div><h3>运维操作</h3><p>读取状态不会触发库存检查；更新会先创建备份。</p></div></div>
       <div class="manage-actions">
       <button id="manage-refresh" type="button">刷新状态</button>
@@ -844,9 +845,23 @@
       </div>
       <p class="hint">导出备份通过浏览器保存到本地。导入支持 20 MB 以内的 HostWatch .tar.gz 备份，恢复商品配置、库存记录和备份计划，保留当前管理员账号、访问设置及程序版本。导入前自动备份当前数据，恢复后按保存的自动刷新设置运行。重启 HostWatch 服务会让库存监控短暂中断，服务会重新读取已保存配置。</p>
     </div>
+    <div class="settings-card telegram-card">
+      <div class="manage-section-head"><div><h3>Telegram 通知</h3><p>配置通知机器人，接收库存提醒与商品测试结果。</p></div><span id="telegram-status" class="state">读取中</span></div>
+      <div class="form-grid">
+        <label>Bot token（保存后不会回显）<input id="telegram-token" type="password" autocomplete="new-password" placeholder="留空表示保持已保存的 token"></label>
+        <label>Chat ID 或频道用户名<input id="telegram-chat-id" autocomplete="off" placeholder="例如 -1001234567890 或 @my_channel"></label>
+        <button id="telegram-disabled" class="option-button" type="button" data-config-option data-on="已选择停用" data-off="未停用" aria-pressed="false" aria-label="暂时停用通知"><span>暂时停用通知</span><span data-option-state>未停用</span></button>
+        <button id="telegram-clear" class="option-button" type="button" data-config-option data-tone="danger" data-on="保存时清除" data-off="不清除" aria-pressed="false" aria-label="清除已保存的凭据" aria-describedby="telegram-options-note"><span>清除已保存的凭据</span><span data-option-state>不清除</span></button>
+      </div>
+      <p id="telegram-options-note" class="hint">点击按钮切换选择，再次点击取消；保存配置后生效。“清除已保存的凭据”仅在保存时执行，可先取消选择或点击“取消修改”。</p>
+      <div class="actions"><button id="telegram-test" type="button">测试发送</button><button id="telegram-load-chats" type="button">读取最近聊天</button></div>
+      <div id="telegram-chats" class="chat-list" aria-live="polite"></div>
+    </div>
+    </div>
     <p class="hint manage-global-note">库存监控和库存通知分别选择“仅手动刷新”或“自动刷新”；保存配置后 HostWatch 服务会按设置自动运行或停止。</p>
     <p id="manage-task-status" class="manage-task-status" aria-live="polite"></p>
-    <div class="manage-block">
+    <div class="settings-card-grid">
+    <div class="settings-card backup-card">
       <div class="manage-section-head"><div><h3>自动备份计划</h3><p>每天按北京时间备份到服务器硬盘，关闭管理页后仍会执行。错过计划时，服务器恢复后补做一次。</p></div></div>
       <div class="manage-form">
         <button id="manage-auto-backup" type="button" class="option-button" aria-pressed="false" data-on="已开启" data-off="未开启"><span>每日自动备份</span><span data-option-state>未开启</span></button>
@@ -856,8 +871,9 @@
       <p id="manage-backup-schedule-status" class="hint" role="status" aria-live="polite">正在读取备份计划。</p>
       <div class="manage-actions"><button id="manage-backup-schedule-save" type="button" class="primary" disabled>保存备份计划</button></div>
       <p class="hint">备份计划通过此处单独保存并立即生效，无需点击底部“保存配置”。关闭定时备份不影响更新前备份和手动导出。</p>
+      <div class="backup-recent"><div class="manage-section-head"><div><h3>最近备份</h3><p>定时备份、更新前及导入前备份保存在服务器硬盘。</p></div></div><p id="manage-backup-storage" class="hint">自动备份存储位置：读取中</p><div id="manage-backups" class="manage-users"><span>读取中</span></div></div>
     </div>
-    <div class="manage-block manage-accounts">
+    <div class="settings-card manage-accounts">
       <div class="manage-section-head"><div><h3>管理员账号</h3><p>密码至少 12 个字符，账号修改立即生效。删除最后一个管理员会被拒绝。</p></div><span class="section-badge">账号安全</span></div>
       <div id="manage-users" class="manage-users"></div>
       <div class="manage-form">
@@ -871,11 +887,9 @@
         <button id="manage-delete-user" type="button" class="danger">删除该管理员</button>
       </div>
     </div>
-    <div class="manage-block manage-records">
-      <div class="manage-record-grid">
-        <div><div class="manage-section-head"><div><h3>最近日志</h3><p>监控和管理服务的最近记录。</p></div></div><div class="manage-actions"><button id="manage-load-logs" type="button">载入日志</button></div><pre id="manage-logs" class="manage-logs">点击“载入日志”查看最近记录。</pre></div>
-        <div><div class="manage-section-head"><div><h3>最近备份</h3><p>定时备份、更新前及导入前备份保存在服务器硬盘；手动导出的备份由浏览器保存到本地。</p></div></div><p id="manage-backup-storage" class="hint">自动备份存储位置：读取中</p><div id="manage-backups" class="manage-users"><span>读取中</span></div></div>
-      </div>
+    </div>
+    <div class="settings-card-grid">
+      <div class="settings-card logs-card"><div class="manage-section-head"><div><h3>最近日志</h3><p>监控和管理服务的最近记录。</p></div></div><div class="manage-actions"><button id="manage-load-logs" type="button">载入日志</button></div><pre id="manage-logs" class="manage-logs">点击“载入日志”查看最近记录。</pre></div>
     </div>
     </div>
   </section>

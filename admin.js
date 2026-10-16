@@ -73,9 +73,8 @@ const pages = {
   monitor: { title: "VPS 库存监控", description: "集中查看你关注的 VPS，查看库存与配置、编辑备注和线路，直接购买，不发送通知。" },
   notifications: { title: "VPS 库存通知", description: "选择需要 Telegram 库存提醒的商品，管理通知和测试。" },
   affiliates: { title: "AFF 管理", description: "统一管理各商家推广码，保存后应用到新的购买入口。" },
-  telegram: { title: "Telegram 通知", description: "配置通知机器人，接收库存提醒与商品测试结果。" },
   requests: { title: "网页请求", description: "设置各商家请求方式，配置轻量请求与浏览器请求，测试访问效果。" },
-  management: { title: "管理员管理", description: "管理服务与账号，查看日志、备份及更新程序。" },
+  settings: { title: "设置", description: "集中管理服务、通知、备份和管理员账号。" },
 };
 let currentPage = null;
 const mobileNavToggle = document.querySelector("#mobile-nav-toggle");
@@ -105,6 +104,7 @@ window.addEventListener("resize", () => {
 
 function navigatePage(name, { history = true, focus = true } = {}) {
   if (name === "products") { navigatePage("notifications", { history, focus }); openAdvancedProducts(); return; }
+  if (name === "telegram" || name === "management") name = "settings";
   if (!Object.hasOwn(pages, name)) name = "overview";
   if (history && location.hash !== `#${name}`) window.history.pushState(null, "", `#${name}`);
   sessionStorage.setItem("hostwatch-current-page", name);
