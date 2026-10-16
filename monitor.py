@@ -90,6 +90,21 @@ def html_metadata(card, region="") -> dict:
     return {"region": region[:500], "specs": " · ".join(hardware)[:500], "traffic": " · ".join(network)[:500], "price": price[:500]}
 
 
+def vmiss_metadata(card, region="") -> dict:
+    """Separate VMISS's unlabelled inline resources before classifying them."""
+    metadata = html_metadata(card, region)
+    raw = " · ".join(node.get_text(" ", strip=True) for node in card.select(".package-content"))
+    fields = re.split(r"\s*·\s*|\s+(?=\d+(?:\.\d+)?\s*(?:v?CPU|cores?|[KMGT]i?B|[KMGT]?bps|IPv[46])\b)", raw, flags=re.I)
+    hardware, network = [], []
+    for field in fields:
+        value = " ".join(field.split()).strip(" ·")
+        if value:
+            target = network if re.search(r"traffic|bandwidth|[KMGT]?bps|流量|带宽", value, re.I) else hardware
+            if value not in target:
+                target.append(value)
+    return {**metadata, "specs": " · ".join(hardware)[:500], "traffic": " · ".join(network)[:500]}
+
+
 def soy_metadata(card, region="") -> dict:
     """Read labelled configuration values; omit port counts and store notices."""
     metadata = html_metadata(card, region)
@@ -151,7 +166,7 @@ def parse_products(html: str, page_url: str, selectors: list[str]) -> list[Produ
         matched_selectors.update(matches)
         if selectors and not matches:
             continue
-        products.append(Product(key, name, int(match.group(1).replace(",", "")), product_url, product_id, **html_metadata(card, soup.select_one("h1").get_text(" ", strip=True) if soup.select_one("h1") else "")))
+        products.append(Product(key, name, int(match.group(1).replace(",", "")), product_url, product_id, **vmiss_metadata(card, soup.select_one("h1").get_text(" ", strip=True) if soup.select_one("h1") else "")))
 
     if not products:
         raise MonitorError("页面已读取，但没有商品符合 WATCH_PRODUCTS")

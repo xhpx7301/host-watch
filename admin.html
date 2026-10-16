@@ -383,7 +383,7 @@
     .overview-table .price-pending { color:var(--muted); font-weight:600; white-space:nowrap; }
     .membership-tag { display:inline-flex; align-items:center; padding:2px 6px; border-radius:4px; margin:2px; color:var(--blue); background:var(--blue-soft); font-size:11px; white-space:nowrap; }
     .membership-tag.notify { color:var(--purple); background:var(--purple-soft); }
-    .spec-chip { display:inline-block; white-space:nowrap; padding:4px 7px; border:1px solid #e7eaf3; border-radius:5px; background:#f3f5fa; color:#526079; font-size:12px; font-weight:600; }
+    .spec-chip { display:inline-block; max-width:100%; box-sizing:border-box; white-space:normal; overflow-wrap:anywhere; padding:4px 7px; border:1px solid #e7eaf3; border-radius:5px; background:#f3f5fa; color:#526079; font-size:12px; font-weight:600; }
     .network-detail { font-size:12px; font-variant-numeric:tabular-nums; color:#526079; }
     .price-main { color:var(--blue); font-weight:700; font-size:13px; font-variant-numeric:tabular-nums; }
     .price-stack { display:flex; flex-direction:column; align-items:center; gap:1px; line-height:1.2; }
@@ -424,7 +424,8 @@
     .watch-operations,.catalog-row-actions { justify-content:center; margin-inline:auto; }
     .watch-table .manual-field { text-align:center; }
     .catalog-network { margin-top:5px; }
-    .network-detail,.price-main,.watch-table td:nth-child(3) { white-space:nowrap; }
+    .network-detail { display:inline-block; max-width:100%; white-space:normal; overflow-wrap:anywhere; }
+    .price-main,.watch-table td:nth-child(3) { white-space:nowrap; }
     .carrier-lines { display:flex; flex-wrap:wrap; justify-content:center; gap:5px; max-width:360px; margin-inline:auto; }
     .carrier-line { display:flex; align-items:center; justify-content:center; gap:2px; padding:3px 5px; border:1px solid #d6eddf; border-radius:5px; color:var(--green); background:#f0faf4; font-size:11px; }
     .carrier-line.unicom { color:var(--blue); border-color:#dce6ff; background:#f2f6ff; }

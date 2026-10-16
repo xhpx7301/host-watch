@@ -1286,8 +1286,15 @@ function setMembership(item, type, enabled) {
 }
 function productSnapshot(item, status) {
   const data = { ...(item.snapshot || {}), ...status, region: status?.region || item.snapshot?.region || item.category_name || "—" };
+  // VMISS's older snapshots may repeat the same inline resources in both fields.
+  if (item.adapter === "vmiss") {
+    const fields = [...new Set([data.specs, data.traffic].filter(Boolean).join(" · ").split(/\s*·\s*|\s+(?=\d+(?:\.\d+)?\s*(?:v?CPU|cores?|[KMGT]i?B|[KMGT]?bps|IPv[46])\b)/i).map(value => value.trim()).filter(Boolean))];
+    const network = value => /traffic|bandwidth|[KMGT]?bps|流量|带宽/i.test(value);
+    data.specs = fields.filter(value => !network(value)).join(" · ");
+    data.traffic = fields.filter(network).join(" · ");
+  }
   // Older directory caches combined hardware and network text in one field.
-  if (!data.traffic && data.specs) {
+  if (item.adapter !== "vmiss" && !data.traffic && data.specs) {
     const fields = data.specs.split(/\s*·\s*|\s+(?=(?:CPU|内存|硬盘|带宽|流量|端口|架构|网络)\s*[:：])/i);
     if (fields.length > 1) {
       const network = value => /流量|带宽|traffic|bandwidth|[GM]bps/i.test(value);

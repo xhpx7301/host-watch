@@ -109,6 +109,23 @@ class CatalogParsingTests(unittest.TestCase):
         with patch("monitor.fetch_page", side_effect=[(navigation, "https://app.vmiss.com/store"), (card, "https://app.vmiss.com/store/other")]), self.assertRaisesRegex(monitor.MonitorError, "不一致"):
             catalog.vmiss_catalog(Mock(), "")
 
+    def test_vmiss_separates_inline_resources_even_when_stock_is_unknown(self):
+        navigation = '<a href="/store/hk-bgp">CN - HongKong - BGP</a>'
+        resources = ["1 Core", "1024MB", "10GB SSD", "100Mbps Port", "300GB Bandwidth", "1 IPv4 Included"]
+        for content in (" ".join(resources), "<ul>" + "".join("<li>" + value + "</li>" for value in resources) + "</ul>"):
+            for quantity in ("0 Available", "Unknown"):
+                with self.subTest(content=content, quantity=quantity):
+                    card = ('<div class="section products"><div class="package" id="product44"><h3 class="package-title">CN.HK.BGP.Basic</h3>'
+                            '<div class="package-content">' + content + '</div><div class="package-qty">' + quantity + '</div>'
+                            '<a class="btn-order-now" href="/store/hk-bgp/basic">Buy</a><div class="price-amount">CA$5.00</div><div class="price-cycle">Monthly</div></div></div>')
+                    with patch("monitor.fetch_page", side_effect=[(navigation, "https://app.vmiss.com/store"), (card, "https://app.vmiss.com/store/hk-bgp")]):
+                        row = catalog.vmiss_catalog(Mock(), "")[2][0]
+                    self.assertEqual(row["specs"], "1 Core · 1024MB · 10GB SSD · 1 IPv4 Included")
+                    self.assertEqual(row["traffic"], "100Mbps Port · 300GB Bandwidth")
+                    self.assertEqual(row["price"], "CA$5.00 / Monthly")
+                    self.assertEqual(row["available"], 0 if quantity.startswith("0") else None)
+                    self.assertEqual(row["watch"]["pid"], "44")
+
     def test_vmiss_load_catalog_reuses_cloudscraper_session_for_discovery_and_scope(self):
         navigation = '<a href="/store/test">Hong Kong</a>'
         card = '<div class="section products"><div class="package" id="product44"><h3 class="package-title">Mini</h3><div class="package-qty">3 Available</div><a class="btn-order-now" href="/store/test/mini">Buy</a></div></div>'

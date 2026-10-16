@@ -95,7 +95,7 @@ def akile_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[lis
 
 
 def vmiss_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[list, str, list]:
-    from monitor import MonitorError, fetch_page, parse_products
+    from monitor import MonitorError, fetch_page, parse_products, vmiss_metadata
     fetcher = fetcher or {"mode": "requests"}
     body, _ = fetch_page(session, "https://app.vmiss.com/store", fetcher, "app.vmiss.com")
     scopes_by_id = {}
@@ -127,8 +127,8 @@ def vmiss_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[lis
                 error = str(exc)
             price = card.select_one(".price-amount")
             cycle = card.select_one(".price-cycle")
-            specs = card.select_one(".package-content")
-            row = make_row(f"vmiss:{target['id']}:{identifier[1]}", watch, target["name"], target["name"], specs.get_text(" ", strip=True) if specs else "", " / ".join(n.get_text(" ", strip=True) for n in (price, cycle) if n), product, error)
+            metadata = vmiss_metadata(card)
+            row = make_row(f"vmiss:{target['id']}:{identifier[1]}", watch, target["name"], target["name"], metadata["specs"], " / ".join(n.get_text(" ", strip=True) for n in (price, cycle) if n), product, error, traffic=metadata["traffic"])
             rows.append(row)
     if not rows:
         raise MonitorError("VMISS 分类没有可识别的商品卡片")
