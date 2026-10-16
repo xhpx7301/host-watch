@@ -2057,7 +2057,8 @@ function renderOverview() {
     const at = state.last_checked ? formatBeijingDate(state.last_checked) : "暂无";
     const manualAt = state.last_manual_refresh ? formatBeijingDate(state.last_manual_refresh) : "暂无";
     const autoAt = state.last_auto_refresh ? formatBeijingDate(state.last_auto_refresh) : "暂无";
-    note.textContent = `${mode} · 间隔 ${intervalLabel(Number(schedule.interval_seconds ?? 0))} · 最近 ${at} · 自动 ${autoAt} · 手动 ${manualAt}`;
+    const serviceState = key === "monitor" || key === "notify" ? ({ active: "运行中", inactive: "已停止", failed: "运行失败", activating: "启动中", deactivating: "停止中" }[monitorService?.active] || "状态未知") : "";
+    note.textContent = `${mode} · 间隔 ${intervalLabel(Number(schedule.interval_seconds ?? 0))}${serviceState ? ` · 服务${serviceState}` : ""} · 最近 ${at} · 自动 ${autoAt} · 手动 ${manualAt}`;
     if (log) {
       const sourceLogs = key === "seckill" && vpsSeckillTask?.logs?.length ? vpsSeckillTask.logs : state.logs || [];
       const lines = sourceLogs.slice(-5).map(item => `[${formatBeijingDate(item.at)}] ${item.trigger === "manual" ? "手动" : "自动"} · ${item.message || item.result || ""}`);
