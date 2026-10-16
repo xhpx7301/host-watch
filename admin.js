@@ -1589,7 +1589,7 @@ function renderExchangeRates() {
   else if (exchangeRateData?.error) noteNode.textContent = exchangeRateData.error;
   else {
     const updated = exchangeRateData?.fetched_at ? formatBeijingDate(Number(exchangeRateData.fetched_at) * 1000) : "内置参考值";
-    noteNode.textContent = `汇率更新 ${updated}${exchangeRateData?.stale ? " · 使用缓存" : ""}`;
+    noteNode.textContent = `汇率更新时间 ${updated}${exchangeRateData?.stale ? " · 使用缓存" : ""}`;
   }
 }
 async function loadExchangeRates() {
