@@ -517,6 +517,22 @@
     .module-settings-actions { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin-top:12px; }
     .module-settings-actions .hint { margin:0; }
     @media(max-width:620px) { .module-settings-head { flex-direction:column; gap:6px; } }
+    .watchlist-filters { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(440px,1fr); align-items:end; gap:10px 14px; margin:10px 0 12px; }
+    .watchlist-filter-fields { display:grid; grid-template-columns:minmax(0,1.55fr) minmax(120px,.75fr) minmax(120px,.75fr); align-items:end; gap:10px; min-width:0; }
+    .watchlist-filter-fields label,.watchlist-refresh-controls label { width:auto; min-width:0; flex:none; }
+    .watchlist-filter-tools { min-width:0; padding:9px 11px; border:1px solid var(--line); border-radius:8px; background:#fbfcff; }
+    .watchlist-refresh-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:7px; }
+    .watchlist-refresh-heading h3 { margin:0; color:var(--ink); font-size:13px; }
+    .watchlist-refresh-heading .state { flex-shrink:0; font-size:12px; }
+    .watchlist-refresh-controls { display:grid; grid-template-columns:minmax(110px,1fr) minmax(95px,.78fr) minmax(95px,.78fr) auto; align-items:end; gap:7px; }
+    .watchlist-refresh-controls button { min-height:34px; padding-inline:10px; white-space:nowrap; }
+    .watchlist-refresh-meta { display:flex; align-items:baseline; flex-wrap:wrap; gap:3px 10px; margin-top:6px; min-height:17px; color:var(--muted); font-size:11px; }
+    .watchlist-refresh-meta .hint { margin:0; font-size:11px; }
+    .watchlist-refresh-meta .subtle { margin:0; font-size:11px; }
+    .watchlist-filter-tools #interval-description { margin:5px 0 0; font-size:11px; }
+    @media(max-width:1100px) { .watchlist-filters { grid-template-columns:1fr; } }
+    @media(max-width:760px) { .watchlist-filter-fields { grid-template-columns:minmax(0,1fr) minmax(130px,.65fr) minmax(130px,.65fr); } .watchlist-refresh-controls { grid-template-columns:repeat(2,minmax(0,1fr)); } .watchlist-refresh-controls button { width:max-content; } }
+    @media(max-width:520px) { .watchlist-filter-fields { grid-template-columns:1fr; } .watchlist-refresh-controls { grid-template-columns:1fr; } .watchlist-refresh-controls button { width:100%; } .watchlist-refresh-heading { align-items:flex-start; flex-direction:column; gap:4px; } }
     .affiliate-card { padding:14px; }
     @media(min-width:781px) and (max-width:1100px) { .workspace { padding:20px; } }
     @media(max-width:780px) {
@@ -658,19 +674,25 @@
   <section class="page-panel panel-card" id="page-monitor" data-page="monitor" aria-labelledby="page-title" hidden>
     <div class="section-body">
     <div class="section-head"><div><h2>我的 VPS 库存监控 <span id="watchlist-count" class="subtle">0</span></h2><p>关注商品与实时库存 · 仅查看，不发送通知。</p></div><button id="watchlist-browse" type="button">从大盘添加</button></div>
-    <div class="watchlist-filters"><label>搜索商品<input id="watchlist-search" type="search" placeholder="商品、商家或线路"></label><label>商家<select id="watchlist-provider"><option value="all">全部商家</option></select></label><label>最近库存<select id="watchlist-stock"><option value="all">全部状态</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">暂无记录</option></select></label></div>
-    <details class="help-note"><summary>库存监控说明</summary><p id="watchlist-note" class="hint" role="status"></p></details>
-    <div class="module-settings" aria-labelledby="monitor-settings-title">
-      <div class="module-settings-head"><div><h3 id="monitor-settings-title">库存监控刷新设置</h3><p>只控制库存监控商品的检查，不影响库存通知。保存配置后按这里的设置运行。</p></div><strong id="monitor-runtime" class="state">正在读取服务状态</strong></div>
-      <p id="monitor-runtime-note" class="subtle">以服务器实际运行状态为准。</p>
-      <div class="form-grid">
-        <label>刷新模式<select id="monitor-schedule-mode"><option value="manual">仅手动刷新</option><option value="auto">自动刷新</option></select></label>
-        <label>监控检查间隔（秒）<input id="interval" type="number" min="0" max="86400" step="1"></label>
-        <label>常用监控间隔<select id="interval-preset"><option value="">自定义间隔</option><option value="0">0 秒（连续检查）</option><option value="1">1 秒</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option><option value="60">1 分钟</option><option value="300">5 分钟</option><option value="600">10 分钟</option><option value="1800">30 分钟</option><option value="3600">1 小时</option></select></label>
-        <p id="interval-description" class="hint span-2"></p>
+    <div class="watchlist-filters">
+      <div class="watchlist-filter-fields">
+        <label>搜索商品<input id="watchlist-search" type="search" placeholder="商品、商家或线路"></label>
+        <label>商家<select id="watchlist-provider"><option value="all">全部商家</option></select></label>
+        <label>最近库存<select id="watchlist-stock"><option value="all">全部状态</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">暂无记录</option></select></label>
       </div>
-      <div class="module-settings-actions"><button id="monitor-refresh-manual" type="button">手动刷新库存监控</button><span id="monitor-draft" class="hint" aria-live="polite">配置读取中。</span></div>
+      <div class="watchlist-filter-tools" aria-labelledby="monitor-settings-title">
+        <div class="watchlist-refresh-heading"><h3 id="monitor-settings-title">库存监控刷新</h3><strong id="monitor-runtime" class="state">正在读取服务状态</strong></div>
+        <div class="watchlist-refresh-controls">
+          <label>刷新模式<select id="monitor-schedule-mode"><option value="manual">仅手动刷新</option><option value="auto">自动刷新</option></select></label>
+          <label>监控间隔（秒）<input id="interval" type="number" min="0" max="86400" step="1"></label>
+          <label>常用间隔<select id="interval-preset"><option value="">自定义</option><option value="0">0 秒</option><option value="1">1 秒</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option><option value="60">1 分钟</option><option value="300">5 分钟</option><option value="600">10 分钟</option><option value="1800">30 分钟</option><option value="3600">1 小时</option></select></label>
+          <button id="monitor-refresh-manual" type="button">手动刷新</button>
+        </div>
+        <div class="watchlist-refresh-meta"><span id="monitor-runtime-note" class="subtle">以服务器实际运行状态为准。</span><span id="monitor-draft" class="hint" aria-live="polite">配置读取中。</span></div>
+        <p id="interval-description" class="hint"></p>
+      </div>
     </div>
+    <details class="help-note"><summary>库存监控说明</summary><p id="watchlist-note" class="hint" role="status"></p></details>
     <div id="product-list"></div>
      <div id="watch-compare-bar" class="watch-compare-bar" hidden role="region" aria-live="polite"><div><strong id="watch-compare-count">已选 0 项</strong><span id="watch-compare-note" class="subtle">再选择至少 1 个商品开始参数对比</span></div><div class="actions"><button id="watch-compare-clear" type="button">清除选择</button><button id="watch-compare-start" type="button" class="primary" disabled>开始对比</button></div></div>
     <p class="table-footnote">拖动商家旁的 ⠿ 调整顺序，保存后保留 · 购买链接已应用 AFF · 备注与线路可点击编辑</p>
