@@ -404,7 +404,7 @@ class SeckillTask:
 
     def _submit(self, session, item, account, url):
         if not item.get("submit_url") or not item.get("auto_submit") or not account or not account.get("auto_submit"):
-            self.log(f"检测到库存，已准备购买链接：{url}；未执行自动提交，请确认条目勾选自动下单并填写提交地址", "ready", item)
+            self.log(f"检测到库存，已准备购买链接：{url}；未执行自动提交，请确认商品自动提交和账户自动下单均为已允许，并填写提交地址", "ready", item)
             return {"status": "ready", "url": url}
         payload = {"username": account.get("username", ""), "password": account.get("password", ""), "coupon": item.get("coupon_code", "")}
         if account.get("login_url"):
