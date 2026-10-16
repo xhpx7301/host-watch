@@ -107,6 +107,7 @@
       renderPrice(cell(), row.price || "以商家页面为准", expanded.has(row.key));
       const stock = cell();
       stock.append(text("span", row.available === null ? "未知" : row.available > 0 ? (row.stock_mode === "availability" ? "有货" : `有货 ${row.available}`) : "缺货", `state ${row.available === null ? "pending" : row.available > 0 ? "ok" : "error"}`));
+      if (row.available > 0 && row.stock_mode === "availability") stock.append(text("small", "数量未公开"));
       if (row.error) { const error = text("small", row.error); stock.append(error); stock.style.whiteSpace = "normal"; }
       const actions = text("div", "", "catalog-row-actions");
       const item = existing(row);

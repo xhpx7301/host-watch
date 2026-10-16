@@ -144,19 +144,39 @@ def parse_products(html: str, page_url: str, selectors: list[str]) -> list[Produ
         title_el = card.select_one(".package-title")
         qty_el = card.select_one(".package-qty")
         order_el = card.select_one("a.btn-order-now[href]")
-        if not title_el or not qty_el or not order_el:
-            raise MonitorError("有商品卡片缺少名称、库存或订购链接；本轮不更新状态")
+        if not title_el or not order_el:
+            raise MonitorError("有商品卡片缺少名称或订购链接；本轮不更新状态")
 
         name = " ".join(title_el.get_text(" ", strip=True).split())
-        qty_text = " ".join(qty_el.get_text(" ", strip=True).split())
-        match = re.fullmatch(r"([\d,]+)\s+Available", qty_text, flags=re.IGNORECASE)
-        if not name or not match:
-            raise MonitorError(f"无法识别套餐 {name or '(无名称)'} 的库存文本：{qty_text!r}")
+        if not name:
+            raise MonitorError("有商品卡片名称为空；本轮不更新状态")
+        disabled = ("disabled" in order_el.get("class", []) or order_el.has_attr("disabled")
+                    or str(order_el.get("aria-disabled", "")).casefold() == "true")
+        # VMISS omits package-qty for plans without a published stock limit.
+        # Only use the button state when the quantity element is absent;
+        # malformed explicit inventory must remain unknown.
+        stock_mode = "quantity"
+        if qty_el is not None:
+            qty_text = " ".join(qty_el.get_text(" ", strip=True).split())
+            match = re.fullmatch(r"(\d{1,3}(?:,\d{3})+|\d+)\s+Available", qty_text, flags=re.IGNORECASE)
+            if not match:
+                raise MonitorError(f"无法识别套餐 {name} 的库存文本：{qty_text!r}")
+            available = int(match.group(1).replace(",", ""))
+            if available > 0 and disabled:
+                raise MonitorError(f"套餐 {name} 的库存数量与订购按钮状态不一致；本轮不更新状态")
+        else:
+            available, stock_mode = (0 if disabled else 1), "availability"
 
-        product_url = urljoin(page_url, order_el["href"])
+        href = str(order_el["href"]).strip()
+        if not href or href.startswith(("#", "?")):
+            raise MonitorError(f"套餐 {name} 缺少有效订购链接；本轮不更新状态")
+        product_url = urljoin(page_url, href)
         parsed_product_url = urlsplit(product_url)
-        if parsed_product_url.scheme != "https" or parsed_product_url.hostname != page_host:
+        if (parsed_product_url.scheme != "https" or parsed_product_url.hostname != page_host
+                or parsed_product_url.username or parsed_product_url.password):
             raise MonitorError(f"套餐 {name} 的购买链接不在本站；拒绝将 aff 参数附加到外站链接")
+        if parsed_product_url.path in {"", "/", urlsplit(page_url).path.rstrip("/")} or parsed_product_url.fragment:
+            raise MonitorError(f"套餐 {name} 缺少有效订购链接；本轮不更新状态")
         # The title can repeat for variants, so use its order URL as the stable key.
         key = parsed_product_url.path
         product_id = (card.get("id") or "").strip()
@@ -166,7 +186,7 @@ def parse_products(html: str, page_url: str, selectors: list[str]) -> list[Produ
         matched_selectors.update(matches)
         if selectors and not matches:
             continue
-        products.append(Product(key, name, int(match.group(1).replace(",", "")), product_url, product_id, **vmiss_metadata(card, soup.select_one("h1").get_text(" ", strip=True) if soup.select_one("h1") else "")))
+        products.append(Product(key, name, available, product_url, product_id, stock_mode=stock_mode, **vmiss_metadata(card, soup.select_one("h1").get_text(" ", strip=True) if soup.select_one("h1") else "")))
 
     if not products:
         raise MonitorError("页面已读取，但没有商品符合 WATCH_PRODUCTS")
