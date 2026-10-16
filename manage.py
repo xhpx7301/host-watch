@@ -757,9 +757,15 @@ def web_action(payload: dict) -> dict:
         raise ValueError("管理操作无效")
     if action == "status":
         def unit_state(unit: str) -> dict:
-            active = subprocess.run(["systemctl", "is-active", unit], text=True, capture_output=True, check=False).stdout.strip()
-            enabled = subprocess.run(["systemctl", "is-enabled", unit], text=True, capture_output=True, check=False).stdout.strip()
-            return {"active": active or "unknown", "enabled": enabled or "unknown"}
+            try:
+                result = subprocess.run(
+                    ["systemctl", "show", unit, "--property=ActiveState", "--property=UnitFileState"],
+                    text=True, capture_output=True, check=False, timeout=5,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                return {"active": "unknown", "enabled": "unknown"}
+            values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+            return {"active": values.get("ActiveState", "unknown"), "enabled": values.get("UnitFileState", "unknown")}
         users = read_accounts()
         if not users:
             users = {"(当前使用旧版单账号认证；添加管理员后启用账号管理)": {}}
@@ -811,8 +817,11 @@ def web_action(payload: dict) -> dict:
             raise ValueError("更新任务编号无效")
         result = subprocess.run(["systemctl", "show", unit, "--property=LoadState", "--property=ActiveState", "--property=SubState", "--property=Result"], text=True, capture_output=True, check=False, timeout=10)
         values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
-        logs = subprocess.run(["journalctl", "--no-pager", "-u", unit, "-n", "30"], text=True, capture_output=True, check=False, timeout=10, env={**os.environ, "TZ": "Asia/Shanghai"})
-        return {"unit": unit, **values, "logs": logs.stdout[-12_000:]}
+        logs = ""
+        if payload.get("include_logs", True):
+            output = subprocess.run(["journalctl", "--no-pager", "-u", unit, "-n", "30"], text=True, capture_output=True, check=False, timeout=10, env={**os.environ, "TZ": "Asia/Shanghai"})
+            logs = output.stdout[-12_000:]
+        return {"unit": unit, **values, "logs": logs}
     if action in {"admin-add", "admin-passwd", "admin-delete"}:
         username = validate_username(str(payload.get("username", "")))
         users = read_accounts()

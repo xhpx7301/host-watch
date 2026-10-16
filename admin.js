@@ -39,6 +39,8 @@ const providerFlareDraft = new Map();
 let serviceRefreshTimer, serviceRefreshPending = false;
 let serviceTransitionStartedAt = 0;
 let hostwatchService = null;
+let updatePollTimer;
+let updatePollTimeout;
 let exchangeRateData = null;
 let exchangeClockTimer;
 let exchangeRateRefreshTimer;
@@ -206,6 +208,7 @@ async function runAction(button, label, message, action, notify = true) {
     }
     actionRunning = false;
     document.querySelector(".shell").inert = false;
+    syncUpdateControl();
     renderMerchantOrder();
     renderProductList();
     syncTestControls();
@@ -344,7 +347,20 @@ async function refreshManagement() {
   renderBackupSchedule();
   const backups = document.querySelector("#manage-backups");
   backups.replaceChildren(...(state.backups.length ? state.backups.map((item) => text("span", `${item.name} · ${formatBytes(item.size)}`)) : [text("span", "暂无备份")]));
-  if (updateUnit) await refreshUpdateStatus();
+  if (updateUnit) {
+    const update = await refreshUpdateStatus();
+    if (update.finished || update.LoadState === "not-found") {
+      updateUnit = "";
+      sessionStorage.removeItem("hostwatch-update-unit");
+      // A reload marker left by a previous completed update must not start
+      // another reload loop when the browser restores the old tab.
+      if (!sessionStorage.getItem(UPDATE_RELOAD_KEY)) {
+        clearTimeout(updateReloadTimer);
+        sessionStorage.removeItem(UPDATE_RELOAD_KEY);
+      }
+      syncUpdateControl();
+    }
+  }
   return state;
 }
 
@@ -402,13 +418,20 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-async function refreshUpdateStatus() {
-  const result = await managementRequest({ action: "update-status", unit: updateUnit });
+async function refreshUpdateStatus(includeLogs = true) {
+  const result = await managementRequest({ action: "update-status", unit: updateUnit, include_logs: includeLogs });
   const finished = result.ActiveState === "failed" || (result.ActiveState === "active" && result.SubState === "exited");
   const label = finished ? (result.Result === "success" ? "更新完成。" : `更新失败：${result.Result}`) : `更新任务：${result.ActiveState || result.LoadState || "等待中"}`;
   document.querySelector("#manage-task-status").textContent = label;
   if (result.logs) document.querySelector("#manage-logs").textContent = result.logs;
   return { ...result, finished };
+}
+
+function syncUpdateControl() {
+  const button = document.querySelector("#manage-update");
+  if (!button) return;
+  button.disabled = actionRunning || Boolean(updateUnit);
+  button.title = updateUnit ? "更新任务正在执行，请等待完成" : "从 GitHub 更新 HostWatch";
 }
 
 function scheduleUpdateReload(delayMs = 10_000) {
@@ -424,7 +447,10 @@ function scheduleUpdateReload(delayMs = 10_000) {
 
 function resumeUpdateReload() {
   const deadline = Number(sessionStorage.getItem(UPDATE_RELOAD_KEY));
-  if (!Number.isFinite(deadline)) return;
+  if (!updateUnit || !Number.isFinite(deadline) || deadline <= Date.now()) {
+    sessionStorage.removeItem(UPDATE_RELOAD_KEY);
+    return;
+  }
   const delay = Math.max(0, deadline - Date.now());
   updateReloadTimer = setTimeout(() => {
     sessionStorage.removeItem(UPDATE_RELOAD_KEY);
@@ -437,6 +463,7 @@ async function performManagementAction(action, extra = {}) {
   if (result.update_unit) {
     updateUnit = result.update_unit;
     sessionStorage.setItem("hostwatch-update-unit", updateUnit);
+    syncUpdateControl();
     document.querySelector("#manage-task-status").textContent = result.message;
     setMessage(result.message, "success");
     pollUpdateStatus();
@@ -529,25 +556,32 @@ async function importManagementBackup(file) {
 }
 
 function pollUpdateStatus() {
+  if (updatePollTimer || !updateUnit) return;
   let polling = false;
-  const timer = setInterval(async () => {
+  updatePollTimer = setInterval(async () => {
     if (polling || actionRunning) return;
     polling = true;
     try {
-      const result = await refreshUpdateStatus();
+      const result = await refreshUpdateStatus(false);
       if (result.finished || result.LoadState === "not-found") {
-        clearInterval(timer);
+        clearInterval(updatePollTimer);
+        updatePollTimer = null;
+        clearTimeout(updatePollTimeout);
+        updatePollTimeout = null;
         setMessage(result.Result === "success" ? "HostWatch 更新完成，管理页将在 10 秒后自动刷新。" : `HostWatch 更新结束：${result.Result || result.LoadState}`, result.Result === "success" ? "success" : "error");
         updateUnit = "";
         sessionStorage.removeItem("hostwatch-update-unit");
+        syncUpdateControl();
         await refreshManagement();
       }
     } catch (error) {
       document.querySelector("#manage-task-status").textContent = `更新可能正在重启服务，等待管理页恢复：${error.message}`;
     } finally { polling = false; }
   }, 4000);
-  setTimeout(() => {
-    clearInterval(timer);
+  updatePollTimeout = setTimeout(() => {
+    clearInterval(updatePollTimer);
+    updatePollTimer = null;
+    updatePollTimeout = null;
     if (updateUnit) document.querySelector("#manage-task-status").textContent = "更新仍未返回最终结果，请点击刷新状态核对，或查看服务器更新任务日志。";
   }, 10 * 60 * 1000);
 }
@@ -2013,6 +2047,10 @@ function renderProductList() {
   restoreProductSortFocus(listNode, focusedSortId);
 }
 
+window.addEventListener("hostwatch-page-change", event => {
+  if (["monitor", "notifications"].includes(event.detail)) renderProductList();
+});
+
 function renderNotificationList() {
   if (productDrag) return;
   syncProductEditorOrder();
@@ -2508,7 +2546,6 @@ function renderMonitorState() {
   header.className = `state ${serviceTone(hostActive)}`;
   const overviewNote = document.querySelector("#overview-state-note");
   if (overviewNote) overviewNote.textContent = active === "active" ? "按各模块设置后台刷新，关闭网页后仍运行" : active === "activating" && transitionTimedOut ? "启动超过 60 秒未完成，请查看服务日志" : active === "activating" ? "正在确认启动状态，页面自动刷新" : active === "failed" ? "请检查配置或查看服务日志" : active === "deactivating" && transitionTimedOut ? "停止超过 60 秒未完成，请查看服务日志" : active === "deactivating" ? "正在停止，等待最终状态" : active === "inactive" ? "没有模块启用自动刷新，保留最近库存记录" : "等待服务器返回服务状态";
-  renderProductList();
   window.dispatchEvent(new Event("hostwatch-service-change"));
 }
 
@@ -2711,7 +2748,7 @@ async function loadStatus() {
   const errorNode = document.querySelector("#request-error");
   errorNode.hidden = !["error", "partial"].includes(lastStatus.state);
   errorNode.textContent = ["error", "partial"].includes(lastStatus.state) ? `最近检查提示：${lastStatus.message || "请查看服务日志"}` : "";
-  renderProductList();
+  if (["monitor", "notifications"].includes(currentPage)) renderProductList();
   renderOverview();
   renderSeckill();
   renderExchangeRates();
