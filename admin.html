@@ -334,7 +334,7 @@
     .provider-flare-card .hint { margin:8px 0 0; overflow-wrap:anywhere; }
     .provider-flare-card .form-grid { grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),max-content)); align-items:end; }
     .provider-flare-card .option-button { justify-self:start; }
-    .affiliate-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-top:18px; }
+    .affiliate-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin-top:18px; }
     .affiliate-card { display:grid; gap:8px; min-width:0; padding:20px; border:1px solid var(--line); border-radius:10px; background:var(--canvas); }
     .affiliate-card .hint { margin:0; }
     .affiliate-card a { overflow-wrap:anywhere; }
@@ -350,6 +350,7 @@
     .catalog-filters select:focus, .watchlist-filters select:focus { transition: border-color .18s ease, box-shadow .18s ease; }
     .product-actions { flex-wrap:wrap; }
     .watchlist-item > .product-test-result { grid-column:1/-1; margin:0; }
+    @media (max-width:1100px) { .affiliate-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
     @media (max-width:640px) { #page-catalog > .section-head { flex-wrap:wrap; } .watchlist-filters label { min-width:100%; } .affiliate-grid { grid-template-columns:minmax(0,1fr); } }
     @media (max-width:520px) { .request-tool .request-parameters { grid-template-columns:minmax(0,1fr); } .request-probe-controls label { max-width:none; flex-basis:100%; } }
     .watch-table { min-width:1040px; width:100%; border-collapse:collapse; font-size:13px; }
