@@ -807,12 +807,13 @@
       <div class="manage-actions">
       <button id="manage-refresh" type="button">刷新状态</button>
       <button id="manage-restart-admin" type="button">重启管理页</button>
+      <button id="manage-restart-server" type="button" class="danger">重启服务器</button>
       <button id="manage-backup" type="button">导出备份</button>
       <button id="manage-import-backup" type="button">导入备份</button>
       <input id="manage-import-backup-file" type="file" accept=".tar.gz,application/gzip" aria-label="选择 HostWatch 备份文件" hidden>
       <button id="manage-update" type="button" class="primary">更新 HostWatch</button>
       </div>
-      <p class="hint">导出备份通过浏览器保存到本地。导入支持 20 MB 以内的 HostWatch .tar.gz 备份，恢复商品配置、库存记录和备份计划，保留当前管理员账号、访问设置及程序版本。导入前自动备份当前数据，恢复后按保存的自动刷新设置运行。</p>
+      <p class="hint">导出备份通过浏览器保存到本地。导入支持 20 MB 以内的 HostWatch .tar.gz 备份，恢复商品配置、库存记录和备份计划，保留当前管理员账号、访问设置及程序版本。导入前自动备份当前数据，恢复后按保存的自动刷新设置运行。重启服务器会让整台服务器断开连接，重启后按系统开机启动配置恢复服务。</p>
     </div>
     <p class="hint manage-global-note">库存监控和库存通知分别选择“仅手动刷新”或“自动刷新”；保存配置后 HostWatch 服务会按设置自动运行或停止。</p>
     <p id="manage-task-status" class="manage-task-status" aria-live="polite"></p>

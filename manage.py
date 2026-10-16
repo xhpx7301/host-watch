@@ -811,6 +811,9 @@ def web_action(payload: dict) -> dict:
     if action == "admin-restart":
         run("systemd-run", "--quiet", "--on-active=2s", "/usr/bin/systemctl", "restart", ADMIN)
         return {"ok": True, "message": "管理页将在 2 秒后重启，连接将短暂中断。"}
+    if action == "server-restart":
+        run("systemd-run", "--quiet", "--on-active=5s", "/usr/bin/systemctl", "reboot")
+        return {"ok": True, "message": "服务器将在约 5 秒后重启，当前连接会中断；服务将按系统开机启动配置恢复。"}
     if action == "update-status":
         unit = payload.get("unit", "")
         if not isinstance(unit, str) or not re.fullmatch(r"host-watch-web-update-[0-9]{14}-[0-9a-f]{8}\.service", unit):

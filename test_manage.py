@@ -140,6 +140,12 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0], "systemd-run")
         self.assertEqual(run.call_args.args[-1], "web-update-worker")
 
+    def test_web_server_restart_uses_delayed_systemd_reboot(self):
+        with patch.object(self.manage, "run") as run:
+            result = self.manage.web_action({"action": "server-restart"})
+        run.assert_called_once_with("systemd-run", "--quiet", "--on-active=5s", "/usr/bin/systemctl", "reboot")
+        self.assertIn("5 秒", result["message"])
+
     def test_browser_backup_is_removed_after_reading_archive(self):
         archive = self.directory / "host-watch-20261016-120000-abcd.tar.gz"
         archive.write_bytes(b"backup bytes")

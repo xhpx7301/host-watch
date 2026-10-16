@@ -487,12 +487,12 @@ async function performManagementAction(action, extra = {}) {
     if (action === "admin-add") managementUsers = [...managementUsers.filter((name) => !name.startsWith("(")), extra.username].sort();
     if (action === "admin-delete") managementUsers = managementUsers.filter((name) => name !== extra.username);
     renderManagementUsers();
-    if (action !== "admin-restart") {
+    if (!['admin-restart', 'server-restart'].includes(action)) {
       setMessage(`${result.message}后续请求如出现登录提示，请使用新的管理员凭据登录。`, "success");
       return;
     }
   }
-  if (!result.update_unit && action !== "admin-restart") {
+  if (!result.update_unit && !['admin-restart', 'server-restart'].includes(action)) {
     try { await refreshManagement(); }
     catch (error) { setMessage(`${result.message || "操作已完成。"}状态刷新失败：${error.message}`, "error"); }
   }
@@ -617,10 +617,12 @@ function bindManagementActions() {
   }));
   for (const [id, action, label, message] of [
     ["manage-restart-admin", "admin-restart", "安排中…", "正在安排管理页服务重启…"],
+    ["manage-restart-server", "server-restart", "安排中…", "正在安排服务器重启…"],
     ["manage-backup", "backup-download", "导出中…", "正在打包并导出备份…"],
     ["manage-update", "update", "启动中…", "正在启动 HostWatch 更新任务…"],
   ]) {
     document.querySelector(`#${id}`).addEventListener("click", (event) => {
+      if (action === "server-restart" && !window.confirm("确认重启整台服务器？当前管理页、监控和其他服务都会中断，服务器将在约 5 秒后重启。")) return;
       const operation = action === "backup-download" ? exportManagementBackup : () => performManagementAction(action);
       runAction(event.currentTarget, label, message, operation);
     });
