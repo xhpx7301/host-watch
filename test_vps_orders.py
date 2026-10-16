@@ -116,6 +116,18 @@ class OrderTaskTests(unittest.TestCase):
         self.assertIn('状态：待付款', payload['text'])
         self.assertEqual(payload['reply_markup']['inline_keyboard'][0][0]['url'], 'https://shop.example.com/buy')
 
+    def test_seckill_test_checks_page_and_account_without_creating_order(self):
+        checked = {'ok': True, 'status': 'valid', 'message': '账户认证正常', 'account_id': 'account', 'checked_at': '2026-10-16T12:00:00+08:00'}
+        with patch.object(admin, 'current_config', return_value=self.config), \
+             patch.object(admin, 'check_order_account', return_value=checked), \
+             patch('monitor.inspect_product', self.stock):
+            result = admin.seckill_test({'mode': 'rapid'})
+        self.assertTrue(result['ok'])
+        self.assertTrue(result['items'][0]['site_access']['ok'])
+        self.assertTrue(result['items'][0]['page_recognition']['ok'])
+        self.assertTrue(result['items'][0]['account']['ok'])
+        self.assertEqual(self.orders(), [])
+
     def test_precise_rechecks_account_and_stock_before_submission(self):
         result = self.run_task('precise')
         self.assertEqual(self.stock.call_count, 2)

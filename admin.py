@@ -587,6 +587,65 @@ def seckill_account_check(submitted: dict) -> dict:
         return {**check_order_account(session, account), "account_id": account["id"], "item_id": item["id"]}
 
 
+def seckill_test(submitted: dict) -> dict:
+    """Check configured VPS purchase prerequisites without submitting an order."""
+    from monitor import MonitorError, inspect_product, product_fetcher
+    current = validate_config(current_config())
+    mode = str(submitted.get("mode", current["vps_seckill"]["mode"])).strip().casefold()
+    if mode not in {"rapid", "precise", "manual"}:
+        raise ValueError("秒杀测试模式无效")
+    products = {str(item.get("id")): item for item in current.get("products", [])}
+    accounts = {str(item.get("id")): item for item in current["vps_seckill"].get("accounts", [])}
+    items = [item for item in current["vps_seckill"].get("items", []) if item.get("enabled", True)]
+    if not items:
+        raise ValueError("请先从库存监控或库存通知选择至少一个启用的抢购商品")
+    results = []
+    for item in items:
+        product = products.get(item.get("product_id"))
+        required_account = mode != "manual" and item.get("auto_submit", False)
+        label = item.get("label") or (product.get("name") if product else item.get("product_id", "已下架商品"))
+        result = {"item_id": item["id"], "label": label, "required_account": required_account,
+                  "site_access": {"ok": False, "message": "尚未检查"},
+                  "page_recognition": {"ok": False, "message": "尚未检查"},
+                  "account": {"ok": False, "required": required_account, "status": "unbound", "message": "未绑定账户"}}
+        if not product:
+            result["site_access"] = {"ok": False, "message": "商品已下架，无法访问并识别页面"}
+            result["page_recognition"] = {"ok": False, "message": "商品已下架，无法识别页面"}
+            results.append(result)
+            continue
+        routed = {**product, "egress_node_id": item.get("egress_node_id", "")}
+        fetcher = product_fetcher(current.get("fetcher"), routed)
+        account = accounts.get(item.get("account_id"))
+        try:
+            with requests.Session() as session:
+                session.trust_env = False
+                session.headers["User-Agent"] = "HostWatch/1.0 (VPS seckill configuration test)"
+                egress.apply_session(session, fetcher)
+                try:
+                    found = inspect_product(session, routed, fetcher)
+                    available = found.available if type(found.available) is int else None
+                    stock = "有货" if ((found.stock_mode == "availability" and available and available > 0) or (available and available > 0)) else "缺货/未知"
+                    result["site_access"] = {"ok": True, "message": "网站访问成功"}
+                    result["page_recognition"] = {"ok": True, "message": f"页面识别成功：{found.name} · {stock}"}
+                except (MonitorError, requests.RequestException, ValueError) as exc:
+                    message = str(exc)[:300] or "访问或识别失败"
+                    result["site_access"] = {"ok": False, "message": f"网站访问失败：{message}"}
+                    result["page_recognition"] = {"ok": False, "message": f"页面识别失败：{message}"}
+                if account:
+                    checked = check_order_account(session, account)
+                    result["account"] = {**checked, "required": required_account, "account_id": account["id"]}
+        except (OSError, requests.RequestException, ValueError) as exc:
+            message = str(exc)[:300] or "检查失败"
+            if not result["site_access"]["ok"]:
+                result["site_access"] = {"ok": False, "message": f"网站访问失败：{message}"}
+            if not result["page_recognition"]["ok"]:
+                result["page_recognition"] = {"ok": False, "message": f"页面识别失败：{message}"}
+        result["ok"] = bool(result["site_access"]["ok"] and result["page_recognition"]["ok"]
+                            and (not result["account"]["required"] or result["account"].get("ok")))
+        results.append(result)
+    return {"ok": all(item["ok"] for item in results), "mode": mode, "checked_at": beijing_iso(), "items": results}
+
+
 class SeckillTask:
     def __init__(self, task_id: str, config: dict, mode: str):
         self.id = task_id
@@ -1757,7 +1816,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(403)
             return
         # Stopping and polling tests must never wait behind config/service locks.
-        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/egress/probe"}:
+        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/test", "/api/egress/probe"}:
             self._post_action()
             return
         if not MUTATION_LOCK.acquire(blocking=False):
@@ -1769,7 +1828,7 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
+        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/test", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
             self.send_error(404)
             return
         try:
@@ -1838,6 +1897,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/seckill/account-check":
                 output = seckill_account_check(submitted)
+                self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
+                return
+            if self.path == "/api/seckill/test":
+                output = seckill_test(submitted)
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/seckill/start":

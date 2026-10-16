@@ -621,8 +621,9 @@
     <div class="section-body">
       <div class="section-head"><div><h2>VPS 补货抢购</h2><p>从 VPS 库存监控或 VPS 库存通知逐个加入商品。下架商品仍可保留目标链接，恢复上架后继续检查。</p></div><span id="seckill-task-state" class="state">未运行</span></div>
       <div class="seckill-panel vps-seckill-panel">
-        <div class="section-head"><div><h3>执行模式</h3><p>所有模式均不自动付款。自动模式仅创建待付款订单，付款需要你手动前往商家官网完成。</p></div><div class="actions"><button id="vps-seckill-start" type="button" class="primary">启动补货抢购</button><button id="vps-seckill-stop" type="button" class="danger" hidden>暂停补货抢购</button></div></div>
+        <div class="section-head"><div><h3>执行模式</h3><p>所有模式均不自动付款。自动模式仅创建待付款订单，付款需要你手动前往商家官网完成。</p></div><div class="actions"><button id="vps-seckill-test" type="button">测试抢购配置</button><button id="vps-seckill-start" type="button" class="primary">启动补货抢购</button><button id="vps-seckill-stop" type="button" class="danger" hidden>暂停补货抢购</button></div></div>
         <div class="form-grid"><label>模式<select id="vps-seckill-mode"><option value="rapid">极速抢购（自动）</option><option value="precise">精准抢购（自动）</option><option value="manual">手动抢购</option></select></label><label>检查间隔（秒）<input id="vps-seckill-interval" type="number" min="1" max="3600" step="1"></label></div>
+        <p id="vps-seckill-test-status" class="hint" role="status" aria-live="polite">测试会访问网站、识别页面并检查账户，不创建订单、不付款。</p><div id="vps-seckill-test-results" class="seckill-results" aria-live="polite"></div>
         <div class="seckill-mode-guide">
           <article><strong>极速抢购（自动）</strong><p>启动时检查账户；发现一次库存满足数量后立即提交。减少重复检查，抢单更快，但提交时库存或登录状态可能已变化。</p></article>
           <article><strong>精准抢购（自动）</strong><p>启动时检查账户；发现有货后再次验证账户、重新读取库存，数量仍满足才提交。核验更多、请求更多，可能错过短暂库存；不保证抢单成功。</p></article>

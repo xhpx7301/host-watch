@@ -2351,9 +2351,24 @@ function renderVpsSeckillTask() {
   });
   const logs = vpsSeckillTask?.logs || []; document.querySelector("#vps-seckill-logs").textContent = logs.length ? logs.map(log => `[${formatBeijingDate(log.at)}] ${log.message}`).join("\n") : "暂无日志"; document.querySelector("#vps-seckill-log-note").textContent = vpsSeckillTask ? `${vpsSeckillTask.mode || ""} · ${logs.length} 条日志` : "尚未启动补货抢购任务。";
 }
+function renderVpsSeckillTest(result) {
+  const status = document.querySelector("#vps-seckill-test-status"), target = document.querySelector("#vps-seckill-test-results");
+  if (!status || !target || !result) return;
+  status.textContent = `${result.ok ? "抢购配置测试通过" : "抢购配置测试发现问题"} · ${result.checked_at ? formatBeijingDate(result.checked_at) : ""}`;
+  target.replaceChildren(...(result.items || []).map(item => {
+    const row = text("article", "", `seckill-result ${item.ok ? "success" : "error"}`);
+    row.append(text("strong", item.label || item.item_id));
+    row.append(text("p", `${item.site_access?.ok ? "✓" : "✗"} 网站访问：${item.site_access?.message || "未检查"}`, "hint"));
+    row.append(text("p", `${item.page_recognition?.ok ? "✓" : "✗"} 页面识别：${item.page_recognition?.message || "未检查"}`, "hint"));
+    const account = item.account || {};
+    row.append(text("p", `${account.required ? (account.ok ? "✓" : "✗") : "－"} 账户状态：${account.message || "未绑定账户（手动模式可用）"}`, "hint"));
+    return row;
+  }));
+}
 window.addEventListener("hostwatch-action-change", renderVpsSeckillTask);
 async function pollVpsSeckill(taskId) { clearInterval(vpsSeckillPoll); vpsSeckillPoll = setInterval(async () => { try { vpsSeckillTask = await requestJSON(`/api/seckill/status/${encodeURIComponent(taskId)}`); renderVpsSeckillTask(); if (!vpsSeckillTask.pending) clearInterval(vpsSeckillPoll); } catch { clearInterval(vpsSeckillPoll); } }, 1000); }
 document.querySelector("#vps-seckill-start").addEventListener("click", async event => { if (hasUnsavedChanges()) { setMessage("请先点击底部“保存配置”，再启动 VPS 补货抢购。", "error"); return; } try { const taskId = `seckill-${Date.now()}-${Math.random().toString(36).slice(2, 18)}`; vpsSeckillTask = await requestJSON("/api/seckill/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: taskId, mode: document.querySelector("#vps-seckill-mode").value }) }); renderVpsSeckillTask(); pollVpsSeckill(taskId); setMessage("VPS 补货抢购任务已启动。", "success"); } catch (error) { setMessage(error.message, "error"); } });
+document.querySelector("#vps-seckill-test").addEventListener("click", event => runAction(event.currentTarget, "测试中…", "正在访问网站、识别商品页面并检查账户；不会创建订单或付款…", async () => { if (hasUnsavedChanges()) throw new Error("请先点击底部“保存配置”，再测试 VPS 抢购配置。"); const result = await requestJSON("/api/seckill/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: document.querySelector("#vps-seckill-mode").value }), timeoutMs: 180000 }); renderVpsSeckillTest(result); setMessage(result.ok ? "VPS 抢购配置测试通过。" : "VPS 抢购配置测试发现问题，请查看测试结果。", result.ok ? "success" : "error"); }));
 document.querySelector("#vps-seckill-stop").addEventListener("click", async () => { if (!vpsSeckillTask?.task_id) return; try { vpsSeckillTask = await requestJSON("/api/seckill/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: vpsSeckillTask.task_id }) }); renderVpsSeckillTask(); } catch (error) { setMessage(error.message, "error"); } });
 function openSeckillPicker(type) {
   const dialog = document.querySelector("#seckill-picker-dialog"), content = document.querySelector("#seckill-picker-content");
