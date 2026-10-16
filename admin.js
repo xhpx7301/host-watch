@@ -786,10 +786,14 @@ function productEditor(item, index) {
   const head = text("summary", "", "editor-head");
   const identity = text("span", "", "editor-identity");
   identity.append(text("strong", item.name || `新商品 ${index + 1}`), text("span", "", "editor-meta"));
-  head.append(identity, text("span", "", "section-toggle"));
-  head.lastElementChild.setAttribute("aria-hidden", "true");
+  const toggle = text("span", "", "section-toggle");
+  toggle.setAttribute("aria-hidden", "true");
   const body = text("div", "", "section-body");
   const actions = text("div", "", "actions");
+  // Controls live in the summary row; keep their clicks from toggling the
+  // surrounding details element.
+  actions.addEventListener("click", event => event.stopPropagation());
+  actions.addEventListener("keydown", event => event.stopPropagation());
   for (const [type, label] of [["watch", "库存监控"], ["notify", "库存通知"]]) {
     const button = text("button", "", `membership-toggle membership-${type}`); button.type = "button"; button.dataset.membership = type;
     const syncButton = () => {
@@ -827,6 +831,7 @@ function productEditor(item, index) {
     setMessage("商品已移除，保存后生效。", "pending");
   });
   actions.append(remove);
+  head.append(identity, toggle, actions);
 
   const grid = text("div", "", "form-grid");
   grid.append(
@@ -912,7 +917,7 @@ function productEditor(item, index) {
   const result = text("div", "", "product-test-result");
   result.setAttribute("role", "status");
   result.setAttribute("aria-live", "polite");
-  body.append(actions, text("p", "单次检查使用当前商品配置，无需保存商品或开启监控；结果通过已保存的 Telegram 机器人发送（含缺货和错误），不受自动提醒开关影响。请先保存机器人 Token 和 Chat ID；停止检查不发送结果。", "hint"), result, grid, modeWrap);
+  body.append(text("p", "单次检查使用当前商品配置，无需保存商品或开启监控；结果通过已保存的 Telegram 机器人发送（含缺货和错误），不受自动提醒开关影响。请先保存机器人 Token 和 Chat ID；停止检查不发送结果。", "hint"), result, grid, modeWrap);
   article.append(head, body);
   renderProductTest(article, item.id);
   updateProductEditorTitle(article, item);
