@@ -344,12 +344,39 @@
     .request-probe-controls label { flex:0 1 280px; max-width:280px; }
     .request-probe-controls button { margin-bottom:1px; }
     .request-tool .product-test-result { margin-top:12px; white-space:pre-line; overflow-wrap:anywhere; }
-    .provider-flare-settings { display:grid; gap:10px; margin-top:12px; }
+    .request-card-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-top:14px; align-items:stretch; }
+    .request-card { min-width:0; padding:14px; border:1px solid var(--line); border-radius:10px; background:#fbfcff; }
+    .request-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:8px; }
+    .request-card-head h2 { margin:0; font-size:15px; }
+    .request-card-head p { margin:4px 0 0; color:var(--muted); font-size:11px; }
+    .request-card-icon { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; min-width:30px; min-height:26px; padding:4px 7px; border-radius:6px; color:var(--blue); background:var(--blue-soft); font-size:11px; font-weight:700; }
+    .request-global-card { background:#f7fbff; border-color:#cbd9f5; }
+    .request-provider-card { background:#fbfcfe; }
+    .provider-mode-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:9px; margin-top:11px; }
+    .provider-mode-grid label { min-width:0; }
+    .provider-mode-grid select { min-width:0; padding-inline:7px; font-size:12px; }
+    .request-top-grid .hint { margin-top:8px; }
+    .request-tool-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-top:14px; align-items:start; }
+    .request-tool-grid .request-tool { margin-top:0; }
+    .request-tool-grid .request-tool h2 { font-size:15px; }
+    .request-tool-grid .request-tool .form-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .request-tool-grid .request-tool .request-parameters { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .request-tool-grid .request-tool .request-parameters > label:last-child { grid-column:1/-1; }
+    .request-tool-grid .flaresolverr .form-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .request-tool-grid .flaresolverr .form-grid > label:first-child { grid-column:1/-1; }
+    .provider-flare-settings { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:12px; }
     .provider-flare-card { min-width:0; padding:12px; border:1px solid var(--line); border-radius:8px; background:var(--paper); }
     .provider-flare-head { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 12px; }
     .provider-flare-card .hint { margin:8px 0 0; overflow-wrap:anywhere; }
     .provider-flare-card .form-grid { grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),max-content)); align-items:end; }
     .provider-flare-card .option-button { justify-self:start; }
+    .request-card.egress-panel { margin-top:14px; padding:14px; }
+    .request-card.egress-panel .section-head { margin-bottom:10px; }
+    .request-card.egress-panel h3 { margin:14px 0 0; font-size:14px; }
+    .request-card.egress-panel .egress-routes { grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+    @media(max-width:1100px) { .provider-mode-grid,.provider-flare-settings { grid-template-columns:repeat(2,minmax(0,1fr)); } .request-tool-grid .request-tool .form-grid,.request-tool-grid .request-tool .request-parameters { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media(max-width:760px) { .request-card-grid,.request-tool-grid { grid-template-columns:1fr; } .provider-mode-grid,.provider-flare-settings,.request-card.egress-panel .egress-routes { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media(max-width:520px) { .provider-mode-grid,.provider-flare-settings,.request-card.egress-panel .egress-routes,.request-tool-grid .request-tool .form-grid,.request-tool-grid .request-tool .request-parameters { grid-template-columns:1fr; } .request-tool-grid .request-tool .request-parameters > label:last-child,.request-tool-grid .flaresolverr .form-grid > label:first-child { grid-column:auto; } }
     .affiliate-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin-top:18px; }
     .affiliate-card { display:grid; gap:8px; min-width:0; padding:20px; border:1px solid var(--line); border-radius:10px; background:var(--canvas); }
     .affiliate-card .hint { margin:0; }
@@ -775,14 +802,23 @@
   <section class="page-panel panel-card" id="page-requests" data-page="requests" aria-labelledby="page-title" hidden>
     <div class="section-body">
       <div class="section-head"><div><h2>网页请求</h2><p>设置各商家请求方式，配置轻量请求与浏览器请求，测试访问效果。</p></div><button id="requests-open-seckill" type="button">打开 VPS 补货抢购</button></div>
-    <div class="form-grid">
-      <label>全局请求方式<select id="fetcher-mode"><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label>
+    <div class="request-card-grid request-top-grid">
+      <div class="request-card request-global-card">
+        <div class="request-card-head"><div><h2>全局请求方式</h2><p>作为未单独设置商家的默认方式。</p></div><span class="request-card-icon">↗</span></div>
+        <div class="form-grid"><label>请求方式<select id="fetcher-mode"><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label></div>
+        <p id="fetcher-status" class="hint">普通 HTTPS 请求已启用。</p>
+        <p class="hint">小内存服务器优先使用普通 HTTPS 或 cloudscraper；需要浏览器渲染时再为对应商家选择 FlareSolverr。</p>
+      </div>
+      <div class="request-card request-provider-card">
+        <div class="request-card-head"><div><h2>各商家请求方式</h2><p>保存后应用到该商家的监控、通知和大盘刷新。</p></div><span class="request-card-icon">商家</span></div>
+        <p class="hint">选择“跟随全局”即可继承上方设置。</p>
+        <div class="provider-mode-grid" id="provider-request-modes"><label>VMISS<select data-provider-mode="vmiss"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>VPS.SOY<select data-provider-mode="vps_soy"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>Akile<select data-provider-mode="akile"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>Isvoro<select data-provider-mode="isvoro"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>DMIT<select data-provider-mode="dmit"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>搬瓦工<select data-provider-mode="bwh"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>其他商家 / 自定义网页<select data-provider-mode="html"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label></div>
+        <p id="provider-request-note" class="hint" aria-live="polite"></p>
+      </div>
     </div>
-    <h2 class="monitor-settings-title">各商家监控请求方式</h2><p class="hint">用于后台自动监控和“测试通知”，保存后统一应用到该商家所有商品。选择“跟随全局”使用上方全局方式。库存大盘刷新同样使用已保存的商家请求方式。</p><div class="form-grid" id="provider-request-modes"><label>VMISS<select data-provider-mode="vmiss"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>VPS.SOY<select data-provider-mode="vps_soy"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>Akile<select data-provider-mode="akile"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>Isvoro<select data-provider-mode="isvoro"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>DMIT<select data-provider-mode="dmit"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>搬瓦工<select data-provider-mode="bwh"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>其他商家 / 自定义网页<select data-provider-mode="html"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label></div><p id="provider-request-note" class="hint" aria-live="polite"></p>
-    <div class="egress-panel"><div class="section-head"><div><h2>出口节点</h2><p>添加节点后可直接复制安装命令，支持 Debian / Alpine，自动识别子服务器公网 IP。主服务器需能连接节点的监听端口；安装后刷新节点并按商家绑定出口。</p></div><div class="actions"><button id="egress-add-node" type="button">添加节点</button><button id="egress-refresh" type="button">刷新节点</button></div></div><div id="egress-nodes" class="egress-nodes"></div><h3>商家出口路由</h3><div id="egress-routes" class="egress-routes"></div><p id="egress-status" class="hint" aria-live="polite">尚未配置出口节点。</p></div>
-    <p id="fetcher-status" class="hint">普通 HTTPS 请求已启用。</p>
-    <p class="hint">1 核 1GB 等小内存服务器建议优先使用普通 HTTPS 或 cloudscraper；需要浏览器渲染时再为对应商家选择 FlareSolverr。</p>
-    <div class="request-tool cloudscraper">
+    <div class="request-card egress-panel"><div class="section-head"><div><h2>出口节点与商家路由</h2><p>添加节点后按商家绑定出口；主服务器需能连接节点监听端口。</p></div><div class="actions"><button id="egress-add-node" type="button">添加节点</button><button id="egress-refresh" type="button">刷新节点</button></div></div><div id="egress-nodes" class="egress-nodes"></div><h3>商家出口路由</h3><div id="egress-routes" class="egress-routes"></div><p id="egress-status" class="hint" aria-live="polite">尚未配置出口节点。</p></div>
+    <div class="request-tool-grid">
+    <div class="request-tool request-card cloudscraper">
       <h2>cloudscraper · 轻量请求</h2>
       <p class="hint">无需浏览器或额外服务，随安装/更新自动安装。以下参数仅用于 cloudscraper，保存后应用到选择此方式的商家。</p>
       <div class="form-grid request-parameters">
@@ -797,7 +833,7 @@
       <p class="hint">测试使用当前填写的 cloudscraper 参数，无需保存或开启监控，可随时停止。不发送 Telegram、不修改库存。页面可读不代表能识别具体商品库存；动态库存请使用“测试通知”。cloudscraper 不会完整渲染 JavaScript，也不保证通过所有 Cloudflare 验证。</p>
       <div id="cloudscraper-test-result" class="product-test-result" role="status" aria-live="polite" hidden></div>
     </div>
-    <div class="request-tool flaresolverr">
+    <div class="request-tool request-card flaresolverr">
       <h2>FlareSolverr · 浏览器请求</h2>
       <p class="hint">可执行网页 JavaScript，启动浏览器时 CPU 和内存占用更高。安装和更新自动部署或复用本机服务。以下为默认请求参数，各商家可在下方开启独立设置。</p>
       <div class="form-grid">
@@ -816,6 +852,7 @@
       <div id="provider-flaresolverr-settings" class="provider-flare-settings"></div>
       <div class="actions" style="margin-top:10px"><button id="fetcher-test" type="button">测试 FlareSolverr 连接</button></div>
       <p id="fetcher-health" class="hint" aria-live="polite">这里只检测服务是否就绪，不启动浏览器、不访问商品网站。实际库存请在“VPS 库存通知”中点击“测试通知”。</p>
+    </div>
     </div>
     </div>
   </section>
