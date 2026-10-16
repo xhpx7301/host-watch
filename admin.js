@@ -310,7 +310,9 @@ async function refreshManagement() {
   }
   const previousActive = monitorService?.active;
   monitorService = state.monitor;
-  hostwatchService = state.admin;
+  // The top-right badge represents the actual HostWatch monitor service.
+  // The admin HTTP service is shown separately in the management panel.
+  hostwatchService = state.monitor;
   if (["activating", "deactivating"].includes(monitorService?.active)) {
     if (previousActive !== monitorService.active || !serviceTransitionStartedAt) serviceTransitionStartedAt = Date.now();
     monitorService.transition_timeout = Date.now() - serviceTransitionStartedAt >= SERVICE_TRANSITION_TIMEOUT_MS;
