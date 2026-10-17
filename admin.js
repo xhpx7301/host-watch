@@ -2465,9 +2465,7 @@ function addToVpsSeckill(product) {
   let addedDefaults = null;
   if (!items.some(item => item.product_id === product.id)) {
     const defaults = seckillAddDefaults(product);
-    const providerKey = seckillProviderKey(product?.adapter) || seckillProviderKey(product?.provider);
-    const nativeProvider = providerKey === "akile" || providerKey === "vmiss";
-    items.push({ id: product.id, product_id: product.id, label: product.name, quantity: 1, ...defaults, target_url: product.purchase_url || product.snapshot?.url || "", submit_url: "", enabled: true, auto_submit: nativeProvider });
+    items.push({ id: product.id, product_id: product.id, label: product.name, quantity: 1, ...defaults, target_url: product.purchase_url || product.snapshot?.url || "", enabled: true });
     const accountLabel = defaults.account_id ? "已绑定默认账户" : "未找到对应账户";
     const egressLabel = defaults.egress_node_id ? "已绑定默认出口节点" : "跟随商家出口";
     const couponLabel = defaults.coupon_code ? "已填入默认优惠码" : "暂无默认优惠码";
@@ -2516,28 +2514,10 @@ function renderVpsSeckill() {
         item.akile_protocol_agreed = true;
         item.akile_broadcast_ip_ack = true;
       }
-      if (item.auto_submit === undefined) item.auto_submit = true;
     }
-    const submit = document.createElement("input"); submit.type = "url"; submit.value = item.submit_url || ""; submit.placeholder = "仅创建待付款订单的适配接口（非普通结算页）";
-    const submitLabel = document.createElement("label"); submitLabel.append(text("span", "待付款下单接口"), submit);
-    const akileSettings = text("div", "", "form-grid span-2"); akileSettings.hidden = true;
-    const submitHint = text("p", "", "hint span-2");
-    const updateSubmitHint = () => {
-      const nativeAkile = providerKey === "akile";
-      const nativeVmiss = providerKey === "vmiss";
-      const nativeOrder = nativeAkile || nativeVmiss;
-      const missing = item.auto_submit && !nativeOrder && !String(item.submit_url || "").trim();
-      submit.hidden = nativeOrder;
-      submitLabel.hidden = nativeOrder;
-      submitHint.textContent = nativeAkile ? "Akile 使用内置待付款下单接口：自动确认服务协议和广播 IP 条款，固定 Debian 12、1 个月；只创建订单，不调用支付。" : nativeVmiss ? "VMISS 使用内置官网结算适配：登录、预填系统与月付、应用优惠码并创建 Alipay 待付款发票；不会跳转或自动付款。" : missing ? "自动提交已允许，但未配置待付款下单接口；启动后只会提供官网购买链接，不会创建订单。" : "下单接口必须明确支持仅创建待付款订单，普通结算网页不会被调用。";
-      submitHint.className = missing ? "error span-2" : "hint span-2";
-    };
-    submit.addEventListener("input", () => { item.submit_url = submit.value; updateSubmitHint(); updateDraftState(); });
     [["下单数量（台，1–100）", quantity], ["优惠码", coupon], ["系统", operatingSystem], ["付款周期", billingCycle], ["付款方式", paymentMethod], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
-    grid.append(submitLabel, akileSettings);
     const enabled = settingButton("商品状态", item.enabled !== false, value => { item.enabled = value; renderVpsSeckillTask(); }, ["已停用", "已启用"]);
-    const auto = settingButton("自动提交", item.auto_submit, value => { item.auto_submit = value; updateSubmitHint(); });
-    const flags = text("div", "", "actions"); flags.append(enabled, auto);
+    const flags = text("div", "", "actions"); flags.append(enabled);
     const check = text("button", "检查账户", "seckill-check-account"); check.type = "button"; check.disabled = actionRunning || !item.account_id;
     check.setAttribute("aria-label", `检查补货抢购账户 ${title.textContent}`);
     const status = text("p", seckillAccountNote(item), "hint seckill-account-status"); status.setAttribute("role", "status");
@@ -2548,7 +2528,7 @@ function renderVpsSeckill() {
         seckillAccountChecks.set(item.id, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : "error");
       });
     });
-    flags.append(check); card.append(status); updateSubmitHint();
+    flags.append(check); card.append(status);
     const remove = text("button", "删除商品", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.setAttribute("aria-label", `删除补货抢购商品 ${title.textContent}`);
     remove.addEventListener("click", () => { const index = seckillItems().indexOf(item); if (index >= 0) seckillItems().splice(index, 1); renderVpsSeckill(); updateDraftState(); setMessage("已删除该补货抢购商品。", "pending"); }); flags.append(remove);
@@ -2608,7 +2588,6 @@ function renderVpsSeckill() {
     setProviderExtra();
     field("用户名 / 邮箱", "username", "官网登录名或邮箱");
     const password = document.createElement("input"); password.type = "password"; password.autocomplete = "new-password"; password.placeholder = account.password_configured ? "已保存，留空保持不变" : "登录密码"; password.addEventListener("input", () => { account.password = password.value; account.password_configured = Boolean(password.value) || account.password_configured; updateDraftState(); }); const passwordLabel = document.createElement("label"); passwordLabel.append(text("span", "密码"), password); grid.append(passwordLabel);
-    const autoLabel = settingButton("自动下单", account.auto_submit, value => { account.auto_submit = value; });
     const check = text("button", "检查账户", "seckill-check-account"); check.type = "button"; check.dataset.accountId = account.id; check.disabled = actionRunning;
     check.setAttribute("aria-label", `检查网站账户 ${account.name || account.username || account.id}`);
     check.addEventListener("click", () => {
@@ -2620,7 +2599,7 @@ function renderVpsSeckill() {
     const remove = text("button", "删除账户", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.setAttribute("aria-label", `删除补货抢购账户 ${account.name || account.id}`);
     remove.addEventListener("click", () => deleteSeckillAccounts([account.id]));
-    card.append(grid, adapterNote, providerExtra, text("p", standaloneAccountNote(account), "hint seckill-account-status"), text("div", "", "actions")); card.lastChild.append(autoLabel, check, remove);
+    card.append(grid, adapterNote, providerExtra, text("p", standaloneAccountNote(account), "hint seckill-account-status"), text("div", "", "actions")); card.lastChild.append(check, remove);
     const saveAccount = text("button", "保存账户", "card-save"); saveAccount.type = "button"; saveAccount.dataset.saveCard = `seckill-account:${account.id}`; card.lastChild.append(saveAccount); accountTarget.append(card);
   });
   renderVpsSeckillTask();
@@ -2634,7 +2613,9 @@ function deleteSeckillAccounts(ids) {
   setMessage("已删除补货抢购账户并解除对应商品绑定，请保存抢购卡片。", "pending");
 }
 function collectVpsSeckill() {
-  return { enabled: seckillItems().some(item => item.enabled !== false), mode: document.querySelector("#vps-seckill-mode")?.value || "manual", interval_seconds: Number(document.querySelector("#vps-seckill-interval")?.value || 5), items: seckillItems().map(item => ({ ...item })), accounts: seckillAccounts().map(account => ({ ...account })) };
+  const items = seckillItems().map(({ submit_url, auto_submit, ...item }) => item);
+  const accounts = seckillAccounts().map(({ auto_submit, ...account }) => account);
+  return { enabled: items.some(item => item.enabled !== false), mode: document.querySelector("#vps-seckill-mode")?.value || "manual", interval_seconds: Number(document.querySelector("#vps-seckill-interval")?.value || 5), items, accounts };
 }
 function savedConfigSnapshot() {
   if (!savedConfig) return null;
@@ -2651,7 +2632,6 @@ function comparableSeckillAccount(account) {
     provider: String(account.provider || ""),
     username: String(account.username || ""),
     login_url: String(account.login_url || ""),
-    auto_submit: Boolean(account.auto_submit),
     password: String(account.password || ""),
     password_configured: Boolean(account.password_configured || account.password),
   };
@@ -2673,12 +2653,10 @@ function comparableSeckillItem(item) {
     billing_cycle: String(item.billing_cycle || ""),
     payment_method: String(item.payment_method || ""),
     target_url: String(item.target_url || ""),
-    submit_url: String(item.submit_url || ""),
     account_id: String(item.account_id || ""),
     egress_node_id: String(item.egress_node_id || ""),
     quantity: Number(item.quantity || 0),
     enabled: item.enabled !== false,
-    auto_submit: Boolean(item.auto_submit),
     label: String(item.label || ""),
   };
 }
@@ -2751,7 +2729,7 @@ document.querySelector("#vps-seckill-open-notifications").addEventListener("clic
 document.querySelector("#seckill-picker-close").addEventListener("click", () => document.querySelector("#seckill-picker-dialog").close());
 document.querySelector("#vps-seckill-delete-all").addEventListener("click", () => { seckillItems().splice(0); renderVpsSeckill(); updateDraftState(); setMessage("已删除全部补货抢购商品，请保存抢购卡片。", "pending"); });
 document.querySelector("#vps-seckill-delete-all-accounts").addEventListener("click", () => deleteSeckillAccounts(seckillAccounts().map(account => account.id)));
-document.querySelector("#vps-seckill-add-account").addEventListener("click", () => { seckillAccounts().push({ id: `account-${Date.now()}`, name: "", provider: "", username: "", password: "", login_url: "", auto_submit: false }); renderVpsSeckill(); updateDraftState(); });
+document.querySelector("#vps-seckill-add-account").addEventListener("click", () => { seckillAccounts().push({ id: `account-${Date.now()}`, name: "", provider: "", username: "", password: "", login_url: "" }); renderVpsSeckill(); updateDraftState(); });
 document.querySelector("#vps-seckill-clear-log").addEventListener("click", () => { if (vpsSeckillTask) { vpsSeckillTask.logs = []; renderVpsSeckillTask(); } });
 document.querySelector("#vps-seckill-mode").addEventListener("change", event => { config.vps_seckill.mode = event.target.value; updateDraftState(); });
 document.querySelector("#vps-seckill-interval").addEventListener("input", event => { config.vps_seckill.interval_seconds = Number(event.target.value); updateDraftState(); });
