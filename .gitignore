@@ -10,3 +10,6 @@ config.json
 status.json
 catalog.json
 .browser-request.lock
+exchange-rates.json
+inventory-cache.json
+auto-sync.log
