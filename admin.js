@@ -2615,7 +2615,7 @@ function deleteSeckillAccounts(ids) {
   config.vps_seckill.accounts = seckillAccounts().filter(account => !deleted.has(account.id));
   seckillItems().forEach(item => { if (deleted.has(item.account_id)) item.account_id = ""; });
   renderVpsSeckill(); updateDraftState();
-  setMessage("已删除补货抢购账户并解除对应商品绑定，请保存抢购卡片。", "pending");
+  setMessage("已删除补货抢购账户并解除对应商品绑定，请在网站账号区域保存。", "pending");
 }
 function collectVpsSeckill() {
   const items = seckillItems().map(({ submit_url, auto_submit, ...item }) => item);
