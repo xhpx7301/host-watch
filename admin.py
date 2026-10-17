@@ -873,14 +873,17 @@ def vmiss_order(session, item: dict, account: dict, product, url: str, key: str)
                     invoice_url = _vmiss_invoice_url(invoice_page, invoice_page.url)
             except ValueError:
                 pass
+    invoice_confirmed = False
     if not invoice_url:
         invoice_url = _vmiss_unpaid_invoice_from_list(session)
+        invoice_confirmed = bool(invoice_url)
     if not invoice_url:
         if 300 <= order_response.status_code < 400:
             raise ValueError("VMISS 订单提交后跳转到支付或未知页面，已停止且未确认订单")
         raise ValueError("VMISS 未返回待付款发票，未确认订单")
     invoice_id = parse_qs(urlsplit(invoice_url).query)["id"][0]
-    _vmiss_confirm_invoice(session, invoice_url)
+    if not invoice_confirmed:
+        _vmiss_confirm_invoice(session, invoice_url)
     return {"order_id": f"vmiss-invoice-{invoice_id}", "invoice_url": invoice_url, "payment_status": "unpaid"}
 
 
