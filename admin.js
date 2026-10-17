@@ -445,6 +445,8 @@ function scheduleUpdateReload(delayMs = 10_000) {
   sessionStorage.setItem(UPDATE_RELOAD_KEY, String(deadline));
   const reload = () => {
     sessionStorage.removeItem(UPDATE_RELOAD_KEY);
+    sessionStorage.setItem("hostwatch-current-page", "overview");
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#overview`);
     window.location.reload();
   };
   updateReloadTimer = setTimeout(reload, Math.max(0, deadline - Date.now()));
@@ -459,6 +461,8 @@ function resumeUpdateReload() {
   const delay = Math.max(0, deadline - Date.now());
   updateReloadTimer = setTimeout(() => {
     sessionStorage.removeItem(UPDATE_RELOAD_KEY);
+    sessionStorage.setItem("hostwatch-current-page", "overview");
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#overview`);
     window.location.reload();
   }, delay);
 }
