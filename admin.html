@@ -490,6 +490,11 @@
     .more-actions { display:inline-flex; position:relative; }
     .more-actions > button { min-width:76px; padding-inline:11px; color:#44566d; background:#f8fafc; }
     .more-actions > button:hover:not(:disabled) { color:var(--blue); border-color:#aebfe0; background:var(--blue-soft); }
+    .overview-quick-actions { justify-content:flex-end; }
+    .overview-quick-actions .more-actions > button { display:inline-flex; align-items:center; gap:5px; }
+    .menu-caret { color:var(--muted); font-size:14px; line-height:1; transform:translateY(-1px); transition:transform .18s ease; }
+    .overview-quick-actions .more-actions > button[aria-expanded="true"] .menu-caret { transform:rotate(180deg) translateY(1px); }
+    .overview-quick-menu { min-width:190px; }
     .action-popover { position:fixed; inset:auto; margin:0; padding:5px; min-width:155px; max-width:calc(100vw - 24px); border:1px solid var(--line); border-radius:8px; background:white; box-shadow:0 8px 28px #24375426; }
     .action-popover:popover-open { display:grid; gap:2px; }
     .action-popover button { border:0; text-align:left; min-height:34px; border-radius:5px; padding:7px 10px; background:transparent; font-size:13px; font-weight:600; }
@@ -701,7 +706,13 @@
   </section>
 
   <section class="section">
-    <div class="section-head overview-recent-head"><div><h2>关注商品 · 最近库存</h2><p>显示最近读取的库存，暂停后保留历史结果。</p></div><div class="actions"><button type="button" id="overview-open-catalog">浏览大盘</button><button type="button" id="overview-open-monitor">我的监控</button><button type="button" id="overview-open-notifications">我的通知</button><button type="button" id="overview-open-seckill">VPS 补货抢购</button><button id="open-products" type="button">＋ 自定义商品</button></div></div>
+    <div class="section-head overview-recent-head"><div><h2>关注商品 · 最近库存</h2><p>显示最近读取的库存，暂停后保留历史结果。</p></div><div class="actions overview-quick-actions">
+      <div class="more-actions"><button type="button" id="overview-open-catalog" aria-expanded="false" popovertarget="overview-catalog-menu">浏览大盘 <span class="menu-caret" aria-hidden="true">⌄</span></button><div id="overview-catalog-menu" class="action-popover overview-quick-menu" popover="auto" role="menu" aria-label="浏览大盘更多操作"><button type="button" role="menuitem" data-overview-action="catalog-open">打开库存大盘</button><button type="button" role="menuitem" data-overview-action="catalog-refresh">刷新目录库存</button><button type="button" role="menuitem" data-overview-action="catalog-watch">查看我的监控</button></div></div>
+      <div class="more-actions"><button type="button" id="overview-open-monitor" aria-expanded="false" popovertarget="overview-monitor-menu">我的监控 <span class="menu-caret" aria-hidden="true">⌄</span></button><div id="overview-monitor-menu" class="action-popover overview-quick-menu" popover="auto" role="menu" aria-label="我的监控更多操作"><button type="button" role="menuitem" data-overview-action="monitor-open">打开库存监控</button><button type="button" role="menuitem" data-overview-action="monitor-refresh">立即刷新库存监控</button><button type="button" role="menuitem" data-overview-action="monitor-catalog">从大盘添加监控</button></div></div>
+      <div class="more-actions"><button type="button" id="overview-open-notifications" aria-expanded="false" popovertarget="overview-notifications-menu">我的通知 <span class="menu-caret" aria-hidden="true">⌄</span></button><div id="overview-notifications-menu" class="action-popover overview-quick-menu" popover="auto" role="menu" aria-label="我的通知更多操作"><button type="button" role="menuitem" data-overview-action="notifications-open">打开库存通知</button><button type="button" role="menuitem" data-overview-action="notifications-refresh">立即刷新库存通知</button><button type="button" role="menuitem" data-overview-action="notifications-catalog">从大盘添加通知</button></div></div>
+      <div class="more-actions"><button type="button" id="overview-open-seckill" aria-expanded="false" popovertarget="overview-seckill-menu">VPS 补货抢购 <span class="menu-caret" aria-hidden="true">⌄</span></button><div id="overview-seckill-menu" class="action-popover overview-quick-menu" popover="auto" role="menu" aria-label="VPS 补货抢购更多操作"><button type="button" role="menuitem" data-overview-action="seckill-open">打开补货抢购</button><button type="button" role="menuitem" data-overview-action="seckill-watch">从我的监控添加</button><button type="button" role="menuitem" data-overview-action="seckill-notifications">从我的通知添加</button></div></div>
+      <div class="more-actions"><button id="open-products" type="button" aria-expanded="false" popovertarget="overview-products-menu">＋ 自定义商品 <span class="menu-caret" aria-hidden="true">⌄</span></button><div id="overview-products-menu" class="action-popover overview-quick-menu" popover="auto" role="menu" aria-label="自定义商品更多操作"><button type="button" role="menuitem" data-overview-action="products-add">添加自定义商品</button><button type="button" role="menuitem" data-overview-action="products-manage">管理已有商品</button></div></div>
+    </div></div>
     <div id="overview-recent"></div>
   </section>
   </div>
