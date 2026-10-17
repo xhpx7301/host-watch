@@ -3349,9 +3349,9 @@ async function saveConfig(scope = "all", automatic = false) {
   }
   updateDraftState();
   if (result.service?.ok) {
-    setMessage(automatic ? `${autoSaveScopeNames[scope] || "配置"}已自动保存并应用。` : scope === "all" ? "配置已保存并应用。" : "本卡片配置已保存并应用。", "success");
+    setMessage(automatic ? `${autoSaveScopeNames[scope] || "配置"}已自动保存并应用。` : scope === "all" ? "配置已保存并应用。" : "本卡片配置已保存并应用。", "success", true, automatic ? false : true);
   } else {
-    setMessage(`配置已保存，但自动应用服务失败：${result.service?.error || "请在设置中重试"}`, "error");
+    setMessage(`配置已保存，但自动应用服务失败：${result.service?.error || "请在设置中重试"}`, "error", true, automatic ? false : true);
   }
   try { await Promise.all([refreshManagement(), loadStatus()]); }
   catch (error) { document.querySelector("#manage-task-status").textContent = `配置已保存，管理状态刷新失败：${error.message}`; }

@@ -222,7 +222,7 @@
     renderProducts(); updateDraftState(); renderTable();
     if (changed) {
       scheduleAutoSave(type === "watch" ? "monitor" : "notifications");
-      setMessage(`已${enabled ? "加入" : "移出"} ${changed} 个商品的${type === "watch" ? "库存监控（不通知）" : "库存通知"}，正在自动保存。`, "pending");
+      setMessage(`已${enabled ? "加入" : "移出"} ${changed} 个商品的${type === "watch" ? "库存监控（不通知）" : "库存通知"}，正在自动保存。`, "pending", true, false);
     } else setMessage("选择无需更改。", "success");
   }
 
