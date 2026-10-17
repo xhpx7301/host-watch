@@ -942,6 +942,16 @@ def vmiss_order(session, item: dict, account: dict, product, url: str, key: str,
             "invoice_verification": verification}
 
 
+def _order_exception_detail(exc: Exception) -> str:
+    """Keep order diagnostics useful without copying request secrets into logs."""
+    if isinstance(exc, requests.RequestException):
+        return f"{exc.__class__.__name__}（网络请求异常）"
+    detail = str(exc).strip()
+    detail = re.sub(r"https?://\S+", "[地址已隐藏]", detail, flags=re.IGNORECASE)
+    detail = re.sub(r"(?i)(password|passwd|token|secret|authorization|cookie)[^；。,\s]*", r"\1=[已隐藏]", detail)
+    return detail[:240] or exc.__class__.__name__
+
+
 def akile_order_payload(item: dict, product, url: str) -> dict:
     """Build the same unpaid Akile order payload used by the shop page.
 
@@ -1308,7 +1318,7 @@ class SeckillTask:
                 verification = akile_confirm_order(session, order["order_id"], item, inspected)
                 self.log(f"Akile 订单 {order['order_id']} 检查正常：状态为待付款且订单号匹配", "success", item)
             except (requests.RequestException, ValueError) as exc:
-                detail = str(exc).strip() or exc.__class__.__name__
+                detail = _order_exception_detail(exc)
                 self.log(f"已发送一次 Akile 下单请求，但无法确认待付款订单；原因：{detail[:240]}。已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
                 return {"status": "uncertain", "url": url, "quantity": quantity}
             purchase_url = akile_order_page_url(order["order_id"])
@@ -1322,7 +1332,7 @@ class SeckillTask:
                 order = vmiss_order(session, item, account, inspected, url, key,
                                     progress=lambda message: self.log(message, "info", item))
             except (requests.RequestException, ValueError) as exc:
-                detail = str(exc).strip() or exc.__class__.__name__
+                detail = _order_exception_detail(exc)
                 self.log(f"已发送一次 VMISS 下单请求，但无法确认待付款发票；原因：{detail[:240]}。已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
                 return {"status": "uncertain", "url": url, "quantity": quantity}
             self.log(f"VMISS 订单 {order['order_id']} 检查正常：状态为未付款，商品、系统和优惠码已匹配", "success", item)
@@ -1350,7 +1360,7 @@ class SeckillTask:
             self.log(f"已创建待付款订单 {data['order_id']}，订单状态检查正常", "success", item)
         except (requests.RequestException, ValueError) as exc:
             # A lost response may still have created an order. Never retry automatically.
-            detail = str(exc).strip() or exc.__class__.__name__
+            detail = _order_exception_detail(exc)
             self.log(f"已发送一次下单请求，但无法确认待付款订单；原因：{detail[:240]}。已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
             return {"status": "uncertain", "url": url, "quantity": quantity}
         purchase_url = self._affiliate_purchase_url(item, url)
