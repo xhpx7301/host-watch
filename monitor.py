@@ -7,6 +7,7 @@ import math
 import os
 import re
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -27,6 +28,7 @@ ROOT = Path(__file__).resolve().parent
 STATE_PATH = ROOT / "state.json"
 CONFIG_PATH = ROOT / "config.json"
 STATUS_PATH = ROOT / "status.json"
+_BROWSER_THREAD_LOCK = threading.Lock()
 
 
 class MonitorError(RuntimeError):
@@ -374,21 +376,57 @@ def cloudscraper_request_session(fetcher: dict | None = None):
 
 @contextmanager
 def browser_request_slot(wait: bool = False):
-    """Serialize Chromium across the admin and monitor services on Debian."""
-    if sys.platform != "linux":
-        yield
-        return
-    import fcntl
+    """Serialize FlareSolverr requests across monitor/admin processes.
+
+    Automatic stock checks run in the monitor service while VPS seckill runs in
+    the admin service.  FlareSolverr commonly uses one Chromium profile, so
+    requests must share one cross-process queue.  Keep the same lock on Linux
+    and Windows; the previous Windows no-op allowed both services to launch
+    Chromium at the same time and produced browser-occupied errors.
+    """
     lock_path = Path(os.getenv("VMISS_CONFIG", str(CONFIG_PATH))).parent / ".browser-request.lock"
-    with lock_path.open("a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
-        except BlockingIOError:
-            raise RequestServiceError("另一个浏览器请求正在执行，请等待完成或停止测试后重试") from None
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    thread_acquired = _BROWSER_THREAD_LOCK.acquire(blocking=wait)
+    if not thread_acquired:
+        raise RequestServiceError("另一个浏览器请求正在执行，请等待完成或停止测试后重试") from None
+    lock = None
+    try:
+        lock = lock_path.open("a+b")
+        if sys.platform == "win32":
+            import msvcrt
+            lock.seek(0)
+            if lock.tell() == 0:
+                lock.write(b"0")
+                lock.flush()
+            while True:
+                try:
+                    lock.seek(0)
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    if not wait:
+                        raise RequestServiceError("另一个浏览器请求正在执行，请等待完成或停止测试后重试") from None
+                    time.sleep(0.2)
+        else:
+            import fcntl
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+            except BlockingIOError:
+                raise RequestServiceError("另一个浏览器请求正在执行，请等待完成或停止测试后重试") from None
         try:
             yield
         finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+            if sys.platform == "win32":
+                import msvcrt
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock, fcntl.LOCK_UN)
+    finally:
+        if lock is not None:
+            lock.close()
+        _BROWSER_THREAD_LOCK.release()
 
 
 def check_browser_memory(fetcher: dict) -> None:
@@ -449,23 +487,35 @@ def _fetch_with_flaresolverr(session: requests.Session, url: str, fetcher: dict,
         request["disableMedia"] = fetcher["disable_media"]
     if fetcher.get("egress_proxy_url"):
         request["proxy"] = egress.browser_proxy(fetcher)
-    try:
-        request_kwargs = {"json": request, "timeout": (10, timeout_seconds + wait + 15)}
-        if fetcher.get("egress_proxy_url"):
-            # The API is a control connection, not a request to the merchant.
-            # Empty mappings still inherit Session.proxies in requests.
-            request_kwargs["proxies"] = {"http": "", "https": ""}
-        response = session.post(endpoint, **request_kwargs)
-        payload = response.json()
-    except requests.Timeout:
-        raise RequestServiceError("FlareSolverr 请求超时；请检查服务器资源、目标站点验证和超时设置") from None
-    except requests.RequestException:
-        raise RequestServiceError("无法连接 FlareSolverr；请在网页测试服务连接，或检查容器日志") from None
-    except ValueError:
-        raise RequestServiceError("FlareSolverr 返回非 JSON 响应；请核对 API 地址是否以 /v1 结尾") from None
+    request_kwargs = {"json": request, "timeout": (10, timeout_seconds + wait + 15)}
+    if fetcher.get("egress_proxy_url"):
+        # The API is a control connection, not a request to the merchant.
+        # Empty mappings still inherit Session.proxies in requests.
+        request_kwargs["proxies"] = {"http": "", "https": ""}
+    browser_busy = False
+    for busy_attempt in range(3):
+        try:
+            response = session.post(endpoint, **request_kwargs)
+            payload = response.json()
+        except requests.Timeout:
+            raise RequestServiceError("FlareSolverr 请求超时；请检查服务器资源、目标站点验证和超时设置") from None
+        except requests.RequestException:
+            raise RequestServiceError("无法连接 FlareSolverr；请在网页测试服务中检查连接，或查看容器日志") from None
+        except ValueError:
+            raise RequestServiceError("FlareSolverr 返回非 JSON 响应；请核对 API 地址是否以 /v1 结尾") from None
+        if isinstance(payload, dict) and payload.get("status") != "ok":
+            busy_message = str(payload.get("message", "")).casefold()
+            busy_markers = ("browser is already", "already running", "browser busy", "occupied", "in use", "正在使用", "已占用")
+            browser_busy = any(marker in busy_message for marker in busy_markers)
+            if browser_busy and busy_attempt < 2:
+                time.sleep(0.5 * (busy_attempt + 1))
+                continue
+        break
     if not isinstance(payload, dict):
         raise RequestServiceError(f"FlareSolverr API 返回异常（HTTP {response.status_code}）；请检查服务日志")
     if payload.get("status") != "ok":
+        if browser_busy:
+            raise RequestServiceError("FlareSolverr 浏览器仍在处理上一请求，已自动排队并重试；请检查服务资源，或适当增大抢购检查间隔") from None
         # Do not expose raw browser errors, which can contain URLs or cookies.
         message = str(payload.get("message", "")).casefold()
         if "captcha" in message or "challenge" in message:

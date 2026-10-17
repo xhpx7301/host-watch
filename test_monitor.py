@@ -144,6 +144,16 @@ class BrowserRequestTests(unittest.TestCase):
                 with self.assertRaisesRegex(RequestServiceError, label):
                     fetch_html_stock(self.session, html_product(), self.fetcher)
 
+    def test_browser_busy_response_is_retried_before_failing(self):
+        busy = Mock(ok=False, status_code=500)
+        busy.json.return_value = {"status": "error", "message": "browser is already running"}
+        self.session.post.side_effect = [busy, busy, self.session.post.return_value]
+        with patch("monitor.time.sleep") as sleep:
+            result = fetch_html_stock(self.session, html_product(), self.fetcher)
+        self.assertEqual(result.available, 3)
+        self.assertEqual(self.session.post.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
     def test_captcha_error_does_not_expose_server_response_secrets(self):
         self.payload = {"status": "error", "message": "Captcha detected at https://example.com/?token=secret"}
         self.session.post.return_value.ok = False

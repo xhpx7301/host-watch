@@ -881,7 +881,7 @@
         <button id="flaresolverr-full" class="option-button mode-button" type="button" data-flare-mode="full" aria-pressed="true">完整加载</button>
       </div>
       <p class="hint">默认使用轻量加载和 0 秒额外等待，优先速度；轻量加载减少图片、样式和字体下载，适合只读取库存。需要支持 disableMedia 的 FlareSolverr 版本，旧服务可能忽略此选项。若读取不完整，切换到完整加载，并将渲染等待设为 1–2 秒。渲染等待是页面加载完成后的固定额外等待，不会因未出现 CF 而提前跳过；超时是等待上限，调小不会让成功请求更快。首次启动浏览器和网站验证仍需要时间。</p>
-      <p class="hint">提速建议：能正常读取的商家单独使用普通 HTTPS 或 cloudscraper；FlareSolverr 只用于需要浏览器的商家。尽量只刷新所需分类，“全部公开套餐”可能需要访问多页。页面上的连接测试只测服务就绪，速度以商品测试为准。</p>
+      <p class="hint">提速建议：能正常读取的商家单独使用普通 HTTPS 或 cloudscraper；FlareSolverr 只用于需要浏览器的商家。尽量只刷新所需分类，“全部公开套餐”可能需要访问多页。库存监控、库存通知和抢购共用一个浏览器请求队列，同一时间只执行一个 FlareSolverr 请求，后到的请求会自动等待，避免浏览器被占用。页面上的连接测试只测服务就绪，速度以商品测试为准。</p>
       <h3>各商家 FlareSolverr 参数</h3>
       <p class="hint">默认跟随上方参数，点击“参数来源”切换为独立设置。仅在该商家使用 FlareSolverr 时生效；普通 HTTPS 和 cloudscraper 使用各自的设置。修改后点击底部“保存配置”，应用到大盘、自动监控、通知和秒杀；商品单次测试可直接使用未保存的参数。</p>
       <div id="provider-flaresolverr-settings" class="provider-flare-settings"></div>
