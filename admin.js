@@ -151,6 +151,9 @@ function setMessage(message, kind = "", notify = true, inline = true) {
   if (inline) {
     messageNode.textContent = message;
     messageNode.className = kind;
+  } else if (messageNode.className === "pending") {
+    messageNode.textContent = "";
+    messageNode.className = "";
   }
   if (!notify) return;
   clearTimeout(toastTimer);
