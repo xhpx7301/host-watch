@@ -320,6 +320,11 @@ class VmissOrderTests(OrderTaskTests):
         self.assertIn(("accepttos", "on"), order_data)
         self.assertNotIn("ccnumber", {name for name, _ in order_data})
 
+    def test_native_checkout_rejects_multi_quantity_instead_of_misreporting(self):
+        with self.assertRaisesRegex(ValueError, "单台"):
+            admin.vmiss_order(Mock(), {"quantity": 2}, {}, None,
+                              "https://app.vmiss.com/store/test", "abc123")
+
     def test_account_and_order_endpoints_must_share_origin(self):
         self.config['vps_seckill']['items'][0]['submit_url'] = 'https://other.example/order'
         result = self.run_task()

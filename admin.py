@@ -744,6 +744,8 @@ def vmiss_order(session, item: dict, account: dict, product, url: str, key: str)
     """
     from bs4 import BeautifulSoup
 
+    if item.get("quantity", 1) != 1:
+        raise ValueError("VMISS 原生下单暂只支持单台订单")
     page = _vmiss_get(session, url)
     soup = BeautifulSoup(page.text, "html.parser")
     config = soup.select_one("form#frmConfigureProduct")
