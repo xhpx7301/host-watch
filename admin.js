@@ -839,13 +839,10 @@ function productEditor(item, index) {
     renderProducts();
     renderOverview();
     updateDraftState();
-    setMessage("商品已移除，保存后生效。", "pending");
+    scheduleAutoSave(`product:${item.id}`);
+    setMessage("商品已移除，正在自动保存。", "pending");
   });
   actions.append(remove);
-  const saveProduct = text("button", "保存商品", "card-save");
-  saveProduct.type = "button";
-  saveProduct.dataset.saveCard = `product:${item.id}`;
-  actions.append(saveProduct);
   head.append(identity, toggle, actions);
 
   const grid = text("div", "", "form-grid");
@@ -937,7 +934,7 @@ function productEditor(item, index) {
   renderProductTest(article, item.id);
   updateProductEditorTitle(article, item);
 
-  article.addEventListener("input", (event) => { syncSoyCategory(article, event.target.dataset.key); syncEditor(article); });
+  article.addEventListener("input", (event) => { syncSoyCategory(article, event.target.dataset.key); syncEditor(article); updateDraftState(); scheduleAutoSave(`product:${item.id}`); });
   article.addEventListener("change", (event) => {
     if (event.target.dataset.key === "adapter") article.isvoroController?.abort();
     syncSoyCategory(article, event.target.dataset.key);
@@ -947,6 +944,8 @@ function productEditor(item, index) {
       void loadIsvoroDirectory(article);
     }
     syncEditor(article);
+    updateDraftState();
+    scheduleAutoSave(`product:${item.id}`);
     updateAdapterFields(article);
     if (["adapter", "soy_group", "akile_area_mode", "akile_area_id"].includes(event.target.dataset.key)) {
       for (const fields of article.querySelectorAll("[data-adapter-fields]:not([hidden])")) animateFilterResult(fields);
@@ -3148,7 +3147,7 @@ function addProducts(items) {
   renderProducts();
   navigatePage("notifications"); openAdvancedProducts();
   editorNode.querySelector(`[data-id="${CSS.escape(items[0].id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
-  setMessage(items.length === 1 ? "商品已添加，请填写商品信息后保存。" : `已添加 ${items.length} 个商品，可先测试，将需要的套餐加入库存监控或通知后保存。`, "pending");
+  setMessage(items.length === 1 ? "商品已添加，填写内容后会自动保存。" : `已添加 ${items.length} 个商品，可先测试，填写内容后会自动保存。`, "pending");
   updateDraftState();
 }
 // Merchant defaults live in one registry so future presets share the same entry.
