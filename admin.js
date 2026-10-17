@@ -1437,8 +1437,8 @@ function renderMerchantOrder() {
       const from = next.indexOf(source), to = next.indexOf(button.dataset.catalogProvider);
       if (from < 0 || to < 0 || from === to) return;
       next.splice(from, 1); next.splice(to, 0, source); config.merchant_order = next;
-      renderMerchantOrder(); renderProducts(); updateDraftState();
-      setMessage("商家顺序已调整，点击“保存商家顺序”完成编辑，再保存监控卡片。", "pending");
+      renderMerchantOrder(); renderProducts(); updateDraftState(); scheduleAutoSave("monitor");
+      setMessage("商家顺序已调整，正在自动保存。", "pending");
     });
     tabs.addEventListener("click", event => {
       if (merchantOrderEditing && event.target.closest("[data-catalog-provider]")) {
@@ -3177,7 +3177,7 @@ for (const input of document.querySelectorAll("[data-provider-mode]")) input.add
 document.querySelector("#merchant-order-toggle").addEventListener("click", (event) => {
   if (actionRunning) return;
   merchantOrderEditing = !merchantOrderEditing;
-  event.currentTarget.textContent = merchantOrderEditing ? "保存商家顺序" : "调整商家顺序";
+  event.currentTarget.textContent = merchantOrderEditing ? "完成调整" : "调整商家顺序";
   event.currentTarget.classList.toggle("merchant-order-editing", merchantOrderEditing);
   event.currentTarget.setAttribute("aria-expanded", String(merchantOrderEditing));
   renderMerchantOrder();
