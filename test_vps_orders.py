@@ -342,6 +342,19 @@ class AccountVerificationTests(unittest.TestCase):
         self.assertEqual(result['status'], 'valid')
         self.assertEqual(session.post.call_args.kwargs['data'], {'token': 'csrf', 'loginorigin': 'clientarea', 'username': 'user', 'password': 'private-password'})
 
+    def test_dmit_form_login_uses_builtin_adapter(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='dmit', login_url='https://www.dmit.io/login')
+        page = Mock(status_code=200, url='https://www.dmit.io/login', content=b'<form action="/login" method="post"><input type="hidden" name="token" value="csrf"><input name="username"><input name="password"></form>')
+        redirected = Mock(status_code=302, headers={'Location': '/clientarea.php'})
+        logged_in = Mock(status_code=200, url='https://www.dmit.io/clientarea.php', content=b'<a href="logout.php">Logout</a>')
+        session = Mock()
+        session.get.side_effect = [page, logged_in]
+        session.post.return_value = redirected
+        result = admin.check_order_account(session, account)
+        self.assertEqual(result['status'], 'valid')
+        self.assertEqual(session.post.call_args.args[0], 'https://www.dmit.io/login')
+
     def test_known_merchant_url_is_canonical_and_unsupported_auth_stays_unknown(self):
         value = admin.default_config()
         value['vps_seckill']['accounts'] = [{'id': 'v', 'name': 'VMISS', 'provider': 'VMISS', 'username': 'user', 'password': 'pw', 'login_url': 'https://attacker.example/collect'}]

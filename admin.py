@@ -401,6 +401,7 @@ MERCHANT_LOGIN_ADAPTERS = {
     "vmiss": {"name": "VMISS", "url": "https://app.vmiss.com/login", "host": "app.vmiss.com", "username_field": "username"},
     "vps_soy": {"name": "VPS.SOY", "url": "https://www.vps.soy/login", "host": "www.vps.soy", "username_field": "email"},
     "bwh": {"name": "搬瓦工", "url": "https://bwh81.net/clientarea.php", "host": "bwh81.net", "username_field": "username"},
+    "dmit": {"name": "DMIT", "url": "https://www.dmit.io/login", "host": "www.dmit.io", "username_field": "username"},
 }
 AKILE_LOGIN_URL = "https://api.akile.ai/api/v1/user/login"
 AKILE_PROFILE_URL = "https://api.akile.ai/api/v1/user/info"
@@ -465,6 +466,19 @@ def _merchant_form_login(session, account: dict, adapter: dict, fetcher: dict | 
             response = SimpleNamespace(status_code=200, url=final_url, content=body.encode("utf-8"), text=body, headers={})
         except (MonitorError, OSError, requests.RequestException, ValueError) as exc:
             return {"status": "unknown", "message": f"{adapter['name']} 登录页访问失败：{str(exc)[:220]}"}
+    elif (fetcher or {}).get("mode") == "cloudscraper":
+        try:
+            import cloudscraper
+            options = (fetcher or {}).get("cloudscraper") or {}
+            with cloudscraper.create_scraper(interpreter="native", delay=int(options.get("challenge_delay_seconds", 5)), solveDepth=1, doubleDown=False, debug=False) as scraper:
+                egress.apply_session(scraper, fetcher)
+                response = scraper.get(adapter["url"], timeout=(5, 25), allow_redirects=False, headers={**MERCHANT_BROWSER_HEADERS, "Sec-Fetch-Site": "none", "Sec-Fetch-User": "?1"})
+                session.cookies.update(scraper.cookies)
+                session.headers.update(scraper.headers)
+        except ImportError:
+            return {"status": "unknown", "message": "cloudscraper 依赖未安装，无法使用该请求方式检查登录"}
+        except (requests.RequestException, RuntimeError, ValueError):
+            return {"status": "unknown", "message": f"{adapter['name']} cloudscraper 登录页访问失败，请检查请求日志"}
     else:
         session.headers.update(MERCHANT_BROWSER_HEADERS)
         response = session.get(adapter["url"], timeout=(5, 20), allow_redirects=False,
@@ -492,11 +506,20 @@ def _merchant_form_login(session, account: dict, adapter: dict, fetcher: dict | 
     if submitted.status_code == 403:
         return {"status": "unknown", "message": f"{adapter['name']} 登录 POST 被官网拒绝（HTTP 403）{_response_detail(submitted)}；可能是安全策略、验证码或出口 IP，不代表账号密码错误"}
     if 300 <= submitted.status_code < 400:
-        location = submitted.headers.get("Location", "")
-        destination = urljoin(action, location)
-        if not location or not _same_merchant_url(destination, adapter):
-            return {"status": "unknown", "message": "官网登录跳转无法安全确认，请到官网检查"}
-        checked = session.get(destination, timeout=(5, 20), allow_redirects=False)
+        # Some WHMCS installations use a short same-site redirect chain after
+        # login (for example dologin.php -> post-login -> browser_auth.php).
+        # Follow only a bounded chain on the merchant origin; never follow a
+        # payment or cross-origin redirect.
+        checked = submitted
+        for _ in range(6):
+            location = checked.headers.get("Location", "")
+            base_url = checked.url if isinstance(getattr(checked, "url", None), str) and checked.url else action
+            destination = urljoin(base_url, location)
+            if not location or not _same_merchant_url(destination, adapter):
+                return {"status": "unknown", "message": "官网登录跳转无法安全确认，请到官网检查"}
+            checked = session.get(destination, timeout=(5, 20), allow_redirects=False)
+            if not 300 <= checked.status_code < 400:
+                break
         if not 200 <= checked.status_code < 300:
             return {"status": "unknown", "message": "官网登录结果无法读取，请到官网检查"}
         page = checked
