@@ -3099,14 +3099,35 @@ for (const [key, preset] of Object.entries(merchantPresets)) {
 function updateMerchantHint() { document.querySelector("#add-merchant-hint").textContent = merchantPresets[merchantSelect.value].hint; }
 merchantSelect.addEventListener("change", updateMerchantHint);
 updateMerchantHint();
-document.querySelector("#open-products").addEventListener("click", () => {
+function openCustomProducts() {
   navigatePage("notifications"); openAdvancedProducts();
   merchantSelect.focus({ preventScroll: true });
-});
-document.querySelector("#overview-open-catalog").addEventListener("click", () => navigatePage("catalog"));
-document.querySelector("#overview-open-monitor").addEventListener("click", () => navigatePage("monitor"));
-document.querySelector("#overview-open-notifications").addEventListener("click", () => navigatePage("notifications"));
-document.querySelector("#overview-open-seckill").addEventListener("click", () => navigatePage("seckill"));
+}
+const overviewQuickActions = {
+  "catalog-open": () => navigatePage("catalog"),
+  "catalog-refresh": () => document.querySelector("#catalog-refresh")?.click(),
+  "catalog-watch": () => navigatePage("monitor"),
+  "monitor-open": () => navigatePage("monitor"),
+  "monitor-refresh": () => document.querySelector("#monitor-refresh-manual")?.click(),
+  "monitor-catalog": () => navigatePage("catalog"),
+  "notifications-open": () => navigatePage("notifications"),
+  "notifications-refresh": () => document.querySelector("#notify-refresh-manual")?.click(),
+  "notifications-catalog": () => navigatePage("catalog"),
+  "seckill-open": () => navigatePage("seckill"),
+  "seckill-watch": () => { navigatePage("seckill"); openSeckillPicker("watch"); },
+  "seckill-notifications": () => { navigatePage("seckill"); openSeckillPicker("notify"); },
+  "products-add": openCustomProducts,
+  "products-manage": () => { navigatePage("notifications"); openAdvancedProducts(); },
+};
+document.querySelectorAll("[data-overview-action]").forEach(button => button.addEventListener("click", () => {
+  const action = overviewQuickActions[button.dataset.overviewAction];
+  if (action) action();
+  button.closest(".action-popover")?.hidePopover();
+}));
+document.querySelectorAll(".overview-quick-actions .action-popover").forEach(menu => menu.addEventListener("toggle", event => {
+  const trigger = document.querySelector(`[popovertarget="${CSS.escape(menu.id)}"]`);
+  trigger?.setAttribute("aria-expanded", String(event.newState === "open"));
+}));
 document.querySelector("#catalog-open-seckill").addEventListener("click", () => navigatePage("seckill"));
 document.querySelector("#requests-open-seckill").addEventListener("click", () => navigatePage("seckill"));
 document.querySelector("#notification-browse").addEventListener("click", () => navigatePage("catalog"));
