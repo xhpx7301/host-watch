@@ -2956,6 +2956,8 @@ function updateDraftState() {
 }
 
 const autoSaveScopeNames = { catalog: "大盘设置", monitor: "监控设置", notifications: "通知设置", seckill: "抢购设置", "seckill-settings": "抢购执行设置", fetcher: "全局请求方式", "provider-modes": "商家请求方式", cloudscraper: "cloudscraper 参数", egress: "出口节点" };
+// 时间输入需要给用户留出连续输入多位数字的时间，避免输入首位数字时就触发保存。
+const INTERVAL_AUTOSAVE_DELAY_MS = 1500;
 function scheduleAutoSave(scope, delay = 650) {
   if (!savedConfig || !scope) return;
   clearTimeout(autoSaveTimers.get(scope));
@@ -3301,8 +3303,8 @@ document.querySelector("#fetcher-test").addEventListener("click", (event) => run
   document.querySelector("#fetcher-health").textContent = `版本 ${result.version}：${result.message}`;
   setMessage(`FlareSolverr ${result.version} 服务连接成功；实际库存请在 VPS 库存通知中点击“测试通知”，无需开启监控。`, "success");
 }));
-document.querySelector("#interval").addEventListener("input", () => { config.interval_seconds = Number(document.querySelector("#interval").value || NaN); config.monitor_schedule = { ...(config.monitor_schedule || {}), interval_seconds: config.interval_seconds }; renderOverview(); updateDraftState(); scheduleAutoSave("monitor"); });
-document.querySelector("#notify-interval").addEventListener("input", () => { config.notify_schedule = { ...(config.notify_schedule || {}), interval_seconds: Number(document.querySelector("#notify-interval").value || NaN) }; renderOverview(); updateDraftState(); scheduleAutoSave("notifications"); });
+document.querySelector("#interval").addEventListener("input", () => { config.interval_seconds = Number(document.querySelector("#interval").value || NaN); config.monitor_schedule = { ...(config.monitor_schedule || {}), interval_seconds: config.interval_seconds }; renderOverview(); updateDraftState(); scheduleAutoSave("monitor", INTERVAL_AUTOSAVE_DELAY_MS); });
+document.querySelector("#notify-interval").addEventListener("input", () => { config.notify_schedule = { ...(config.notify_schedule || {}), interval_seconds: Number(document.querySelector("#notify-interval").value || NaN) }; renderOverview(); updateDraftState(); scheduleAutoSave("notifications", INTERVAL_AUTOSAVE_DELAY_MS); });
 document.querySelector("#monitor-schedule-mode").addEventListener("change", event => { config.monitor_schedule = { ...(config.monitor_schedule || {}), mode: event.target.value }; renderOverview(); updateDraftState(); scheduleAutoSave("monitor"); });
 document.querySelector("#notify-schedule-mode").addEventListener("change", event => { config.notify_schedule = { ...(config.notify_schedule || {}), mode: event.target.value }; renderOverview(); updateDraftState(); scheduleAutoSave("notifications"); });
 document.querySelector("#interval-preset").addEventListener("change", (event) => {
