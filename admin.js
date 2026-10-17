@@ -2099,7 +2099,7 @@ function renderProductList() {
     else actions.append(text("small", "等待购买链接"));
     const notifyActive = membership(item, "notify");
     const notify = text("button", notifyActive ? "✓ 已加入库存通知" : "＋ 加入库存通知", "membership-toggle membership-notify"); notify.type = "button"; notify.disabled = actionRunning || notifyActive; notify.setAttribute("aria-pressed", String(notifyActive));
-    notify.addEventListener("click", () => { setMembership(item, "notify", true); renderProducts(); updateDraftState(); scheduleAutoSave("notifications"); setMessage("已加入库存通知，正在自动保存。", "pending"); });
+    notify.addEventListener("click", () => { setMembership(item, "notify", true); renderProducts(); updateDraftState(); scheduleAutoSave("notifications"); setMessage("已加入库存通知，正在自动保存。", "pending", true, false); });
     const seckill = text("button", "加入 VPS 补货抢购", "membership-toggle"); seckill.type = "button"; seckill.disabled = actionRunning; seckill.addEventListener("click", () => addToVpsSeckill(item));
     const remove = text("button", "移出监控", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.addEventListener("click", () => { setMembership(item, "watch", false); renderProducts(); updateDraftState(); scheduleAutoSave("monitor"); setMessage("已移出库存监控，正在自动保存。", "pending"); });
@@ -2478,7 +2478,7 @@ function addToVpsSeckill(product) {
     const couponLabel = defaults.coupon_code ? "已填入默认优惠码" : "暂无默认优惠码";
     addedDefaults = `${accountLabel}、${egressLabel}、${couponLabel}`;
   }
-  renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); setMessage(`${product.name} 已加入 VPS 补货抢购${addedDefaults ? `：${addedDefaults}` : ""}，正在自动保存；账户、出口节点和优惠码仍可修改。`, "pending");
+  renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); setMessage(`${product.name} 已加入 VPS 补货抢购${addedDefaults ? `：${addedDefaults}` : ""}，正在自动保存；账户、出口节点和优惠码仍可修改。`, "pending", true, false);
 }
 function renderVpsSeckill() {
   const value = config.vps_seckill || { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] };
@@ -2945,7 +2945,7 @@ function scheduleAutoSave(scope, delay = 650) {
       if (!Number.isInteger(seconds) || seconds < 0 || seconds > 86400) return;
     }
     if (actionRunning) { scheduleAutoSave(scope, 900); return; }
-    runAction(null, "", `正在自动保存${autoSaveScopeNames[scope] || "配置"}…`, () => saveConfig(scope, true));
+    runAction(null, "", `正在自动保存${autoSaveScopeNames[scope] || "配置"}…`, () => saveConfig(scope, true), true, false);
   }, delay);
   autoSaveTimers.set(scope, timer);
 }
