@@ -59,8 +59,8 @@ def vmiss_checkout_page():
     <form method="post" action="cart.php?a=checkout"><input type="hidden" name="token" value="checkout-token"><input name="promocode"><button name="validatepromo">Validate Code</button></form>"""
 
 
-def vmiss_invoice_page(status="Unpaid"):
-    return f'<main><h1>View Invoice</h1><span class="status">{status}</span></main>'
+def vmiss_invoice_page(status="Unpaid", product="US.LA.CMIN2.Elite", system="Debian 12", coupon="10%OFF"):
+    return f'<main><h1>View Invoice</h1><span class="status">{status}</span><div class="invoice-item">{product}<br>Operating System: {system}<br>优惠码: {coupon}</div></main>'
 
 
 class OrderTaskTests(unittest.TestCase):
@@ -350,14 +350,16 @@ class VmissOrderTests(OrderTaskTests):
         invoice_list = VmissResponse(
             '<table><tr><td><a href="/viewinvoice.php?id=456">VMISS-2026</a></td><td>Unpaid</td></tr></table>',
             url="https://app.vmiss.com/clientarea.php?action=invoices")
-        session.get.side_effect = [config, checkout, invoice_list]
+        invoice_page = VmissResponse(vmiss_invoice_page(), url="https://app.vmiss.com/viewinvoice.php?id=456")
+        session.get.side_effect = [config, checkout, invoice_list, invoice_page]
         session.post.side_effect = [VmissResponse(""), order_response]
         result = admin.vmiss_order(session, {"quantity": 1}, {"username": "user@example.com"},
                                    Product("product60", "US.LA.CMIN2.Elite", 1, "https://app.vmiss.com/store/test"),
                                    "https://app.vmiss.com/store/test", "abc123")
         self.assertEqual(result["order_id"], "vmiss-invoice-456")
         self.assertEqual(result["payment_status"], "unpaid")
-        self.assertEqual(session.get.call_args_list[-1].args[0], admin.VMISS_INVOICES_URL)
+        self.assertEqual(session.get.call_args_list[-2].args[0], admin.VMISS_INVOICES_URL)
+        self.assertEqual(session.get.call_args_list[-1].args[0], "https://app.vmiss.com/viewinvoice.php?id=456")
 
     def test_native_checkout_rejects_multi_quantity_instead_of_misreporting(self):
         with self.assertRaisesRegex(ValueError, "单台"):
