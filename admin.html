@@ -792,7 +792,7 @@
   </section>
   <section class="page-panel panel-card" id="page-notifications" data-page="notifications" aria-labelledby="page-title" hidden>
     <div class="section-body">
-    <div class="section-head"><div><h2>我的 VPS 库存通知 <span id="notification-count" class="subtle"></span></h2><p>每轮补货通知一次，库存变化更新原 Telegram 消息，支持单次测试。</p></div><div class="actions"><button id="notification-browse" type="button">从大盘添加</button><button type="button" class="card-save" data-save-card="notifications">保存通知设置</button></div></div>
+    <div class="section-head"><div><h2>我的 VPS 库存通知 <span id="notification-count" class="subtle"></span></h2><p>每轮补货通知一次，库存变化更新原 Telegram 消息，支持单次测试。</p></div><div class="actions"><button id="notification-browse" type="button">从大盘添加</button></div></div>
     <details class="help-note"><summary>库存通知说明</summary><p id="notification-note" class="hint"></p></details>
     <div class="module-settings" aria-labelledby="notify-settings-title">
       <div class="module-settings-head"><div><h3 id="notify-settings-title">库存通知刷新设置</h3><p>只控制库存通知商品的检查，不影响库存监控。通知仍需配置 Telegram 才会发送。</p></div><span class="subtle">独立于库存监控</span></div>
@@ -810,7 +810,7 @@
         <button id="isvoro-seckill" class="option-button" type="button" data-config-option data-on="已开启" data-off="未开启" aria-pressed="false"><span>新活动提醒</span><span data-option-state>未开启</span></button>
         <button id="seckill-test" type="button">测试秒杀通知</button><button id="seckill-stop" class="product-test-stop danger" type="button" hidden>停止测试</button>
       </div></div>
-      <p class="hint">开启后保存库存通知卡片，按库存通知的独立刷新设置运行；也可单独手动测试秒杀。同一活动只自动通知一次，重启、库存和倒计时变化不重复推送。测试会发送当前活动或暂无活动的结果，可停止，不改动自动通知记录。</p>
+      <p class="hint">开启或关闭后自动应用，按库存通知的独立刷新设置运行；也可单独手动测试秒杀。同一活动只自动通知一次，重启、库存和倒计时变化不重复推送。测试会发送当前活动或暂无活动的结果，可停止，不改动自动通知记录。</p>
       <p id="seckill-status" class="hint" role="status" aria-live="polite">尚无秒杀检查记录。</p>
       <div id="seckill-activities" class="campaign-list"></div>
     </div>
@@ -818,7 +818,7 @@
     <p class="hint">两个模块分别保存刷新模式和检查间隔，模式和间隔修改会自动保存。仅手动刷新时后台不会自动访问网站；每轮缺货变有货时发送一条 Telegram 通知，库存增减更新原消息。</p>
     <div id="blocked-help" class="blocked-help" hidden><strong>上次库存检查被网站拦截（历史记录）</strong><span id="blocked-message">检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。</span><p class="hint">该记录保留至下一次检查；当前服务状态请看上方。请先确认访问方式，避免反复重启。</p></div>
     <p id="request-error" class="blocked-help" hidden></p>
-    <p class="table-footnote">监控设置修改会自动保存；通知商品和通知选项仍通过通知卡片保存 · 仅手动模式下也可测试通知</p>
+    <p class="table-footnote">监控设置、通知模式、检查间隔和通知选项均会自动保存 · 仅手动模式下也可测试通知</p>
   <details class="section" id="advanced-products" data-tone="slate"><summary><span>高级：自定义商品 / 已移出商品</span><span class="section-toggle" aria-hidden="true"></span></summary>
     <div class="section-body">
     <div class="section-head"><div><h2>手动商品管理</h2><p>通知商品按上方库存通知的顺序排列，其余商品列在后方。大盘未收录、临时下架的商品可手动添加并保存，重新上架后继续匹配；也可恢复已移出商品。下架不等于缺货，线路与套餐名称请分别填写。商家请求方式统一在“网页请求”设置。</p></div><div class="merchant-add"><div class="actions"><label for="add-merchant">商家适配<select id="add-merchant" aria-describedby="add-merchant-hint"></select></label><button id="add" type="button" class="primary">＋ 添加商品</button></div><p id="add-merchant-hint" class="hint"></p></div></div>

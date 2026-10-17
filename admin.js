@@ -288,6 +288,7 @@ document.querySelectorAll("[data-config-option]").forEach(button => button.addEv
   setOptionPressed(button.id, !optionPressed(button.id));
   updateDraftState();
   if (button.id === "isvoro-seckill") renderSeckill();
+  if (["notify-current", "isvoro-seckill"].includes(button.id)) scheduleAutoSave("notifications");
 }));
 
 const filterMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -3284,9 +3285,9 @@ document.querySelector("#fetcher-test").addEventListener("click", (event) => run
   setMessage(`FlareSolverr ${result.version} 服务连接成功；实际库存请在 VPS 库存通知中点击“测试通知”，无需开启监控。`, "success");
 }));
 document.querySelector("#interval").addEventListener("input", () => { config.interval_seconds = Number(document.querySelector("#interval").value || NaN); config.monitor_schedule = { ...(config.monitor_schedule || {}), interval_seconds: config.interval_seconds }; renderOverview(); updateDraftState(); scheduleAutoSave("monitor"); });
-document.querySelector("#notify-interval").addEventListener("input", () => { config.notify_schedule = { ...(config.notify_schedule || {}), interval_seconds: Number(document.querySelector("#notify-interval").value || NaN) }; renderOverview(); updateDraftState(); });
+document.querySelector("#notify-interval").addEventListener("input", () => { config.notify_schedule = { ...(config.notify_schedule || {}), interval_seconds: Number(document.querySelector("#notify-interval").value || NaN) }; renderOverview(); updateDraftState(); scheduleAutoSave("notifications"); });
 document.querySelector("#monitor-schedule-mode").addEventListener("change", event => { config.monitor_schedule = { ...(config.monitor_schedule || {}), mode: event.target.value }; renderOverview(); updateDraftState(); scheduleAutoSave("monitor"); });
-document.querySelector("#notify-schedule-mode").addEventListener("change", event => { config.notify_schedule = { ...(config.notify_schedule || {}), mode: event.target.value }; renderOverview(); updateDraftState(); });
+document.querySelector("#notify-schedule-mode").addEventListener("change", event => { config.notify_schedule = { ...(config.notify_schedule || {}), mode: event.target.value }; renderOverview(); updateDraftState(); scheduleAutoSave("notifications"); });
 document.querySelector("#interval-preset").addEventListener("change", (event) => {
   if (event.target.value) {
     document.querySelector("#interval").value = event.target.value;
