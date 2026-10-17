@@ -676,15 +676,28 @@ def seckill_account_check(submitted: dict) -> dict:
     from monitor import product_fetcher
     current = validate_config(current_config())
     account = next((row for row in current["vps_seckill"]["accounts"] if row["id"] == submitted.get("account_id")), None)
-    item = next((row for row in current["vps_seckill"]["items"] if row["id"] == submitted.get("item_id") and row["account_id"] == submitted.get("account_id")), None)
-    if not account or not item:
+    if not account:
+        raise ValueError("网站账户不存在，请先保存账户配置")
+    item_id = str(submitted.get("item_id", "")).strip()
+    item = next((row for row in current["vps_seckill"]["items"] if row["id"] == item_id and row["account_id"] == account["id"]), None) if item_id else None
+    if item_id and not item:
         raise ValueError("请先保存商品与账户绑定，再检查该商品的账户")
-    product = next((row for row in current["products"] if row["id"] == item["product_id"]), {})
-    fetcher = product_fetcher(current.get("fetcher"), {**product, "egress_node_id": item["egress_node_id"]})
+    if item:
+        product = next((row for row in current["products"] if row["id"] == item["product_id"]), {})
+        route_item = {**product, "egress_node_id": item["egress_node_id"]}
+    else:
+        # Account-level checks follow the merchant's saved route and request mode.
+        # They intentionally do not require a product to be configured first.
+        adapter_id = merchant_login_id(account.get("provider")) or "html"
+        route_item = {"adapter": adapter_id, "provider": account.get("provider", ""), "egress_node_id": ""}
+    fetcher = product_fetcher(current.get("fetcher"), route_item)
     with requests.Session() as session:
         session.trust_env = False
         egress.apply_session(session, fetcher)
-        return {**check_order_account(session, account, fetcher), "account_id": account["id"], "item_id": item["id"]}
+        result = {**check_order_account(session, account, fetcher), "account_id": account["id"]}
+        if item:
+            result["item_id"] = item["id"]
+        return result
 
 
 def seckill_test(submitted: dict) -> dict:

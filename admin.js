@@ -2397,11 +2397,16 @@ document.querySelector("#egress-refresh").addEventListener("click", async () => 
 
 let vpsSeckillTask = null;
 const seckillAccountChecks = new Map();
+const standaloneAccountChecks = new Map();
 function seckillAccountNote(item) {
   if (!item.account_id) return "未绑定账户：发现有货后提供链接，由你到官网下单和付款。";
   const checks = [seckillAccountChecks.get(item.id), vpsSeckillTask?.accounts?.[item.id]]
     .filter(result => result?.account_id === item.account_id).sort((a, b) => Date.parse(b.checked_at) - Date.parse(a.checked_at));
   return checks.length ? `上次检查：${checks[0].message} · ${formatBeijingDate(checks[0].checked_at)}` : "账户待检查：自动下单前会通过此商品的出口验证账户。";
+}
+function standaloneAccountNote(account) {
+  const result = standaloneAccountChecks.get(account.id);
+  return result ? `上次检查：${result.message} · ${formatBeijingDate(result.checked_at)}` : "账户待检查：此检查只验证登录，不创建订单、不付款。";
 }
 let vpsSeckillPoll = null;
 function seckillItemId() { return `seckill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; }
@@ -2500,7 +2505,7 @@ function renderVpsSeckill() {
   const accountTarget = document.querySelector("#vps-seckill-accounts"); accountTarget.replaceChildren();
   if (!seckillAccounts().length) accountTarget.append(text("p", "尚未配置网站账户。手动抢购不需要账户。", "empty"));
   accounts.forEach(account => {
-    const card = text("article", "", "seckill-account"), grid = text("div", "", "form-grid");
+    const card = text("article", "", "seckill-account"), grid = text("div", "", "form-grid"); card.dataset.accountId = account.id;
     const merchantIds = { vmiss: "vmiss", "vps.soy": "vps_soy", vps_soy: "vps_soy", "搬瓦工": "bwh", bwh: "bwh", bandwagonhost: "bwh", akile: "akile", isvoro: "isvoro", dmit: "dmit" };
     const providerValue = () => account.provider ? (merchantIds[String(account.provider).trim().toLowerCase()] || "custom") : (account.login_url ? "custom" : "");
     const field = (label, key, placeholder, type = "text") => {
@@ -2551,10 +2556,19 @@ function renderVpsSeckill() {
     field("用户名 / 邮箱", "username", "官网登录名或邮箱");
     const password = document.createElement("input"); password.type = "password"; password.autocomplete = "new-password"; password.placeholder = account.password_configured ? "已保存，留空保持不变" : "登录密码"; password.addEventListener("input", () => { account.password = password.value; account.password_configured = Boolean(password.value) || account.password_configured; updateDraftState(); }); const passwordLabel = document.createElement("label"); passwordLabel.append(text("span", "密码"), password); grid.append(passwordLabel);
     const autoLabel = settingButton("自动下单", account.auto_submit, value => { account.auto_submit = value; });
+    const check = text("button", "检查账户", "seckill-check-account"); check.type = "button"; check.dataset.accountId = account.id; check.disabled = actionRunning;
+    check.setAttribute("aria-label", `检查网站账户 ${account.name || account.username || account.id}`);
+    check.addEventListener("click", () => {
+      if (hasUnsavedChanges()) { setMessage("请先保存账户配置，再检查账户。", "error"); return; }
+      runAction(check, "检查中…", "正在检查账户，不创建订单、不付款…", async () => {
+        const result = await requestJSON("/api/seckill/account-check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account_id: account.id }) });
+        standaloneAccountChecks.set(account.id, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : "error");
+      });
+    });
     const remove = text("button", "删除账户", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.setAttribute("aria-label", `删除补货抢购账户 ${account.name || account.id}`);
     remove.addEventListener("click", () => deleteSeckillAccounts([account.id]));
-    card.append(grid, adapterNote, providerExtra, text("div", "", "actions")); card.lastChild.append(autoLabel, remove); accountTarget.append(card);
+    card.append(grid, adapterNote, providerExtra, text("p", standaloneAccountNote(account), "hint seckill-account-status"), text("div", "", "actions")); card.lastChild.append(autoLabel, check, remove); accountTarget.append(card);
   });
   renderVpsSeckillTask();
 }
@@ -2571,8 +2585,8 @@ function collectVpsSeckill() {
 }
 function renderVpsSeckillTask() {
   document.querySelectorAll("#page-seckill .option-button, .seckill-item .danger, .seckill-account .danger, #egress-nodes .egress-node-head button, #egress-nodes .egress-install-copy, #egress-nodes .egress-uninstall-copy").forEach(button => { button.disabled = actionRunning; });
-  document.querySelectorAll(".seckill-check-account").forEach(button => { const item = seckillItems().find(row => row.id === button.closest(".seckill-item").dataset.id); button.disabled = actionRunning || !item?.account_id; });
-  document.querySelectorAll(".seckill-account-status").forEach(node => { const item = seckillItems().find(row => row.id === node.closest(".seckill-item").dataset.id); if (item) node.textContent = seckillAccountNote(item); });
+  document.querySelectorAll(".seckill-check-account").forEach(button => { const itemCard = button.closest(".seckill-item"); const item = itemCard ? seckillItems().find(row => row.id === itemCard.dataset.id) : null; button.disabled = actionRunning || (itemCard ? !item?.account_id : !button.dataset.accountId); });
+  document.querySelectorAll(".seckill-account-status").forEach(node => { const itemCard = node.closest(".seckill-item"); if (itemCard) { const item = seckillItems().find(row => row.id === itemCard.dataset.id); if (item) node.textContent = seckillAccountNote(item); } else { const account = seckillAccounts().find(row => row.id === node.closest(".seckill-account")?.dataset.accountId); if (account) node.textContent = standaloneAccountNote(account); } });
   document.querySelector("#vps-seckill-delete-all").disabled = actionRunning || !seckillItems().length;
   document.querySelector("#vps-seckill-delete-all-accounts").disabled = actionRunning || !seckillAccounts().length;
   const state = document.querySelector("#seckill-task-state"), start = document.querySelector("#vps-seckill-start"), stop = document.querySelector("#vps-seckill-stop");
