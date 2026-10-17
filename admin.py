@@ -412,6 +412,12 @@ MERCHANT_LOGIN_ADAPTERS = {
 AKILE_LOGIN_URL = "https://api.akile.ai/api/v1/user/login"
 AKILE_PROFILE_URL = "https://api.akile.ai/api/v1/user/info"
 AKILE_STORE_URL = "https://api.akile.ai/api/v1/store/GetVpsStoreV3"
+AKILE_ORDER_URL = "https://api.akile.ai/api/v1/store/makeOrder"
+AKILE_DEBIAN_TEMPLATES = {
+    "Debian 11": "063c07af-b200-40c0-839c-21864474saw",
+    "Debian 12": "063c07af-b200-40c0-839c-1864474saw",
+    "Debian 13": "063c07af-b200-40c0-839c-164474saw",
+}
 MERCHANT_LOGIN_IDS = {
     "vmiss": "vmiss", "vps.soy": "vps_soy", "vps_soy": "vps_soy",
     "搬瓦工": "bwh", "bwh": "bwh", "bandwagonhost": "bwh",
@@ -647,6 +653,63 @@ def order_json(response) -> dict:
     return data
 
 
+def akile_order_payload(item: dict, product, url: str) -> dict:
+    """Build the same unpaid Akile order payload used by the shop page.
+
+    This function only prepares the order request.  The caller must POST it to
+    ``makeOrder`` and must never call Akile's payment endpoint.
+    """
+    operating_system = str(item.get("operating_system") or "Debian 12").strip()
+    template_uuid = AKILE_DEBIAN_TEMPLATES.get(operating_system)
+    if not template_uuid:
+        raise ValueError("Akile 自动下单仅支持 Debian 11、Debian 12 或 Debian 13")
+    billing_cycle = str(item.get("billing_cycle") or "monthly").strip().casefold()
+    if billing_cycle != "monthly":
+        raise ValueError("Akile 自动下单目前固定使用 1 个月周期")
+    details = product.match_details if product and isinstance(product.match_details, dict) else {}
+    plan = details.get("plan")
+    if not isinstance(plan, dict):
+        raise ValueError("Akile 商品目录未返回完整套餐信息，未提交订单")
+    quantity = item.get("quantity", 1)
+    if quantity != 1:
+        raise ValueError("Akile 原生下单暂只支持单台订单")
+    if item.get("akile_protocol_agreed") is not True or item.get("akile_broadcast_ip_ack") is not True:
+        raise ValueError("Akile 服务协议和广播 IP 条款必须自动确认")
+    data = {
+        "order_data": [
+            {"key": "password", "name": "密码", "value": "开通后服务器管理页面查看"},
+            {"key": "template_uuid", "name": "模版", "value": template_uuid},
+            {"key": "cycle", "name": "周期", "value": "1"},
+            {"key": "system_name", "name": "系统名称", "value": operating_system},
+            {"key": "area_name", "name": "区域名称", "value": str(details.get("area_name") or product.area_name or "")},
+            {"key": "node_name", "name": "节点名称", "value": str(details.get("node_name") or product.node_name or "")},
+            {"key": "plan_info", "name": "套餐详情", "value": json.dumps(plan, ensure_ascii=False, separators=(",", ":"))},
+        ],
+        "order_plan_id": details.get("plan_id") or product.card_id or product.id,
+        "order_type": "1",
+    }
+    if not isinstance(data["order_plan_id"], int):
+        try:
+            data["order_plan_id"] = int(data["order_plan_id"])
+        except (TypeError, ValueError):
+            raise ValueError("Akile 套餐 ID 无效，未提交订单") from None
+    return data
+
+
+def akile_order_result(response, quantity: int = 1) -> dict:
+    """Validate Akile's makeOrder response without following payment links."""
+    data = order_json(response)
+    if str(data.get("status_code")) not in {"0", "200"}:
+        raise ValueError(str(data.get("status_msg") or "Akile 下单接口未确认订单"))
+    body = data.get("data")
+    if not isinstance(body, dict):
+        raise ValueError("Akile 下单响应缺少订单信息")
+    order_no = body.get("order_no") or body.get("order_id")
+    if not isinstance(order_no, (str, int)) or not str(order_no).strip():
+        raise ValueError("Akile 下单响应缺少订单号")
+    return {"order_id": str(order_no).strip()[:128], "quantity": quantity}
+
+
 def check_order_account(session, account: dict, fetcher: dict | None = None) -> dict:
     result = {"status": "unknown", "ok": False, "account_id": account.get("id", ""),
         "checked_at": beijing_iso()}
@@ -826,11 +889,14 @@ def seckill_test(submitted: dict) -> dict:
                 result["order_submission"] = {"ok": False, "required": True, "message": "未绑定账户，本次不会创建订单"}
             elif not account.get("auto_submit"):
                 result["order_submission"] = {"ok": False, "required": True, "message": "账户未允许自动下单，本次不会创建订单"}
-            elif not str(item.get("submit_url", "")).strip():
+            elif (str((product or {}).get("adapter", "")).casefold() != "akile"
+                  and not str(item.get("submit_url", "")).strip()):
                 result["order_submission"] = {"ok": False, "required": True, "message": "未配置待付款下单接口，本次不会创建订单"}
             else:
                 result["order_submission"] = {"ok": True, "required": True,
-                                                "message": "已配置统一 hostwatch-unpaid-v1 待付款接口，启动时还会校验接口能力"}
+                                                "message": ("已启用 Akile 原生待付款下单适配，启动时会固定使用 Debian 12 和 1 个月周期"
+                                                            if str((product or {}).get("adapter", "")).casefold() == "akile"
+                                                            else "已配置统一 hostwatch-unpaid-v1 待付款接口，启动时还会校验接口能力")}
         try:
             with requests.Session() as session:
                 session.trust_env = False
@@ -902,13 +968,27 @@ class SeckillTask:
         provider = product.get("adapter") or product.get("provider") or ""
         return affiliate_purchase_url(url, str(provider).casefold(), self.config, product)
 
-    def _submit(self, session, item, account, url, product=None, fetcher=None):
+    def _submit(self, session, item, account, url, product=None, fetcher=None, inspected=None):
         quantity = item.get("quantity", 1)
         # This is an explicit unpaid-order adapter contract, never a generic checkout POST.
         # The adapter MUST enforce no charging, including saved cards/account credit.
         if self.cancelled.is_set():
             return {"status": "cancelled", "url": url, "quantity": quantity}
         key = hashlib.sha256(f"{self.id}:{item['id']}".encode()).hexdigest()
+        if product and str(product.get("adapter", "")).casefold() == "akile":
+            try:
+                payload = akile_order_payload(item, inspected, url)
+                response = session.post(AKILE_ORDER_URL, json=payload,
+                    headers={"Idempotency-Key": key}, timeout=(5, 20), allow_redirects=False)
+                order = akile_order_result(response, quantity)
+            except (requests.RequestException, ValueError):
+                self.log("已发送一次 Akile 下单请求，但无法确认待付款订单；已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
+                return {"status": "uncertain", "url": url, "quantity": quantity}
+            purchase_url = self._affiliate_purchase_url(item, url, product)
+            self.log(f"已创建 Akile 待付款订单，数量 {quantity}；请手动前往官网核对订单并支付。", "success", item)
+            notification = self._notify_unpaid_order(item, order["order_id"], quantity, purchase_url)
+            return {"status": "submitted", "order_id": order["order_id"], "url": purchase_url,
+                    "quantity": quantity, "payment_status": "unpaid", "telegram_status": notification}
         payload = {"protocol": ORDER_PROTOCOL, "action": "create_unpaid_order",
             "product_id": item["product_id"], "purchase_url": url, "quantity": quantity,
             "coupon_code": item.get("coupon_code", ""), "payment_mode": "manual",
@@ -992,11 +1072,12 @@ class SeckillTask:
                             session.headers["User-Agent"] = "HostWatch/1.0 (VPS seckill; unpaid orders only)"
                             egress.apply_session(session, fetcher)
                         account = accounts.get(item.get("account_id"))
+                        native_akile = str((product or {}).get("adapter", "")).casefold() == "akile"
                         auto_requested = self.mode != "manual" and item.get("auto_submit") and account and account.get("auto_submit")
-                        auto = bool(auto_requested and str(item.get("submit_url", "")).strip())
+                        auto = bool(auto_requested and (native_akile or str(item.get("submit_url", "")).strip()))
                         if auto_requested and not auto:
                             self.log("自动提交已允许，但未配置待付款下单接口；本次不会创建订单，仅提供官网购买链接。", "error", item)
-                        if auto:
+                        if auto and not native_akile:
                             if not account.get("login_url") or urlsplit(account["login_url"]).netloc != urlsplit(item["submit_url"]).netloc:
                                 raise ValueError("账户检查接口与待付款下单接口必须同源，以复用认证会话")
                             capability = order_json(order_session.get(item["submit_url"], timeout=(5, 20), allow_redirects=False))
@@ -1056,7 +1137,7 @@ class SeckillTask:
                                     continue
                                 url = result.url or url
                             if auto:
-                                finished[item["id"]] = self._submit(order_session, item, account, url, product, fetcher)
+                                finished[item["id"]] = self._submit(order_session, item, account, url, product, fetcher, result)
                             else:
                                 purchase_url = self._affiliate_purchase_url(item, url, product)
                                 finished[item["id"]] = {"status": "ready", "url": purchase_url, "quantity": quantity}
@@ -1450,6 +1531,9 @@ def normalize_seckill(value: object, product_ids: set[str]) -> dict:
         for key in ("enabled", "auto_submit"):
             if key in item and not isinstance(item[key], bool):
                 raise ValueError(f"VPS 秒杀商品 {item_id} 的 {key} 必须是布尔值")
+        for key in ("akile_protocol_agreed", "akile_broadcast_ip_ack"):
+            if key in item and not isinstance(item[key], bool):
+                raise ValueError(f"VPS 秒杀商品 {item_id} 的 {key} 必须是布尔值")
         if account_id and account_id not in account_ids:
             raise ValueError(f"VPS 秒杀商品 {item_id} 绑定的账户不存在")
         quantity = item.get("quantity", 1)
@@ -1467,6 +1551,8 @@ def normalize_seckill(value: object, product_ids: set[str]) -> dict:
             "payment_method": payment_method, "target_url": target_url, "submit_url": submit_url, "account_id": account_id,
             "egress_node_id": egress_node_id[:64], "quantity": quantity,
             "enabled": bool(item.get("enabled", True)), "auto_submit": bool(item.get("auto_submit", False)),
+            "akile_protocol_agreed": bool(item.get("akile_protocol_agreed", True)),
+            "akile_broadcast_ip_ack": bool(item.get("akile_broadcast_ip_ack", True)),
             "label": str(item.get("label", ""))[:160]})
     return {"enabled": enabled, "mode": mode, "interval_seconds": interval,
         "items": normalized_items, "accounts": normalized_accounts}

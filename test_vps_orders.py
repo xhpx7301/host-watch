@@ -267,6 +267,29 @@ class OrderTaskTests(unittest.TestCase):
         self.assertEqual(self.orders(), [])
         self.assertEqual(self.auth_checks, 0)
 
+    def test_akile_native_payload_uses_debian12_monthly_and_acknowledgements(self):
+        plan = {"id": 1047, "plan_name": "TWLite-Mini", "cpu": 1, "memory": 2048,
+                "disk": 10, "flow": 1500, "bandwidth": 1000, "price_datas": [{"id": 1, "price": 2499, "cycle": 1}]}
+        product = Product("1047", "TWLite-Mini", 20, "https://akile.ai/shop/server?areaId=6&nodeId=41&planId=1047",
+                          vendor="Akile", area_id="6", area_name="中国台湾", node_name="TWLite",
+                          match_details={"area_id": 6, "area_name": "中国台湾", "node_id": 41,
+                                         "node_name": "TWLite", "plan_id": 1047, "plan": plan})
+        payload = admin.akile_order_payload({"quantity": 1, "akile_protocol_agreed": True,
+            "akile_broadcast_ip_ack": True}, product, product.url)
+        fields = {field["key"]: field["value"] for field in payload["order_data"]}
+        self.assertEqual(payload["order_plan_id"], 1047)
+        self.assertEqual(payload["order_type"], "1")
+        self.assertEqual(fields["template_uuid"], admin.AKILE_DEBIAN_TEMPLATES["Debian 12"])
+        self.assertEqual(fields["cycle"], "1")
+        self.assertEqual(fields["system_name"], "Debian 12")
+        self.assertEqual(fields["node_name"], "TWLite")
+
+    def test_akile_order_result_accepts_unpaid_order_number_only(self):
+        result = admin.akile_order_result(response({"status_code": 0, "data": {"order_no": "202610170001"}}))
+        self.assertEqual(result, {"order_id": "202610170001", "quantity": 1})
+        with self.assertRaises(ValueError):
+            admin.akile_order_result(response({"status_code": 0, "data": {"payment_url": "https://pay.example"}}))
+
 
 class AccountVerificationTests(unittest.TestCase):
     def test_requires_positive_authentication_and_matching_identity(self):

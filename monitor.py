@@ -832,7 +832,11 @@ def parse_akile(payload: object, item: dict) -> Product:
     return Product(str(plan["id"]), plan["plan_name"], stock, purchase_url, vendor="Akile", area_id=str(area["id"]), area_name=str(area.get("area_name") or f"地区 {area['id']}")[:80], node_name=str(node["group_name"]), region=str(area.get("area_name") or ""),
         specs=f"{plan.get('cpu', '—')} 核 · {plan.get('memory', '—')} MB · {plan.get('disk', '—')} GB",
         traffic=akile_network(plan),
-        price="；".join(f"¥{p['price'] / 100:g} / {p['cycle']}个月" for p in (plan.get('price_datas') or []) if type(p.get('price')) in {int, float} and type(p.get('cycle')) is int and p['cycle'] > 0)[:500])
+        price="；".join(f"¥{p['price'] / 100:g} / {p['cycle']}个月" for p in (plan.get('price_datas') or []) if type(p.get('price')) in {int, float} and type(p.get('cycle')) is int and p['cycle'] > 0)[:500],
+        match_details={"area_id": area["id"], "area_name": str(area.get("area_name") or ""),
+                       "node_id": node["id"], "node_name": str(node.get("group_name") or ""),
+                       "plan_id": plan["id"], "plan_name": str(plan.get("plan_name") or ""),
+                       "plan": plan})
 
 
 def fetch_isvoro_json(session: requests.Session, path: str, fetcher: dict) -> object:

@@ -899,7 +899,7 @@ function productEditor(item, index) {
     selectField("监控地区（areaId）", akileAreas.some(([id]) => id === akileArea) ? akileArea : akileArea ? "custom" : "", "akile_area_id", [["", "请选择地区"], ...akileAreas.map(([id, name]) => [id, `${name}（${id}）`]), ["custom", "自定义地区 ID"]]),
     inputField("自定义地区 ID", akileArea, "akile_custom_area_id", "text", "填写官网新增地区的 areaId"),
     inputField("线路完整名称（精确匹配）", item.node_name || "HKL-TW", "akile_node_name", "text", "HKL-TW"),
-    inputField("套餐完整名称（精确匹配）", item.adapter === "akile" ? item.selector : "HKL-TW-Mini", "akile_selector", "text", "HKL-TW-Mini"),
+    inputField("套餐完整名称（精确匹配）", item.adapter === "akile" ? item.selector : "TWLite-Mini", "akile_selector", "text", "TWLite-Mini"),
     text("p", "默认按线路＋套餐完整名称在实际商品目录中自动识别地区；官网切换地区后地址栏可能仍保留旧 areaId，请勿据此判断。HKL-TW 属于台湾（6），MOLite 属于澳门（14）。自动模式忽略旧地区 ID，重名时需指定地区；推荐普通 HTTPS 请求。", "hint span-2"),
   );
   const isvoroFields = text("div", "", "form-grid span-2");
@@ -2446,13 +2446,16 @@ function seckillAddDefaults(product) {
   const account = provider ? seckillAccounts().find(row => seckillProviderKey(row.provider) === provider) : null;
   const coupon = provider ? String(product?.notification_coupon_code || config.affiliate_coupons?.[provider] || "").trim() : "";
   const vmissElite = provider === "vmiss" && String(product?.name || "").trim().toLowerCase() === "us.la.cmin2.elite";
+  const akile = provider === "akile";
   return {
     account_id: account?.id || "",
     egress_node_id: provider ? config.egress?.routes?.[provider] || "" : "",
     coupon_code: vmissElite ? "10%OFF" : coupon,
-    operating_system: vmissElite ? "Debian 12" : "",
-    billing_cycle: vmissElite ? "monthly" : "",
+    operating_system: vmissElite || akile ? "Debian 12" : "",
+    billing_cycle: vmissElite || akile ? "monthly" : "",
     payment_method: vmissElite ? "alipay" : "",
+    akile_protocol_agreed: akile,
+    akile_broadcast_ip_ack: akile,
   };
 }
 function addToVpsSeckill(product) {
@@ -2461,7 +2464,8 @@ function addToVpsSeckill(product) {
   let addedDefaults = null;
   if (!items.some(item => item.product_id === product.id)) {
     const defaults = seckillAddDefaults(product);
-    items.push({ id: product.id, product_id: product.id, label: product.name, quantity: 1, ...defaults, target_url: product.purchase_url || product.snapshot?.url || "", submit_url: "", enabled: true, auto_submit: false });
+    const isAkile = seckillProviderKey(product?.adapter) === "akile" || seckillProviderKey(product?.provider) === "akile";
+    items.push({ id: product.id, product_id: product.id, label: product.name, quantity: 1, ...defaults, target_url: product.purchase_url || product.snapshot?.url || "", submit_url: "", enabled: true, auto_submit: isAkile });
     const accountLabel = defaults.account_id ? "已绑定默认账户" : "未找到对应账户";
     const egressLabel = defaults.egress_node_id ? "已绑定默认出口节点" : "跟随商家出口";
     const couponLabel = defaults.coupon_code ? "已填入默认优惠码" : "暂无默认优惠码";
@@ -2503,13 +2507,23 @@ function renderVpsSeckill() {
     const egressSelect = document.createElement("select"); const egressOptions = [new Option("跟随商家出口（未分配则直连）", "")]; egressNodes().forEach(node => egressOptions.push(new Option(node.name || node.id, node.id))); egressSelect.replaceChildren(...egressOptions); egressSelect.value = item.egress_node_id || ""; egressSelect.addEventListener("change", () => { item.egress_node_id = egressSelect.value; seckillAccountChecks.delete(item.id); renderVpsSeckill(); updateDraftState(); });
     const target = document.createElement("input"); target.type = "url"; target.value = item.target_url || product?.purchase_url || ""; target.placeholder = "下架商品目标购买链接（可选）"; target.addEventListener("input", () => { item.target_url = target.value; updateDraftState(); });
     const providerKey = seckillProviderKey(product?.adapter) || seckillProviderKey(product?.provider);
+    if (providerKey === "akile") {
+      item.operating_system = "Debian 12";
+      item.billing_cycle = "monthly";
+      item.akile_protocol_agreed = true;
+      item.akile_broadcast_ip_ack = true;
+      if (item.auto_submit === undefined) item.auto_submit = true;
+    }
     const submit = document.createElement("input"); submit.type = "url"; submit.value = item.submit_url || ""; submit.placeholder = "仅创建待付款订单的适配接口（非普通结算页）";
     const submitLabel = document.createElement("label"); submitLabel.append(text("span", "待付款下单接口"), submit);
     const akileSettings = text("div", "", "form-grid span-2"); akileSettings.hidden = true;
     const submitHint = text("p", "", "hint span-2");
     const updateSubmitHint = () => {
-      const missing = item.auto_submit && !String(item.submit_url || "").trim();
-      submitHint.textContent = missing ? "自动提交已允许，但未配置待付款下单接口；启动后只会提供官网购买链接，不会创建订单。" : "下单接口必须明确支持仅创建待付款订单，普通结算页不会被调用。";
+      const nativeAkile = providerKey === "akile";
+      const missing = item.auto_submit && !nativeAkile && !String(item.submit_url || "").trim();
+      submit.hidden = nativeAkile;
+      submitLabel.hidden = nativeAkile;
+      submitHint.textContent = nativeAkile ? "Akile 使用内置待付款下单接口：自动确认服务协议和广播 IP 条款，固定 Debian 12、1 个月；只创建订单，不调用支付。" : missing ? "自动提交已允许，但未配置待付款下单接口；启动后只会提供官网购买链接，不会创建订单。" : "下单接口必须明确支持仅创建待付款订单，普通结算网页不会被调用。";
       submitHint.className = missing ? "error span-2" : "hint span-2";
     };
     submit.addEventListener("input", () => { item.submit_url = submit.value; updateSubmitHint(); updateDraftState(); });
@@ -2565,6 +2579,7 @@ function renderVpsSeckill() {
       } else if (selected === "vmiss" || selected === "vps_soy" || selected === "bwh" || selected === "akile" || selected === "dmit") {
         const urls = { vmiss: "https://app.vmiss.com/login", vps_soy: "https://www.vps.soy/login", bwh: "https://bwh81.net/clientarea.php", akile: "https://api.akile.ai/api/v1/user/login", dmit: "https://www.dmit.io/login" };
         account.provider = selected; account.login_url = urls[selected];
+        if (selected === "akile") account.auto_submit = true;
         adapterNote.textContent = selected === "akile" ? "Akile 已内置 API 登录检查；填写邮箱和密码。若要求邮箱验证、二步验证、Passkey 或验证码，请到官网完成。检查不下单、不付款。" : `${ids[selected]} 已内置登录检查；只需填写官网登录名和密码。检查仅登录，不下单、不付款。遇到安全验证时，请在网页请求中为该商家选择 FlareSolverr 或 cloudscraper。`;
         const destinations = { ...urls, akile: "https://akile.ai/login" };
         const link = text("a", `打开 ${ids[selected]} 官网登录页`); link.href = destinations[selected]; link.target = "_blank"; link.rel = "noopener noreferrer"; providerExtra.append(link);
@@ -3084,7 +3099,7 @@ const merchantPresets = {
   html: { label: "其他商家 · 通用 HTTPS 网页", hint: "填写商品网址及库存规则，适用于其他公开商品网页。", product: { adapter: "html", provider: "自定义网站", name: "", url: "", stock_selector: "", stock_mode: "quantity", stock_pattern: "([\\d,]+)", available_pattern: "(?i)in stock|available|有货|现货", unavailable_pattern: "(?i)out of stock|sold out|缺货|售罄", purchase_url: "" } },
   vmiss: { label: "VMISS", hint: "填写分类页、商品选择器和分组 ID，使用 VMISS 专用解析。", product: { adapter: "vmiss", provider: "VMISS", name: "", category_url: "", selector: "", gid: "" } },
   vps_soy: { label: "VPS.SOY", hint: "默认深港IX-MINI（FID=1、GID=8），支持切换地区/线路分组。", product: { adapter: "vps_soy", provider: "VPS.SOY", name: "深港IX-MINI", url: "https://www.vps.soy/cart?fid=1&gid=8", selector: "深港IX-MINI", request_mode: "inherit" } },
-  akile: { label: "Akile", hint: "默认仅添加 HKL-TW-Mini，自动识别地区，请求方式在“网页请求”中设置。", product: { adapter: "akile", provider: "Akile", name: "HKL-TW-Mini", area_mode: "auto", area_id: "6", node_name: "HKL-TW", selector: "HKL-TW-Mini", request_mode: "inherit" } },
+  akile: { label: "Akile", hint: "默认添加中国台湾 TWLite-Mini，自动提交固定 Debian 12、1 个月并停在待付款订单。", product: { adapter: "akile", provider: "Akile", name: "TWLite-Mini", area_mode: "manual", area_id: "6", node_name: "TWLite", selector: "TWLite-Mini", request_mode: "inherit" } },
   isvoro: { label: "Isvoro", hint: "按类型、地区/线路、套餐分别选择，默认中国香港 → HK PROD → HK PROD MiNi。", product: { adapter: "isvoro", provider: "Isvoro", name: "HK PROD MiNi", type_id: "24", type_name: "中国香港", category_id: "27", category_name: "HK PROD", product_id: "188", product_name: "HK PROD MiNi", request_mode: "inherit" } },
   dmit: { label: "DMIT", hint: "优先从库存大盘选择套餐；也可填写官网分类页与购买链接中的 PID。AFF 默认 22544，可在 AFF 管理中修改。", product: { adapter: "dmit", provider: "DMIT", name: "", category_url: "https://www.dmit.io/pages/pricing", pid: "", request_mode: "inherit" } },
   bwh: { label: "搬瓦工", hint: "读取公开 catalog.json，默认洛杉矶 USCA_9 电商 VPS；地区和套餐会自动显示中文。AFF 默认 84938，可在 AFF 管理中修改。", product: { adapter: "bwh", provider: "搬瓦工", name: "", category_url: "https://bwh81.net/order/ecommerce/Los%20Angeles/USCA_9", bwh_offer_key: "", selector: "", pid: "", request_mode: "inherit" } },
@@ -3145,7 +3160,7 @@ document.querySelector("#add").addEventListener("click", () => {
     renderProducts();
     navigatePage("notifications"); openAdvancedProducts();
     editorNode.querySelector(`[data-id="${CSS.escape(existing.id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
-    setMessage("HKL-TW-Mini 已存在，已展开配置；监控其他套餐可修改此商品的套餐完整名称后再添加。", "success");
+    setMessage("TWLite-Mini 已存在，已展开配置；监控其他套餐可修改此商品的套餐完整名称后再添加。", "success");
     return;
   }
   addProduct(item);
