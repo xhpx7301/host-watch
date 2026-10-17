@@ -2446,14 +2446,15 @@ function seckillAddDefaults(product) {
   const account = provider ? seckillAccounts().find(row => seckillProviderKey(row.provider) === provider) : null;
   const coupon = provider ? String(product?.notification_coupon_code || config.affiliate_coupons?.[provider] || "").trim() : "";
   const vmissElite = provider === "vmiss" && String(product?.name || "").trim().toLowerCase() === "us.la.cmin2.elite";
+  const vmiss = provider === "vmiss";
   const akile = provider === "akile";
   return {
     account_id: account?.id || "",
     egress_node_id: provider ? config.egress?.routes?.[provider] || "" : "",
     coupon_code: vmissElite ? "10%OFF" : coupon,
-    operating_system: vmissElite || akile ? "Debian 12" : "",
-    billing_cycle: vmissElite || akile ? "monthly" : "",
-    payment_method: vmissElite ? "alipay" : "",
+    operating_system: vmiss || akile ? "Debian 12" : "",
+    billing_cycle: vmiss || akile ? "monthly" : "",
+    payment_method: vmiss ? "alipay" : "",
     akile_protocol_agreed: akile,
     akile_broadcast_ip_ack: akile,
   };
