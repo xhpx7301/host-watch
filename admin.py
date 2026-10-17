@@ -17,7 +17,7 @@ from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
 from pathlib import Path
-from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlencode, urljoin, urlsplit
 
 import requests
 
@@ -418,6 +418,9 @@ AKILE_DEBIAN_TEMPLATES = {
     "Debian 12": "063c07af-b200-40c0-839c-1864474saw",
     "Debian 13": "063c07af-b200-40c0-839c-164474saw",
 }
+VMISS_HOST = "app.vmiss.com"
+VMISS_BASE_URL = "https://app.vmiss.com/"
+VMISS_PAYMENT_METHODS = {"alipay": "motionpayalipay", "credit_card": "stripe", "usdt": "cryptomusgateway"}
 MERCHANT_LOGIN_IDS = {
     "vmiss": "vmiss", "vps.soy": "vps_soy", "vps_soy": "vps_soy",
     "搬瓦工": "bwh", "bwh": "bwh", "bandwagonhost": "bwh",
