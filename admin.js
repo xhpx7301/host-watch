@@ -1380,7 +1380,13 @@ function collectAffiliates() {
   return Object.fromEntries([...document.querySelectorAll("[data-affiliate]")].map((input) => [input.dataset.affiliate, input.value.trim()]));
 }
 function collectAffiliateNotes() {
-  return Object.fromEntries([...document.querySelectorAll("[data-affiliate-note]")].map((input) => [input.dataset.affiliateNote, input.value.trim()]));
+  return config.affiliate_notes || {};
+}
+function collectAffiliateAccounts() {
+  return Object.fromEntries([...document.querySelectorAll("[data-affiliate-account]")].map((input) => [input.dataset.affiliateAccount, input.value.trim()]));
+}
+function collectAffiliateRates() {
+  return Object.fromEntries([...document.querySelectorAll("[data-affiliate-rate]")].map((input) => [input.dataset.affiliateRate, input.value.trim()]));
 }
 function collectAffiliateCoupons() {
   return Object.fromEntries([...document.querySelectorAll("[data-affiliate-coupon]")].map((input) => [input.dataset.affiliateCoupon, input.value.trim()]));
@@ -2785,6 +2791,8 @@ function collectConfig(enabled = config.enabled) {
     affiliate_id: config.affiliate_id || "",
     affiliates: collectAffiliates(),
     affiliate_notes: collectAffiliateNotes(),
+    affiliate_accounts: collectAffiliateAccounts(),
+    affiliate_rates: collectAffiliateRates(),
     affiliate_coupons: collectAffiliateCoupons(),
     merchant_order: merchantOrder(),
     watch_order: config.watch_order || [],
@@ -2849,7 +2857,7 @@ function mergeConfigScope(baseValue, draftValue, scope) {
   const draft = cloneConfig(draftValue);
   if (!scope || scope === "all") return draft;
   if (scope === "affiliates") {
-    for (const key of ["affiliate_id", "affiliates", "affiliate_notes", "affiliate_coupons"]) base[key] = draft[key];
+    for (const key of ["affiliate_id", "affiliates", "affiliate_notes", "affiliate_accounts", "affiliate_rates", "affiliate_coupons"]) base[key] = draft[key];
   } else if (scope === "catalog") base.catalog_schedule = draft.catalog_schedule;
   else if (scope === "fetcher") {
     const keys = ["mode", "flaresolverr_url", "timeout_seconds", "wait_seconds", "disable_media", "provider_flaresolverr"];
@@ -3032,7 +3040,8 @@ function applyConfig(value) {
   const catalogAuto = document.querySelector("#catalog-auto");
   if (catalogAuto) catalogAuto.value = catalogSchedule.mode === "auto" && [60, 300, 600].includes(Number(catalogSchedule.interval_seconds)) ? String(catalogSchedule.interval_seconds) : "0";
   for (const input of document.querySelectorAll("[data-affiliate]")) input.value = config.affiliates?.[input.dataset.affiliate] ?? (input.dataset.affiliate === "vmiss" ? config.affiliate_id || "" : "");
-  for (const input of document.querySelectorAll("[data-affiliate-note]")) input.value = config.affiliate_notes?.[input.dataset.affiliateNote] ?? "";
+  for (const input of document.querySelectorAll("[data-affiliate-account]")) input.value = config.affiliate_accounts?.[input.dataset.affiliateAccount] ?? "";
+  for (const input of document.querySelectorAll("[data-affiliate-rate]")) input.value = config.affiliate_rates?.[input.dataset.affiliateRate] ?? "";
   for (const input of document.querySelectorAll("[data-affiliate-coupon]")) input.value = config.affiliate_coupons?.[input.dataset.affiliateCoupon] ?? "";
   renderAffiliatePreviews(); renderMerchantOrder();
   setOptionPressed("notify-current", config.notify_current_stock_on_start);
@@ -3327,7 +3336,7 @@ async function saveConfig(scope = "all", automatic = false) {
   // remain local until their own save button is pressed.
   const visibleDraft = scope === "all" ? result.config : mergeConfigScope(result.config, draft, "all");
   if (scope !== "all") {
-    if (scope === "affiliates") Object.assign(visibleDraft, { affiliate_id: result.config.affiliate_id, affiliates: result.config.affiliates, affiliate_notes: result.config.affiliate_notes, affiliate_coupons: result.config.affiliate_coupons, merchant_order: result.config.merchant_order });
+    if (scope === "affiliates") Object.assign(visibleDraft, { affiliate_id: result.config.affiliate_id, affiliates: result.config.affiliates, affiliate_notes: result.config.affiliate_notes, affiliate_accounts: result.config.affiliate_accounts, affiliate_rates: result.config.affiliate_rates, affiliate_coupons: result.config.affiliate_coupons, merchant_order: result.config.merchant_order });
     else if (scope === "fetcher" || scope === "provider-modes" || scope === "egress") visibleDraft.fetcher = draft.fetcher;
     else if (scope === "cloudscraper") visibleDraft.fetcher = { ...visibleDraft.fetcher, cloudscraper: draft.fetcher.cloudscraper };
     else if (scope === "telegram") visibleDraft.telegram = draft.telegram;
