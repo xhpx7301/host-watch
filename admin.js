@@ -147,9 +147,11 @@ window.addEventListener("hashchange", () => navigatePage(location.hash.slice(1),
 const initialPage = location.hash.slice(1) || sessionStorage.getItem("hostwatch-current-page") || "overview";
 navigatePage(initialPage, { history: false, focus: false });
 
-function setMessage(message, kind = "", notify = true) {
-  messageNode.textContent = message;
-  messageNode.className = kind;
+function setMessage(message, kind = "", notify = true, inline = true) {
+  if (inline) {
+    messageNode.textContent = message;
+    messageNode.className = kind;
+  }
   if (!notify) return;
   clearTimeout(toastTimer);
   toastNode.className = `toast ${kind}`;
@@ -190,7 +192,7 @@ async function requestJSON(url, options = {}) {
   } finally { clearTimeout(timer); signal?.removeEventListener("abort", cancel); }
 }
 
-async function runAction(button, label, message, action, notify = true) {
+async function runAction(button, label, message, action, notify = true, inline = true) {
   if (actionRunning) return;
   cancelProductDrag();
   actionRunning = true;
@@ -203,9 +205,9 @@ async function runAction(button, label, message, action, notify = true) {
     button.textContent = label;
     button.setAttribute("aria-busy", "true");
   }
-  setMessage(message, "pending", notify);
+  setMessage(message, "pending", notify, inline);
   try { await action(); }
-  catch (error) { setMessage(error.message, "error"); }
+  catch (error) { setMessage(error.message, "error", true, inline); }
   finally {
     controls.forEach((control, index) => { control.disabled = previousStates[index]; });
     if (button) {
@@ -820,7 +822,7 @@ function productEditor(item, index) {
       setMembership(item, type, !membership(item, type)); syncButton();
       updateProductEditorTitle(article, item); renderOverview(); updateDraftState();
       scheduleAutoSave(type === "watch" ? "monitor" : "notifications");
-      setMessage(`已${membership(item, type) ? "加入" : "移出"}${label}，正在自动保存。`, "pending");
+      setMessage(`已${membership(item, type) ? "加入" : "移出"}${label}，正在自动保存。`, "pending", true, false);
     });
     actions.append(button);
   }
@@ -1438,7 +1440,7 @@ function renderMerchantOrder() {
       if (from < 0 || to < 0 || from === to) return;
       next.splice(from, 1); next.splice(to, 0, source); config.merchant_order = next;
       renderMerchantOrder(); renderProducts(); updateDraftState(); scheduleAutoSave("monitor");
-      setMessage("商家顺序已调整，正在自动保存。", "pending");
+      setMessage("商家顺序已调整，正在自动保存。", "pending", true, false);
     });
     tabs.addEventListener("click", event => {
       if (merchantOrderEditing && event.target.closest("[data-catalog-provider]")) {
@@ -3186,7 +3188,7 @@ document.querySelector("#merchant-order-toggle").addEventListener("click", (even
   event.currentTarget.classList.toggle("merchant-order-editing", merchantOrderEditing);
   event.currentTarget.setAttribute("aria-expanded", String(merchantOrderEditing));
   renderMerchantOrder();
-  if (!merchantOrderEditing) { scheduleAutoSave("monitor"); setMessage("商家顺序编辑已完成，正在自动保存。", "pending"); }
+  if (!merchantOrderEditing) { scheduleAutoSave("monitor"); setMessage("商家顺序编辑已完成，正在自动保存。", "pending", true, false); }
 });
 document.querySelector("#add").addEventListener("click", () => {
   const item = { ...structuredClone(merchantPresets[merchantSelect.value].product), id: crypto.randomUUID(), enabled: false };
