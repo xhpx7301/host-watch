@@ -2407,10 +2407,14 @@ let vpsSeckillPoll = null;
 function seckillItemId() { return `seckill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; }
 function seckillItems() { return config.vps_seckill?.items || (config.vps_seckill = { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] }).items; }
 function seckillAccounts() { return config.vps_seckill?.accounts || (config.vps_seckill.accounts = []); }
-function seckillAccountMerchant(account) {
+function seckillProviderKey(value) {
   const aliases = { vmiss: "vmiss", "vps.soy": "vps_soy", vps_soy: "vps_soy", "搬瓦工": "bwh", bwh: "bwh", bandwagonhost: "bwh", akile: "akile", isvoro: "isvoro", dmit: "dmit" };
+  const raw = String(value || "").trim();
+  return aliases[raw.toLowerCase()] || (Object.prototype.hasOwnProperty.call(merchantNames, raw) ? raw : "");
+}
+function seckillAccountMerchant(account) {
   const provider = String(account?.provider || "").trim();
-  const key = aliases[provider.toLowerCase()] || provider;
+  const key = seckillProviderKey(provider) || provider;
   return merchantNames[key] || provider || (account?.login_url ? "自定义商家" : "未选择商家");
 }
 function seckillAccountLabel(account) {
@@ -2421,11 +2425,29 @@ function orderedSeckillAccounts() {
   const ranks = new Map(merchantOrder().map((key, index) => [merchantNames[key], index]));
   return seckillAccounts().map((account, index) => ({ account, index })).sort((a, b) => (ranks.get(seckillAccountMerchant(a.account)) ?? 999) - (ranks.get(seckillAccountMerchant(b.account)) ?? 999) || a.index - b.index).map(entry => entry.account);
 }
+function seckillAddDefaults(product) {
+  const provider = seckillProviderKey(product?.adapter) || seckillProviderKey(product?.provider);
+  const account = provider ? seckillAccounts().find(row => seckillProviderKey(row.provider) === provider) : null;
+  const coupon = provider ? String(product?.notification_coupon_code || config.affiliate_coupons?.[provider] || "").trim() : "";
+  return {
+    account_id: account?.id || "",
+    egress_node_id: provider ? config.egress?.routes?.[provider] || "" : "",
+    coupon_code: coupon,
+  };
+}
 function addToVpsSeckill(product) {
   if (!product || !config.products.some(item => item.id === product.id && (membership(item, "watch") || membership(item, "notify")))) return;
   const items = seckillItems();
-  if (!items.some(item => item.product_id === product.id)) items.push({ id: product.id, product_id: product.id, label: product.name, quantity: 1, coupon_code: "", target_url: product.purchase_url || product.snapshot?.url || "", submit_url: "", account_id: "", egress_node_id: "", enabled: true, auto_submit: false });
-  navigatePage("seckill"); renderVpsSeckill(); updateDraftState(); setMessage(`${product.name} 已加入 VPS 补货抢购，保存配置后可启动。`, "pending");
+  let addedDefaults = null;
+  if (!items.some(item => item.product_id === product.id)) {
+    const defaults = seckillAddDefaults(product);
+    items.push({ id: product.id, product_id: product.id, label: product.name, quantity: 1, ...defaults, target_url: product.purchase_url || product.snapshot?.url || "", submit_url: "", enabled: true, auto_submit: false });
+    const accountLabel = defaults.account_id ? "已绑定默认账户" : "未找到对应账户";
+    const egressLabel = defaults.egress_node_id ? "已绑定默认出口节点" : "跟随商家出口";
+    const couponLabel = defaults.coupon_code ? "已填入默认优惠码" : "暂无默认优惠码";
+    addedDefaults = `${accountLabel}、${egressLabel}、${couponLabel}`;
+  }
+  navigatePage("seckill"); renderVpsSeckill(); updateDraftState(); setMessage(`${product.name} 已加入 VPS 补货抢购${addedDefaults ? `：${addedDefaults}` : ""}，保存配置后可启动；账户、出口节点和优惠码仍可修改。`, "pending");
 }
 function renderVpsSeckill() {
   const value = config.vps_seckill || { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] };
