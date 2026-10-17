@@ -844,22 +844,22 @@
       <div class="section-head"><div><h2>网页请求</h2><p>设置各商家请求方式，配置轻量请求与浏览器请求，测试访问效果。</p></div><button id="requests-open-seckill" type="button">打开 VPS 补货抢购</button></div>
     <div class="request-card-grid request-top-grid">
       <div class="request-card request-global-card">
-        <div class="request-card-head"><div><h2>全局请求方式</h2><p>作为未单独设置商家的默认方式。</p></div><button type="button" class="card-save" data-save-card="fetcher">保存</button></div>
+        <div class="request-card-head"><div><h2>全局请求方式</h2><p>作为未单独设置商家的默认方式，修改后自动应用。</p></div></div>
         <div class="form-grid"><label>请求方式<select id="fetcher-mode"><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label></div>
         <p id="fetcher-status" class="hint">普通 HTTPS 请求已启用。</p>
         <p class="hint">小内存服务器优先使用普通 HTTPS 或 cloudscraper；需要浏览器渲染时再为对应商家选择 FlareSolverr。</p>
       </div>
       <div class="request-card request-provider-card">
-        <div class="request-card-head"><div><h2>各商家请求方式</h2><p>保存后应用到该商家的监控、通知和大盘刷新。</p></div><button type="button" class="card-save" data-save-card="provider-modes">保存</button></div>
+        <div class="request-card-head"><div><h2>各商家请求方式</h2><p>修改后自动应用到该商家的监控、通知和大盘刷新。</p></div></div>
         <p class="hint">选择“跟随全局”即可继承上方设置。</p>
         <div class="provider-mode-grid" id="provider-request-modes"><label>VMISS<select data-provider-mode="vmiss"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>VPS.SOY<select data-provider-mode="vps_soy"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>Akile<select data-provider-mode="akile"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>Isvoro<select data-provider-mode="isvoro"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>DMIT<select data-provider-mode="dmit"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>搬瓦工<select data-provider-mode="bwh"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label><label>其他商家 / 自定义网页<select data-provider-mode="html"><option value="inherit">跟随全局设置</option><option value="requests">普通 HTTPS 请求</option><option value="flaresolverr">FlareSolverr 浏览器请求</option><option value="cloudscraper">cloudscraper 请求</option></select></label></div>
         <p id="provider-request-note" class="hint" aria-live="polite"></p>
       </div>
     </div>
-    <div class="request-card egress-panel"><div class="section-head"><div><h2>出口节点与商家路由</h2><p>添加节点后按商家绑定出口；主服务器需能连接节点监听端口。</p></div><div class="actions"><button id="egress-add-node" type="button">添加节点</button><button id="egress-refresh" type="button">刷新节点</button><button type="button" class="card-save" data-save-card="egress">保存</button></div></div><div id="egress-nodes" class="egress-nodes"></div><h3>商家出口路由</h3><div id="egress-routes" class="egress-routes"></div><p id="egress-status" class="hint" aria-live="polite">尚未配置出口节点。</p></div>
+    <div class="request-card egress-panel"><div class="section-head"><div><h2>出口节点与商家路由</h2><p>添加节点后按商家绑定出口；主服务器需能连接节点监听端口，修改后自动保存。</p></div><div class="actions"><button id="egress-add-node" type="button">添加节点</button><button id="egress-refresh" type="button">刷新节点</button></div></div><div id="egress-nodes" class="egress-nodes"></div><h3>商家出口路由</h3><div id="egress-routes" class="egress-routes"></div><p id="egress-status" class="hint" aria-live="polite">尚未配置出口节点。</p></div>
     <div class="request-tool-grid">
     <div class="request-tool request-card cloudscraper">
-      <div class="request-card-head"><div><h2>cloudscraper · 轻量请求</h2><p>无需浏览器或额外服务，随安装/更新自动安装。以下参数仅用于 cloudscraper，保存后应用到选择此方式的商家。</p></div><button type="button" class="card-save" data-save-card="cloudscraper">保存</button></div>
+      <div class="request-card-head"><div><h2>cloudscraper · 轻量请求</h2><p>无需浏览器或额外服务，随安装/更新自动安装。以下参数仅用于 cloudscraper，修改后自动应用到选择此方式的商家。</p></div></div>
       <div class="form-grid request-parameters">
         <label>连接超时（秒）<input id="cloudscraper-connect-timeout" type="number" min="1" max="30" step="1" value="10"><span class="hint">建立连接的等待时间，默认 10 秒。</span></label>
         <label>读取超时（秒）<input id="cloudscraper-read-timeout" type="number" min="1" max="120" step="1" value="25"><span class="hint">等待响应数据的时间，默认 25 秒。</span></label>
@@ -887,9 +887,9 @@
       <p class="hint">默认使用轻量加载和 0 秒额外等待，优先速度；轻量加载减少图片、样式和字体下载，适合只读取库存。需要支持 disableMedia 的 FlareSolverr 版本，旧服务可能忽略此选项。若读取不完整，切换到完整加载，并将渲染等待设为 1–2 秒。渲染等待是页面加载完成后的固定额外等待，不会因未出现 CF 而提前跳过；超时是等待上限，调小不会让成功请求更快。首次启动浏览器和网站验证仍需要时间。</p>
       <p class="hint">提速建议：能正常读取的商家单独使用普通 HTTPS 或 cloudscraper；FlareSolverr 只用于需要浏览器的商家。尽量只刷新所需分类，“全部公开套餐”可能需要访问多页。库存监控、库存通知和抢购共用一个浏览器请求队列，同一时间只执行一个 FlareSolverr 请求，后到的请求会自动等待，避免浏览器被占用。页面上的连接测试只测服务就绪，速度以商品测试为准。</p>
       <h3>各商家 FlareSolverr 参数</h3>
-      <p class="hint">默认跟随上方参数，点击“参数来源”切换为独立设置。仅在该商家使用 FlareSolverr 时生效；普通 HTTPS 和 cloudscraper 使用各自的设置。修改后保存本卡片，应用到大盘、自动监控、通知和秒杀；商品单次测试可直接使用未保存的参数。</p>
+      <p class="hint">默认跟随上方参数，点击“参数来源”切换为独立设置。仅在该商家使用 FlareSolverr 时生效；普通 HTTPS 和 cloudscraper 使用各自的设置。修改后自动应用到大盘、自动监控、通知和秒杀；商品单次测试可直接使用未保存的参数。</p>
       <div id="provider-flaresolverr-settings" class="provider-flare-settings"></div>
-      <div class="actions" style="margin-top:10px"><button id="fetcher-test" type="button">测试 FlareSolverr 连接</button><button type="button" class="card-save" data-save-card="fetcher">保存请求设置</button></div>
+      <div class="actions" style="margin-top:10px"><button id="fetcher-test" type="button">测试 FlareSolverr 连接</button></div>
       <p id="fetcher-health" class="hint" aria-live="polite">这里只检测服务是否就绪，不启动浏览器、不访问商品网站。实际库存请在“VPS 库存通知”中点击“测试通知”。</p>
     </div>
     </div>

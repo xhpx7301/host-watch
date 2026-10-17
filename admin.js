@@ -2852,7 +2852,7 @@ function mergeConfigScope(baseValue, draftValue, scope) {
     for (const key of ["affiliate_id", "affiliates", "affiliate_notes", "affiliate_coupons"]) base[key] = draft[key];
   } else if (scope === "catalog") base.catalog_schedule = draft.catalog_schedule;
   else if (scope === "fetcher") {
-    const keys = ["mode", "flaresolverr_url", "timeout_seconds", "wait_seconds", "disable_media", "provider_flaresolverr", "cloudscraper"];
+    const keys = ["mode", "flaresolverr_url", "timeout_seconds", "wait_seconds", "disable_media", "provider_flaresolverr"];
     base.fetcher = { ...base.fetcher, ...Object.fromEntries(keys.map(key => [key, draft.fetcher[key]])) };
   } else if (scope === "cloudscraper") base.fetcher = { ...base.fetcher, cloudscraper: draft.fetcher.cloudscraper };
   else if (scope === "provider-modes") base.fetcher = { ...base.fetcher, provider_modes: draft.fetcher.provider_modes };
@@ -2928,7 +2928,7 @@ function updateDraftState() {
   window.dispatchEvent(new Event("hostwatch-draft-change"));
 }
 
-const autoSaveScopeNames = { catalog: "大盘设置", monitor: "监控设置", notifications: "通知设置", seckill: "抢购设置", "seckill-settings": "抢购执行设置" };
+const autoSaveScopeNames = { catalog: "大盘设置", monitor: "监控设置", notifications: "通知设置", seckill: "抢购设置", "seckill-settings": "抢购执行设置", fetcher: "全局请求方式", "provider-modes": "商家请求方式", cloudscraper: "cloudscraper 参数", egress: "出口节点" };
 function scheduleAutoSave(scope, delay = 650) {
   if (!savedConfig || !scope) return;
   clearTimeout(autoSaveTimers.get(scope));
