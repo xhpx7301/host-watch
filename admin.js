@@ -2112,10 +2112,10 @@ function renderProductList() {
     if (raw && /^https:\/\//i.test(raw)) { const link = text("a", "直接购买", "buy-link"); link.href = affiliatePurchaseURL(raw, item.adapter, item); link.target = "_blank"; link.rel = "noopener noreferrer"; actions.append(link); }
     else actions.append(text("small", "等待购买链接"));
     const notifyActive = membership(item, "notify");
-    const notify = text("button", notifyActive ? "✓ 已加入库存通知" : "＋ 加入库存通知", "membership-toggle membership-notify"); notify.type = "button"; notify.disabled = actionRunning || notifyActive; notify.setAttribute("aria-pressed", String(notifyActive));
-    notify.addEventListener("click", () => { setMembership(item, "notify", true); renderProducts(); updateDraftState(); scheduleAutoSave("notifications"); setMessage("已加入库存通知，正在自动保存。", "pending", true, false); });
+    const notify = text("button", notifyActive ? "✓ 已加入库存通知" : "＋ 加入库存通知", "membership-toggle membership-notify"); notify.type = "button"; notify.disabled = actionRunning; notify.setAttribute("aria-pressed", String(notifyActive)); notify.title = notifyActive ? "点击移出库存通知，修改会自动保存" : "点击加入库存通知，修改会自动保存";
+    notify.addEventListener("click", () => { const enabled = !membership(item, "notify"); setMembership(item, "notify", enabled); renderProducts(); updateDraftState(); scheduleAutoSave("notifications"); setMessage(`已${enabled ? "加入" : "移出"}库存通知，正在自动保存。`, "pending", true, false); });
     const seckillActive = seckillMembership(item);
-    const seckill = text("button", seckillActive ? "✓ 已加入 VPS 补货抢购" : "＋ 加入 VPS 补货抢购", "membership-toggle membership-seckill"); seckill.type = "button"; seckill.disabled = actionRunning || seckillActive; seckill.setAttribute("aria-pressed", String(seckillActive)); seckill.title = seckillActive ? "已加入 VPS 补货抢购" : "加入 VPS 补货抢购"; seckill.addEventListener("click", () => addToVpsSeckill(item));
+    const seckill = text("button", seckillActive ? "✓ 已加入 VPS 补货抢购" : "＋ 加入 VPS 补货抢购", "membership-toggle membership-seckill"); seckill.type = "button"; seckill.disabled = actionRunning; seckill.setAttribute("aria-pressed", String(seckillActive)); seckill.title = seckillActive ? "点击移出 VPS 补货抢购" : "点击加入 VPS 补货抢购"; seckill.addEventListener("click", () => toggleVpsSeckill(item));
     const remove = text("button", "移出监控", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.addEventListener("click", () => { setMembership(item, "watch", false); renderProducts(); updateDraftState(); scheduleAutoSave("monitor"); setMessage("已移出库存监控，正在自动保存。", "pending"); });
     actions.append(moreActions(`watch-${item.id}`, item.name, [notify, seckill, remove])); cell().append(actions); body.append(row);
@@ -2181,7 +2181,7 @@ function renderNotificationList() {
     if (raw && /^https:\/\//i.test(raw)) { const link = text("a", "直接购买", "buy-link"); link.href = affiliatePurchaseURL(raw, item.adapter, item); link.target = "_blank"; link.rel = "noopener noreferrer"; actions.append(link); }
     const test = text("button", "测试通知", "product-test"); test.type = "button"; test.addEventListener("click", () => testProduct(item.id));
     const seckillActive = seckillMembership(item);
-    const seckill = text("button", seckillActive ? "✓ 已加入 VPS 补货抢购" : "＋ 加入 VPS 补货抢购", "membership-toggle membership-seckill"); seckill.type = "button"; seckill.disabled = actionRunning || seckillActive; seckill.setAttribute("aria-pressed", String(seckillActive)); seckill.title = seckillActive ? "已加入 VPS 补货抢购" : "加入 VPS 补货抢购"; seckill.addEventListener("click", () => addToVpsSeckill(item));
+    const seckill = text("button", seckillActive ? "✓ 已加入 VPS 补货抢购" : "＋ 加入 VPS 补货抢购", "membership-toggle membership-seckill"); seckill.type = "button"; seckill.disabled = actionRunning; seckill.setAttribute("aria-pressed", String(seckillActive)); seckill.title = seckillActive ? "点击移出 VPS 补货抢购" : "点击加入 VPS 补货抢购"; seckill.addEventListener("click", () => toggleVpsSeckill(item));
     const stop = text("button", "停止测试", "product-test-stop danger"); stop.type = "button"; stop.addEventListener("click", stopProductTest);
     const edit = text("button", "编辑商品"); edit.type = "button"; edit.disabled = actionRunning;
     edit.addEventListener("click", () => { openProducts.add(item.id); renderProducts(); openAdvancedProducts(); editorNode.querySelector(`[data-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }); });
@@ -2495,6 +2495,18 @@ function addToVpsSeckill(product) {
     addedDefaults = `${accountLabel}、${egressLabel}、${couponLabel}`;
   }
   renderVpsSeckill(); updateDraftState(); setMessage(`${product.name} 已加入 VPS 补货抢购${addedDefaults ? `：${addedDefaults}` : ""}，请在商品区右下角保存；账户、出口节点和优惠码仍可修改。`, "pending", true, false);
+}
+function toggleVpsSeckill(product) {
+  if (!product || actionRunning) return;
+  const existing = seckillItems().find(item => item.product_id === product.id);
+  if (existing) {
+    const index = seckillItems().indexOf(existing);
+    if (index >= 0) seckillItems().splice(index, 1);
+    renderVpsSeckill(); updateDraftState();
+    setMessage(`${product.name} 已移出 VPS 补货抢购，请在商品区右下角保存。`, "pending", true, false);
+    return;
+  }
+  addToVpsSeckill(product);
 }
 function renderVpsSeckill() {
   const value = config.vps_seckill || { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] };
