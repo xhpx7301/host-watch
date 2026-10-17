@@ -406,9 +406,12 @@ class VmissOrderTests(OrderTaskTests):
 
     def test_akile_order_result_accepts_unpaid_order_number_only(self):
         result = admin.akile_order_result(response({"status_code": 0, "data": {"order_no": "202610170001"}}))
-        self.assertEqual(result, {"order_id": "202610170001", "quantity": 1})
+        self.assertEqual(result, {"order_id": "202610170001",
+            "order_url": "https://akile.ai/console/finance/order/202610170001", "quantity": 1})
         with self.assertRaises(ValueError):
             admin.akile_order_result(response({"status_code": 0, "data": {"payment_url": "https://pay.example"}}))
+        with self.assertRaisesRegex(ValueError, "订单号格式无效"):
+            admin.akile_order_result(response({"status_code": 0, "data": {"order_no": "../../payment"}}))
 
 
 class AccountVerificationTests(unittest.TestCase):

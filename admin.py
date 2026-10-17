@@ -413,6 +413,7 @@ AKILE_LOGIN_URL = "https://api.akile.ai/api/v1/user/login"
 AKILE_PROFILE_URL = "https://api.akile.ai/api/v1/user/info"
 AKILE_STORE_URL = "https://api.akile.ai/api/v1/store/GetVpsStoreV3"
 AKILE_ORDER_URL = "https://api.akile.ai/api/v1/store/makeOrder"
+AKILE_ORDER_PAGE_BASE = "https://akile.ai/console/finance/order/"
 AKILE_DEBIAN_TEMPLATES = {
     "Debian 11": "063c07af-b200-40c0-839c-21864474saw",
     "Debian 12": "063c07af-b200-40c0-839c-1864474saw",
@@ -949,6 +950,14 @@ def akile_order_payload(item: dict, product, url: str) -> dict:
     return data
 
 
+def akile_order_page_url(order_id: object) -> str:
+    """Return the official Akile order page for a confirmed order number."""
+    value = str(order_id or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value):
+        raise ValueError("Akile 订单号格式无效，未生成付款链接")
+    return f"{AKILE_ORDER_PAGE_BASE}{value}"
+
+
 def akile_order_result(response, quantity: int = 1) -> dict:
     """Validate Akile's makeOrder response without following payment links."""
     data = order_json(response)
@@ -960,7 +969,8 @@ def akile_order_result(response, quantity: int = 1) -> dict:
     order_no = body.get("order_no") or body.get("order_id")
     if not isinstance(order_no, (str, int)) or not str(order_no).strip():
         raise ValueError("Akile 下单响应缺少订单号")
-    return {"order_id": str(order_no).strip()[:128], "quantity": quantity}
+    order_id = str(order_no).strip()[:128]
+    return {"order_id": order_id, "order_url": akile_order_page_url(order_id), "quantity": quantity}
 
 
 def check_order_account(session, account: dict, fetcher: dict | None = None) -> dict:
@@ -1238,7 +1248,7 @@ class SeckillTask:
             except (requests.RequestException, ValueError):
                 self.log("已发送一次 Akile 下单请求，但无法确认待付款订单；已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
                 return {"status": "uncertain", "url": url, "quantity": quantity}
-            purchase_url = self._affiliate_purchase_url(item, url, product)
+            purchase_url = akile_order_page_url(order["order_id"])
             self.log(f"已创建 Akile 待付款订单，数量 {quantity}；请手动前往官网核对订单并支付。", "success", item)
             notification = self._notify_unpaid_order(item, order["order_id"], quantity, purchase_url)
             return {"status": "submitted", "order_id": order["order_id"], "url": purchase_url,
