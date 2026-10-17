@@ -426,6 +426,8 @@ class VmissOrderTests(OrderTaskTests):
         session = Mock(headers={})
         session.post.return_value = response({"status_code": 0, "data": {"order_no": "202610170001",
             "payment_url": "https://pay.example/charge"}})
+        session.get.return_value = response({"status_code": 0, "data": {"order_no": "202610170001",
+            "order_status": 1, "order_type": 1}})
         with patch.object(admin, "effective_telegram", return_value=("bot", "chat")), \
              patch.object(admin, "telegram_call") as telegram:
             result = task._submit(session, item, {}, inspected.url, product, inspected=inspected)
@@ -434,8 +436,19 @@ class VmissOrderTests(OrderTaskTests):
         self.assertEqual(result["url"], order_url)
         self.assertEqual(result["telegram_status"], "sent")
         self.assertEqual(session.post.call_args.args[0], admin.AKILE_ORDER_URL)
+        self.assertEqual(session.get.call_args.args[0], admin.AKILE_ORDER_DETAIL_URL)
+        self.assertEqual(session.get.call_args.kwargs["params"], {"orderNo": "202610170001"})
         self.assertNotIn("payment_url", session.post.call_args.kwargs["json"])
         self.assertEqual(telegram.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["url"], order_url)
+
+    def test_akile_order_confirmation_rejects_paid_or_mismatched_details(self):
+        session = Mock()
+        session.get.return_value = response({"status_code": 0, "data": {"order_no": "202610170001", "order_status": 2}})
+        with self.assertRaisesRegex(ValueError, "已支付"):
+            admin.akile_confirm_order(session, "202610170001")
+        session.get.return_value = response({"status_code": 0, "data": {"order_no": "202610170002", "order_status": 1}})
+        with self.assertRaisesRegex(ValueError, "不匹配"):
+            admin.akile_confirm_order(session, "202610170001")
 
 
 class AccountVerificationTests(unittest.TestCase):

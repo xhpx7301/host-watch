@@ -413,6 +413,7 @@ AKILE_LOGIN_URL = "https://api.akile.ai/api/v1/user/login"
 AKILE_PROFILE_URL = "https://api.akile.ai/api/v1/user/info"
 AKILE_STORE_URL = "https://api.akile.ai/api/v1/store/GetVpsStoreV3"
 AKILE_ORDER_URL = "https://api.akile.ai/api/v1/store/makeOrder"
+AKILE_ORDER_DETAIL_URL = "https://api.akile.ai/api/v1/order/GetOrderByOrderNo"
 AKILE_ORDER_PAGE_BASE = "https://akile.ai/console/finance/order/"
 AKILE_DEBIAN_TEMPLATES = {
     "Debian 11": "063c07af-b200-40c0-839c-21864474saw",
@@ -973,6 +974,29 @@ def akile_order_result(response, quantity: int = 1) -> dict:
     return {"order_id": order_id, "order_url": akile_order_page_url(order_id), "quantity": quantity}
 
 
+def akile_confirm_order(session, order_id: str, item: dict | None = None, product=None) -> dict:
+    """Read Akile's official order detail and require the same unpaid order."""
+    response = session.get(AKILE_ORDER_DETAIL_URL, params={"orderNo": order_id},
+                           timeout=(5, 20), allow_redirects=False)
+    data = order_json(response)
+    if str(data.get("status_code")) not in {"0", "200"}:
+        raise ValueError(str(data.get("status_msg") or "Akile 订单详情接口未确认订单"))
+    detail = data.get("data")
+    if not isinstance(detail, dict):
+        raise ValueError("Akile 订单详情缺少订单信息")
+    returned_id = detail.get("order_no") or detail.get("order_id")
+    if str(returned_id or "").strip() != str(order_id).strip():
+        raise ValueError("Akile 订单详情与本次订单号不匹配")
+    status = detail.get("order_status")
+    if str(status) != "1":
+        labels = {"2": "已支付", "3": "已关闭", "4": "已作废"}
+        raise ValueError(f"Akile 订单状态不是待付款：{labels.get(str(status), str(status or '未知'))}")
+    if detail.get("order_type") not in {None, 1, "1"}:
+        raise ValueError("Akile 订单类型与 VPS 商品不匹配")
+    return {"status": "unpaid", "order_id": str(order_id).strip(),
+            "order_url": akile_order_page_url(order_id), "order_status": 1}
+
+
 def check_order_account(session, account: dict, fetcher: dict | None = None) -> dict:
     result = {"status": "unknown", "ok": False, "account_id": account.get("id", ""),
         "checked_at": beijing_iso()}
@@ -1245,6 +1269,7 @@ class SeckillTask:
                 response = session.post(AKILE_ORDER_URL, json=payload,
                     headers={"Idempotency-Key": key}, timeout=(5, 20), allow_redirects=False)
                 order = akile_order_result(response, quantity)
+                verification = akile_confirm_order(session, order["order_id"], item, inspected)
             except (requests.RequestException, ValueError):
                 self.log("已发送一次 Akile 下单请求，但无法确认待付款订单；已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
                 return {"status": "uncertain", "url": url, "quantity": quantity}
@@ -1252,7 +1277,8 @@ class SeckillTask:
             self.log(f"已创建 Akile 待付款订单，数量 {quantity}；请手动前往官网核对订单并支付。", "success", item)
             notification = self._notify_unpaid_order(item, order["order_id"], quantity, purchase_url)
             return {"status": "submitted", "order_id": order["order_id"], "url": purchase_url,
-                    "quantity": quantity, "payment_status": "unpaid", "telegram_status": notification}
+                    "quantity": quantity, "payment_status": "unpaid", "order_verification": verification,
+                    "telegram_status": notification}
         if product and str(product.get("adapter", "")).casefold() == "vmiss":
             try:
                 order = vmiss_order(session, item, account, inspected, url, key)
