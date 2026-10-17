@@ -23,7 +23,7 @@ import requests
 
 from auth import DEFAULT_USERS_PATH, authentication_required, authorized, users_path
 from catalog import CatalogBusy, CatalogService
-from affiliates import DEFAULT_AFFILIATES, PROVIDERS, affiliate_purchase_url, effective_coupon, normalize_affiliate_coupons, normalize_affiliate_notes, normalize_affiliates, normalize_merchant_order
+from affiliates import DEFAULT_AFFILIATES, PROVIDERS, affiliate_purchase_url, effective_coupon, normalize_affiliate_accounts, normalize_affiliate_coupons, normalize_affiliate_notes, normalize_affiliate_rates, normalize_affiliates, normalize_merchant_order
 from time_utils import beijing_iso, format_beijing
 from notifications import purchase_button, stock_message
 import egress
@@ -1602,6 +1602,8 @@ def default_config() -> dict:
         "affiliate_id": DEFAULT_AFFILIATES["vmiss"],
         "affiliates": dict(DEFAULT_AFFILIATES),
         "affiliate_notes": {provider: "" for provider in PROVIDERS},
+        "affiliate_accounts": {provider: "" for provider in PROVIDERS},
+        "affiliate_rates": {provider: "" for provider in PROVIDERS},
         "affiliate_coupons": {provider: "" for provider in PROVIDERS},
         "merchant_order": list(PROVIDERS),
         "watch_order": [],
@@ -1967,6 +1969,8 @@ def validate_config(value: object) -> dict:
 
     affiliates = normalize_affiliates(value)
     affiliate_notes = normalize_affiliate_notes(value)
+    affiliate_accounts = normalize_affiliate_accounts(value)
+    affiliate_rates = normalize_affiliate_rates(value)
     affiliate_coupons = normalize_affiliate_coupons(value)
     merchant_order = normalize_merchant_order(value.get("merchant_order", []))
 
@@ -2185,6 +2189,8 @@ def validate_config(value: object) -> dict:
         "affiliate_id": affiliates["vmiss"],
         "affiliates": affiliates,
         "affiliate_notes": affiliate_notes,
+        "affiliate_accounts": affiliate_accounts,
+        "affiliate_rates": affiliate_rates,
         "affiliate_coupons": affiliate_coupons,
         "merchant_order": merchant_order,
         **product_orders,
@@ -2838,6 +2844,10 @@ class Handler(BaseHTTPRequestHandler):
                     submitted["affiliates"]["vmiss"] = str(submitted["affiliate_id"]).strip()
             if "affiliate_notes" not in submitted:
                 submitted["affiliate_notes"] = dict(current["affiliate_notes"])
+            if "affiliate_accounts" not in submitted:
+                submitted["affiliate_accounts"] = dict(current.get("affiliate_accounts", {}))
+            if "affiliate_rates" not in submitted:
+                submitted["affiliate_rates"] = dict(current.get("affiliate_rates", {}))
             if "affiliate_coupons" not in submitted:
                 submitted["affiliate_coupons"] = dict(current.get("affiliate_coupons", {}))
             if "merchant_order" not in submitted:

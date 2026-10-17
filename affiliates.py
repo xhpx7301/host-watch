@@ -59,6 +59,31 @@ def normalize_affiliate_notes(value: dict) -> dict:
     return result
 
 
+def _normalize_affiliate_text_map(value: dict, key: str, label: str, limit: int) -> dict:
+    supplied = value.get(key, {})
+    if supplied is None:
+        supplied = {}
+    if not isinstance(supplied, dict) or any(provider not in PROVIDERS for provider in supplied):
+        raise ValueError(f"{label}必须是支持商家的对象")
+    result = {provider: "" for provider in PROVIDERS}
+    for provider, raw in supplied.items():
+        if not isinstance(raw, str):
+            raise ValueError(f"{label}必须是文本")
+        text = raw.strip()
+        if len(text) > limit or any(ch in text for ch in "\r\n"):
+            raise ValueError(f"{provider}{label}长度或格式无效")
+        result[provider] = text
+    return result
+
+
+def normalize_affiliate_accounts(value: dict) -> dict:
+    return _normalize_affiliate_text_map(value, "affiliate_accounts", "AFF 账号", 120)
+
+
+def normalize_affiliate_rates(value: dict) -> dict:
+    return _normalize_affiliate_text_map(value, "affiliate_rates", "AFF 推广比例", 40)
+
+
 def normalize_affiliates(value: dict) -> dict:
     supplied = value.get("affiliates", {})
     if not isinstance(supplied, dict) or any(key not in PROVIDERS for key in supplied):
