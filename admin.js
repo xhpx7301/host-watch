@@ -1878,10 +1878,10 @@ function commitProductOrder(type, visibleIds, focusId) {
   // Filtered-out products keep their positions; only visible slots are reordered.
   config[`${type}_order`] = orderedProducts(type).map(item => selected.has(item.id) ? visibleIds[index++] : item.id);
   renderProductList(); updateDraftState();
-  if (type === "watch") scheduleAutoSave("monitor");
+  scheduleAutoSave(type === "watch" ? "monitor" : "notifications");
   const target = type === "watch" ? listNode : document.querySelector("#notification-list");
   restoreProductSortFocus(target, focusId);
-  document.querySelector("#product-sort-status").textContent = type === "watch" ? "监控商品顺序已调整，正在自动保存。" : "通知商品顺序已调整，请保存通知卡片。";
+  document.querySelector("#product-sort-status").textContent = type === "watch" ? "监控商品顺序已调整，正在自动保存。" : "通知商品顺序已调整，正在自动保存。";
 }
 function finishProductDrag(cancelled = false) {
   const drag = productDrag;
@@ -2185,7 +2185,7 @@ function renderNotificationList() {
     const edit = text("button", "编辑商品"); edit.type = "button"; edit.disabled = actionRunning;
     edit.addEventListener("click", () => { openProducts.add(item.id); renderProducts(); openAdvancedProducts(); editorNode.querySelector(`[data-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }); });
     const remove = text("button", "移出通知", "danger product-remove"); remove.type = "button";
-    remove.addEventListener("click", () => { if (actionRunning) return; setMembership(item, "notify", false); renderProducts(); updateDraftState(); setMessage("已移出库存通知，库存监控选择保留，请保存通知卡片。", "pending"); });
+    remove.addEventListener("click", () => { if (actionRunning) return; setMembership(item, "notify", false); renderProducts(); updateDraftState(); scheduleAutoSave("notifications"); setMessage("已移出库存通知，库存监控选择保留，正在自动保存。", "pending", true, false); });
     actions.append(test, stop, moreActions(`notify-${item.id}`, item.name, [seckill, edit, remove])); cell().append(actions); body.append(row);
     const resultRow = text("tr", "", "notification-result-row"), resultCell = document.createElement("td"); resultCell.colSpan = 8;
     resultCell.append(text("div", "", "product-test-result")); resultRow.append(resultCell); body.append(resultRow); table.append(body);
