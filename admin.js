@@ -2495,7 +2495,7 @@ function renderVpsSeckill() {
     check.setAttribute("aria-label", `检查补货抢购账户 ${title.textContent}`);
     const status = text("p", seckillAccountNote(item), "hint seckill-account-status"); status.setAttribute("role", "status");
     check.addEventListener("click", () => {
-      if (hasUnsavedChanges()) { setMessage("请先保存配置，再按该商品的出口检查账户。", "error"); return; }
+      if (hasUnsavedSeckillItem(item.id)) { setMessage("请先保存该商品和账户配置，再按该商品的出口检查账户。", "error"); return; }
       runAction(check, "检查中…", "正在检查账户，不创建订单、不付款…", async () => {
         const result = await requestJSON("/api/seckill/account-check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account_id: item.account_id, item_id: item.id }) });
         seckillAccountChecks.set(item.id, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : "error");
@@ -2563,7 +2563,7 @@ function renderVpsSeckill() {
     const check = text("button", "检查账户", "seckill-check-account"); check.type = "button"; check.dataset.accountId = account.id; check.disabled = actionRunning;
     check.setAttribute("aria-label", `检查网站账户 ${account.name || account.username || account.id}`);
     check.addEventListener("click", () => {
-      if (hasUnsavedChanges()) { setMessage("请先保存账户配置，再检查账户。", "error"); return; }
+      if (hasUnsavedSeckillAccount(account.id)) { setMessage("请先保存该账户配置，再检查账户。", "error"); return; }
       runAction(check, "检查中…", "正在检查账户，不创建订单、不付款…", async () => {
         const result = await requestJSON("/api/seckill/account-check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account_id: account.id }) });
         standaloneAccountChecks.set(account.id, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : "error");
@@ -2586,6 +2586,56 @@ function deleteSeckillAccounts(ids) {
 }
 function collectVpsSeckill() {
   return { enabled: seckillItems().some(item => item.enabled !== false), mode: document.querySelector("#vps-seckill-mode")?.value || "manual", interval_seconds: Number(document.querySelector("#vps-seckill-interval")?.value || 5), items: seckillItems().map(item => ({ ...item })), accounts: seckillAccounts().map(account => ({ ...account })) };
+}
+function savedConfigSnapshot() {
+  if (!savedConfig) return null;
+  try { return JSON.parse(savedConfig); } catch { return null; }
+}
+function comparableSeckillAccount(account) {
+  if (!account) return null;
+  // The API intentionally never returns the saved password. An empty password
+  // therefore means “keep the saved one”; compare that state by its configured
+  // flag while still detecting a newly typed password.
+  return {
+    id: String(account.id || ""),
+    name: String(account.name || ""),
+    provider: String(account.provider || ""),
+    username: String(account.username || ""),
+    login_url: String(account.login_url || ""),
+    auto_submit: Boolean(account.auto_submit),
+    password: String(account.password || ""),
+    password_configured: Boolean(account.password_configured || account.password),
+  };
+}
+function hasUnsavedSeckillAccount(accountId) {
+  const saved = savedConfigSnapshot();
+  const current = seckillAccounts().find(account => account.id === accountId);
+  const previous = saved?.vps_seckill?.accounts?.find(account => account.id === accountId);
+  if (!saved || !current || !previous) return true;
+  return JSON.stringify(comparableSeckillAccount(current)) !== JSON.stringify(comparableSeckillAccount(previous));
+}
+function comparableSeckillItem(item) {
+  if (!item) return null;
+  return {
+    id: String(item.id || ""),
+    product_id: String(item.product_id || ""),
+    coupon_code: String(item.coupon_code || ""),
+    target_url: String(item.target_url || ""),
+    submit_url: String(item.submit_url || ""),
+    account_id: String(item.account_id || ""),
+    egress_node_id: String(item.egress_node_id || ""),
+    quantity: Number(item.quantity || 0),
+    enabled: item.enabled !== false,
+    auto_submit: Boolean(item.auto_submit),
+    label: String(item.label || ""),
+  };
+}
+function hasUnsavedSeckillItem(itemId) {
+  const current = seckillItems().find(item => item.id === itemId);
+  const saved = savedConfigSnapshot();
+  const previous = saved?.vps_seckill?.items?.find(item => item.id === itemId);
+  if (!saved || !current || !previous || hasUnsavedSeckillAccount(current.account_id)) return true;
+  return JSON.stringify(comparableSeckillItem(current)) !== JSON.stringify(comparableSeckillItem(previous));
 }
 function renderVpsSeckillTask() {
   document.querySelectorAll("#page-seckill .option-button, .seckill-item .danger, .seckill-account .danger, #egress-nodes .egress-node-head button, #egress-nodes .egress-install-copy, #egress-nodes .egress-uninstall-copy").forEach(button => { button.disabled = actionRunning; });
