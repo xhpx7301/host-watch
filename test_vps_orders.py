@@ -376,6 +376,25 @@ class VmissOrderTests(OrderTaskTests):
         self.assertEqual(session.get.call_args_list[-2].args[0], admin.VMISS_INVOICES_URL)
         self.assertEqual(session.get.call_args_list[-1].args[0], "https://app.vmiss.com/viewinvoice.php?id=456")
 
+    def test_native_checkout_matches_requested_invoice_when_list_has_old_unpaid_invoice(self):
+        session = Mock()
+        config = VmissResponse(vmiss_config_page(), url="https://app.vmiss.com/cart.php?a=confproduct&i=0")
+        checkout = VmissResponse(vmiss_checkout_page(), url="https://app.vmiss.com/cart.php?a=checkout")
+        order_response = VmissResponse("<html>Order accepted</html>", url="https://app.vmiss.com/cart.php?a=checkout")
+        invoice_list = VmissResponse(
+            '<table><tr><td><a href="/viewinvoice.php?id=111">Old</a></td><td>Unpaid</td></tr>'
+            '<tr><td><a href="/viewinvoice.php?id=456">New</a></td><td>Unpaid</td></tr></table>',
+            url="https://app.vmiss.com/clientarea.php?action=invoices")
+        old_invoice = VmissResponse(vmiss_invoice_page(product="US.LA.OTHER.Elite"), url="https://app.vmiss.com/viewinvoice.php?id=111")
+        new_invoice = VmissResponse(vmiss_invoice_page(), url="https://app.vmiss.com/viewinvoice.php?id=456")
+        session.get.side_effect = [config, checkout, invoice_list, old_invoice, new_invoice]
+        session.post.side_effect = [VmissResponse(""), order_response]
+        result = admin.vmiss_order(session, {"quantity": 1}, {"username": "user@example.com"},
+                                   Product("product60", "US.LA.CMIN2.Elite", 1, "https://app.vmiss.com/store/test"),
+                                   "https://app.vmiss.com/store/test", "abc123")
+        self.assertEqual(result["order_id"], "vmiss-invoice-456")
+        self.assertEqual(result["payment_status"], "unpaid")
+
     def test_native_checkout_rejects_multi_quantity_instead_of_misreporting(self):
         with self.assertRaisesRegex(ValueError, "单台"):
             admin.vmiss_order(Mock(), {"quantity": 2}, {}, None,
