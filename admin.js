@@ -3250,7 +3250,7 @@ document.querySelectorAll("[data-overview-log-detail]").forEach(button => button
   overviewLogDialog.showModal();
 }));
 document.querySelector("#vps-seckill-log-detail").addEventListener("click", () => {
-  overviewLogTitle.textContent = "抢购完整日志";
+  overviewLogTitle.textContent = "抢购详细日志";
   overviewLogDetail.textContent = formatModuleLogs("seckill", 0, true);
   overviewLogDialog.showModal();
 });
