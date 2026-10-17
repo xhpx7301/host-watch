@@ -66,7 +66,7 @@
     const notifications = config.products.filter(p => membership(p, "notify")).length;
     get("catalog-watch-count").textContent = `${count} / ${notifications}`;
     const dirty = savedConfig !== null && hasUnsavedChanges();
-    let note = dirty ? "选择已修改，请保存库存监控或库存通知卡片。" : "选择已保存。";
+    let note = dirty ? "选择已修改，正在自动保存。" : "选择已保存。";
     if (!config.enabled || monitorService?.active !== "active") note += "后台自动刷新尚未运行，请检查监控 / 通知的独立刷新设置并保存。";
     else note += "HostWatch 服务已按保存的自动刷新设置运行，关闭网页后继续检查。";
     if (notifications && (!config.telegram?.configured || config.telegram?.disabled)) note += "请在 Telegram 通知中配置并启用机器人后保存。";
