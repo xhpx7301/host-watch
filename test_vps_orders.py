@@ -433,6 +433,22 @@ class AccountCheckAPITests(unittest.TestCase):
         self.assertNotIn('item_id', json.loads(body))
         route.assert_called_once()
 
+    def test_account_check_uses_unsaved_account_draft_without_saving_it(self):
+        config = configuration()
+        self.config.write_text(json.dumps(config), encoding='utf-8')
+        draft = admin.public_config(config)
+        draft['vps_seckill']['accounts'][0]['username'] = 'draft-user'
+        checked = {'ok': True, 'status': 'valid', 'message': '账户认证正常'}
+        with patch.object(admin, 'check_order_account', return_value=checked) as check, patch.object(admin.egress, 'apply_session'):
+            status, body = self.request('/api/seckill/account-check', {
+                'config': draft, 'account_id': 'account', 'account': draft['vps_seckill']['accounts'][0]
+            })
+        self.assertEqual(status, 200)
+        self.assertEqual(check.call_args.args[1]['username'], 'draft-user')
+        self.assertEqual(check.call_args.args[1]['password'], 'private-password')
+        self.assertEqual(json.loads(self.config.read_text())['vps_seckill']['accounts'][0]['username'], 'user')
+        self.assertNotIn(b'private-password', body)
+
 
 # Do not discover the borrowed API fixture as a second copy of its entire suite.
 del _AdminAPIBase

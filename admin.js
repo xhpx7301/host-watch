@@ -2499,9 +2499,9 @@ function renderVpsSeckill() {
     check.setAttribute("aria-label", `检查补货抢购账户 ${title.textContent}`);
     const status = text("p", seckillAccountNote(item), "hint seckill-account-status"); status.setAttribute("role", "status");
     check.addEventListener("click", () => {
-      if (hasUnsavedSeckillItem(item.id)) { setMessage("请先保存该商品和账户配置，再按该商品的出口检查账户。", "error"); return; }
       runAction(check, "检查中…", "正在检查账户，不创建订单、不付款…", async () => {
-        const result = await requestJSON("/api/seckill/account-check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account_id: item.account_id, item_id: item.id }) });
+        const account = seckillAccounts().find(row => row.id === item.account_id);
+        const result = await requestJSON("/api/seckill/account-check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: collectConfig(), account_id: item.account_id, item_id: item.id, account, item: { ...item } }) });
         seckillAccountChecks.set(item.id, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : "error");
       });
     });
@@ -2567,9 +2567,8 @@ function renderVpsSeckill() {
     const check = text("button", "检查账户", "seckill-check-account"); check.type = "button"; check.dataset.accountId = account.id; check.disabled = actionRunning;
     check.setAttribute("aria-label", `检查网站账户 ${account.name || account.username || account.id}`);
     check.addEventListener("click", () => {
-      if (hasUnsavedSeckillAccount(account.id)) { setMessage("请先保存该账户配置，再检查账户。", "error"); return; }
       runAction(check, "检查中…", "正在检查账户，不创建订单、不付款…", async () => {
-        const result = await requestJSON("/api/seckill/account-check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account_id: account.id }) });
+        const result = await requestJSON("/api/seckill/account-check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: collectConfig(), account_id: account.id, account }) });
         standaloneAccountChecks.set(account.id, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : "error");
       });
     });
@@ -2679,8 +2678,8 @@ function renderVpsSeckillTest(result) {
 }
 window.addEventListener("hostwatch-action-change", renderVpsSeckillTask);
 async function pollVpsSeckill(taskId) { clearInterval(vpsSeckillPoll); vpsSeckillPoll = setInterval(async () => { try { vpsSeckillTask = await requestJSON(`/api/seckill/status/${encodeURIComponent(taskId)}`); renderVpsSeckillTask(); if (!vpsSeckillTask.pending) clearInterval(vpsSeckillPoll); } catch { clearInterval(vpsSeckillPoll); } }, 1000); }
-document.querySelector("#vps-seckill-start").addEventListener("click", async event => { if (hasUnsavedChanges()) { setMessage("请先点击底部“保存配置”，再启动 VPS 补货抢购。", "error"); return; } try { const taskId = `seckill-${Date.now()}-${Math.random().toString(36).slice(2, 18)}`; vpsSeckillTask = await requestJSON("/api/seckill/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: taskId, mode: document.querySelector("#vps-seckill-mode").value }) }); renderVpsSeckillTask(); pollVpsSeckill(taskId); setMessage("VPS 补货抢购任务已启动。", "success"); } catch (error) { setMessage(error.message, "error"); } });
-document.querySelector("#vps-seckill-test").addEventListener("click", event => runAction(event.currentTarget, "测试中…", "正在访问网站、识别商品页面并检查账户；不会创建订单或付款…", async () => { if (hasUnsavedChanges()) throw new Error("请先点击底部“保存配置”，再测试 VPS 抢购配置。"); const result = await requestJSON("/api/seckill/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: document.querySelector("#vps-seckill-mode").value }), timeoutMs: 180000 }); renderVpsSeckillTest(result); setMessage(result.ok ? "VPS 抢购配置测试通过。" : "VPS 抢购配置测试发现问题，请查看测试结果。", result.ok ? "success" : "error"); }));
+document.querySelector("#vps-seckill-start").addEventListener("click", async () => { try { const taskId = `seckill-${Date.now()}-${Math.random().toString(36).slice(2, 18)}`; vpsSeckillTask = await requestJSON("/api/seckill/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: collectConfig(), task_id: taskId, mode: document.querySelector("#vps-seckill-mode").value }) }); renderVpsSeckillTask(); pollVpsSeckill(taskId); setMessage("VPS 补货抢购任务已启动，使用当前页面配置（未保存的配置仅用于本次任务）。", "success"); } catch (error) { setMessage(error.message, "error"); } });
+document.querySelector("#vps-seckill-test").addEventListener("click", event => runAction(event.currentTarget, "测试中…", "正在访问网站、识别商品页面并检查账户；不会创建订单或付款…", async () => { const result = await requestJSON("/api/seckill/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: collectConfig(), mode: document.querySelector("#vps-seckill-mode").value }), timeoutMs: 180000 }); renderVpsSeckillTest(result); setMessage(result.ok ? "VPS 抢购配置测试通过（使用当前页面配置，未保存的内容不会写入服务器配置）。" : "VPS 抢购配置测试发现问题，请查看测试结果。", result.ok ? "success" : "error"); }));
 document.querySelector("#vps-seckill-stop").addEventListener("click", async () => { if (!vpsSeckillTask?.task_id) return; try { vpsSeckillTask = await requestJSON("/api/seckill/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: vpsSeckillTask.task_id }) }); renderVpsSeckillTask(); } catch (error) { setMessage(error.message, "error"); } });
 function openSeckillPicker(type) {
   const dialog = document.querySelector("#seckill-picker-dialog"), content = document.querySelector("#seckill-picker-content");

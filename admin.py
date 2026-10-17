@@ -682,14 +682,86 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
         return {**result, "message": "无法验证账户：网络异常、跳转或接口未适配，请到官网检查"}
 
 
+def _seckill_action_config(submitted: dict) -> dict:
+    """Validate a transient browser draft while retaining server-only secrets."""
+    current = current_config()
+    draft = submitted.get("config")
+    if not isinstance(draft, dict):
+        return validate_config(current)
+    draft = dict(draft)
+    current_accounts = {row["id"]: row for row in current["vps_seckill"]["accounts"]}
+    seckill = draft.get("vps_seckill")
+    if isinstance(seckill, dict):
+        seckill = dict(seckill)
+        accounts = []
+        for raw in seckill.get("accounts", []):
+            if not isinstance(raw, dict):
+                continue
+            account = dict(raw)
+            saved = current_accounts.get(str(account.get("id", "")))
+            if not account.get("password") and saved:
+                account["password"] = saved.get("password", "")
+            accounts.append(account)
+        seckill["accounts"] = accounts
+        draft["vps_seckill"] = seckill
+    egress_value = draft.get("egress")
+    current_nodes = {row["id"]: row for row in current.get("egress", {}).get("nodes", [])}
+    if isinstance(egress_value, dict):
+        egress_value = dict(egress_value)
+        nodes = []
+        for raw in egress_value.get("nodes", []):
+            if isinstance(raw, dict):
+                node = dict(raw)
+                saved = current_nodes.get(str(node.get("id", "")))
+                if not node.get("token") and saved:
+                    node["token"] = saved.get("token", "")
+                nodes.append(node)
+        egress_value["nodes"] = nodes
+        draft["egress"] = egress_value
+    value = validate_config(draft)
+    # Proxy credentials are server-only and must not be supplied by the browser.
+    value["egress"] = current.get("egress", value["egress"])
+    value["fetcher"]["egress"] = value["egress"]
+    if not value["telegram"].get("bot_token"):
+        value["telegram"]["bot_token"] = current.get("telegram", {}).get("bot_token", "")
+    return value
+
+
 def seckill_account_check(submitted: dict) -> dict:
     from monitor import product_fetcher
-    current = validate_config(current_config())
+    current = _seckill_action_config(submitted)
+    account_override = submitted.get("account")
+    if isinstance(account_override, dict):
+        account_id = str(submitted.get("account_id", ""))
+        if str(account_override.get("id", "")) != account_id:
+            raise ValueError("网站账户与检查请求不匹配")
+        draft = dict(current)
+        seckill = dict(current["vps_seckill"])
+        accounts = [row for row in seckill["accounts"] if row["id"] != account_id]
+        accounts.append(account_override)
+        seckill["accounts"] = accounts
+        item_override = submitted.get("item")
+        item_id = str(submitted.get("item_id", "")).strip()
+        if item_id and isinstance(item_override, dict):
+            items = [row for row in seckill["items"] if row["id"] != item_id]
+            items.append(item_override)
+            seckill["items"] = items
+        draft["vps_seckill"] = seckill
+        current = _seckill_action_config({"config": draft})
     account = next((row for row in current["vps_seckill"]["accounts"] if row["id"] == submitted.get("account_id")), None)
     if not account:
         raise ValueError("网站账户不存在，请先保存账户配置")
     item_id = str(submitted.get("item_id", "")).strip()
-    item = next((row for row in current["vps_seckill"]["items"] if row["id"] == item_id and row["account_id"] == account["id"]), None) if item_id else None
+    item = next((row for row in current["vps_seckill"]["items"] if row["id"] == item_id), None) if item_id else None
+    item_override = submitted.get("item")
+    if item_id and isinstance(item_override, dict):
+        draft_item = next((row for row in current["vps_seckill"]["items"] if row["id"] == item_id), None)
+        if draft_item:
+            item = {**draft_item, **item_override}
+        else:
+            raise ValueError("抢购商品不存在")
+    if item and item.get("account_id") != account["id"]:
+        raise ValueError("请为该商品选择正在检查的账户")
     if item_id and not item:
         raise ValueError("请先保存商品与账户绑定，再检查该商品的账户")
     if item:
@@ -713,7 +785,7 @@ def seckill_account_check(submitted: dict) -> dict:
 def seckill_test(submitted: dict) -> dict:
     """Check configured VPS purchase prerequisites without submitting an order."""
     from monitor import MonitorError, inspect_product, product_fetcher
-    current = validate_config(current_config())
+    current = _seckill_action_config(submitted)
     mode = str(submitted.get("mode", current["vps_seckill"]["mode"])).strip().casefold()
     if mode not in {"rapid", "precise", "manual"}:
         raise ValueError("秒杀测试模式无效")
@@ -1005,7 +1077,7 @@ def start_seckill(submitted: dict) -> dict:
     task_id = str(submitted.get("task_id", ""))
     if not re.fullmatch(r"[a-zA-Z0-9-]{16,64}", task_id):
         raise ValueError("秒杀任务编号无效")
-    current = validate_config(current_config())
+    current = _seckill_action_config(submitted)
     requested_mode = str(submitted.get("mode", current["vps_seckill"]["mode"])).strip().casefold()
     if requested_mode not in {"rapid", "precise", "manual"}:
         raise ValueError("秒杀模式无效")

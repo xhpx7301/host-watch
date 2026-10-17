@@ -39,6 +39,20 @@ class SeckillTests(unittest.TestCase):
         with patch.object(monitor, "fetch_isvoro_json", return_value=data):
             return seckill.check_once(Mock(), config or self.config, self.path, token, chat)
 
+    def test_transient_seckill_config_keeps_saved_password_without_persisting_draft(self):
+        saved = admin.validate_config({"vps_seckill": {"accounts": [{
+            "id": "acct-1", "name": "VMISS", "provider": "vmiss", "username": "user@example.com",
+            "password": "saved-secret", "login_url": "https://app.vmiss.com/login",
+        }]}})
+        draft = admin.public_config(saved)
+        draft["vps_seckill"]["accounts"][0]["username"] = "draft@example.com"
+        draft["vps_seckill"]["accounts"][0]["password"] = ""
+        with patch.object(admin, "current_config", return_value=copy.deepcopy(saved)):
+            action = admin._seckill_action_config({"config": draft})
+        self.assertEqual(action["vps_seckill"]["accounts"][0]["username"], "draft@example.com")
+        self.assertEqual(action["vps_seckill"]["accounts"][0]["password"], "saved-secret")
+        self.assertEqual(saved["vps_seckill"]["accounts"][0]["username"], "user@example.com")
+
     def test_public_empty_response_and_running_upcoming_expired(self):
         self.assertEqual(self.parse({"activities": [], "server_time": fixture()["server_time"]})["activities"], [])
         data = fixture()
