@@ -242,8 +242,9 @@
     .monitor-control .state { font-size:16px; }
     .monitor-control p { margin:7px 0; }
     .draft-note { color:var(--amber); font-weight:600; }
-    .card-save { white-space:nowrap; }
-    .card-save.is-dirty { border-color:#2d72d9; color:#1557ad; box-shadow:0 0 0 2px rgba(45,114,217,.12); }
+    .card-save { position:relative; white-space:nowrap; border-color:#b8cbf5; color:#2454b8; background:#edf3ff; }
+    .card-save:hover:not(:disabled) { border-color:#8eacee; color:#17469f; background:#e2ecff; }
+    .card-save.is-dirty::after { width:7px; height:7px; margin-left:7px; border-radius:50%; background:#d28719; content:""; }
     .card-save:disabled { opacity:.62; }
     .catalog-intro { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:14px; }
     .catalog-intro .eyebrow { font-size:10px; letter-spacing:2px; }
