@@ -2736,8 +2736,8 @@ document.querySelector("#vps-seckill-delete-all").addEventListener("click", () =
 document.querySelector("#vps-seckill-delete-all-accounts").addEventListener("click", () => deleteSeckillAccounts(seckillAccounts().map(account => account.id)));
 document.querySelector("#vps-seckill-add-account").addEventListener("click", () => { seckillAccounts().push({ id: `account-${Date.now()}`, name: "", provider: "", username: "", password: "", login_url: "" }); renderVpsSeckill(); updateDraftState(); });
 document.querySelector("#vps-seckill-clear-log").addEventListener("click", () => { if (vpsSeckillTask) { vpsSeckillTask.logs = []; renderVpsSeckillTask(); } });
-document.querySelector("#vps-seckill-mode").addEventListener("change", event => { config.vps_seckill.mode = event.target.value; updateDraftState(); scheduleAutoSave("seckill"); });
-document.querySelector("#vps-seckill-interval").addEventListener("input", event => { config.vps_seckill.interval_seconds = Number(event.target.value); updateDraftState(); scheduleAutoSave("seckill"); });
+document.querySelector("#vps-seckill-mode").addEventListener("change", event => { config.vps_seckill.mode = event.target.value; updateDraftState(); scheduleAutoSave("seckill-settings"); });
+document.querySelector("#vps-seckill-interval").addEventListener("input", event => { config.vps_seckill.interval_seconds = Number(event.target.value); updateDraftState(); scheduleAutoSave("seckill-settings"); });
 
 function renderMonitorState() {
   const active = monitorService?.active;
@@ -2865,6 +2865,7 @@ function mergeConfigScope(baseValue, draftValue, scope) {
     for (const key of ["notify_schedule", "notify_current_stock_on_start", "isvoro_seckill", "notify_order"]) base[key] = draft[key];
     base.products = mergeProductMemberships(base.products, draft.products, "notify");
   } else if (scope === "seckill") base.vps_seckill = draft.vps_seckill;
+  else if (scope === "seckill-settings") base.vps_seckill = { ...base.vps_seckill, mode: draft.vps_seckill.mode, interval_seconds: draft.vps_seckill.interval_seconds };
   else if (scope.startsWith("product:")) {
     const id = scope.slice("product:".length), item = draft.products.find(row => row.id === id);
     const index = base.products.findIndex(row => row.id === id);
@@ -2927,7 +2928,7 @@ function updateDraftState() {
   window.dispatchEvent(new Event("hostwatch-draft-change"));
 }
 
-const autoSaveScopeNames = { catalog: "大盘设置", monitor: "监控设置", notifications: "通知设置", seckill: "抢购设置" };
+const autoSaveScopeNames = { catalog: "大盘设置", monitor: "监控设置", notifications: "通知设置", seckill: "抢购设置", "seckill-settings": "抢购执行设置" };
 function scheduleAutoSave(scope, delay = 650) {
   if (!savedConfig || !scope) return;
   clearTimeout(autoSaveTimers.get(scope));
@@ -3329,6 +3330,7 @@ async function saveConfig(scope = "all", automatic = false) {
     else if (scope === "catalog") visibleDraft.catalog_schedule = draft.catalog_schedule;
     else if (scope === "monitor" || scope === "notifications") visibleDraft.products = draft.products;
     else if (scope === "seckill") visibleDraft.vps_seckill = draft.vps_seckill;
+    else if (scope === "seckill-settings") visibleDraft.vps_seckill = { ...visibleDraft.vps_seckill, mode: draft.vps_seckill.mode, interval_seconds: draft.vps_seckill.interval_seconds };
     else if (scope.startsWith("product:")) visibleDraft.products = draft.products;
     else if (scope.startsWith("seckill-")) visibleDraft.vps_seckill = draft.vps_seckill;
   }
