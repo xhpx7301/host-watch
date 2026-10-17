@@ -1517,6 +1517,9 @@ function setMembership(item, type, enabled) {
   item.watch_enabled = watch; item.notify_enabled = notify;
   item[`${type}_enabled`] = enabled; item.enabled = item.watch_enabled || item.notify_enabled;
 }
+function seckillMembership(item) {
+  return Boolean(item && seckillItems().some(row => row.product_id === item.id));
+}
 function productSnapshot(item, status) {
   const data = { ...(item.snapshot || {}), ...status, region: status?.region || item.snapshot?.region || item.category_name || "—" };
   if (item.adapter === "dmit") {
@@ -2109,7 +2112,8 @@ function renderProductList() {
     const notifyActive = membership(item, "notify");
     const notify = text("button", notifyActive ? "✓ 已加入库存通知" : "＋ 加入库存通知", "membership-toggle membership-notify"); notify.type = "button"; notify.disabled = actionRunning || notifyActive; notify.setAttribute("aria-pressed", String(notifyActive));
     notify.addEventListener("click", () => { setMembership(item, "notify", true); renderProducts(); updateDraftState(); scheduleAutoSave("notifications"); setMessage("已加入库存通知，正在自动保存。", "pending", true, false); });
-    const seckill = text("button", "加入 VPS 补货抢购", "membership-toggle"); seckill.type = "button"; seckill.disabled = actionRunning; seckill.addEventListener("click", () => addToVpsSeckill(item));
+    const seckillActive = seckillMembership(item);
+    const seckill = text("button", seckillActive ? "✓ 已加入 VPS 补货抢购" : "＋ 加入 VPS 补货抢购", "membership-toggle"); seckill.type = "button"; seckill.disabled = actionRunning || seckillActive; seckill.setAttribute("aria-pressed", String(seckillActive)); seckill.title = seckillActive ? "已加入 VPS 补货抢购" : "加入 VPS 补货抢购"; seckill.addEventListener("click", () => addToVpsSeckill(item));
     const remove = text("button", "移出监控", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.addEventListener("click", () => { setMembership(item, "watch", false); renderProducts(); updateDraftState(); scheduleAutoSave("monitor"); setMessage("已移出库存监控，正在自动保存。", "pending"); });
     actions.append(moreActions(`watch-${item.id}`, item.name, [notify, seckill, remove])); cell().append(actions); body.append(row);
@@ -2174,7 +2178,8 @@ function renderNotificationList() {
     const raw = p.url || item.purchase_url;
     if (raw && /^https:\/\//i.test(raw)) { const link = text("a", "直接购买", "buy-link"); link.href = affiliatePurchaseURL(raw, item.adapter, item); link.target = "_blank"; link.rel = "noopener noreferrer"; actions.append(link); }
     const test = text("button", "测试通知", "product-test"); test.type = "button"; test.addEventListener("click", () => testProduct(item.id));
-    const seckill = text("button", "加入 VPS 补货抢购", "membership-toggle"); seckill.type = "button"; seckill.addEventListener("click", () => addToVpsSeckill(item));
+    const seckillActive = seckillMembership(item);
+    const seckill = text("button", seckillActive ? "✓ 已加入 VPS 补货抢购" : "＋ 加入 VPS 补货抢购", "membership-toggle"); seckill.type = "button"; seckill.disabled = actionRunning || seckillActive; seckill.setAttribute("aria-pressed", String(seckillActive)); seckill.title = seckillActive ? "已加入 VPS 补货抢购" : "加入 VPS 补货抢购"; seckill.addEventListener("click", () => addToVpsSeckill(item));
     const stop = text("button", "停止测试", "product-test-stop danger"); stop.type = "button"; stop.addEventListener("click", stopProductTest);
     const edit = text("button", "编辑商品"); edit.type = "button"; edit.disabled = actionRunning;
     edit.addEventListener("click", () => { openProducts.add(item.id); renderProducts(); openAdvancedProducts(); editorNode.querySelector(`[data-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }); });
