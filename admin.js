@@ -3176,7 +3176,7 @@ document.querySelector("#watch-compare-dialog").addEventListener("cancel", event
   closeCompareDialog();
 });
 for (const input of document.querySelectorAll("[data-affiliate]")) input.addEventListener("input", renderAffiliatePreviews);
-for (const input of document.querySelectorAll("[data-provider-mode]")) input.addEventListener("change", updateFetcherStatus);
+for (const input of document.querySelectorAll("[data-provider-mode]")) input.addEventListener("change", () => { updateFetcherStatus(); scheduleAutoSave("provider-modes"); });
 document.querySelector("#merchant-order-toggle").addEventListener("click", (event) => {
   if (actionRunning) return;
   merchantOrderEditing = !merchantOrderEditing;
@@ -3256,12 +3256,13 @@ document.querySelector("#vps-seckill-log-detail").addEventListener("click", () =
 });
 document.querySelector("#overview-log-close").addEventListener("click", () => overviewLogDialog.close());
 overviewLogDialog.addEventListener("click", event => { if (event.target === overviewLogDialog) overviewLogDialog.close(); });
-document.querySelector("#fetcher-mode").addEventListener("change", updateFetcherStatus);
+document.querySelector("#fetcher-mode").addEventListener("change", () => { updateFetcherStatus(); scheduleAutoSave("fetcher"); });
 window.addEventListener("hostwatch-action-change", syncProviderFlareSettings);
 document.querySelectorAll("#flaresolverr-light, #flaresolverr-full").forEach(button => button.addEventListener("click", () => {
   if (actionRunning) return;
   setFlareModeButtons([...document.querySelectorAll("#flaresolverr-light, #flaresolverr-full")], button.id === "flaresolverr-light");
   updateDraftState();
+  scheduleAutoSave("fetcher");
 }));
 document.querySelector("#fetcher-test").addEventListener("click", (event) => runAction(event.currentTarget, "检测中…", "正在测试 FlareSolverr 服务连接，不访问商品网站…", async () => {
   const result = await requestJSON("/api/fetcher/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(collectConfig().fetcher) });
@@ -3287,6 +3288,8 @@ document.querySelector(".shell").addEventListener("input", (event) => {
 document.querySelector(".shell").addEventListener("change", (event) => {
   if (!event.target.closest("#page-catalog, .watchlist-filters")) updateDraftState();
 });
+document.querySelectorAll("#flaresolverr-url, #flaresolverr-timeout, #fetcher-wait").forEach(input => input.addEventListener("input", () => scheduleAutoSave("fetcher")));
+document.querySelectorAll("#cloudscraper-connect-timeout, #cloudscraper-read-timeout, #cloudscraper-challenge-delay").forEach(input => input.addEventListener("input", () => scheduleAutoSave("cloudscraper")));
 document.querySelector("#telegram-test").addEventListener("click", (event) => runAction(event.currentTarget, "发送中…", "正在发送 Telegram 测试消息…", async () => {
   await requestJSON("/api/telegram/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim() }) });
   setMessage("Telegram 测试消息已发送。", "success");
