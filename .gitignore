@@ -13,3 +13,4 @@ catalog.json
 exchange-rates.json
 inventory-cache.json
 auto-sync.log
+*.log
