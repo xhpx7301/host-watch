@@ -296,6 +296,19 @@ class AccountVerificationTests(unittest.TestCase):
         self.assertIn('GET 返回 HTTP 403', result['message'])
         self.assertIn('abc123', result['message'])
 
+    def test_dmit_cloudflare_challenge_is_reported_before_login_form(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='dmit', login_url='https://www.dmit.io/login')
+        blocked = Mock(status_code=403, headers={'cf-mitigated': 'challenge', 'CF-Ray': 'ray-123'}, url='https://www.dmit.io/login')
+        blocked.text = '<title>Just a moment...</title><div>Cloudflare</div>'
+        session = Mock(headers={})
+        session.get.return_value = blocked
+        result = admin.check_order_account(session, account)
+        self.assertEqual(result['status'], 'unknown')
+        self.assertIn('Cloudflare 安全挑战', result['message'])
+        self.assertIn('出口 IP', result['message'])
+        session.post.assert_not_called()
+
     def test_vmiss_flaresolverr_login_reuses_same_site_browser_state(self):
         account = configuration()['vps_seckill']['accounts'][0]
         account.update(provider='vmiss', login_url='https://app.vmiss.com/login')
@@ -341,6 +354,19 @@ class AccountVerificationTests(unittest.TestCase):
         result = admin.check_order_account(session, account)
         self.assertEqual(result['status'], 'valid')
         self.assertEqual(session.post.call_args.kwargs['data'], {'token': 'csrf', 'loginorigin': 'clientarea', 'username': 'user', 'password': 'private-password'})
+
+    def test_bandwagon_browser_auth_is_not_reported_as_logged_in(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='bwh', login_url='https://bwh81.net/clientarea.php')
+        page = Mock(status_code=200, url='https://bwh81.net/clientarea.php', content=b'<form action="dologin.php"><input name="username"><input name="password"></form>')
+        redirected = Mock(status_code=302, headers={'Location': '/browser_auth.php'})
+        browser_auth = Mock(status_code=200, url='https://bwh81.net/browser_auth.php', content=b'<a href="logout.php">Logout</a><input name="browser_auth_code"><p>Email verification code</p>')
+        session = Mock()
+        session.get.side_effect = [page, browser_auth]
+        session.post.return_value = redirected
+        result = admin.check_order_account(session, account)
+        self.assertEqual(result['status'], 'unknown')
+        self.assertIn('邮箱验证码', result['message'])
 
     def test_dmit_form_login_uses_builtin_adapter(self):
         account = configuration()['vps_seckill']['accounts'][0]

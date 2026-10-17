@@ -450,6 +450,33 @@ def _response_detail(response) -> str:
     return f"（Cloudflare Ray ID: {ray[:100]}）" if re.fullmatch(r"[A-Za-z0-9-]{1,100}", ray) else ""
 
 
+def _is_cloudflare_challenge(response) -> bool:
+    """Recognize a Cloudflare challenge before attempting to parse a login form."""
+    headers = getattr(response, "headers", {}) or {}
+    if str(headers.get("cf-mitigated", "")).casefold() == "challenge":
+        return True
+    try:
+        raw_body = getattr(response, "text", "") or ""
+        body = raw_body.casefold() if isinstance(raw_body, str) else ""
+    except (AttributeError, TypeError):
+        body = ""
+    return "just a moment" in body and "cloudflare" in body
+
+
+def _merchant_additional_verification_required(page, soup, adapter: dict) -> bool:
+    """Return true for an authenticated-looking page that still needs a code."""
+    if adapter.get("name") != "搬瓦工":
+        return False
+    path = urlsplit(str(getattr(page, "url", "") or "")).path.casefold()
+    if path.endswith("/browser_auth.php"):
+        return True
+    body = soup.get_text(" ", strip=True).casefold()
+    return any(marker in body for marker in (
+        "browser_auth_code", "email verification code", "email verification required",
+        "邮箱验证码", "邮箱验证", "browser verification",
+    ))
+
+
 def _merchant_form_login(session, account: dict, adapter: dict, fetcher: dict | None = None) -> dict:
     from urllib.parse import urljoin
     from types import SimpleNamespace
@@ -485,6 +512,8 @@ def _merchant_form_login(session, account: dict, adapter: dict, fetcher: dict | 
                                headers={**MERCHANT_BROWSER_HEADERS, "Sec-Fetch-Site": "none", "Sec-Fetch-User": "?1"})
 
     if not 200 <= response.status_code < 300:
+        if _is_cloudflare_challenge(response):
+            return {"status": "unknown", "message": f"{adapter['name']} 登录页被 Cloudflare 安全挑战拦截（HTTP {response.status_code}）{_response_detail(response)}；挑战发生在登录表单之前，通常是当前出口 IP 风控或请求未完成浏览器 JavaScript。请为该商家选择 FlareSolverr，若仍失败请更换出口节点/IP；Chrome 无痕能打开不代表服务器出口也能通过"}
         return {"status": "unknown", "message": f"{adapter['name']} 登录页 GET 返回 HTTP {response.status_code}{_response_detail(response)}；脚本请求被官网拒绝，请检查出口节点/IP或浏览器请求方式"}
     soup, form, fields = _login_form(response, adapter["username_field"])
     if form is None:
@@ -504,6 +533,8 @@ def _merchant_form_login(session, account: dict, adapter: dict, fetcher: dict | 
     if submitted.status_code == 401:
         return {"status": "invalid", "message": "官网拒绝登录：用户名或密码错误（HTTP 401）"}
     if submitted.status_code == 403:
+        if _is_cloudflare_challenge(submitted):
+            return {"status": "unknown", "message": f"{adapter['name']} 登录 POST 被 Cloudflare 安全挑战拦截（HTTP 403）{_response_detail(submitted)}；请使用 FlareSolverr 或更换出口节点/IP"}
         return {"status": "unknown", "message": f"{adapter['name']} 登录 POST 被官网拒绝（HTTP 403）{_response_detail(submitted)}；可能是安全策略、验证码或出口 IP，不代表账号密码错误"}
     if 300 <= submitted.status_code < 400:
         # Some WHMCS installations use a short same-site redirect chain after
@@ -528,6 +559,8 @@ def _merchant_form_login(session, account: dict, adapter: dict, fetcher: dict | 
     else:
         return {"status": "unknown", "message": f"官网登录返回 HTTP {submitted.status_code}，请到官网检查"}
     soup, form, _ = _login_form(page, adapter["username_field"])
+    if _merchant_additional_verification_required(page, soup, adapter):
+        return {"status": "unknown", "message": "搬瓦工要求邮箱验证码或浏览器验证，暂不自动适配；请先到官网完成验证后再检查"}
     if form is not None:
         body = soup.get_text(" ", strip=True).casefold()
         if any(marker in body for marker in ("incorrect", "invalid", "incorrect password", "用户名或密码", "密码错误", "账号或密码")):
