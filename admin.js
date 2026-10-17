@@ -1865,7 +1865,7 @@ function commitProductOrder(type, visibleIds, focusId) {
   if (type === "watch") scheduleAutoSave("monitor");
   const target = type === "watch" ? listNode : document.querySelector("#notification-list");
   restoreProductSortFocus(target, focusId);
-  document.querySelector("#product-sort-status").textContent = "商品顺序已调整，请保存当前卡片；两个列表分别保存顺序。";
+  document.querySelector("#product-sort-status").textContent = type === "watch" ? "监控商品顺序已调整，正在自动保存。" : "通知商品顺序已调整，请保存通知卡片。";
 }
 function finishProductDrag(cancelled = false) {
   const drag = productDrag;
@@ -2474,7 +2474,7 @@ function addToVpsSeckill(product) {
     const couponLabel = defaults.coupon_code ? "已填入默认优惠码" : "暂无默认优惠码";
     addedDefaults = `${accountLabel}、${egressLabel}、${couponLabel}`;
   }
-  navigatePage("seckill"); renderVpsSeckill(); updateDraftState(); setMessage(`${product.name} 已加入 VPS 补货抢购${addedDefaults ? `：${addedDefaults}` : ""}，保存抢购卡片后可长期使用；账户、出口节点和优惠码仍可修改。`, "pending");
+  renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); setMessage(`${product.name} 已加入 VPS 补货抢购${addedDefaults ? `：${addedDefaults}` : ""}，正在自动保存；账户、出口节点和优惠码仍可修改。`, "pending");
 }
 function renderVpsSeckill() {
   const value = config.vps_seckill || { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] };
