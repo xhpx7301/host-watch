@@ -775,7 +775,7 @@ def _vmiss_confirm_invoice(session, invoice_url: str, item: dict, product) -> di
 
 
 def _vmiss_unpaid_invoice_from_list(session) -> str:
-    """Find the highest-numbered visible unpaid invoice from the client list."""
+    """Find a single unambiguous visible unpaid invoice from the client list."""
     from bs4 import BeautifulSoup
 
     page = _vmiss_get(session, VMISS_INVOICES_URL)
