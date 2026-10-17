@@ -760,7 +760,9 @@ def _vmiss_confirm_invoice(session, invoice_url: str, item: dict, product) -> di
     if status != "unpaid":
         raise ValueError("VMISS 账单页未确认未付款状态，已停止且不会重复下单")
     normalized_text = _vmiss_normalize_invoice_text(text)
-    product_name = str(getattr(product, "name", "") or (product or {}).get("name", "") if isinstance(product, dict) else "").strip()
+    product_name = str(getattr(product, "name", "") or "").strip()
+    if not product_name and isinstance(product, dict):
+        product_name = str(product.get("name", "")).strip()
     if product_name and _vmiss_normalize_invoice_text(product_name) not in normalized_text:
         raise ValueError(f"VMISS 账单项目未匹配本次商品：{product_name[:120]}")
     operating_system = str(item.get("operating_system") or "Debian 12").strip()
