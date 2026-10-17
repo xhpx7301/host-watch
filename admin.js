@@ -2953,6 +2953,10 @@ function scheduleAutoSave(scope, delay = 650) {
       const seconds = Number(document.querySelector("#interval")?.value || NaN);
       if (!Number.isInteger(seconds) || seconds < 0 || seconds > 86400) return;
     }
+    if (scope === "notifications") {
+      const seconds = Number(document.querySelector("#notify-interval")?.value || NaN);
+      if (!Number.isInteger(seconds) || seconds < 0 || seconds > 86400) return;
+    }
     if (actionRunning) { scheduleAutoSave(scope, 900); return; }
     runAction(null, "", `正在自动保存${autoSaveScopeNames[scope] || "配置"}…`, () => saveConfig(scope, true), true, false);
   }, delay);
