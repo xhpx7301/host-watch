@@ -2839,14 +2839,21 @@ function mergeConfigScope(baseValue, draftValue, scope) {
   } else if (scope === "seckill") base.vps_seckill = draft.vps_seckill;
   else if (scope.startsWith("product:")) {
     const id = scope.slice("product:".length), item = draft.products.find(row => row.id === id);
-    base.products = base.products.filter(row => row.id !== id);
-    if (item) base.products.push(item);
+    const index = base.products.findIndex(row => row.id === id);
+    if (index >= 0) {
+      if (item) base.products[index] = item;
+      else base.products.splice(index, 1);
+    } else if (item) base.products.push(item);
   } else if (scope.startsWith("seckill-item:") || scope.startsWith("seckill-account:")) {
     const [kind, id] = scope.split(":", 2), key = kind === "seckill-item" ? "items" : "accounts";
     const draftRows = draft.vps_seckill[key] || [], baseRows = base.vps_seckill[key] || [];
     const row = draftRows.find(entry => entry.id === id);
-    base.vps_seckill = { ...base.vps_seckill, [key]: baseRows.filter(entry => entry.id !== id) };
-    if (row) base.vps_seckill[key].push(row);
+    const index = baseRows.findIndex(entry => entry.id === id);
+    if (index >= 0) {
+      if (row) baseRows[index] = row;
+      else baseRows.splice(index, 1);
+    } else if (row) baseRows.push(row);
+    base.vps_seckill = { ...base.vps_seckill, [key]: baseRows };
   }
   return base;
 }
