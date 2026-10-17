@@ -1062,14 +1062,17 @@ def seckill_test(submitted: dict) -> dict:
                 result["order_submission"] = {"ok": False, "required": True, "message": "未绑定账户，本次不会创建订单"}
             elif not account.get("auto_submit"):
                 result["order_submission"] = {"ok": False, "required": True, "message": "账户未允许自动下单，本次不会创建订单"}
-            elif (str((product or {}).get("adapter", "")).casefold() != "akile"
+            elif str((product or {}).get("adapter", "")).casefold() not in {"akile", "vmiss"}
                   and not str(item.get("submit_url", "")).strip()):
                 result["order_submission"] = {"ok": False, "required": True, "message": "未配置待付款下单接口，本次不会创建订单"}
             else:
+                adapter_id = str((product or {}).get("adapter", "")).casefold()
                 result["order_submission"] = {"ok": True, "required": True,
                                                 "message": ("已启用 Akile 原生待付款下单适配，启动时会固定使用 Debian 12 和 1 个月周期"
-                                                            if str((product or {}).get("adapter", "")).casefold() == "akile"
-                                                            else "已配置统一 hostwatch-unpaid-v1 待付款接口，启动时还会校验接口能力")}
+                                                            if adapter_id == "akile" else
+                                                            "已启用 VMISS 原生结算适配，启动时会登录、预填配置并创建待付款发票"
+                                                            if adapter_id == "vmiss" else
+                                                            "已配置统一 hostwatch-unpaid-v1 待付款接口，启动时还会校验接口能力")}
         try:
             with requests.Session() as session:
                 session.trust_env = False
@@ -1255,12 +1258,14 @@ class SeckillTask:
                             session.headers["User-Agent"] = "HostWatch/1.0 (VPS seckill; unpaid orders only)"
                             egress.apply_session(session, fetcher)
                         account = accounts.get(item.get("account_id"))
-                        native_akile = str((product or {}).get("adapter", "")).casefold() == "akile"
+                        native_adapter = str((product or {}).get("adapter", "")).casefold()
+                        native_akile = native_adapter == "akile"
+                        native_vmiss = native_adapter == "vmiss"
                         auto_requested = self.mode != "manual" and item.get("auto_submit") and account and account.get("auto_submit")
-                        auto = bool(auto_requested and (native_akile or str(item.get("submit_url", "")).strip()))
+                        auto = bool(auto_requested and (native_akile or native_vmiss or str(item.get("submit_url", "")).strip()))
                         if auto_requested and not auto:
                             self.log("自动提交已允许，但未配置待付款下单接口；本次不会创建订单，仅提供官网购买链接。", "error", item)
-                        if auto and not native_akile:
+                        if auto and not native_akile and not native_vmiss:
                             if not account.get("login_url") or urlsplit(account["login_url"]).netloc != urlsplit(item["submit_url"]).netloc:
                                 raise ValueError("账户检查接口与待付款下单接口必须同源，以复用认证会话")
                             capability = order_json(order_session.get(item["submit_url"], timeout=(5, 20), allow_redirects=False))
