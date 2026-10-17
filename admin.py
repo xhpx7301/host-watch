@@ -1062,7 +1062,7 @@ def seckill_test(submitted: dict) -> dict:
                 result["order_submission"] = {"ok": False, "required": True, "message": "未绑定账户，本次不会创建订单"}
             elif not account.get("auto_submit"):
                 result["order_submission"] = {"ok": False, "required": True, "message": "账户未允许自动下单，本次不会创建订单"}
-            elif str((product or {}).get("adapter", "")).casefold() not in {"akile", "vmiss"}
+            elif (str((product or {}).get("adapter", "")).casefold() not in {"akile", "vmiss"}
                   and not str(item.get("submit_url", "")).strip()):
                 result["order_submission"] = {"ok": False, "required": True, "message": "未配置待付款下单接口，本次不会创建订单"}
             else:
