@@ -77,7 +77,7 @@
     #message.pending { color:var(--blue); border-color:#b9d2df; }
     #message.success { color:var(--green); border-color:#b7d7c9; }
     #message.error { color:var(--red); border-color:#e7c1bc; background:#fffafa; }
-    .toast { position:fixed; top:88px; right:24px; z-index:20; display:flex; align-items:flex-start; gap:10px; width:min(360px,calc(100vw - 48px)); max-width:calc(100vw - 48px); padding:11px 12px; border:1px solid #b9d2df; border-left:4px solid var(--blue); border-radius:7px; background:var(--paper); color:var(--blue); box-shadow:0 6px 28px rgba(25,43,42,.18); font-size:14px; line-height:1.55; overflow-wrap:anywhere; }
+    .toast { position:fixed; right:24px; bottom:24px; z-index:20; display:flex; align-items:flex-start; gap:10px; width:min(360px,calc(100vw - 48px)); max-width:calc(100vw - 48px); padding:11px 12px; border:1px solid #b9d2df; border-left:4px solid var(--blue); border-radius:7px; background:var(--paper); color:var(--blue); box-shadow:0 6px 28px rgba(25,43,42,.18); font-size:14px; line-height:1.55; overflow-wrap:anywhere; }
     .toast[hidden] { display:none; }
     .toast.success { color:var(--green); border-color:#b7d7c9; border-left-color:var(--green); }
     .toast.error { color:var(--red); border-color:#e7c1bc; border-left-color:var(--red); }
@@ -722,7 +722,7 @@
       <div class="section-head"><div class="catalog-merchants" role="group" aria-label="选择商家"><button type="button" data-catalog-provider="vmiss" aria-pressed="false">VMISS</button><button type="button" data-catalog-provider="vps_soy" aria-pressed="false">VPS.SOY</button><button type="button" data-catalog-provider="akile" aria-pressed="true">Akile</button><button type="button" data-catalog-provider="isvoro" aria-pressed="false">Isvoro</button><button type="button" data-catalog-provider="dmit" aria-pressed="false">DMIT</button><button type="button" data-catalog-provider="bwh" aria-pressed="false">搬瓦工</button></div><button id="merchant-order-toggle" type="button" aria-expanded="false">调整商家顺序</button></div>
     <div class="panel-card catalog-browser">
       <div class="catalog-filters"><label>全部套餐 / 地区 / 线路<select id="catalog-scope" disabled><option value="">等待目录</option></select></label><label>搜索套餐<input id="catalog-search" type="search" placeholder="名称、地区、线路或配置"></label><label>库存状态<select id="catalog-stock"><option value="all">全部库存</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">状态未知</option><option value="watched">已加入监控</option><option value="notified">已加入通知</option></select></label><label>大盘自动刷新<select id="catalog-auto"><option value="0" selected>仅手动</option><option value="60">1 分钟</option><option value="300">5 分钟</option><option value="600">10 分钟</option></select></label></div>
-      <div class="catalog-sync"><div><strong id="catalog-summary">尚未载入目录</strong><span id="catalog-updated" class="subtle"></span></div><div class="actions"><button id="catalog-refresh" type="button">刷新目录库存</button><button id="catalog-stop" type="button" class="danger" hidden>停止刷新</button><button type="button" class="card-save" data-save-card="catalog">保存大盘设置</button></div></div>
+      <div class="catalog-sync"><div><strong id="catalog-summary">尚未载入目录</strong><span id="catalog-updated" class="subtle"></span></div><div class="actions"><button id="catalog-refresh" type="button">刷新目录库存</button><button id="catalog-stop" type="button" class="danger" hidden>停止刷新</button></div></div>
       <p id="catalog-route" class="hint" role="status" aria-live="polite"></p>
       <p id="catalog-status" class="hint" role="status" aria-live="polite">选择商家后获取公开套餐目录；切换分类时优先使用已读取的全量快照。</p>
       <div class="catalog-bulk"><button id="catalog-select-all" class="option-button" type="button" aria-pressed="false" aria-label="选择本页">选择本页 <span data-option-state>未全选</span></button><span id="catalog-selected" class="subtle">已选 0 项</span><button id="catalog-watch-selected" type="button" disabled>所选加入库存监控</button><button id="catalog-unwatch-selected" type="button" disabled>所选加入库存通知</button></div>
@@ -732,7 +732,7 @@
       </div>
       <div class="catalog-pagination"><span id="catalog-page-label" class="subtle"></span><div class="actions"><button id="catalog-prev" type="button" disabled>上一页</button><button id="catalog-next" type="button" disabled>下一页</button></div></div>
     </div>
-    <div class="catalog-reminders"><div><h2>已关注 / 通知 <span id="catalog-watch-count">0</span></h2><p id="catalog-reminder-note" class="hint">加入后请保存库存监控或库存通知卡片，再按各模块的刷新设置运行。</p></div><div class="actions"><button id="catalog-open-products" type="button">查看 VPS 库存监控</button><button id="catalog-open-seckill" type="button">配置 VPS 补货抢购</button></div></div>
+    <div class="catalog-reminders"><div><h2>已关注 / 通知 <span id="catalog-watch-count">0</span></h2><p id="catalog-reminder-note" class="hint">加入监控或通知后会自动保存，并按各模块的刷新设置运行。</p></div><div class="actions"><button id="catalog-open-products" type="button">查看 VPS 库存监控</button><button id="catalog-open-seckill" type="button">配置 VPS 补货抢购</button></div></div>
     <p class="hint">大盘分类自动刷新仅在此栏目打开且页面可见时运行，使用已保存的商家请求方式；可随时停止。全部公开套餐会读取多个分类，仅支持手动刷新，建议偶尔用于发现新套餐。关闭网页后，已保存的监控和通知商品仍会在服务器检查，只有通知列表会通过 Telegram 提醒。大盘刷新不发送通知，也不改动提醒历史。外币价格下方的人民币金额为参考折算值，实际价格与购买资格以商家下单页为准。</p>
   </section>
 
@@ -761,7 +761,7 @@
 
   <section class="page-panel panel-card" id="page-monitor" data-page="monitor" aria-labelledby="page-title" hidden>
     <div class="section-body">
-    <div class="section-head"><div><h2>我的 VPS 库存监控 <span id="watchlist-count" class="subtle">0</span></h2><p>关注商品与实时库存 · 仅查看，不发送通知。</p></div><div class="actions"><button id="watchlist-browse" type="button">从大盘添加</button><button type="button" class="card-save" data-save-card="monitor">保存监控设置</button></div></div>
+    <div class="section-head"><div><h2>我的 VPS 库存监控 <span id="watchlist-count" class="subtle">0</span></h2><p>关注商品与实时库存 · 仅查看，不发送通知。</p></div><div class="actions"><button id="watchlist-browse" type="button">从大盘添加</button></div></div>
     <div class="watchlist-filters">
       <div class="watchlist-filter-fields">
         <label>搜索商品<input id="watchlist-search" type="search" placeholder="商品、商家或线路"></label>
