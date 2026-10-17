@@ -847,8 +847,7 @@
     <div class="request-card egress-panel"><div class="section-head"><div><h2>出口节点与商家路由</h2><p>添加节点后按商家绑定出口；主服务器需能连接节点监听端口。</p></div><div class="actions"><button id="egress-add-node" type="button">添加节点</button><button id="egress-refresh" type="button">刷新节点</button><button type="button" class="card-save" data-save-card="egress">保存</button></div></div><div id="egress-nodes" class="egress-nodes"></div><h3>商家出口路由</h3><div id="egress-routes" class="egress-routes"></div><p id="egress-status" class="hint" aria-live="polite">尚未配置出口节点。</p></div>
     <div class="request-tool-grid">
     <div class="request-tool request-card cloudscraper">
-      <h2>cloudscraper · 轻量请求</h2>
-      <p class="hint">无需浏览器或额外服务，随安装/更新自动安装。以下参数仅用于 cloudscraper，保存后应用到选择此方式的商家。</p>
+      <div class="request-card-head"><div><h2>cloudscraper · 轻量请求</h2><p>无需浏览器或额外服务，随安装/更新自动安装。以下参数仅用于 cloudscraper，保存后应用到选择此方式的商家。</p></div><button type="button" class="card-save" data-save-card="cloudscraper">保存</button></div>
       <div class="form-grid request-parameters">
         <label>连接超时（秒）<input id="cloudscraper-connect-timeout" type="number" min="1" max="30" step="1"><span class="hint">建立连接的等待时间，默认 10 秒。</span></label>
         <label>读取超时（秒）<input id="cloudscraper-read-timeout" type="number" min="1" max="120" step="1"><span class="hint">等待响应数据的时间，默认 25 秒。</span></label>

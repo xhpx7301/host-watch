@@ -2826,7 +2826,7 @@ function mergeConfigScope(baseValue, draftValue, scope) {
   else if (scope === "fetcher") {
     const keys = ["mode", "flaresolverr_url", "timeout_seconds", "wait_seconds", "disable_media", "provider_flaresolverr", "cloudscraper"];
     base.fetcher = { ...base.fetcher, ...Object.fromEntries(keys.map(key => [key, draft.fetcher[key]])) };
-  }
+  } else if (scope === "cloudscraper") base.fetcher = { ...base.fetcher, cloudscraper: draft.fetcher.cloudscraper };
   else if (scope === "provider-modes") base.fetcher = { ...base.fetcher, provider_modes: draft.fetcher.provider_modes };
   else if (scope === "egress") { base.egress = draft.egress; base.fetcher = { ...base.fetcher, egress: draft.egress }; }
   else if (scope === "telegram") base.telegram = draft.telegram;
@@ -3240,6 +3240,7 @@ async function saveConfig(scope = "all") {
   if (scope !== "all") {
     if (scope === "affiliates") Object.assign(visibleDraft, { affiliate_id: result.config.affiliate_id, affiliates: result.config.affiliates, affiliate_notes: result.config.affiliate_notes, affiliate_coupons: result.config.affiliate_coupons, merchant_order: result.config.merchant_order });
     else if (scope === "fetcher" || scope === "provider-modes" || scope === "egress") visibleDraft.fetcher = draft.fetcher;
+    else if (scope === "cloudscraper") visibleDraft.fetcher = { ...visibleDraft.fetcher, cloudscraper: draft.fetcher.cloudscraper };
     else if (scope === "telegram") visibleDraft.telegram = draft.telegram;
     else if (scope === "catalog") visibleDraft.catalog_schedule = draft.catalog_schedule;
     else if (scope === "monitor" || scope === "notifications") visibleDraft.products = draft.products;
