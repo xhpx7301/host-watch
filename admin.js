@@ -838,7 +838,7 @@ function productEditor(item, index) {
 
   const grid = text("div", "", "form-grid");
   grid.append(
-    selectField("监控适配器", item.adapter || (item.category_url ? "vmiss" : "html"), "adapter", [["html", "通用 HTTPS 网页"], ["vmiss", "VMISS WHMCS"], ["vps_soy", "VPS.SOY 商品页"], ["akile", "Akile 商品库存"], ["isvoro", "Isvoro 商品库存"], ["dmit", "DMIT 商品库存"], ["bwh", "搬瓦工商品库存"]]),
+    selectField("监控适配器", item.adapter || (item.category_url ? "vmiss" : "html"), "adapter", orderedMerchantEntries().map(([key, label]) => [key, key === "html" ? "通用 HTTPS 网页" : `${label} 商品库存`]).map(([key, label]) => [key, key === "vmiss" ? "VMISS WHMCS" : label])),
     inputField("厂商名称", item.provider || (item.adapter === "vmiss" || item.category_url ? "VMISS" : "自定义网站"), "provider", "text", "例如 ExampleHost"),
     inputField("商品名称", item.name, "name", "text", "例如 US VPS 2 GB"),
     inputField("通知优惠码（留空跟随 AFF 默认）", item.notification_coupon_code || "", "notification_coupon_code", "text", "例如 10%OFF"),
@@ -1304,6 +1304,12 @@ function productMonitorLabel(item, saved) {
 }
 
 const merchantNames = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", isvoro: "Isvoro", dmit: "DMIT", bwh: "搬瓦工" };
+const customMerchantEntry = ["html", "其他商家 / 自定义网页"];
+function orderedMerchantEntries({ includeCustom = true } = {}) {
+  const entries = merchantOrder().map(key => [key, merchantNames[key]]);
+  if (includeCustom) entries.push(customMerchantEntry);
+  return entries;
+}
 function requestRouteLabel(route) {
   if (!route) return "出口信息尚未确认";
   const method = { requests: "HTTP", cloudscraper: "cloudscraper", flaresolverr: "FlareSolverr 浏览器" }[route.mode] || route.mode;
@@ -1418,7 +1424,7 @@ function renderMerchantOrder() {
       const from = next.indexOf(source), to = next.indexOf(button.dataset.catalogProvider);
       if (from < 0 || to < 0 || from === to) return;
       next.splice(from, 1); next.splice(to, 0, source); config.merchant_order = next;
-      renderMerchantOrder(); renderProductList(); updateDraftState();
+      renderMerchantOrder(); renderProducts(); updateDraftState();
       setMessage("商家顺序已调整，点击“保存商家顺序”完成编辑，再点击底部“保存配置”保存到服务器。", "pending");
     });
     tabs.addEventListener("click", event => {
@@ -1446,6 +1452,36 @@ function renderMerchantOrder() {
   filter.replaceChildren(new Option("全部商家", "all"), ...order.map((key) => new Option(merchantNames[key], key)), new Option("其他商家", "other")); filter.value = selected;
   const add = document.querySelector("#add-merchant"), chosen = add.value;
   for (const key of [...order, "html"]) { const option = [...add.options].find((option) => option.value === key); if (option) add.append(option); } add.value = chosen;
+  renderProviderModeOrder();
+  renderAffiliateOrder();
+  renderCloudscraperTargetOrder();
+  renderEgress();
+  renderProviderFlareSettings();
+  renderVpsSeckill();
+}
+
+function renderProviderModeOrder() {
+  const target = document.querySelector("#provider-request-modes");
+  if (!target) return;
+  const labels = new Map([...target.querySelectorAll("label")].map(label => [label.querySelector("[data-provider-mode]")?.dataset.providerMode, label]));
+  orderedMerchantEntries().forEach(([key]) => { const label = labels.get(key); if (label) target.append(label); });
+}
+
+function renderAffiliateOrder() {
+  const target = document.querySelector(".affiliate-grid");
+  if (!target) return;
+  const cards = new Map([...target.querySelectorAll("[data-affiliate-card]")].map(card => [card.dataset.affiliateCard, card]));
+  merchantOrder().forEach(key => { const card = cards.get(key); if (card) target.append(card); });
+}
+
+function renderCloudscraperTargetOrder() {
+  const target = document.querySelector("#cloudscraper-test-target");
+  if (!target) return;
+  const selected = target.value;
+  const options = new Map([...target.options].map(option => [option.value, option]));
+  const ordered = [...merchantOrder().map(key => options.get(key)).filter(Boolean), options.get("baseline")].filter(Boolean);
+  target.replaceChildren(...ordered);
+  target.value = selected;
 }
 
 function membership(item, type) {
@@ -2194,7 +2230,6 @@ function renderOverviewRecent() {
   }); table.append(body); wrap.append(table); target.replaceChildren(wrap);
 }
 
-const egressProviders = [["vmiss", "VMISS"], ["vps_soy", "VPS.SOY"], ["akile", "Akile"], ["isvoro", "Isvoro"], ["dmit", "DMIT"], ["bwh", "搬瓦工"], ["html", "其他商家 / 自定义网页"]];
 const egressInstallCommands = new Map();
 const expandedEgressNodes = new Set();
 // The command is identical for every node. Prefer the installed offline script;
@@ -2346,7 +2381,7 @@ function renderEgress() {
     const actions = text("div", "", "actions egress-node-actions"); actions.append(healthLabel, enabledLabel, probe, remove); probe.disabled = remove.disabled = actionRunning || egressHealthRunning || Boolean(node._egressHealthChecking); head.append(actions); body.append(grid); if (node.last_error) card.append(text("p", node.last_error, "error")); target.append(card);
   });
   const routes = document.querySelector("#egress-routes"); routes.replaceChildren(); const options = [new Option("主服务器直连", "")]; nodes.forEach(node => options.push(new Option(`${node.name} · ${node.public_ip || "未检查"}`, node.id)));
-  egressProviders.forEach(([id, label]) => {
+  orderedMerchantEntries().forEach(([id, label]) => {
     const select = document.createElement("select"); select.replaceChildren(...options.map(option => option.cloneNode(true)));
     select.value = config.egress?.routes?.[id] || "";
     const hint = text("small", "", "hint");
@@ -2382,6 +2417,10 @@ function seckillAccountLabel(account) {
   const name = account?.name || account?.username || account?.id || "未命名账户";
   return `${name} · ${seckillAccountMerchant(account)}${account?.password_configured ? " · 已保存密码" : ""}`;
 }
+function orderedSeckillAccounts() {
+  const ranks = new Map(merchantOrder().map((key, index) => [merchantNames[key], index]));
+  return seckillAccounts().map((account, index) => ({ account, index })).sort((a, b) => (ranks.get(seckillAccountMerchant(a.account)) ?? 999) - (ranks.get(seckillAccountMerchant(b.account)) ?? 999) || a.index - b.index).map(entry => entry.account);
+}
 function addToVpsSeckill(product) {
   if (!product || !config.products.some(item => item.id === product.id && (membership(item, "watch") || membership(item, "notify")))) return;
   const items = seckillItems();
@@ -2393,7 +2432,8 @@ function renderVpsSeckill() {
   document.querySelector("#vps-seckill-mode").value = value.mode || "manual";
   document.querySelector("#vps-seckill-interval").value = value.interval_seconds || 5;
   const accountOptions = [new Option("不绑定账户", "")];
-  seckillAccounts().forEach(account => accountOptions.push(new Option(seckillAccountLabel(account), account.id)));
+  const accounts = orderedSeckillAccounts();
+  accounts.forEach(account => accountOptions.push(new Option(seckillAccountLabel(account), account.id)));
   const itemTarget = document.querySelector("#vps-seckill-items"); itemTarget.replaceChildren();
   const products = new Map(config.products.map(item => [item.id, item]));
   if (!seckillItems().length) itemTarget.append(text("p", "还没有补货抢购商品，请从 VPS 库存监控或 VPS 库存通知的“更多”中逐个加入。", "empty"));
@@ -2437,7 +2477,7 @@ function renderVpsSeckill() {
   });
   const accountTarget = document.querySelector("#vps-seckill-accounts"); accountTarget.replaceChildren();
   if (!seckillAccounts().length) accountTarget.append(text("p", "尚未配置网站账户。手动抢购不需要账户。", "empty"));
-  seckillAccounts().forEach(account => {
+  accounts.forEach(account => {
     const card = text("article", "", "seckill-account"), grid = text("div", "", "form-grid");
     const merchantIds = { vmiss: "vmiss", "vps.soy": "vps_soy", vps_soy: "vps_soy", "搬瓦工": "bwh", bwh: "bwh", bandwagonhost: "bwh", akile: "akile", isvoro: "isvoro", dmit: "dmit" };
     const providerValue = () => account.provider ? (merchantIds[String(account.provider).trim().toLowerCase()] || "custom") : (account.login_url ? "custom" : "");
@@ -2448,7 +2488,7 @@ function renderVpsSeckill() {
     };
     field("账户名称", "name", "账户名称");
     const provider = document.createElement("select");
-    provider.replaceChildren(new Option("选择商家", ""), new Option("VMISS", "vmiss"), new Option("VPS.SOY", "vps_soy"), new Option("Akile", "akile"), new Option("Isvoro", "isvoro"), new Option("DMIT", "dmit"), new Option("搬瓦工", "bwh"), new Option("其他商家 · JSON 适配接口", "custom"));
+    provider.replaceChildren(new Option("选择商家", ""), ...merchantOrder().map(key => new Option(merchantNames[key], key)), new Option("其他商家 · JSON 适配接口", "custom"));
     provider.value = providerValue();
     const providerLabel = document.createElement("label"); providerLabel.append(text("span", "商家"), provider); grid.append(providerLabel);
     const adapterNote = text("p", "", "hint span-2"); adapterNote.setAttribute("role", "status");
@@ -2701,7 +2741,7 @@ function syncProviderFlareSettings() {
 }
 function renderProviderFlareSettings() {
   const target = document.querySelector("#provider-flaresolverr-settings");
-  target.replaceChildren(...egressProviders.map(([provider, label]) => {
+  target.replaceChildren(...orderedMerchantEntries().map(([provider, label]) => {
     const card = text("article", "", "provider-flare-card"); card.dataset.providerFlare = provider;
     const head = text("div", "", "provider-flare-head");
     const independent = providerFlareDraft.has(provider);
