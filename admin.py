@@ -656,6 +656,176 @@ def order_json(response) -> dict:
     return data
 
 
+def _vmiss_url(url: str) -> str:
+    parsed = urlsplit(str(url or ""))
+    if parsed.scheme != "https" or parsed.hostname != VMISS_HOST or parsed.username or parsed.password or parsed.fragment:
+        raise ValueError("VMISS 请求地址必须是 app.vmiss.com 的 HTTPS 地址")
+    return url
+
+
+def _vmiss_get(session, url: str):
+    """Follow only bounded same-host VMISS redirects for page navigation."""
+    current = _vmiss_url(url)
+    for _ in range(6):
+        response = session.get(current, timeout=(5, 25), allow_redirects=False)
+        if 300 <= response.status_code < 400:
+            location = str(getattr(response, "headers", {}).get("Location", "")).strip()
+            if not location:
+                raise ValueError("VMISS 页面跳转缺少目标地址")
+            current = _vmiss_url(urljoin(current, location))
+            continue
+        if not 200 <= response.status_code < 300:
+            raise ValueError(f"VMISS 页面返回 HTTP {response.status_code}")
+        return response
+    raise ValueError("VMISS 页面跳转次数过多")
+
+
+def _vmiss_form_data(form) -> list[tuple[str, str]]:
+    """Collect successful controls from a WHMCS form without submitting buttons."""
+    data = []
+    for control in form.find_all(["input", "select", "textarea"]):
+        name = str(control.get("name") or "").strip()
+        if not name or control.has_attr("disabled"):
+            continue
+        tag = control.name.casefold()
+        if tag == "input":
+            kind = str(control.get("type") or "text").casefold()
+            if kind in {"submit", "button", "reset", "file"} or kind in {"checkbox", "radio"} and not control.has_attr("checked"):
+                continue
+            data.append((name, str(control.get("value") or "")))
+        elif tag == "select":
+            options = control.find_all("option")
+            selected = [option for option in options if option.has_attr("selected")]
+            if not selected and options:
+                selected = [options[0]]
+            for option in selected:
+                data.append((name, str(option.get("value") or "")))
+        else:
+            data.append((name, control.get_text()))
+    return data
+
+
+def _vmiss_replace(data: list[tuple[str, str]], name: str, value: str) -> list[tuple[str, str]]:
+    result = [(key, item) for key, item in data if key != name]
+    result.append((name, value))
+    return result
+
+
+def _vmiss_form_action(form, page_url: str) -> str:
+    action = urljoin(page_url, str(form.get("action") or page_url))
+    return _vmiss_url(action)
+
+
+def _vmiss_invoice_url(response, fallback: str = "") -> str:
+    location = str(getattr(response, "headers", {}).get("Location", "")).strip()
+    candidates = [location, str(getattr(response, "url", "") or ""), str(fallback or "")]
+    body = str(getattr(response, "text", "") or "")
+    candidates.extend(re.findall(r"(?:https://app\.vmiss\.com)?/viewinvoice\.php\?id=[0-9]+", body, re.I))
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            target = _vmiss_url(urljoin(response.url or VMISS_BASE_URL, candidate))
+        except ValueError:
+            continue
+        parsed = urlsplit(target)
+        if parsed.path.casefold() == "/viewinvoice.php" and re.fullmatch(r"[1-9][0-9]{0,18}", parse_qs(parsed.query).get("id", [""])[0]):
+            return target
+    return ""
+
+
+def vmiss_order(session, item: dict, account: dict, product, url: str, key: str) -> dict:
+    """Create one VMISS WHMCS order and stop at its unpaid invoice.
+
+    VMISS has no HostWatch JSON order endpoint. This adapter follows the site's
+    own product configuration and checkout forms, explicitly selects an invoice
+    payment method, disables account credit, and never follows a payment-gateway
+    redirect.
+    """
+    from bs4 import BeautifulSoup
+
+    page = _vmiss_get(session, url)
+    soup = BeautifulSoup(page.text, "html.parser")
+    config = soup.select_one("form#frmConfigureProduct")
+    if config is None:
+        raise ValueError("VMISS 商品页未返回配置表单，未创建订单")
+    data = _vmiss_form_data(config)
+    data = _vmiss_replace(data, "ajax", "1")
+    data = _vmiss_replace(data, "a", "confproduct")
+    cycle = str(item.get("billing_cycle") or "monthly").strip().casefold()
+    if cycle not in ORDER_BILLING_CYCLES:
+        raise ValueError("VMISS 付款周期无效")
+    data = _vmiss_replace(data, "billingcycle", cycle)
+    operating_system = str(item.get("operating_system") or "Debian 12").strip()
+    os_select = next((select for select in config.find_all("select") if str(select.get("name") or "").startswith("configoption[")), None)
+    if os_select is None:
+        raise ValueError("VMISS 配置页未返回系统选项，未创建订单")
+    os_option = next((option for option in os_select.find_all("option") if " ".join(option.get_text(" ", strip=True).split()).casefold() == operating_system.casefold()), None)
+    if os_option is None:
+        raise ValueError(f"VMISS 配置页没有系统选项：{operating_system}")
+    data = _vmiss_replace(data, str(os_select["name"]), str(os_option.get("value") or ""))
+    hostname = next((str(control.get("value") or "").strip() for control in config.select('input[name="hostname"]')), "")
+    if not hostname:
+        hostname = "hostwatch-" + key[:10]
+    data = _vmiss_replace(data, "hostname", hostname)
+    if not any(name == "rootpw" for name, _ in data):
+        data.append(("rootpw", "N/A"))
+    config_response = session.post("https://app.vmiss.com/cart.php", data=data,
+        timeout=(5, 25), allow_redirects=False)
+    if not 200 <= config_response.status_code < 300 or str(config_response.text or "").strip():
+        raise ValueError("VMISS 商品配置未通过，未创建订单")
+
+    checkout = _vmiss_get(session, "https://app.vmiss.com/cart.php?a=checkout")
+    checkout_soup = BeautifulSoup(checkout.text, "html.parser")
+    coupon = str(item.get("coupon_code") or "").strip()
+    if coupon:
+        promo = next((form for form in checkout_soup.find_all("form") if form.select_one('input[name="promocode"]')), None)
+        if promo is None:
+            raise ValueError("VMISS 结算页未返回优惠码表单，未创建订单")
+        promo_data = _vmiss_form_data(promo)
+        promo_data = _vmiss_replace(promo_data, "promocode", coupon)
+        promo_data = _vmiss_replace(promo_data, "validatepromo", "Validate Code")
+        promo_response = session.post(_vmiss_form_action(promo, checkout.url), data=promo_data,
+            timeout=(5, 25), allow_redirects=False)
+        if 300 <= promo_response.status_code < 400:
+            location = str(promo_response.headers.get("Location", ""))
+            checkout = _vmiss_get(session, urljoin(promo_response.url or checkout.url, location))
+        elif 200 <= promo_response.status_code < 300:
+            checkout = promo_response
+        else:
+            raise ValueError("VMISS 优惠码提交失败，未创建订单")
+        promo_text = BeautifulSoup(checkout.text, "html.parser").get_text(" ", strip=True).casefold()
+        if any(marker in promo_text for marker in ("invalid promotion", "promo code is invalid", "not valid", "优惠码无效")):
+            raise ValueError("VMISS 优惠码无效，未创建订单")
+        checkout_soup = BeautifulSoup(checkout.text, "html.parser")
+
+    order_form = checkout_soup.select_one("form#frmCheckout")
+    if order_form is None:
+        raise ValueError("VMISS 结算页未返回订单表单，未创建订单")
+    order_data = _vmiss_form_data(order_form)
+    order_data = [(name, value) for name, value in order_data if name not in {
+        "loginemail", "loginpassword", "password", "password2", "ccnumber", "ccexpirydate", "cccvv", "ccdescription", "ccinfo", "marketingoptin"
+    }]
+    if order_form.select_one('input[name="custtype"]'):
+        order_data = _vmiss_replace(order_data, "custtype", "existing")
+    order_data = _vmiss_replace(order_data, "applycredit", "0")
+    payment_method = str(item.get("payment_method") or "alipay").strip().casefold()
+    gateway = VMISS_PAYMENT_METHODS.get(payment_method)
+    if not gateway:
+        raise ValueError("VMISS 付款方式不受支持")
+    order_data = _vmiss_replace(order_data, "paymentmethod", gateway)
+    order_data = _vmiss_replace(order_data, "accepttos", "on")
+    order_response = session.post(_vmiss_form_action(order_form, checkout.url), data=order_data,
+        headers={"Idempotency-Key": key}, timeout=(5, 30), allow_redirects=False)
+    invoice_url = _vmiss_invoice_url(order_response, checkout.url)
+    if not invoice_url:
+        if 300 <= order_response.status_code < 400:
+            raise ValueError("VMISS 订单提交后跳转到支付或未知页面，已停止且未确认订单")
+        raise ValueError("VMISS 未返回待付款发票，未确认订单")
+    invoice_id = parse_qs(urlsplit(invoice_url).query)["id"][0]
+    return {"order_id": f"vmiss-invoice-{invoice_id}", "invoice_url": invoice_url, "payment_status": "unpaid"}
+
+
 def akile_order_payload(item: dict, product, url: str) -> dict:
     """Build the same unpaid Akile order payload used by the shop page.
 
@@ -991,6 +1161,16 @@ class SeckillTask:
             self.log(f"已创建 Akile 待付款订单，数量 {quantity}；请手动前往官网核对订单并支付。", "success", item)
             notification = self._notify_unpaid_order(item, order["order_id"], quantity, purchase_url)
             return {"status": "submitted", "order_id": order["order_id"], "url": purchase_url,
+                    "quantity": quantity, "payment_status": "unpaid", "telegram_status": notification}
+        if product and str(product.get("adapter", "")).casefold() == "vmiss":
+            try:
+                order = vmiss_order(session, item, account, inspected, url, key)
+            except (requests.RequestException, ValueError):
+                self.log("已发送一次 VMISS 下单请求，但无法确认待付款发票；已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
+                return {"status": "uncertain", "url": url, "quantity": quantity}
+            self.log(f"已创建 VMISS 待付款订单，数量 {quantity}；请手动前往发票页面核对并支付。", "success", item)
+            notification = self._notify_unpaid_order(item, order["order_id"], quantity, order["invoice_url"])
+            return {"status": "submitted", "order_id": order["order_id"], "url": order["invoice_url"],
                     "quantity": quantity, "payment_status": "unpaid", "telegram_status": notification}
         payload = {"protocol": ORDER_PROTOCOL, "action": "create_unpaid_order",
             "product_id": item["product_id"], "purchase_url": url, "quantity": quantity,
