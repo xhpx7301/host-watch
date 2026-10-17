@@ -776,8 +776,8 @@ def _vmiss_confirm_invoice(session, invoice_url: str, item: dict, product) -> di
     return {"status": "unpaid", "product": product_name, "operating_system": operating_system, "coupon_code": coupon}
 
 
-def _vmiss_unpaid_invoice_from_list(session) -> str:
-    """Find a single unambiguous visible unpaid invoice from the client list."""
+def _vmiss_unpaid_invoice_candidates(session) -> list[str]:
+    """Return visible unpaid invoice URLs from the client list."""
     from bs4 import BeautifulSoup
 
     page = _vmiss_get(session, VMISS_INVOICES_URL)
@@ -795,9 +795,13 @@ def _vmiss_unpaid_invoice_from_list(session) -> str:
         status = _vmiss_invoice_status(row.get_text(" ", strip=True) if row else link.get_text(" ", strip=True))
         if status == "unpaid":
             candidates[invoice_id] = invoice_url
-    if len(candidates) != 1:
-        return ""
-    return next(iter(candidates.values()))
+    return list(candidates.values())
+
+
+def _vmiss_unpaid_invoice_from_list(session) -> str:
+    """Find a single visible unpaid invoice from the client list."""
+    candidates = _vmiss_unpaid_invoice_candidates(session)
+    return candidates[0] if len(candidates) == 1 else ""
 
 
 def vmiss_order(session, item: dict, account: dict, product, url: str, key: str) -> dict:
@@ -896,14 +900,34 @@ def vmiss_order(session, item: dict, account: dict, product, url: str, key: str)
                     invoice_url = _vmiss_invoice_url(invoice_page, invoice_page.url)
             except ValueError:
                 pass
+    verification = None
     if not invoice_url:
-        invoice_url = _vmiss_unpaid_invoice_from_list(session)
+        candidates = _vmiss_unpaid_invoice_candidates(session)
+        matches = []
+        reasons = []
+        for candidate in candidates:
+            try:
+                candidate_verification = _vmiss_confirm_invoice(session, candidate, item, product)
+            except (requests.RequestException, ValueError) as exc:
+                reasons.append(str(exc).strip() or exc.__class__.__name__)
+                continue
+            matches.append((candidate, candidate_verification))
+        if len(matches) == 1:
+            invoice_url, verification = matches[0]
+        elif not candidates:
+            raise ValueError("VMISS 账单列表没有明确的未付款账单，未确认订单")
+        elif not matches:
+            detail = reasons[0][:180] if reasons else "账单详情均不匹配"
+            raise ValueError(f"VMISS 账单列表找到 {len(candidates)} 张未付款账单，但没有匹配本次商品：{detail}")
+        else:
+            raise ValueError(f"VMISS 账单列表找到 {len(matches)} 张匹配本次商品的未付款账单，无法唯一确认")
     if not invoice_url:
         if 300 <= order_response.status_code < 400:
             raise ValueError("VMISS 订单提交后跳转到支付或未知页面，已停止且未确认订单")
         raise ValueError("VMISS 未返回待付款发票，未确认订单")
     invoice_id = parse_qs(urlsplit(invoice_url).query)["id"][0]
-    verification = _vmiss_confirm_invoice(session, invoice_url, item, product)
+    if verification is None:
+        verification = _vmiss_confirm_invoice(session, invoice_url, item, product)
     return {"order_id": f"vmiss-invoice-{invoice_id}", "invoice_url": invoice_url, "payment_status": "unpaid",
             "invoice_verification": verification}
 
@@ -1282,8 +1306,9 @@ class SeckillTask:
         if product and str(product.get("adapter", "")).casefold() == "vmiss":
             try:
                 order = vmiss_order(session, item, account, inspected, url, key)
-            except (requests.RequestException, ValueError):
-                self.log("已发送一次 VMISS 下单请求，但无法确认待付款发票；已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
+            except (requests.RequestException, ValueError) as exc:
+                detail = str(exc).strip() or exc.__class__.__name__
+                self.log(f"已发送一次 VMISS 下单请求，但无法确认待付款发票；原因：{detail[:240]}。已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
                 return {"status": "uncertain", "url": url, "quantity": quantity}
             self.log(f"已创建 VMISS 待付款订单，数量 {quantity}；请手动前往发票页面核对并支付。", "success", item)
             notification = self._notify_unpaid_order(item, order["order_id"], quantity, order["invoice_url"])
