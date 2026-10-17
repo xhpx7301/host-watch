@@ -56,10 +56,15 @@ def activities(session, fetcher):
                 settings = {s.get("key"): s.get("value") for s in settings}
             if not isinstance(settings, dict):
                 raise MonitorError("Isvoro 秒杀配置异常")
+            ip_parts = []
+            if str(settings.get("include_ipv4", "")).casefold() in {"1", "true", "yes"}:
+                ip_parts.append("IPv4")
+            if str(settings.get("include_ipv6", "")).casefold() in {"1", "true", "yes"}:
+                ip_parts.append("IPv6")
             plans.append({"id": item["id"], "name": item["product_name"][:120], "plan": str(item.get("plan_name") or "")[:60],
                 "price": price_text(f"{item.get('currency_code', 'CNY')} {price:g}"), "available": max(0, stock - sold),
                 "specs": hardware_text(f"{settings.get('cores', '—')} 核 · {settings.get('memory', '—')} MB · {settings.get('disk', '—')} GB"),
-                "traffic": network_text(isvoro_network(settings)), "url": f"{URL}/buy/{item['id']}"})
+                "traffic": network_text(isvoro_network(settings)), "ip": " / ".join(ip_parts) or "—", "url": f"{URL}/buy/{item['id']}"})
         # The public list can include previews. Do not alert for expired rows.
         if end <= now:
             continue
@@ -77,11 +82,11 @@ def campaign_message(activity, config, test=False):
         "状态：" + ("进行中" if activity["running"] else "即将开始"),
         "开始：" + safe(activity["starts_at"], 32), "结束：" + safe(activity["ends_at"], 32)]
     if activity.get("description"):
-        lines.append(safe(activity["description"], 120))
+        lines += ["", "<b>服务器信息：</b>", safe(activity["description"], 500)]
     for item in activity["items"][:6]:
         lines += ["", f"<b>{safe(item['name'], 45)}</b> · {safe(item['plan'], 15)}",
             f"秒杀价：{safe(item['price'], 24)} · 剩余 {item['available']} 份",
-            f"<code>{safe(item['specs'], 45)}</code> · {safe(item['traffic'], 45)}"]
+            f"<code>{safe(item['specs'], 45)}</code> · {safe(item['traffic'], 45)} · IP：{safe(item.get('ip', '—'), 20)}"]
     if len(activity["items"]) > 6:
         lines.append(f"另有 {len(activity['items']) - 6} 个套餐，详见活动页。")
     link = affiliate_purchase_url(URL, "isvoro", config)

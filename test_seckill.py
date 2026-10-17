@@ -135,7 +135,7 @@ class SeckillTests(unittest.TestCase):
     def test_campaign_message_escapes_content_currency_and_current_affiliate(self):
         activity = self.parse(fixture())["activities"][0]
         text, keyboard = seckill.campaign_message(activity, {"affiliates": {"isvoro": "new-code"}})
-        for value in ["¥79", "1C/1G/10GB", "剩余 3 份", "&lt;test&gt;", "2026-10-17", "aff=new-code"]:
+        for value in ["¥79", "1C/1G/10GB", "剩余 3 份", "IP：—", "服务器信息", "&lt;test&gt;", "2026-10-17", "aff=new-code"]:
             self.assertIn(value, text)
         self.assertIn("aff=new-code", keyboard["inline_keyboard"][0][0]["url"])
         activity["title"] = "😀" * 500
@@ -148,6 +148,14 @@ class SeckillTests(unittest.TestCase):
             def handle_data(self, value): self.plain += value
         parser = Extract(); parser.feed(text)
         self.assertLessEqual(len(parser.plain.encode("utf-16-le")) // 2, 4096)
+
+    def test_seckill_runs_with_independent_notify_role_without_inventory_products(self):
+        with patch.object(monitor, "fetch_isvoro_json", return_value=fixture()), patch.object(monitor, "telegram_request") as send:
+            monitor.check_once(Mock(), self.config, self.path, self.path.parent / "status.json", "mock", "123", role="notify")
+        send.assert_called_once()
+        status = json.loads((self.path.parent / "status.json").read_text(encoding="utf-8"))
+        self.assertTrue(status["seckill"]["ok"])
+        self.assertEqual(status["products"], [])
 
     def test_seckill_only_round_and_merchant_request_policy(self):
         config = {**self.config, "fetcher": {"mode": "requests", "provider_modes": {"isvoro": "flaresolverr"}}}

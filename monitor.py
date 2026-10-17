@@ -1211,14 +1211,14 @@ def check_once(
     selected = selected_products(config, None if role == "both" else role)
     schedule = module_schedule(config, "monitor" if role == "watch" else "notify" if role == "notify" else "monitor")
     module = "monitor" if role == "watch" else "notify" if role == "notify" else "monitor"
-    if not selected and not (role == "both" and config.get("isvoro_seckill", False)):
+    if not selected and not (role in {"both", "notify"} and config.get("isvoro_seckill", False)):
         update_module_status(status_path, module, schedule, "skipped", "没有启用的商品")
         raise MonitorError("没有启用的监控产品")
 
     update_module_status(status_path, module, schedule, "pending", "正在检查库存", trigger=trigger)
 
     seckill_status = None
-    if role == "both" and config.get("isvoro_seckill", False):
+    if role in {"both", "notify"} and config.get("isvoro_seckill", False):
         from seckill import check_once as check_seckill
         try:
             seckill_status = {"ok": True, **check_seckill(session, config, state_path, bot_token, chat_id)}
@@ -1382,7 +1382,7 @@ def main() -> int:
             due = []
             for role in ("watch", "notify"):
                 schedule = module_schedule(config, "monitor" if role == "watch" else "notify")
-                has_products = bool(selected_products(config, role))
+                has_products = bool(selected_products(config, role)) or (role == "notify" and config.get("isvoro_seckill", False))
                 if schedule["mode"] == "auto" and has_products and (not last_run[role] or now - last_run[role] >= schedule["interval_seconds"]):
                     due.append(role)
             active_due = due
@@ -1390,7 +1390,7 @@ def main() -> int:
                 waits = []
                 for role in ("watch", "notify"):
                     schedule = module_schedule(config, "monitor" if role == "watch" else "notify")
-                    if schedule["mode"] == "auto" and selected_products(config, role):
+                    if schedule["mode"] == "auto" and (selected_products(config, role) or (role == "notify" and config.get("isvoro_seckill", False))):
                         waits.append(max(0.25, schedule["interval_seconds"] - (now - last_run[role])) if last_run[role] else 0.25)
                 time.sleep(min(waits) if waits else 1.0)
                 continue
