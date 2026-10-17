@@ -420,6 +420,7 @@ AKILE_DEBIAN_TEMPLATES = {
 }
 VMISS_HOST = "app.vmiss.com"
 VMISS_BASE_URL = "https://app.vmiss.com/"
+VMISS_INVOICES_URL = "https://app.vmiss.com/clientarea.php?action=invoices"
 VMISS_PAYMENT_METHODS = {"alipay": "motionpayalipay", "credit_card": "stripe", "usdt": "cryptomusgateway"}
 MERCHANT_LOGIN_IDS = {
     "vmiss": "vmiss", "vps.soy": "vps_soy", "vps_soy": "vps_soy",
@@ -734,6 +735,48 @@ def _vmiss_invoice_url(response, fallback: str = "") -> str:
     return ""
 
 
+def _vmiss_invoice_status(text: str) -> str:
+    """Classify visible VMISS invoice status without treating ``unpaid`` as paid."""
+    body = " ".join(str(text or "").split()).casefold()
+    if re.search(r"\b(?:cancelled|canceled|paid|refunded|void)\b|已取消|已付款|已支付|已退款", body):
+        return "not_unpaid"
+    if re.search(r"\b(?:unpaid|pending)\b|未付款|未支付|待付款", body):
+        return "unpaid"
+    return "unknown"
+
+
+def _vmiss_confirm_invoice(session, invoice_url: str) -> None:
+    """Read one invoice page and require an explicit unpaid status."""
+    from bs4 import BeautifulSoup
+
+    page = _vmiss_get(session, invoice_url)
+    status = _vmiss_invoice_status(BeautifulSoup(page.text, "html.parser").get_text(" ", strip=True))
+    if status != "unpaid":
+        raise ValueError("VMISS 账单页未确认未付款状态，已停止且不会重复下单")
+
+
+def _vmiss_unpaid_invoice_from_list(session) -> str:
+    """Find the highest-numbered visible unpaid invoice from the client list."""
+    from bs4 import BeautifulSoup
+
+    page = _vmiss_get(session, VMISS_INVOICES_URL)
+    soup = BeautifulSoup(page.text, "html.parser")
+    candidates = []
+    for link in soup.select('a[href*="viewinvoice.php"]'):
+        try:
+            invoice_url = _vmiss_url(urljoin(page.url or VMISS_INVOICES_URL, str(link.get("href") or "")))
+        except ValueError:
+            continue
+        invoice_id = parse_qs(urlsplit(invoice_url).query).get("id", [""])[0]
+        if not re.fullmatch(r"[1-9][0-9]{0,18}", invoice_id):
+            continue
+        row = link.find_parent("tr") or link.parent
+        status = _vmiss_invoice_status(row.get_text(" ", strip=True) if row else link.get_text(" ", strip=True))
+        if status == "unpaid":
+            candidates.append((int(invoice_id), invoice_url))
+    return max(candidates, default=(0, ""))[1]
+
+
 def vmiss_order(session, item: dict, account: dict, product, url: str, key: str) -> dict:
     """Create one VMISS WHMCS order and stop at its unpaid invoice.
 
@@ -820,11 +863,24 @@ def vmiss_order(session, item: dict, account: dict, product, url: str, key: str)
     order_response = session.post(_vmiss_form_action(order_form, checkout.url), data=order_data,
         headers={"Idempotency-Key": key}, timeout=(5, 30), allow_redirects=False)
     invoice_url = _vmiss_invoice_url(order_response, checkout.url)
+    if not invoice_url and 300 <= order_response.status_code < 400:
+        location = str(order_response.headers.get("Location", "")).strip()
+        if location:
+            try:
+                destination = _vmiss_url(urljoin(order_response.url or checkout.url, location))
+                if urlsplit(destination).path.casefold() != "/cart.php":
+                    invoice_page = _vmiss_get(session, destination)
+                    invoice_url = _vmiss_invoice_url(invoice_page, invoice_page.url)
+            except ValueError:
+                pass
+    if not invoice_url:
+        invoice_url = _vmiss_unpaid_invoice_from_list(session)
     if not invoice_url:
         if 300 <= order_response.status_code < 400:
             raise ValueError("VMISS 订单提交后跳转到支付或未知页面，已停止且未确认订单")
         raise ValueError("VMISS 未返回待付款发票，未确认订单")
     invoice_id = parse_qs(urlsplit(invoice_url).query)["id"][0]
+    _vmiss_confirm_invoice(session, invoice_url)
     return {"order_id": f"vmiss-invoice-{invoice_id}", "invoice_url": invoice_url, "payment_status": "unpaid"}
 
 
