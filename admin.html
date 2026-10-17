@@ -77,12 +77,13 @@
     #message.pending { color:var(--blue); border-color:#b9d2df; }
     #message.success { color:var(--green); border-color:#b7d7c9; }
     #message.error { color:var(--red); border-color:#e7c1bc; background:#fffafa; }
-    .toast { position:fixed; right:24px; bottom:24px; z-index:20; display:flex; align-items:flex-start; gap:10px; width:min(360px,calc(100vw - 48px)); max-width:calc(100vw - 48px); padding:11px 12px; border:1px solid #b9d2df; border-left:4px solid var(--blue); border-radius:7px; background:var(--paper); color:var(--blue); box-shadow:0 6px 28px rgba(25,43,42,.18); font-size:14px; line-height:1.55; overflow-wrap:anywhere; }
+    .toast { position:fixed; right:24px; bottom:24px; z-index:1000; display:flex; align-items:center; gap:12px; width:min(420px,calc(100vw - 48px)); max-width:calc(100vw - 48px); padding:12px 14px; border:1px solid #b9d2df; border-left:4px solid var(--blue); border-radius:7px; background:var(--paper); color:var(--blue); box-shadow:0 6px 28px rgba(25,43,42,.18); font-size:14px; line-height:1.55; overflow-wrap:anywhere; }
     .toast[hidden] { display:none; }
     .toast.success { color:var(--green); border-color:#b7d7c9; border-left-color:var(--green); }
     .toast.error { color:var(--red); border-color:#e7c1bc; border-left-color:var(--red); }
+    .toast > div { flex:1 1 auto; min-width:0; }
     .toast-label { display:block; margin-bottom:2px; font-size:14px; font-weight:700; }
-    .toast button { flex-shrink:0; min-height:26px; padding:0 5px; color:inherit; border:0; background:transparent; font-size:18px; line-height:1.2; }
+    .toast button { flex:0 0 28px; align-self:center; width:28px; min-height:28px; padding:0; color:inherit; border:0; background:transparent; font-size:20px; line-height:1; }
     .overview { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
     .overview-item { position:relative; min-height:112px; padding:16px; border:1px solid var(--line); border-radius:12px; background:var(--paper); }
     .eyebrow { color:var(--muted); font-size:11px; font-weight:700; text-transform:uppercase; }
@@ -645,7 +646,7 @@
       .overview-note { font-size:11px; } #overview-state { font-size:14px; }
       .panel-card > .section-body,#page-overview > .section { padding:12px; }
       .module-overview-icon { width:22px; height:22px; top:10px; right:10px; }
-      .toast { top:auto; right:12px; bottom:86px; width:calc(100vw - 24px); max-width:calc(100vw - 24px); }
+      .toast { right:12px; bottom:12px; width:calc(100vw - 24px); max-width:calc(100vw - 24px); }
     }
     @media(max-width:520px) {
       button { min-height:36px; } input,select { height:38px; font-size:14px; }
