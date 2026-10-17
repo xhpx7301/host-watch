@@ -745,14 +745,31 @@ def _vmiss_invoice_status(text: str) -> str:
     return "unknown"
 
 
-def _vmiss_confirm_invoice(session, invoice_url: str) -> None:
-    """Read one invoice page and require an explicit unpaid status."""
+def _vmiss_normalize_invoice_text(value: object) -> str:
+    return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", str(value or "").casefold())
+
+
+def _vmiss_confirm_invoice(session, invoice_url: str, item: dict, product) -> dict:
+    """Read one invoice page and verify status plus the requested order details."""
     from bs4 import BeautifulSoup
 
     page = _vmiss_get(session, invoice_url)
-    status = _vmiss_invoice_status(BeautifulSoup(page.text, "html.parser").get_text(" ", strip=True))
+    soup = BeautifulSoup(page.text, "html.parser")
+    text = soup.get_text(" ", strip=True)
+    status = _vmiss_invoice_status(text)
     if status != "unpaid":
         raise ValueError("VMISS 账单页未确认未付款状态，已停止且不会重复下单")
+    normalized_text = _vmiss_normalize_invoice_text(text)
+    product_name = str(getattr(product, "name", "") or (product or {}).get("name", "") if isinstance(product, dict) else "").strip()
+    if product_name and _vmiss_normalize_invoice_text(product_name) not in normalized_text:
+        raise ValueError(f"VMISS 账单项目未匹配本次商品：{product_name[:120]}")
+    operating_system = str(item.get("operating_system") or "Debian 12").strip()
+    if operating_system and _vmiss_normalize_invoice_text(operating_system) not in normalized_text:
+        raise ValueError(f"VMISS 账单项目未确认系统：{operating_system[:80]}")
+    coupon = str(item.get("coupon_code") or "").strip()
+    if coupon and _vmiss_normalize_invoice_text(coupon) not in normalized_text:
+        raise ValueError(f"VMISS 账单项目未确认优惠码：{coupon[:80]}")
+    return {"status": "unpaid", "product": product_name, "operating_system": operating_system, "coupon_code": coupon}
 
 
 def _vmiss_unpaid_invoice_from_list(session) -> str:
@@ -875,18 +892,16 @@ def vmiss_order(session, item: dict, account: dict, product, url: str, key: str)
                     invoice_url = _vmiss_invoice_url(invoice_page, invoice_page.url)
             except ValueError:
                 pass
-    invoice_confirmed = False
     if not invoice_url:
         invoice_url = _vmiss_unpaid_invoice_from_list(session)
-        invoice_confirmed = bool(invoice_url)
     if not invoice_url:
         if 300 <= order_response.status_code < 400:
             raise ValueError("VMISS 订单提交后跳转到支付或未知页面，已停止且未确认订单")
         raise ValueError("VMISS 未返回待付款发票，未确认订单")
     invoice_id = parse_qs(urlsplit(invoice_url).query)["id"][0]
-    if not invoice_confirmed:
-        _vmiss_confirm_invoice(session, invoice_url)
-    return {"order_id": f"vmiss-invoice-{invoice_id}", "invoice_url": invoice_url, "payment_status": "unpaid"}
+    verification = _vmiss_confirm_invoice(session, invoice_url, item, product)
+    return {"order_id": f"vmiss-invoice-{invoice_id}", "invoice_url": invoice_url, "payment_status": "unpaid",
+            "invoice_verification": verification}
 
 
 def akile_order_payload(item: dict, product, url: str) -> dict:
