@@ -743,7 +743,7 @@
       </div>
       <div class="seckill-panel seckill-log-panel"><div class="section-head"><div><h3>执行日志</h3><p id="vps-seckill-log-note">尚未启动补货抢购任务。</p></div><button id="vps-seckill-clear-log" type="button">清空显示</button></div><div id="vps-seckill-results" aria-live="polite"></div><pre id="vps-seckill-logs" class="seckill-logs" aria-live="polite">暂无日志</pre></div>
       </div>
-      <div class="seckill-panel"><div class="section-head"><div><h3>补货抢购商品</h3><p>在库存监控 / 通知商品的“更多”中点击“加入 VPS 补货抢购”；数量和优惠码按商品保存；每个商品可按所选出口检查绑定账户。所有商家统一使用明确的 hostwatch-unpaid-v1 待付款接口，普通结算页不会自动调用。每个商品卡片单独保存。</p></div><div class="actions"><button id="vps-seckill-open-monitor" type="button">从库存监控添加</button><button id="vps-seckill-open-notifications" type="button">从库存通知添加</button><button id="vps-seckill-delete-all" type="button" class="danger" disabled>删除全部商品</button></div></div><div id="vps-seckill-items" class="seckill-items"></div></div>
+      <div class="seckill-panel"><div class="section-head"><div><h3>补货抢购商品</h3><p>在库存监控 / 通知商品的“更多”中点击“加入 VPS 补货抢购”；数量、优惠码、系统、付款周期和付款方式按商品保存；每个商品可按所选出口检查绑定账户。所有商家统一使用明确的 hostwatch-unpaid-v1 待付款接口，普通结算页不会自动调用。每个商品卡片单独保存。</p></div><div class="actions"><button id="vps-seckill-open-monitor" type="button">从库存监控添加</button><button id="vps-seckill-open-notifications" type="button">从库存通知添加</button><button id="vps-seckill-delete-all" type="button" class="danger" disabled>删除全部商品</button></div></div><div id="vps-seckill-items" class="seckill-items"></div></div>
       <div class="seckill-panel"><div class="section-head"><div><h3>网站账户</h3><p>选择商家后填写官网登录名和密码。VMISS、VPS.SOY、搬瓦工、DMIT、Akile 可自动检查登录；遇到 Cloudflare 或安全验证时，请在网页请求中为该商家选择 FlareSolverr 或 cloudscraper。检查不下单、不付款。密码保存后不回显；自动提交需要另外配置商家支持的 hostwatch-unpaid-v1 待付款接口。每个账户卡片单独保存。</p></div><div class="actions"><button id="vps-seckill-add-account" type="button">添加账户</button><button id="vps-seckill-delete-all-accounts" type="button" class="danger" disabled>删除全部账户</button></div></div><div id="vps-seckill-accounts" class="seckill-accounts"></div></div>
     </div>
   </section>
@@ -965,7 +965,7 @@
   <dialog id="watch-compare-dialog" class="watch-compare-dialog" aria-labelledby="watch-compare-title"><div class="watch-compare-dialog-head"><div><span class="eyebrow">PRODUCT COMPARE</span><h2 id="watch-compare-title">产品参数对比</h2><p>对比当前库存监控中的商品，直接购买入口会保留 AFF。</p></div><button id="watch-compare-close" type="button" class="icon-button" aria-label="关闭产品参数对比">×</button></div><div id="watch-compare-content"></div></dialog>
   <dialog id="overview-log-dialog" class="watch-compare-dialog" aria-labelledby="overview-log-title"><div class="watch-compare-dialog-head"><div><span class="eyebrow">MODULE LOG</span><h2 id="overview-log-title">模块详细日志</h2><p>显示该模块保存的完整近期日志。</p></div><button id="overview-log-close" type="button" class="icon-button" aria-label="关闭模块详细日志">×</button></div><pre id="overview-log-detail-content" class="manage-logs">暂无日志</pre></dialog>
   <dialog id="seckill-picker-dialog" class="watch-compare-dialog" aria-labelledby="seckill-picker-title"><div class="watch-compare-dialog-head"><div><span class="eyebrow">SECKILL PICKER</span><h2 id="seckill-picker-title">选择补货抢购商品</h2><p>选择后加入 VPS 补货抢购，已加入的商品不会重复添加。</p></div><button id="seckill-picker-close" type="button" class="icon-button" aria-label="关闭商品选择">×</button></div><div id="seckill-picker-content"></div></dialog>
-<script src="/admin.js?v=card-save-20261017"></script>
+<script src="/admin.js?v=seckill-order-preferences-20261017"></script>
 <script src="/catalog.js?v=card-save-20261017"></script>
 </body>
 </html>

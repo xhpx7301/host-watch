@@ -84,6 +84,8 @@ class OrderTaskTests(unittest.TestCase):
 
     def test_rapid_checks_once_and_creates_only_unpaid_order_with_quantity_coupon(self):
         self.config['vps_seckill']['items'][0]['coupon_code'] = 'SPECIAL'
+        self.config['vps_seckill']['items'][0].update({
+            'operating_system': 'Debian 12', 'billing_cycle': 'monthly', 'payment_method': 'alipay'})
         result = self.run_task()
         self.assertEqual(self.stock.call_count, 1)
         self.assertEqual(self.auth_checks, 1)
@@ -93,6 +95,9 @@ class OrderTaskTests(unittest.TestCase):
         payload = order.kwargs['json']
         self.assertEqual(payload['quantity'], 2)
         self.assertEqual(payload['coupon_code'], 'SPECIAL')
+        self.assertEqual(payload['operating_system'], 'Debian 12')
+        self.assertEqual(payload['billing_cycle'], 'monthly')
+        self.assertEqual(payload['payment_method'], 'alipay')
         self.assertEqual(payload['payment_mode'], 'manual')
         self.assertIs(payload['auto_pay'], False)
         self.assertNotIn('password', payload)
@@ -188,6 +193,19 @@ class OrderTaskTests(unittest.TestCase):
         self.assertEqual(result['items'][0]['status'], 'blocked')
         self.assertEqual(self.orders(), [])
         self.stock.assert_not_called()
+
+    def test_order_preferences_are_optional_but_validated(self):
+        item = self.config['vps_seckill']['items'][0]
+        for field, value in [('billing_cycle', 'weekly'), ('payment_method', 'paypal')]:
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, '无效'):
+                item[field] = value
+                admin.validate_config(self.config)
+        item['billing_cycle'] = ''
+        item['payment_method'] = ''
+        normalized = admin.validate_config(self.config)
+        self.assertEqual(normalized['vps_seckill']['items'][0]['operating_system'], '')
+        self.assertEqual(normalized['vps_seckill']['items'][0]['billing_cycle'], '')
+        self.assertEqual(normalized['vps_seckill']['items'][0]['payment_method'], '')
 
     def test_checkout_without_explicit_no_payment_contract_is_blocked(self):
         for capability in ({}, {**self.capability, 'automatic_payment': True}):

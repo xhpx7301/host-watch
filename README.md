@@ -357,7 +357,7 @@ sudo journalctl -u vmiss-monitor.service -n 50 --no-pager
 
 ## VPS 补货抢购：仅提交待付款订单
 
-从“VPS 库存监控 / VPS 库存通知 → 更多 → 加入 VPS 补货抢购”添加商品，设置数量（默认 1，范围 1–100）、专属优惠码、账户和出口后保存。不会自动减少数量或拆成多笔订单。已知库存数量不足时等待；只提供“有货 / 无货”的商家由下单适配接口最终核验所需数量。下架商品可在高级商品管理中预先添加，配置中移除的商品仅保留手动购买链接。
+从“VPS 库存监控 / VPS 库存通知 → 更多 → 加入 VPS 补货抢购”添加商品，设置数量（默认 1，范围 1–100）、专属优惠码、系统、付款周期、付款方式、账户和出口后保存。系统、付款周期和付款方式会作为待付款订单参数传给商家适配接口；例如 VMISS 的 `US.LA.CMIN2.Elite` 可设置为 `Debian 12`、`monthly`、`alipay`。不会自动减少数量或拆成多笔订单。已知库存数量不足时等待；只提供“有货 / 无货”的商家由下单适配接口最终核验所需数量。下架商品可在高级商品管理中预先添加，配置中移除的商品仅保留手动购买链接。
 
 - **极速秒杀（自动）**：启动时检查账户，发现一次库存满足要求即提交，减少提交前额外请求；账户或库存可能在提交时变化。
 - **精准秒杀（自动）**：启动时检查账户；发现库存后再次认证账户、重新检查库存，仍满足数量才提交。请求更多，可能错过短暂库存，并不保证下单成功。
@@ -389,7 +389,7 @@ sudo journalctl -u vmiss-monitor.service -n 50 --no-pager
    ```
 3. 对下单接口 `POST` JSON（不包含账户密码），同时携带相同的 `Idempotency-Key` 请求头：
    ```json
-   {"protocol":"hostwatch-unpaid-v1","action":"create_unpaid_order","product_id":"plan-id","purchase_url":"https://shop.example/buy","quantity":2,"coupon_code":"SALE","payment_mode":"manual","auto_pay":false,"idempotency_key":"…"}
+   {"protocol":"hostwatch-unpaid-v1","action":"create_unpaid_order","product_id":"plan-id","purchase_url":"https://shop.example/buy","quantity":2,"coupon_code":"SALE","operating_system":"Debian 12","billing_cycle":"monthly","payment_method":"alipay","payment_mode":"manual","auto_pay":false,"idempotency_key":"…"}
    ```
    仅创建待付款订单后响应：
    ```json

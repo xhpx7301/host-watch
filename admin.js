@@ -2445,10 +2445,14 @@ function seckillAddDefaults(product) {
   const provider = seckillProviderKey(product?.adapter) || seckillProviderKey(product?.provider);
   const account = provider ? seckillAccounts().find(row => seckillProviderKey(row.provider) === provider) : null;
   const coupon = provider ? String(product?.notification_coupon_code || config.affiliate_coupons?.[provider] || "").trim() : "";
+  const vmissElite = provider === "vmiss" && String(product?.name || "").trim().toLowerCase() === "us.la.cmin2.elite";
   return {
     account_id: account?.id || "",
     egress_node_id: provider ? config.egress?.routes?.[provider] || "" : "",
-    coupon_code: coupon,
+    coupon_code: vmissElite ? "10%OFF" : coupon,
+    operating_system: vmissElite ? "Debian 12" : "",
+    billing_cycle: vmissElite ? "monthly" : "",
+    payment_method: vmissElite ? "alipay" : "",
   };
 }
 function addToVpsSeckill(product) {
@@ -2483,6 +2487,18 @@ function renderVpsSeckill() {
     const quantity = document.createElement("input"); quantity.type = "number"; quantity.min = "1"; quantity.max = "100"; quantity.step = "1"; quantity.value = item.quantity ?? 1;
     quantity.addEventListener("input", () => { item.quantity = Number(quantity.value); updateDraftState(); });
     const coupon = document.createElement("input"); coupon.value = item.coupon_code || ""; coupon.maxLength = 256; coupon.placeholder = "可选专属优惠码"; coupon.addEventListener("input", () => { item.coupon_code = coupon.value; updateDraftState(); });
+    const operatingSystem = document.createElement("select");
+    [["", "跟随商家默认系统"], ["AlmaLinux 9", "AlmaLinux 9"], ["AlmaLinux 10", "AlmaLinux 10"], ["Debian 11", "Debian 11"], ["Debian 12", "Debian 12"], ["Debian 13", "Debian 13"], ["Ubuntu 22", "Ubuntu 22"], ["Ubuntu 24", "Ubuntu 24"]].forEach(([value, label]) => operatingSystem.add(new Option(label, value)));
+    operatingSystem.value = item.operating_system || "";
+    operatingSystem.addEventListener("change", () => { item.operating_system = operatingSystem.value; updateDraftState(); });
+    const billingCycle = document.createElement("select");
+    [["", "跟随商家默认周期"], ["monthly", "月付"], ["quarterly", "季付"], ["annually", "年付"]].forEach(([value, label]) => billingCycle.add(new Option(label, value)));
+    billingCycle.value = item.billing_cycle || "";
+    billingCycle.addEventListener("change", () => { item.billing_cycle = billingCycle.value; updateDraftState(); });
+    const paymentMethod = document.createElement("select");
+    [["", "跟随商家默认付款方式"], ["alipay", "Alipay"], ["credit_card", "Credit Card"], ["usdt", "USDT"]].forEach(([value, label]) => paymentMethod.add(new Option(label, value)));
+    paymentMethod.value = item.payment_method || "";
+    paymentMethod.addEventListener("change", () => { item.payment_method = paymentMethod.value; updateDraftState(); });
     const account = document.createElement("select"); account.replaceChildren(...accountOptions.map(option => option.cloneNode(true))); account.value = item.account_id || ""; account.addEventListener("change", () => { item.account_id = account.value; seckillAccountChecks.delete(item.id); renderVpsSeckill(); updateDraftState(); });
     const egressSelect = document.createElement("select"); const egressOptions = [new Option("跟随商家出口（未分配则直连）", "")]; egressNodes().forEach(node => egressOptions.push(new Option(node.name || node.id, node.id))); egressSelect.replaceChildren(...egressOptions); egressSelect.value = item.egress_node_id || ""; egressSelect.addEventListener("change", () => { item.egress_node_id = egressSelect.value; seckillAccountChecks.delete(item.id); renderVpsSeckill(); updateDraftState(); });
     const target = document.createElement("input"); target.type = "url"; target.value = item.target_url || product?.purchase_url || ""; target.placeholder = "下架商品目标购买链接（可选）"; target.addEventListener("input", () => { item.target_url = target.value; updateDraftState(); });
@@ -2497,7 +2513,7 @@ function renderVpsSeckill() {
       submitHint.className = missing ? "error span-2" : "hint span-2";
     };
     submit.addEventListener("input", () => { item.submit_url = submit.value; updateSubmitHint(); updateDraftState(); });
-    [["下单数量（台，1–100）", quantity], ["优惠码", coupon], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
+    [["下单数量（台，1–100）", quantity], ["优惠码", coupon], ["系统", operatingSystem], ["付款周期", billingCycle], ["付款方式", paymentMethod], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
     grid.append(submitLabel, akileSettings);
     const enabled = settingButton("商品状态", item.enabled !== false, value => { item.enabled = value; renderVpsSeckillTask(); }, ["已停用", "已启用"]);
     const auto = settingButton("自动提交", item.auto_submit, value => { item.auto_submit = value; updateSubmitHint(); });
@@ -2632,6 +2648,9 @@ function comparableSeckillItem(item) {
     id: String(item.id || ""),
     product_id: String(item.product_id || ""),
     coupon_code: String(item.coupon_code || ""),
+    operating_system: String(item.operating_system || ""),
+    billing_cycle: String(item.billing_cycle || ""),
+    payment_method: String(item.payment_method || ""),
     target_url: String(item.target_url || ""),
     submit_url: String(item.submit_url || ""),
     account_id: String(item.account_id || ""),

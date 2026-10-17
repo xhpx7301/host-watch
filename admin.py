@@ -397,6 +397,12 @@ def stop_stock_test(task_id: str) -> dict:
 
 ORDER_PROTOCOL = "hostwatch-unpaid-v1"
 
+# Optional purchase preferences passed to a merchant's unpaid-order adapter.
+# ``payment_mode`` remains the safety contract (always manual); these fields
+# describe the invoice that the user will pay later on the merchant site.
+ORDER_BILLING_CYCLES = {"monthly", "quarterly", "annually"}
+ORDER_PAYMENT_METHODS = {"alipay", "credit_card", "usdt"}
+
 MERCHANT_LOGIN_ADAPTERS = {
     "vmiss": {"name": "VMISS", "url": "https://app.vmiss.com/login", "host": "app.vmiss.com", "username_field": "username"},
     "vps_soy": {"name": "VPS.SOY", "url": "https://www.vps.soy/login", "host": "www.vps.soy", "username_field": "email"},
@@ -907,6 +913,10 @@ class SeckillTask:
             "product_id": item["product_id"], "purchase_url": url, "quantity": quantity,
             "coupon_code": item.get("coupon_code", ""), "payment_mode": "manual",
             "auto_pay": False, "idempotency_key": key}
+        for field in ("operating_system", "billing_cycle", "payment_method"):
+            value = str(item.get(field, "")).strip()
+            if value:
+                payload[field] = value
         try:
             response = session.post(item["submit_url"], json=payload,
                 headers={"Idempotency-Key": key}, timeout=(5, 20), allow_redirects=False)
@@ -1423,6 +1433,9 @@ def normalize_seckill(value: object, product_ids: set[str]) -> dict:
             # require a saved target URL so a manual task can still open it.
             product_id = product_id[:128]
         coupon = str(item.get("coupon_code", "")).strip()
+        operating_system = str(item.get("operating_system", "")).strip()
+        billing_cycle = str(item.get("billing_cycle", "")).strip().casefold()
+        payment_method = str(item.get("payment_method", "")).strip().casefold()
         target_url = str(item.get("target_url", "")).strip()
         submit_url = str(item.get("submit_url", "")).strip()
         if not product_id and not target_url:
@@ -1442,9 +1455,16 @@ def normalize_seckill(value: object, product_ids: set[str]) -> dict:
         quantity = item.get("quantity", 1)
         if type(quantity) is not int or not 1 <= quantity <= 100:
             raise ValueError(f"VPS 秒杀商品 {item_id} 的下单数量必须是 1 到 100 的整数")
+        if len(operating_system) > 80:
+            raise ValueError(f"VPS 秒杀商品 {item_id} 的系统名称过长")
+        if billing_cycle not in {"", *ORDER_BILLING_CYCLES}:
+            raise ValueError(f"VPS 秒杀商品 {item_id} 的付款周期无效")
+        if payment_method not in {"", *ORDER_PAYMENT_METHODS}:
+            raise ValueError(f"VPS 秒杀商品 {item_id} 的付款方式无效")
         item_ids.add(item_id)
         normalized_items.append({"id": item_id, "product_id": product_id, "coupon_code": coupon[:256],
-            "target_url": target_url, "submit_url": submit_url, "account_id": account_id,
+            "operating_system": operating_system, "billing_cycle": billing_cycle,
+            "payment_method": payment_method, "target_url": target_url, "submit_url": submit_url, "account_id": account_id,
             "egress_node_id": egress_node_id[:64], "quantity": quantity,
             "enabled": bool(item.get("enabled", True)), "auto_submit": bool(item.get("auto_submit", False)),
             "label": str(item.get("label", ""))[:160]})
