@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import math
@@ -10,7 +11,8 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+import tempfile
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 
@@ -29,6 +31,8 @@ STATE_PATH = ROOT / "state.json"
 CONFIG_PATH = ROOT / "config.json"
 STATUS_PATH = ROOT / "status.json"
 _BROWSER_THREAD_LOCK = threading.Lock()
+_INVENTORY_CACHE_THREAD_LOCK = threading.Lock()
+INVENTORY_CACHE_MAX_AGE_SECONDS = 28
 
 
 class MonitorError(RuntimeError):
@@ -1142,6 +1146,78 @@ def write_state(path: Path, state: dict[str, dict]) -> None:
     temporary.replace(path)
 
 
+def inventory_cache_identity(item: dict, fetcher: dict) -> dict:
+    """Return only request-affecting product fields for shared stock caching."""
+    fields = ("url", "category_url", "selector", "stock_selector", "stock_mode", "stock_pattern",
+              "available_pattern", "unavailable_pattern", "request_mode", "gid", "pid", "plan_key",
+              "bwh_offer_key", "type_id", "category_id", "product_id", "node_name", "area_id")
+    return {
+        "id": str(item.get("id", "")),
+        "adapter": str(item.get("adapter", "")),
+        "mode": str(fetcher.get("mode", "requests")),
+        "egress_node_id": str(fetcher.get("egress_node_id", "")),
+        "wait_seconds": str(fetcher.get("wait_seconds", "")),
+        "disable_media": str(fetcher.get("disable_media", "")),
+        "timeout_seconds": str(fetcher.get("timeout_seconds", "")),
+        "cloudscraper": fetcher.get("cloudscraper", {}),
+        **{key: str(item.get(key, "")) for key in fields if key in item},
+    }
+
+
+def inventory_cache_key(item: dict, fetcher: dict) -> str:
+    identity = json.dumps(inventory_cache_identity(item, fetcher), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def read_inventory_cache(path: Path | None, item: dict, fetcher: dict) -> Product | None:
+    if path is None:
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        entry = payload.get("entries", {}).get(inventory_cache_key(item, fetcher), {})
+        checked_at = float(entry.get("checked_at_epoch", 0))
+        product = entry.get("product")
+        if time.time() - checked_at > INVENTORY_CACHE_MAX_AGE_SECONDS or not isinstance(product, dict):
+            return None
+        return Product(**product)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
+def write_inventory_cache(path: Path | None, item: dict, fetcher: dict, product: Product) -> None:
+    """Publish one fresh inventory result for other modules to consume."""
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with _INVENTORY_CACHE_THREAD_LOCK:
+            payload = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            entries = payload.get("entries", {}) if isinstance(payload, dict) else {}
+            if not isinstance(entries, dict):
+                entries = {}
+            entries[inventory_cache_key(item, fetcher)] = {
+                "identity": inventory_cache_identity(item, fetcher),
+                "checked_at": beijing_iso(),
+                "checked_at_epoch": time.time(),
+                "product": asdict(product),
+            }
+            cutoff = time.time() - 5 * 60
+            entries = {key: value for key, value in entries.items()
+                       if isinstance(value, dict) and float(value.get("checked_at_epoch", 0)) >= cutoff}
+            fd, temporary_name = tempfile.mkstemp(prefix="inventory-cache-", suffix=".tmp", dir=path.parent)
+            os.close(fd)
+            temporary = Path(temporary_name)
+            try:
+                temporary.write_text(json.dumps({"updated_at": beijing_iso(), "entries": entries}, ensure_ascii=False, indent=2), encoding="utf-8")
+                temporary.replace(path)
+            finally:
+                if temporary.exists():
+                    temporary.unlink()
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        # Cache failures must never turn a valid stock result into an error.
+        return
+
+
 def telegram_request(session: requests.Session, token: str, method: str, **kwargs) -> dict:
     # Merchant routing must not leak into notification API calls on this session.
     egress.apply_session(session, None)
@@ -1188,7 +1264,7 @@ def notification_text(product: Product, old_count: int | None, purchase_url: str
         checked_at=now_beijing().strftime("%Y-%m-%d %H:%M:%S 北京时间"))
 
 
-def collect_inventory(session, config, selected, found, unavailable):
+def collect_inventory(session, config, selected, found, unavailable, cache_path: Path | None = None):
     by_category: dict[tuple[str, str, str], list[dict]] = {}
     for item in selected:
         if item["adapter"] != "vmiss":
@@ -1211,7 +1287,9 @@ def collect_inventory(session, config, selected, found, unavailable):
             if len(candidates) != 1:
                 raise MonitorError(f"商品 {item.get('name', selector)} 无法唯一匹配页面套餐；请检查 selector")
             matched = candidates[0]
-            found[item["id"]] = replace(matched, vendor=item["provider"])
+            product = replace(matched, vendor=item["provider"])
+            found[item["id"]] = product
+            write_inventory_cache(cache_path, item, product_fetcher(config.get("fetcher"), item), product)
     soy_pages = {}
     akile_catalogs = {}
     isvoro_catalogs = {}
@@ -1220,13 +1298,19 @@ def collect_inventory(session, config, selected, found, unavailable):
     for item in selected:
         try:
             if item["adapter"] == "html":
-                found[item["id"]] = fetch_html_stock(session, item, config.get("fetcher"))
+                fetcher = product_fetcher(config.get("fetcher"), item)
+                found[item["id"]] = fetch_html_stock(session, item, fetcher)
+                write_inventory_cache(cache_path, item, fetcher, found[item["id"]])
             elif item["adapter"] == "dmit":
                 from dmit import inspect
-                found[item["id"]] = inspect(session, item, product_fetcher(config.get("fetcher"), item), dmit_catalogs)
+                fetcher = product_fetcher(config.get("fetcher"), item)
+                found[item["id"]] = inspect(session, item, fetcher, dmit_catalogs)
+                write_inventory_cache(cache_path, item, fetcher, found[item["id"]])
             elif item["adapter"] == "bwh":
                 from bwh import inspect
-                found[item["id"]] = inspect(session, item, product_fetcher(config.get("fetcher"), item), bwh_catalogs)
+                fetcher = product_fetcher(config.get("fetcher"), item)
+                found[item["id"]] = inspect(session, item, fetcher, bwh_catalogs)
+                write_inventory_cache(cache_path, item, fetcher, found[item["id"]])
             elif item["adapter"] == "vps_soy":
                 fetcher = product_fetcher(config.get("fetcher"), item)
                 key = (normalize_vps_soy_url(item["url"]), fetcher.get("mode", "requests"))
@@ -1234,14 +1318,18 @@ def collect_inventory(session, config, selected, found, unavailable):
                     soy_pages[key] = fetch_vps_soy_page(session, key[0], fetcher)
                 body, final_url = soy_pages[key]
                 found[item["id"]] = parse_vps_soy(body, final_url, item["selector"])
+                write_inventory_cache(cache_path, item, fetcher, found[item["id"]])
             elif item["adapter"] == "akile":
                 fetcher = product_fetcher(config.get("fetcher"), item)
                 mode = fetcher.get("mode", "requests")
                 if mode not in akile_catalogs:
                     akile_catalogs[mode] = fetch_akile_catalog(session, fetcher)
                 found[item["id"]] = parse_akile(akile_catalogs[mode], item)
+                write_inventory_cache(cache_path, item, fetcher, found[item["id"]])
             elif item["adapter"] == "isvoro":
-                found[item["id"]] = inspect_isvoro(session, item, product_fetcher(config.get("fetcher"), item), isvoro_catalogs)
+                fetcher = product_fetcher(config.get("fetcher"), item)
+                found[item["id"]] = inspect_isvoro(session, item, fetcher, isvoro_catalogs)
+                write_inventory_cache(cache_path, item, fetcher, found[item["id"]])
         except ProductUnlisted as exc:
             unavailable[item["id"]] = str(exc) + "；可能已下架或配置不匹配，保留配置等待重新上架"
 
@@ -1283,8 +1371,24 @@ def check_once(
     current = {key: dict(value) for key, value in previous.items()}
     alerts = StockAlerts(sys.modules[__name__], session, config, state_path, current, bot_token, chat_id)
     found, unavailable = {}, {}
+    cache_path = status_path.parent / "inventory-cache.json" if status_path is not None else None
+    uncached = []
+    for item in selected:
+        try:
+            fetcher = product_fetcher(config.get("fetcher"), item)
+            # The notification role is the cache consumer. The monitor role
+            # always performs the authoritative read and refreshes the cache;
+            # this keeps the 10-second抢购/监控 path from ever using stale data.
+            cached = read_inventory_cache(cache_path, item, fetcher) if role == "notify" else None
+        except MonitorError:
+            cached = None
+        if cached is None:
+            uncached.append(item)
+        else:
+            found[item["id"]] = cached
+            logging.info("复用共享库存结果：%s", item.get("name", item["id"]))
     try:
-        collect_inventory(session, config, selected, found, unavailable)
+        collect_inventory(session, config, uncached, found, unavailable, cache_path)
     except (MonitorError, requests.RequestException):
         # Only failed or not-yet-checked products are uncertain. Do not turn
         # request failures into a zero-stock baseline or overwrite the cause.

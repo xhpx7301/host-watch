@@ -1,9 +1,14 @@
 import unittest
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 import requests
 
 from admin import validate_config
-from monitor import MonitorError, Product, RequestServiceError, SiteBlocked, fetch_html_stock, notification_text, check_once, inspect_product
+from monitor import (MonitorError, Product, RequestServiceError, SiteBlocked,
+                     fetch_html_stock, notification_text, check_once, inspect_product,
+                     read_inventory_cache, write_inventory_cache)
 
 
 class FakeResponse:
@@ -153,6 +158,19 @@ class BrowserRequestTests(unittest.TestCase):
         self.assertEqual(result.available, 3)
         self.assertEqual(self.session.post.call_count, 3)
         self.assertEqual(sleep.call_count, 2)
+
+    def test_inventory_cache_round_trip_and_expiry(self):
+        item = html_product()
+        fetcher = {"mode": "requests", "egress_node_id": ""}
+        product = Product("key", "VPS 2 GB", 3, item["url"], vendor="ExampleHost")
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "inventory-cache.json"
+            write_inventory_cache(path, item, fetcher, product)
+            self.assertEqual(read_inventory_cache(path, item, fetcher).available, 3)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["entries"][next(iter(payload["entries"]))]["checked_at_epoch"] = 0
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertIsNone(read_inventory_cache(path, item, fetcher))
 
     def test_captcha_error_does_not_expose_server_response_secrets(self):
         self.payload = {"status": "error", "message": "Captcha detected at https://example.com/?token=secret"}

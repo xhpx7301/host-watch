@@ -867,7 +867,7 @@ class SeckillTask:
 
     def run(self) -> None:
         from contextlib import ExitStack
-        from monitor import inspect_product, product_fetcher
+        from monitor import inspect_product, product_fetcher, write_inventory_cache
         products = {str(item.get("id")): item for item in self.config.get("products", [])}
         seckill = self.config.get("vps_seckill", {})
         accounts = {str(item.get("id")): item for item in seckill.get("accounts", [])}
@@ -930,6 +930,7 @@ class SeckillTask:
                                 finished[item["id"]] = {"status": "ready", "url": item.get("target_url", ""), "quantity": quantity}
                                 continue
                             result = inspect_product(stock_session, routed, fetcher)
+                            write_inventory_cache(CONFIG_PATH.parent / "inventory-cache.json", routed, fetcher, result)
                             url = result.url or item.get("target_url", "")
                             available = self.enough_stock(result, quantity)
                             self.log(f"第 {round_no} 轮：{item.get('label') or item['product_id']} · 需求 {quantity} 台 · {'可下单' if available else '缺货/库存不足/未知'}", "info", item)
@@ -948,6 +949,7 @@ class SeckillTask:
                                 if self.cancelled.is_set():
                                     break
                                 result = inspect_product(stock_session, routed, fetcher)
+                                write_inventory_cache(CONFIG_PATH.parent / "inventory-cache.json", routed, fetcher, result)
                                 if not self.enough_stock(result, quantity):
                                     self.log("提交前第二次库存检查不足，继续等待，不发送订单。", "info", item)
                                     continue
