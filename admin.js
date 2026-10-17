@@ -2515,6 +2515,11 @@ function renderVpsSeckill() {
         item.akile_broadcast_ip_ack = true;
       }
     }
+    const submitHint = text("p", providerKey === "vmiss"
+      ? "VMISS 使用内置官网结算适配：自动登录、预填商品配置并创建待付款发票；不会自动付款。"
+      : providerKey === "akile"
+        ? "Akile 使用内置待付款适配：固定 Debian 12 和 1 个月周期创建订单；不会自动付款。"
+        : "自动模式仅对已配置商家待付款适配的商品创建订单；未适配商家只提供购买链接。", "hint span-2");
     [["下单数量（台，1–100）", quantity], ["优惠码", coupon], ["系统", operatingSystem], ["付款周期", billingCycle], ["付款方式", paymentMethod], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
     const enabled = settingButton("商品状态", item.enabled !== false, value => { item.enabled = value; renderVpsSeckillTask(); }, ["已停用", "已启用"]);
     const flags = text("div", "", "actions"); flags.append(enabled);
