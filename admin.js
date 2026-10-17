@@ -3225,8 +3225,14 @@ function moduleLogItems(key) {
   const state = lastStatus?.modules?.[key] || {};
   return key === "seckill" && vpsSeckillTask?.logs?.length ? vpsSeckillTask.logs : state.logs || [];
 }
-function formatModuleLogs(key, limit = 0) {
-  const logs = moduleLogItems(key), items = limit ? logs.slice(-limit) : logs;
+function fullModuleLogItems(key) {
+  const stateLogs = lastStatus?.modules?.[key]?.logs || [];
+  const currentLogs = key === "seckill" ? vpsSeckillTask?.logs || [] : [];
+  const seen = new Set(stateLogs.map(item => `${item.at || ""}|${item.message || item.result || ""}`));
+  return [...stateLogs, ...currentLogs.filter(item => !seen.has(`${item.at || ""}|${item.message || item.result || ""}`))].sort((a, b) => Date.parse(a.at || 0) - Date.parse(b.at || 0));
+}
+function formatModuleLogs(key, limit = 0, includeHistory = false) {
+  const logs = includeHistory ? fullModuleLogItems(key) : moduleLogItems(key), items = limit ? logs.slice(-limit) : logs;
   return items.length ? items.map(item => `[${formatBeijingDate(item.at)}] ${(item.trigger || "manual") === "manual" ? "手动" : "自动"} · ${item.message || item.result || ""}`).join("\n") : "暂无日志";
 }
 document.querySelectorAll("[data-overview-log-toggle]").forEach(button => button.addEventListener("click", () => {
@@ -3243,7 +3249,7 @@ document.querySelectorAll("[data-overview-log-detail]").forEach(button => button
 }));
 document.querySelector("#vps-seckill-log-detail").addEventListener("click", () => {
   overviewLogTitle.textContent = "抢购完整日志";
-  overviewLogDetail.textContent = formatModuleLogs("seckill");
+  overviewLogDetail.textContent = formatModuleLogs("seckill", 0, true);
   overviewLogDialog.showModal();
 });
 document.querySelector("#overview-log-close").addEventListener("click", () => overviewLogDialog.close());
