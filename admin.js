@@ -3243,6 +3243,15 @@ async function saveConfig(scope = "all") {
     else if (scope.startsWith("product:")) visibleDraft.products = draft.products;
     else if (scope.startsWith("seckill-")) visibleDraft.vps_seckill = draft.vps_seckill;
   }
+  // Password fields are write-only. Do not restore a submitted password into
+  // the local draft after saving, or the account card remains falsely dirty.
+  if (scope === "seckill") {
+    for (const account of visibleDraft.vps_seckill?.accounts || []) account.password = "";
+  } else if (scope.startsWith("seckill-account:")) {
+    const accountId = scope.slice("seckill-account:".length);
+    const account = visibleDraft.vps_seckill?.accounts?.find(row => row.id === accountId);
+    if (account) account.password = "";
+  }
   const telegramTokenDraft = draft.telegram?.bot_token || "";
   // Normalize the server response into the same public shape used by
   // collectConfig(), then restore unrelated local drafts for card isolation.
