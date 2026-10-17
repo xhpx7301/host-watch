@@ -2450,7 +2450,7 @@ function addToVpsSeckill(product) {
   let addedDefaults = null;
   if (!items.some(item => item.product_id === product.id)) {
     const defaults = seckillAddDefaults(product);
-    items.push({ id: product.id, product_id: product.id, label: product.name, quantity: 1, ...defaults, target_url: product.purchase_url || product.snapshot?.url || "", submit_url: "", enabled: true, auto_submit: false });
+    items.push({ id: product.id, product_id: product.id, label: product.name, quantity: 1, ...defaults, target_url: product.purchase_url || product.snapshot?.url || "", submit_url: "", enabled: true, auto_submit: false, order_cycle: 1, order_template_uuid: "", order_system_name: "Debian 12", order_password: "" });
     const accountLabel = defaults.account_id ? "已绑定默认账户" : "未找到对应账户";
     const egressLabel = defaults.egress_node_id ? "已绑定默认出口节点" : "跟随商家出口";
     const couponLabel = defaults.coupon_code ? "已填入默认优惠码" : "暂无默认优惠码";
@@ -2479,15 +2479,22 @@ function renderVpsSeckill() {
     const account = document.createElement("select"); account.replaceChildren(...accountOptions.map(option => option.cloneNode(true))); account.value = item.account_id || ""; account.addEventListener("change", () => { item.account_id = account.value; seckillAccountChecks.delete(item.id); renderVpsSeckill(); updateDraftState(); });
     const egressSelect = document.createElement("select"); const egressOptions = [new Option("跟随商家出口（未分配则直连）", "")]; egressNodes().forEach(node => egressOptions.push(new Option(node.name || node.id, node.id))); egressSelect.replaceChildren(...egressOptions); egressSelect.value = item.egress_node_id || ""; egressSelect.addEventListener("change", () => { item.egress_node_id = egressSelect.value; seckillAccountChecks.delete(item.id); renderVpsSeckill(); updateDraftState(); });
     const target = document.createElement("input"); target.type = "url"; target.value = item.target_url || product?.purchase_url || ""; target.placeholder = "下架商品目标购买链接（可选）"; target.addEventListener("input", () => { item.target_url = target.value; updateDraftState(); });
+    const providerKey = seckillProviderKey(product?.adapter) || seckillProviderKey(product?.provider);
     const submit = document.createElement("input"); submit.type = "url"; submit.value = item.submit_url || ""; submit.placeholder = "仅创建待付款订单的适配接口（非普通结算页）";
+    const submitLabel = document.createElement("label"); submitLabel.append(text("span", "待付款下单接口"), submit);
+    submitLabel.hidden = providerKey === "akile";
+    const akileSettings = text("div", "", "form-grid span-2"); akileSettings.hidden = providerKey !== "akile";
+    const akileField = (label, key, placeholder, type = "text") => { const input = document.createElement("input"); input.type = type; input.value = key === "order_password" ? "" : (item[key] || ""); input.placeholder = key === "order_password" && item.order_password_configured ? "已保存，留空保持不变" : placeholder; input.autocomplete = key === "order_password" ? "new-password" : "off"; input.addEventListener("input", () => { item[key] = input.value; if (key === "order_password") item.order_password_configured = Boolean(input.value) || item.order_password_configured; updateDraftState(); }); const node = document.createElement("label"); node.append(text("span", label), input); akileSettings.append(node); };
+    if (providerKey === "akile") { akileField("计费周期（月）", "order_cycle", "1", "number"); akileField("系统模板 UUID", "order_template_uuid", "从 Akile 商品页选择的模板 UUID"); akileField("系统名称", "order_system_name", "Debian 12"); akileField("服务器密码", "order_password", "8–128 位，仅发送给 Akile 官方 API", "password"); }
     const submitHint = text("p", "", "hint span-2");
     const updateSubmitHint = () => {
       const missing = item.auto_submit && !String(item.submit_url || "").trim();
-      submitHint.textContent = missing ? "自动提交已允许，但未配置待付款下单接口；启动后只会提供官网购买链接，不会创建订单。" : "下单接口必须明确支持仅创建待付款订单，普通结算页不会被调用。";
-      submitHint.className = missing ? "error span-2" : "hint span-2";
+      submitHint.textContent = providerKey === "akile" ? "Akile 使用内置官方待付款 API；请填写周期、系统模板、系统名称和服务器密码，测试会先检查参数，不创建订单。" : (missing ? "自动提交已允许，但未配置待付款下单接口；启动后只会提供官网购买链接，不会创建订单。" : "下单接口必须明确支持仅创建待付款订单，普通结算页不会被调用。");
+      submitHint.className = providerKey === "akile" ? "hint span-2" : (missing ? "error span-2" : "hint span-2");
     };
     submit.addEventListener("input", () => { item.submit_url = submit.value; updateSubmitHint(); updateDraftState(); });
-    [["下单数量（台，1–100）", quantity], ["优惠码", coupon], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target], ["待付款下单接口", submit]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
+    [["下单数量（台，1–100）", quantity], ["优惠码", coupon], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
+    grid.append(submitLabel, akileSettings);
     const enabled = settingButton("商品状态", item.enabled !== false, value => { item.enabled = value; renderVpsSeckillTask(); }, ["已停用", "已启用"]);
     const auto = settingButton("自动提交", item.auto_submit, value => { item.auto_submit = value; updateSubmitHint(); });
     const flags = text("div", "", "actions"); flags.append(enabled, auto);
@@ -2622,6 +2629,10 @@ function comparableSeckillItem(item) {
     coupon_code: String(item.coupon_code || ""),
     target_url: String(item.target_url || ""),
     submit_url: String(item.submit_url || ""),
+    order_cycle: Number(item.order_cycle || 1),
+    order_template_uuid: String(item.order_template_uuid || ""),
+    order_system_name: String(item.order_system_name || "Debian 12"),
+    order_password_configured: Boolean(item.order_password_configured || item.order_password),
     account_id: String(item.account_id || ""),
     egress_node_id: String(item.egress_node_id || ""),
     quantity: Number(item.quantity || 0),

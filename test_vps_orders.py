@@ -392,14 +392,66 @@ class AccountVerificationTests(unittest.TestCase):
         result = admin.check_order_account(session, account)
         self.assertEqual(result['status'], 'unknown')
         session.get.assert_not_called()
-        session.post.assert_not_called()
+
+
+class NativeAkileOrderTests(unittest.TestCase):
+    def item(self):
+        return {'id': 'akile-item', 'product_id': '827',
+                'target_url': 'https://akile.ai/shop/server?type=traffic&areaId=6&nodeId=11&planId=827',
+                'quantity': 1, 'coupon_code': 'AFF10', 'order_cycle': 1,
+                'order_template_uuid': 'template-uuid', 'order_system_name': 'Debian 12',
+                'order_password': 'safe-password-123', 'auto_submit': True}
+
+    def catalog(self):
+        return {'status_code': 0, 'data': {'areas': [{'id': 6, 'area_name': '中国台湾', 'nodes': [{'id': 11,
+            'group_name': 'TWLite', 'plans': [{'id': 827, 'plan_name': 'TWLite-Mini', 'stock': 2,
+            'tag': 'traffic', 'price_datas': [{'price': 2499, 'cycle': 1}]}]}]}]}}
+
+    def test_preflight_requires_explicit_server_parameters(self):
+        product = {'adapter': 'akile', 'provider': 'Akile', 'purchase_url': self.item()['target_url']}
+        value = admin.akile_order_preflight(self.item(), product)
+        self.assertTrue(value['ok'])
+        incomplete = self.item()
+        incomplete['order_template_uuid'] = ''
+        self.assertFalse(admin.akile_order_preflight(incomplete, product)['ok'])
+
+    def test_payload_uses_plan_ids_and_never_logs_password(self):
+        item = self.item()
+        product = {'adapter': 'akile', 'provider': 'Akile', 'purchase_url': item['target_url']}
+        session = Mock()
+        session._hostwatch_akile_user_id = 123
+        with patch('monitor.fetch_akile_catalog', return_value=self.catalog()):
+            payload = admin._akile_order_payload(session, item, product, {})
+        self.assertEqual(payload['order_plan_id'], 827)
+        self.assertEqual(payload['order_type'], '1')
+        self.assertEqual(payload['user_id'], 123)
+        values = {entry['key']: entry['value'] for entry in payload['order_data']}
+        self.assertEqual(values['area_name'], '中国台湾')
+        self.assertEqual(values['node_name'], 'TWLite')
+        self.assertEqual(values['coupon'], 'AFF10')
+        self.assertEqual(values['password'], 'safe-password-123')
+
+    def test_paid_or_missing_order_id_is_uncertain(self):
+        task = admin.SeckillTask('akile-testing-123456', {'telegram': {'disabled': True}, 'products': [], 'vps_seckill': {}}, 'rapid')
+        item = self.item()
+        product = {'adapter': 'akile', 'provider': 'Akile', 'purchase_url': item['target_url']}
+        session = Mock(headers={})
+        session.post.return_value = response({'status_code': 0, 'data': {'order_no': 'A-1', 'status': 'paid'}})
+        with patch.object(admin, '_akile_order_payload', return_value={'order_data': [], 'order_plan_id': 827, 'order_type': '1'}):
+            result = task._submit_akile(session, item, product, {}, item['target_url'])
+        self.assertEqual(result['status'], 'uncertain')
+        session.post.return_value = response({'status_code': 0, 'data': {'status': 'unpaid'}})
+        with patch.object(admin, '_akile_order_payload', return_value={'order_data': [], 'order_plan_id': 827, 'order_type': '1'}):
+            result = task._submit_akile(session, item, product, {}, item['target_url'])
+        self.assertEqual(result['status'], 'uncertain')
+        self.assertEqual(session.post.call_count, 2)
 
     def test_akile_api_requires_profile_identity_and_preserves_token_only_in_session(self):
         account = configuration()['vps_seckill']['accounts'][0]
         account.update(provider='akile', login_url=admin.AKILE_LOGIN_URL)
         session = Mock(headers={})
         session.post.return_value = response({'status_code': 200, 'data': {'token': 'session-token'}})
-        session.get.return_value = response({'status_code': 200, 'data': {'email': 'user'}})
+        session.get.return_value = response({'status_code': 200, 'data': {'email': 'user', 'id': 123}})
         result = admin.check_order_account(session, account)
         self.assertTrue(result['ok'])
         self.assertEqual(result['status'], 'valid')
