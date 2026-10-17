@@ -59,6 +59,10 @@ def vmiss_checkout_page():
     <form method="post" action="cart.php?a=checkout"><input type="hidden" name="token" value="checkout-token"><input name="promocode"><button name="validatepromo">Validate Code</button></form>"""
 
 
+def vmiss_invoice_page(status="Unpaid"):
+    return f'<main><h1>View Invoice</h1><span class="status">{status}</span></main>'
+
+
 class OrderTaskTests(unittest.TestCase):
     def setUp(self):
         self.config = configuration()
@@ -302,7 +306,8 @@ class VmissOrderTests(OrderTaskTests):
         after_coupon = VmissResponse(vmiss_checkout_page(), url="https://app.vmiss.com/cart.php?a=checkout")
         invoice = VmissResponse("", status_code=302, url="https://app.vmiss.com/cart.php?a=checkout")
         invoice.headers = {"Location": "/viewinvoice.php?id=123"}
-        session.get.side_effect = [config, checkout, after_coupon]
+        invoice_page = VmissResponse(vmiss_invoice_page(), url="https://app.vmiss.com/viewinvoice.php?id=123")
+        session.get.side_effect = [config, checkout, after_coupon, invoice_page]
         session.post.side_effect = [VmissResponse(""), VmissResponse("", status_code=302), invoice]
         item = {"product_id": "product60", "coupon_code": "10%OFF", "operating_system": "Debian 12",
                 "billing_cycle": "monthly", "payment_method": "alipay"}
@@ -311,6 +316,7 @@ class VmissOrderTests(OrderTaskTests):
                                    "https://app.vmiss.com/store/test", "abc123")
         self.assertEqual(result["order_id"], "vmiss-invoice-123")
         self.assertEqual(result["payment_status"], "unpaid")
+        self.assertEqual(session.get.call_args_list[-1].args[0], "https://app.vmiss.com/viewinvoice.php?id=123")
         config_data = session.post.call_args_list[0].kwargs["data"]
         self.assertIn(("billingcycle", "monthly"), config_data)
         self.assertIn(("configoption[35]", "173"), config_data)
@@ -321,6 +327,20 @@ class VmissOrderTests(OrderTaskTests):
         self.assertIn(("applycredit", "0"), order_data)
         self.assertIn(("accepttos", "on"), order_data)
         self.assertNotIn("ccnumber", {name for name, _ in order_data})
+
+    def test_native_checkout_rejects_invoice_without_unpaid_status(self):
+        session = Mock()
+        config = VmissResponse(vmiss_config_page(), url="https://app.vmiss.com/cart.php?a=confproduct&i=0")
+        checkout = VmissResponse(vmiss_checkout_page(), url="https://app.vmiss.com/cart.php?a=checkout")
+        invoice = VmissResponse("", status_code=302, url="https://app.vmiss.com/cart.php?a=checkout")
+        invoice.headers = {"Location": "/viewinvoice.php?id=123"}
+        paid_page = VmissResponse(vmiss_invoice_page("Paid"), url="https://app.vmiss.com/viewinvoice.php?id=123")
+        session.get.side_effect = [config, checkout, paid_page]
+        session.post.side_effect = [VmissResponse(""), invoice]
+        with self.assertRaisesRegex(ValueError, "未确认未付款状态"):
+            admin.vmiss_order(session, {"quantity": 1}, {"username": "user@example.com"},
+                              Product("product60", "US.LA.CMIN2.Elite", 1, "https://app.vmiss.com/store/test"),
+                              "https://app.vmiss.com/store/test", "abc123")
 
     def test_native_checkout_rejects_multi_quantity_instead_of_misreporting(self):
         with self.assertRaisesRegex(ValueError, "单台"):
