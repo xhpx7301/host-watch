@@ -2957,8 +2957,10 @@ function updateDraftState() {
 
 const autoSaveScopeNames = { catalog: "大盘设置", monitor: "监控设置", notifications: "通知设置", seckill: "抢购设置", "seckill-settings": "抢购执行设置", fetcher: "全局请求方式", "provider-modes": "商家请求方式", cloudscraper: "cloudscraper 参数", egress: "出口节点" };
 // 时间输入需要给用户留出连续输入多位数字的时间，避免输入首位数字时就触发保存。
-const INTERVAL_AUTOSAVE_DELAY_MS = 1500;
-function scheduleAutoSave(scope, delay = 650) {
+const AUTOSAVE_DELAY_MS = 350;
+const INTERVAL_AUTOSAVE_DELAY_MS = 1000;
+const AUTOSAVE_RETRY_DELAY_MS = 300;
+function scheduleAutoSave(scope, delay = AUTOSAVE_DELAY_MS) {
   if (!savedConfig || !scope) return;
   clearTimeout(autoSaveTimers.get(scope));
   const timer = setTimeout(() => {
@@ -2972,7 +2974,7 @@ function scheduleAutoSave(scope, delay = 650) {
       const seconds = Number(document.querySelector("#notify-interval")?.value || NaN);
       if (!Number.isInteger(seconds) || seconds < 0 || seconds > 86400) return;
     }
-    if (actionRunning) { scheduleAutoSave(scope, 900); return; }
+    if (actionRunning) { scheduleAutoSave(scope, AUTOSAVE_RETRY_DELAY_MS); return; }
     runAction(null, "", `正在自动保存${autoSaveScopeNames[scope] || "配置"}…`, () => saveConfig(scope, true), true, false);
   }, delay);
   autoSaveTimers.set(scope, timer);
