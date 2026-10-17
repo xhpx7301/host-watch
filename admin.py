@@ -1041,13 +1041,13 @@ def seckill_test(submitted: dict) -> dict:
     results = []
     for item in items:
         product = products.get(item.get("product_id"))
-        required_account = mode != "manual" and item.get("auto_submit", False)
+        required_account = mode != "manual"
         label = item.get("label") or (product.get("name") if product else item.get("product_id", "已下架商品"))
         result = {"item_id": item["id"], "label": label, "required_account": required_account,
                   "site_access": {"ok": False, "message": "尚未检查"},
                   "page_recognition": {"ok": False, "message": "尚未检查"},
                   "order_submission": {"ok": not required_account, "required": required_account,
-                                        "message": "未启用自动提交，本次只检查库存与账户" if not required_account else "尚未检查"},
+                  "message": "手动模式只准备购买链接，不创建订单" if not required_account else "尚未检查"},
                   "account": {"ok": False, "required": required_account, "status": "unbound", "message": "未绑定账户"}}
         if required_account:
             result["order_submission"] = {"ok": False, "required": True, "message": "尚未检查"}
@@ -1062,8 +1062,6 @@ def seckill_test(submitted: dict) -> dict:
         if required_account:
             if not account:
                 result["order_submission"] = {"ok": False, "required": True, "message": "未绑定账户，本次不会创建订单"}
-            elif not account.get("auto_submit"):
-                result["order_submission"] = {"ok": False, "required": True, "message": "账户未允许自动下单，本次不会创建订单"}
             elif (str((product or {}).get("adapter", "")).casefold() not in {"akile", "vmiss"}
                   and not str(item.get("submit_url", "")).strip()):
                 result["order_submission"] = {"ok": False, "required": True, "message": "未配置待付款下单接口，本次不会创建订单"}
@@ -1263,10 +1261,10 @@ class SeckillTask:
                         native_adapter = str((product or {}).get("adapter", "")).casefold()
                         native_akile = native_adapter == "akile"
                         native_vmiss = native_adapter == "vmiss"
-                        auto_requested = self.mode != "manual" and item.get("auto_submit") and account and account.get("auto_submit")
+                        auto_requested = self.mode != "manual" and account is not None
                         auto = bool(auto_requested and (native_akile or native_vmiss or str(item.get("submit_url", "")).strip()))
                         if auto_requested and not auto:
-                            self.log("自动提交已允许，但未配置待付款下单接口；本次不会创建订单，仅提供官网购买链接。", "error", item)
+                            self.log("该商家尚未配置内置或兼容的待付款下单适配；本次不会创建订单，仅提供官网购买链接。", "error", item)
                         if auto and not native_akile and not native_vmiss:
                             if not account.get("login_url") or urlsplit(account["login_url"]).netloc != urlsplit(item["submit_url"]).netloc:
                                 raise ValueError("账户检查接口与待付款下单接口必须同源，以复用认证会话")
@@ -1279,7 +1277,7 @@ class SeckillTask:
                             with self.lock:
                                 self.output.setdefault("accounts", {})[item["id"]] = checked
                             if auto and not checked["ok"]:
-                                raise ValueError("账户未通过验证，已停止该商品自动提交")
+                                raise ValueError("账户未通过验证，已停止该商品自动下单")
                         contexts[item["id"]] = (product, routed, fetcher, stock_session, order_session, account, auto)
                     except (requests.RequestException, ValueError) as exc:
                         detail = str(exc) if isinstance(exc, ValueError) else "接口网络异常，请检查出口或接口连通性"
