@@ -2464,6 +2464,7 @@ function seckillAddDefaults(product) {
 }
 function addToVpsSeckill(product) {
   if (!product || !config.products.some(item => item.id === product.id && (membership(item, "watch") || membership(item, "notify")))) return;
+  if (scopeIsDirty("monitor")) scheduleAutoSave("monitor");
   const items = seckillItems();
   let addedDefaults = null;
   if (!items.some(item => item.product_id === product.id)) {
