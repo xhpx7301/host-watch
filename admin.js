@@ -2838,6 +2838,11 @@ function mergeProductMemberships(baseProducts, draftProducts, type) {
     item[enabledKey] = membership(draftItem, type);
     item.enabled = item[enabledKey] || membership(savedItem, otherType);
     if (Object.hasOwn(draftItem, "snapshot")) item.snapshot = cloneConfig(draftItem.snapshot);
+    if (type === "watch") {
+      for (const key of ["remarks", "line_label", "line_telecom", "line_unicom", "line_mobile"]) {
+        if (Object.hasOwn(draftItem, key)) item[key] = draftItem[key];
+      }
+    }
     rows.push(item);
     return rows;
   }, baseRows.filter(item => !draftIds.has(String(item.id))).map(cloneConfig));
