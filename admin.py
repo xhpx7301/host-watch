@@ -804,7 +804,7 @@ def _vmiss_unpaid_invoice_from_list(session) -> str:
     return candidates[0] if len(candidates) == 1 else ""
 
 
-def vmiss_order(session, item: dict, account: dict, product, url: str, key: str) -> dict:
+def vmiss_order(session, item: dict, account: dict, product, url: str, key: str, progress=None) -> dict:
     """Create one VMISS WHMCS order and stop at its unpaid invoice.
 
     VMISS has no HostWatch JSON order endpoint. This adapter follows the site's
@@ -814,6 +814,7 @@ def vmiss_order(session, item: dict, account: dict, product, url: str, key: str)
     """
     from bs4 import BeautifulSoup
 
+    progress = progress or (lambda message: None)
     if item.get("quantity", 1) != 1:
         raise ValueError("VMISS 原生下单暂只支持单台订单")
     page = _vmiss_get(session, url)
@@ -887,8 +888,10 @@ def vmiss_order(session, item: dict, account: dict, product, url: str, key: str)
         raise ValueError("VMISS 付款方式不受支持")
     order_data = _vmiss_replace(order_data, "paymentmethod", gateway)
     order_data = _vmiss_replace(order_data, "accepttos", "on")
+    progress("正在提交 VMISS 下单请求")
     order_response = session.post(_vmiss_form_action(order_form, checkout.url), data=order_data,
         headers={"Idempotency-Key": key}, timeout=(5, 30), allow_redirects=False)
+    progress("VMISS 下单响应已返回，正在定位待付款账单")
     invoice_url = _vmiss_invoice_url(order_response, checkout.url)
     if not invoice_url and 300 <= order_response.status_code < 400:
         location = str(order_response.headers.get("Location", "")).strip()
@@ -902,10 +905,14 @@ def vmiss_order(session, item: dict, account: dict, product, url: str, key: str)
                 pass
     verification = None
     if not invoice_url:
+        progress("订单响应未直接返回账单链接，正在读取 VMISS 账单列表")
         candidates = _vmiss_unpaid_invoice_candidates(session)
+        progress(f"账单列表找到 {len(candidates)} 张未付款账单，正在检查账单详情")
         matches = []
         reasons = []
         for candidate in candidates:
+            candidate_id = parse_qs(urlsplit(candidate).query).get("id", [""])[0]
+            progress(f"正在检查 VMISS 账单 {candidate_id or '未知'}")
             try:
                 candidate_verification = _vmiss_confirm_invoice(session, candidate, item, product)
             except (requests.RequestException, ValueError) as exc:
@@ -914,6 +921,7 @@ def vmiss_order(session, item: dict, account: dict, product, url: str, key: str)
             matches.append((candidate, candidate_verification))
         if len(matches) == 1:
             invoice_url, verification = matches[0]
+            progress(f"VMISS 账单 {parse_qs(urlsplit(invoice_url).query).get('id', ['未知'])[0]} 检查正常")
         elif not candidates:
             raise ValueError("VMISS 账单列表没有明确的未付款账单，未确认订单")
         elif not matches:
@@ -927,7 +935,9 @@ def vmiss_order(session, item: dict, account: dict, product, url: str, key: str)
         raise ValueError("VMISS 未返回待付款发票，未确认订单")
     invoice_id = parse_qs(urlsplit(invoice_url).query)["id"][0]
     if verification is None:
+        progress(f"已定位 VMISS 账单 {invoice_id}，正在检查订单详情")
         verification = _vmiss_confirm_invoice(session, invoice_url, item, product)
+        progress(f"VMISS 账单 {invoice_id} 检查正常")
     return {"order_id": f"vmiss-invoice-{invoice_id}", "invoice_url": invoice_url, "payment_status": "unpaid",
             "invoice_verification": verification}
 
@@ -1290,12 +1300,16 @@ class SeckillTask:
         if product and str(product.get("adapter", "")).casefold() == "akile":
             try:
                 payload = akile_order_payload(item, inspected, url)
+                self.log(f"正在提交 Akile 下单请求，数量 {quantity}", "info", item)
                 response = session.post(AKILE_ORDER_URL, json=payload,
                     headers={"Idempotency-Key": key}, timeout=(5, 20), allow_redirects=False)
                 order = akile_order_result(response, quantity)
+                self.log(f"已创建 Akile 待付款订单 {order['order_id']}，正在检查订单详情", "info", item)
                 verification = akile_confirm_order(session, order["order_id"], item, inspected)
-            except (requests.RequestException, ValueError):
-                self.log("已发送一次 Akile 下单请求，但无法确认待付款订单；已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
+                self.log(f"Akile 订单 {order['order_id']} 检查正常：状态为待付款且订单号匹配", "success", item)
+            except (requests.RequestException, ValueError) as exc:
+                detail = str(exc).strip() or exc.__class__.__name__
+                self.log(f"已发送一次 Akile 下单请求，但无法确认待付款订单；原因：{detail[:240]}。已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
                 return {"status": "uncertain", "url": url, "quantity": quantity}
             purchase_url = akile_order_page_url(order["order_id"])
             self.log(f"已创建 Akile 待付款订单，数量 {quantity}；请手动前往官网核对订单并支付。", "success", item)
@@ -1305,11 +1319,13 @@ class SeckillTask:
                     "telegram_status": notification}
         if product and str(product.get("adapter", "")).casefold() == "vmiss":
             try:
-                order = vmiss_order(session, item, account, inspected, url, key)
+                order = vmiss_order(session, item, account, inspected, url, key,
+                                    progress=lambda message: self.log(message, "info", item))
             except (requests.RequestException, ValueError) as exc:
                 detail = str(exc).strip() or exc.__class__.__name__
                 self.log(f"已发送一次 VMISS 下单请求，但无法确认待付款发票；原因：{detail[:240]}。已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
                 return {"status": "uncertain", "url": url, "quantity": quantity}
+            self.log(f"VMISS 订单 {order['order_id']} 检查正常：状态为未付款，商品、系统和优惠码已匹配", "success", item)
             self.log(f"已创建 VMISS 待付款订单，数量 {quantity}；请手动前往发票页面核对并支付。", "success", item)
             notification = self._notify_unpaid_order(item, order["order_id"], quantity, order["invoice_url"])
             return {"status": "submitted", "order_id": order["order_id"], "url": order["invoice_url"],
@@ -1323,6 +1339,7 @@ class SeckillTask:
             if value:
                 payload[field] = value
         try:
+            self.log(f"正在提交待付款下单请求，数量 {quantity}", "info", item)
             response = session.post(item["submit_url"], json=payload,
                 headers={"Idempotency-Key": key}, timeout=(5, 20), allow_redirects=False)
             data = order_json(response)
@@ -1330,9 +1347,11 @@ class SeckillTask:
                     or not isinstance(data.get("order_id"), str) or not data["order_id"].strip()
                     or type(data.get("quantity")) is not int or data["quantity"] != quantity):
                 raise ValueError("未确认待付款订单")
-        except (requests.RequestException, ValueError):
+            self.log(f"已创建待付款订单 {data['order_id']}，订单状态检查正常", "success", item)
+        except (requests.RequestException, ValueError) as exc:
             # A lost response may still have created an order. Never retry automatically.
-            self.log("已发送一次下单请求，但无法确认待付款订单；已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
+            detail = str(exc).strip() or exc.__class__.__name__
+            self.log(f"已发送一次下单请求，但无法确认待付款订单；原因：{detail[:240]}。已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
             return {"status": "uncertain", "url": url, "quantity": quantity}
         purchase_url = self._affiliate_purchase_url(item, url)
         self.log(f"已创建待付款订单，数量 {quantity}；请手动前往官网核对订单并支付。", "success", item)
