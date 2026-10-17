@@ -1075,8 +1075,9 @@ class SeckillTask:
                         quantity = item.get("quantity", 1)
                         try:
                             if not product:
+                                purchase_url = self._affiliate_purchase_url(item, item.get("target_url", ""))
                                 self.log("商品已移出配置，保留购买链接；请从高级设置重新添加商品以恢复库存检查。", "ready", item)
-                                finished[item["id"]] = {"status": "ready", "url": item.get("target_url", ""), "quantity": quantity}
+                                finished[item["id"]] = {"status": "ready", "url": purchase_url, "quantity": quantity}
                                 continue
                             result = inspect_product(stock_session, routed, fetcher)
                             write_inventory_cache(CONFIG_PATH.parent / "inventory-cache.json", routed, fetcher, result)
@@ -1106,8 +1107,9 @@ class SeckillTask:
                             if auto:
                                 finished[item["id"]] = self._submit(order_session, item, account, url, product, fetcher)
                             else:
-                                finished[item["id"]] = {"status": "ready", "url": url, "quantity": quantity}
-                                self.log(f"已准备购买链接（数量 {quantity}）：{url}；请到官网手动下单和付款。", "ready", item)
+                                purchase_url = self._affiliate_purchase_url(item, url, product)
+                                finished[item["id"]] = {"status": "ready", "url": purchase_url, "quantity": quantity}
+                                self.log(f"已准备购买链接（数量 {quantity}）：{purchase_url}；请到官网手动下单和付款。", "ready", item)
                         except Exception:
                             self.log(f"第 {round_no} 轮库存检查失败，未发送下单请求；请检查商品和出口配置。", "error", item)
                     with self.lock:
