@@ -849,9 +849,9 @@
     <div class="request-tool request-card cloudscraper">
       <div class="request-card-head"><div><h2>cloudscraper · 轻量请求</h2><p>无需浏览器或额外服务，随安装/更新自动安装。以下参数仅用于 cloudscraper，保存后应用到选择此方式的商家。</p></div><button type="button" class="card-save" data-save-card="cloudscraper">保存</button></div>
       <div class="form-grid request-parameters">
-        <label>连接超时（秒）<input id="cloudscraper-connect-timeout" type="number" min="1" max="30" step="1"><span class="hint">建立连接的等待时间，默认 10 秒。</span></label>
-        <label>读取超时（秒）<input id="cloudscraper-read-timeout" type="number" min="1" max="120" step="1"><span class="hint">等待响应数据的时间，默认 25 秒。</span></label>
-        <label>验证等待（秒）<input id="cloudscraper-challenge-delay" type="number" min="0" max="15" step="1"><span class="hint">默认 5 秒；0 为自动识别。仅验证时使用，普通页面不会额外等待。</span></label>
+        <label>连接超时（秒）<input id="cloudscraper-connect-timeout" type="number" min="1" max="30" step="1" value="10"><span class="hint">建立连接的等待时间，默认 10 秒。</span></label>
+        <label>读取超时（秒）<input id="cloudscraper-read-timeout" type="number" min="1" max="120" step="1" value="25"><span class="hint">等待响应数据的时间，默认 25 秒。</span></label>
+        <label>验证等待（秒）<input id="cloudscraper-challenge-delay" type="number" min="0" max="15" step="1" value="5"><span class="hint">默认 5 秒；0 为自动识别。仅验证时使用，普通页面不会额外等待。</span></label>
       </div>
       <div class="request-probe-controls">
         <label>测试网站<select id="cloudscraper-test-target"><option value="dmit">DMIT · 价格页</option><option value="vmiss">VMISS · 商品目录</option><option value="vps_soy">VPS.SOY · 商品目录</option><option value="akile">Akile · 商店页面</option><option value="isvoro">Isvoro · 购买页面</option><option value="bwh">搬瓦工 · 商品目录</option><option value="baseline">公共 HTTPS 基准 · example.com</option></select></label>
@@ -864,13 +864,13 @@
       <h2>FlareSolverr · 浏览器请求</h2>
       <p class="hint">可执行网页 JavaScript，启动浏览器时 CPU 和内存占用更高。安装和更新自动部署或复用本机服务。以下为默认请求参数，各商家可在下方开启独立设置。</p>
       <div class="form-grid">
-        <label>FlareSolverr API 地址<input id="flaresolverr-url" type="url" placeholder="http://127.0.0.1:8191/v1"></label>
-        <label>默认超时（秒）<input id="flaresolverr-timeout" type="number" min="10" max="180" step="1"><span class="hint">默认 60 秒，范围 10–180 秒。</span></label>
-        <label>默认页面渲染等待（秒）<input id="fetcher-wait" type="number" min="0" max="30" step="1"><span class="hint">默认 0 秒，范围 0–30 秒。</span></label>
+        <label>FlareSolverr API 地址<input id="flaresolverr-url" type="url" value="http://127.0.0.1:8191/v1" placeholder="http://127.0.0.1:8191/v1"></label>
+        <label>默认超时（秒）<input id="flaresolverr-timeout" type="number" min="10" max="180" step="1" value="60"><span class="hint">默认 60 秒，范围 10–180 秒。</span></label>
+        <label>默认页面渲染等待（秒）<input id="fetcher-wait" type="number" min="0" max="30" step="1" value="0"><span class="hint">默认 0 秒，范围 0–30 秒。</span></label>
       </div>
       <div class="actions mode-buttons" style="margin-top:10px" role="group" aria-label="默认加载模式">
-        <button id="flaresolverr-light" class="option-button mode-button" type="button" data-flare-mode="light" aria-pressed="false">轻量加载</button>
-        <button id="flaresolverr-full" class="option-button mode-button" type="button" data-flare-mode="full" aria-pressed="true">完整加载</button>
+        <button id="flaresolverr-light" class="option-button mode-button" type="button" data-flare-mode="light" aria-pressed="true">轻量加载</button>
+        <button id="flaresolverr-full" class="option-button mode-button" type="button" data-flare-mode="full" aria-pressed="false">完整加载</button>
       </div>
       <p class="hint">默认使用轻量加载和 0 秒额外等待，优先速度；轻量加载减少图片、样式和字体下载，适合只读取库存。需要支持 disableMedia 的 FlareSolverr 版本，旧服务可能忽略此选项。若读取不完整，切换到完整加载，并将渲染等待设为 1–2 秒。渲染等待是页面加载完成后的固定额外等待，不会因未出现 CF 而提前跳过；超时是等待上限，调小不会让成功请求更快。首次启动浏览器和网站验证仍需要时间。</p>
       <p class="hint">提速建议：能正常读取的商家单独使用普通 HTTPS 或 cloudscraper；FlareSolverr 只用于需要浏览器的商家。尽量只刷新所需分类，“全部公开套餐”可能需要访问多页。库存监控、库存通知和抢购共用一个浏览器请求队列，同一时间只执行一个 FlareSolverr 请求，后到的请求会自动等待，避免浏览器被占用。页面上的连接测试只测服务就绪，速度以商品测试为准。</p>
