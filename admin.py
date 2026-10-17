@@ -912,7 +912,7 @@ def vmiss_order(session, item: dict, account: dict, product, url: str, key: str,
         reasons = []
         for candidate in candidates:
             candidate_id = parse_qs(urlsplit(candidate).query).get("id", [""])[0]
-            progress(f"正在检查 VMISS 账单 {candidate_id or '未知'}")
+            progress(f"已找到 VMISS 待付款账单 {candidate_id or '未知'}（订单已创建），正在检查订单详情")
             try:
                 candidate_verification = _vmiss_confirm_invoice(session, candidate, item, product)
             except (requests.RequestException, ValueError) as exc:
@@ -935,7 +935,7 @@ def vmiss_order(session, item: dict, account: dict, product, url: str, key: str,
         raise ValueError("VMISS 未返回待付款发票，未确认订单")
     invoice_id = parse_qs(urlsplit(invoice_url).query)["id"][0]
     if verification is None:
-        progress(f"已定位 VMISS 账单 {invoice_id}，正在检查订单详情")
+        progress(f"已创建 VMISS 待付款订单，账单 {invoice_id} 已定位；正在检查订单详情")
         verification = _vmiss_confirm_invoice(session, invoice_url, item, product)
         progress(f"VMISS 账单 {invoice_id} 检查正常")
     return {"order_id": f"vmiss-invoice-{invoice_id}", "invoice_url": invoice_url, "payment_status": "unpaid",
@@ -1312,7 +1312,7 @@ class SeckillTask:
                 self.log(f"已发送一次 Akile 下单请求，但无法确认待付款订单；原因：{detail[:240]}。已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
                 return {"status": "uncertain", "url": url, "quantity": quantity}
             purchase_url = akile_order_page_url(order["order_id"])
-            self.log(f"已创建 Akile 待付款订单，数量 {quantity}；请手动前往官网核对订单并支付。", "success", item)
+            self.log(f"Akile 待付款订单已确认，数量 {quantity}；正在准备订单通知。", "success", item)
             notification = self._notify_unpaid_order(item, order["order_id"], quantity, purchase_url)
             return {"status": "submitted", "order_id": order["order_id"], "url": purchase_url,
                     "quantity": quantity, "payment_status": "unpaid", "order_verification": verification,
@@ -1326,7 +1326,7 @@ class SeckillTask:
                 self.log(f"已发送一次 VMISS 下单请求，但无法确认待付款发票；原因：{detail[:240]}。已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
                 return {"status": "uncertain", "url": url, "quantity": quantity}
             self.log(f"VMISS 订单 {order['order_id']} 检查正常：状态为未付款，商品、系统和优惠码已匹配", "success", item)
-            self.log(f"已创建 VMISS 待付款订单，数量 {quantity}；请手动前往发票页面核对并支付。", "success", item)
+            self.log(f"VMISS 待付款订单已确认，数量 {quantity}；正在准备订单通知。", "success", item)
             notification = self._notify_unpaid_order(item, order["order_id"], quantity, order["invoice_url"])
             return {"status": "submitted", "order_id": order["order_id"], "url": order["invoice_url"],
                     "quantity": quantity, "payment_status": "unpaid", "telegram_status": notification}
@@ -1375,6 +1375,7 @@ class SeckillTask:
             f"下单时间：{format_beijing(beijing_iso())}",
             "请登录商家官网手动付款，系统不会自动付款。",
         ])
+        self.log("正在发送 Telegram 待付款订单通知", "info", item)
         try:
             telegram_call(token, "sendMessage", chat_id=chat_id, text=message, parse_mode="HTML",
                           disable_web_page_preview=True, reply_markup=purchase_button(url, "💳 立即付款"))
