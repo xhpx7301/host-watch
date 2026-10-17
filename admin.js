@@ -2464,8 +2464,9 @@ function addToVpsSeckill(product) {
   let addedDefaults = null;
   if (!items.some(item => item.product_id === product.id)) {
     const defaults = seckillAddDefaults(product);
-    const isAkile = seckillProviderKey(product?.adapter) === "akile" || seckillProviderKey(product?.provider) === "akile";
-    items.push({ id: product.id, product_id: product.id, label: product.name, quantity: 1, ...defaults, target_url: product.purchase_url || product.snapshot?.url || "", submit_url: "", enabled: true, auto_submit: isAkile });
+    const providerKey = seckillProviderKey(product?.adapter) || seckillProviderKey(product?.provider);
+    const nativeProvider = providerKey === "akile" || providerKey === "vmiss";
+    items.push({ id: product.id, product_id: product.id, label: product.name, quantity: 1, ...defaults, target_url: product.purchase_url || product.snapshot?.url || "", submit_url: "", enabled: true, auto_submit: nativeProvider });
     const accountLabel = defaults.account_id ? "已绑定默认账户" : "未找到对应账户";
     const egressLabel = defaults.egress_node_id ? "已绑定默认出口节点" : "跟随商家出口";
     const couponLabel = defaults.coupon_code ? "已填入默认优惠码" : "暂无默认优惠码";
@@ -2507,11 +2508,13 @@ function renderVpsSeckill() {
     const egressSelect = document.createElement("select"); const egressOptions = [new Option("跟随商家出口（未分配则直连）", "")]; egressNodes().forEach(node => egressOptions.push(new Option(node.name || node.id, node.id))); egressSelect.replaceChildren(...egressOptions); egressSelect.value = item.egress_node_id || ""; egressSelect.addEventListener("change", () => { item.egress_node_id = egressSelect.value; seckillAccountChecks.delete(item.id); renderVpsSeckill(); updateDraftState(); });
     const target = document.createElement("input"); target.type = "url"; target.value = item.target_url || product?.purchase_url || ""; target.placeholder = "下架商品目标购买链接（可选）"; target.addEventListener("input", () => { item.target_url = target.value; updateDraftState(); });
     const providerKey = seckillProviderKey(product?.adapter) || seckillProviderKey(product?.provider);
-    if (providerKey === "akile") {
+    if (providerKey === "akile" || providerKey === "vmiss") {
       item.operating_system = "Debian 12";
       item.billing_cycle = "monthly";
-      item.akile_protocol_agreed = true;
-      item.akile_broadcast_ip_ack = true;
+      if (providerKey === "akile") {
+        item.akile_protocol_agreed = true;
+        item.akile_broadcast_ip_ack = true;
+      }
       if (item.auto_submit === undefined) item.auto_submit = true;
     }
     const submit = document.createElement("input"); submit.type = "url"; submit.value = item.submit_url || ""; submit.placeholder = "仅创建待付款订单的适配接口（非普通结算页）";
@@ -2520,10 +2523,12 @@ function renderVpsSeckill() {
     const submitHint = text("p", "", "hint span-2");
     const updateSubmitHint = () => {
       const nativeAkile = providerKey === "akile";
-      const missing = item.auto_submit && !nativeAkile && !String(item.submit_url || "").trim();
-      submit.hidden = nativeAkile;
-      submitLabel.hidden = nativeAkile;
-      submitHint.textContent = nativeAkile ? "Akile 使用内置待付款下单接口：自动确认服务协议和广播 IP 条款，固定 Debian 12、1 个月；只创建订单，不调用支付。" : missing ? "自动提交已允许，但未配置待付款下单接口；启动后只会提供官网购买链接，不会创建订单。" : "下单接口必须明确支持仅创建待付款订单，普通结算网页不会被调用。";
+      const nativeVmiss = providerKey === "vmiss";
+      const nativeOrder = nativeAkile || nativeVmiss;
+      const missing = item.auto_submit && !nativeOrder && !String(item.submit_url || "").trim();
+      submit.hidden = nativeOrder;
+      submitLabel.hidden = nativeOrder;
+      submitHint.textContent = nativeAkile ? "Akile 使用内置待付款下单接口：自动确认服务协议和广播 IP 条款，固定 Debian 12、1 个月；只创建订单，不调用支付。" : nativeVmiss ? "VMISS 使用内置官网结算适配：登录、预填系统与月付、应用优惠码并创建 Alipay 待付款发票；不会跳转或自动付款。" : missing ? "自动提交已允许，但未配置待付款下单接口；启动后只会提供官网购买链接，不会创建订单。" : "下单接口必须明确支持仅创建待付款订单，普通结算网页不会被调用。";
       submitHint.className = missing ? "error span-2" : "hint span-2";
     };
     submit.addEventListener("input", () => { item.submit_url = submit.value; updateSubmitHint(); updateDraftState(); });
@@ -2579,8 +2584,8 @@ function renderVpsSeckill() {
       } else if (selected === "vmiss" || selected === "vps_soy" || selected === "bwh" || selected === "akile" || selected === "dmit") {
         const urls = { vmiss: "https://app.vmiss.com/login", vps_soy: "https://www.vps.soy/login", bwh: "https://bwh81.net/clientarea.php", akile: "https://api.akile.ai/api/v1/user/login", dmit: "https://www.dmit.io/login" };
         account.provider = selected; account.login_url = urls[selected];
-        if (selected === "akile") account.auto_submit = true;
-        adapterNote.textContent = selected === "akile" ? "Akile 已内置 API 登录检查；填写邮箱和密码。若要求邮箱验证、二步验证、Passkey 或验证码，请到官网完成。检查不下单、不付款。" : `${ids[selected]} 已内置登录检查；只需填写官网登录名和密码。检查仅登录，不下单、不付款。遇到安全验证时，请在网页请求中为该商家选择 FlareSolverr 或 cloudscraper。`;
+        if (selected === "akile" || selected === "vmiss") account.auto_submit = true;
+        adapterNote.textContent = selected === "akile" ? "Akile 已内置 API 登录检查；填写邮箱和密码。若要求邮箱验证、二步验证、Passkey 或验证码，请到官网完成。检查不下单、不付款。" : selected === "vmiss" ? "VMISS 已内置登录与官网结算适配；填写官网登录邮箱和密码。自动抢购会预填商品配置并创建待付款发票，不会自动付款。" : `${ids[selected]} 已内置登录检查；只需填写官网登录名和密码。检查仅登录，不下单、不付款。遇到安全验证时，请在网页请求中为该商家选择 FlareSolverr 或 cloudscraper。`;
         const destinations = { ...urls, akile: "https://akile.ai/login" };
         const link = text("a", `打开 ${ids[selected]} 官网登录页`); link.href = destinations[selected]; link.target = "_blank"; link.rel = "noopener noreferrer"; providerExtra.append(link);
       } else if (selected) {
