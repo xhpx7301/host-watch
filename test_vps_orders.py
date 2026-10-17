@@ -176,7 +176,7 @@ class OrderTaskTests(unittest.TestCase):
         self.assertFalse(result['ok'])
         submission = result['items'][0]['order_submission']
         self.assertFalse(submission['ok'])
-        self.assertIn('未配置待付款下单接口', submission['message'])
+        self.assertIn('未配置商家待付款下单适配', submission['message'])
         self.assertEqual(self.orders(), [])
 
     def test_precise_rechecks_account_and_stock_before_submission(self):
