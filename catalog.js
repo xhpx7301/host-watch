@@ -180,7 +180,7 @@
     const routeHint = get("catalog-route");
     const hints = [`${providers[provider]} 已保存的读取设置：${requestRouteLabel(effectiveRoute)}。`];
     if (provider === "dmit") hints.push("有货须通过购买页校验；价格页可购买但下单页缺货时统一显示缺货，验证失败显示未知。不同时间的快照可能变化。");
-    if (changed) hints.push("此商家的出口或请求设置尚未保存；当前刷新仍使用上面的已保存设置，请先保存网页请求卡片。");
+    if (changed) hints.push("此商家的出口或请求设置尚未保存；当前刷新仍使用上面的已保存设置，修改后会自动保存。");
     if (effectiveRoute.error) hints.push(effectiveRoute.error);
     if (busy && task.provider === provider && task.route) hints.push(`本次刷新使用：${requestRouteLabel(task.route)}。执行期间修改设置将在下次刷新生效。`);
     if (data?.fetched_at) {

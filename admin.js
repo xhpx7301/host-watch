@@ -2349,7 +2349,7 @@ async function copyEgressUninstallCommand(input) {
     input.focus(); input.select();
     if (!document.execCommand("copy")) { setMessage("卸载命令已显示，请在命令框中手动复制。", "pending"); return; }
   }
-  setMessage("卸载命令已复制，请在要卸载的子服务器执行；卸载后在管理页移除节点并保存网页请求卡片。", "success");
+  setMessage("卸载命令已复制，请在要卸载的子服务器执行；卸载后在管理页移除节点，修改后自动保存。", "success");
 }
 function renderEgress() {
   const nodes = egressNodes(), target = document.querySelector("#egress-nodes"); target.replaceChildren();
@@ -2377,7 +2377,7 @@ function renderEgress() {
     setup.append(commandActions, text("p", "支持 Debian / Alpine，默认端口 8787，节点令牌自动生成。复制安装命令时仅保存此节点，其他栏目草稿保留；在子服务器以 root 执行。", "hint"));
     const command = document.createElement("textarea"); command.className = "egress-command"; command.dataset.egressCommand = node.id; command.rows = 3; command.readOnly = true; command.setAttribute("aria-label", `${node.name} 安装命令`); command.value = egressInstallCommands.get(node.id)?.command || ""; command.placeholder = "点击上方按钮，自动生成并复制安装命令，无需修改下方默认配置。"; setup.append(command);
     const registration = egressInstallCommands.get(node.id);
-    setup.append(text("p", "卸载命令所有节点通用，仅在目标子服务器执行，停止并删除节点程序、配置和专用账户。卸载后需在管理页调整出口路由、移除节点并保存网页请求卡片。", "hint"), uninstallCommand);
+    setup.append(text("p", "卸载命令所有节点通用，仅在目标子服务器执行，停止并删除节点程序、配置和专用账户。卸载后需在管理页调整出口路由、移除节点，修改后自动保存。", "hint"), uninstallCommand);
     if (registration) setup.append(text("p", registration.auto_register ? `自动回报至 ${registration.register_url}；安装后点击“刷新节点”。` : "当前主服务地址仅本机可访问。安装后将终端输出的 JSON 粘贴到“回填安装结果”，即可自动填入 IP 和连接地址。", "hint"));
     const fallback = document.createElement("details"); fallback.className = "egress-import"; fallback.append(text("summary", "回填安装结果（SSH 隧道或自动回报不可用时）"));
     const info = document.createElement("textarea"); info.rows = 3; info.placeholder = "粘贴子服务器安装完成后输出的 JSON"; info.setAttribute("aria-label", `${node.name} 安装结果`);
@@ -2405,11 +2405,11 @@ function renderEgress() {
     const select = document.createElement("select"); select.replaceChildren(...options.map(option => option.cloneNode(true)));
     select.value = config.egress?.routes?.[id] || "";
     const hint = text("small", "", "hint");
-  const updateHint = () => { const node = nodes.find(row => row.id === select.value); hint.textContent = !node ? "仅此商家使用主服务器直连" : node.enabled === false ? "此节点已停用，绑定商家将无法读取；请启用并保存网页请求卡片。" : !node.proxy_url ? "此节点尚未完成安装回报，暂时无法读取。" : `仅此商家使用 ${node.name}；修改后请保存网页请求卡片。`; hint.className = node && (node.enabled === false || !node.proxy_url) ? "error" : "hint"; };
+  const updateHint = () => { const node = nodes.find(row => row.id === select.value); hint.textContent = !node ? "仅此商家使用主服务器直连" : node.enabled === false ? "此节点已停用，绑定商家将无法读取；请启用，修改后自动保存。" : !node.proxy_url ? "此节点尚未完成安装回报，暂时无法读取。" : `仅此商家使用 ${node.name}；修改后修改后会自动保存。`; hint.className = node && (node.enabled === false || !node.proxy_url) ? "error" : "hint"; };
     select.addEventListener("change", () => { config.egress.routes[id] = select.value; if (!select.value) delete config.egress.routes[id]; updateHint(); updateDraftState(); scheduleAutoSave("egress"); });
     updateHint(); const node = document.createElement("label"); node.append(text("span", label), select, hint); routes.append(node);
   });
-  document.querySelector("#egress-status").textContent = `${nodes.length} 个出口节点；已绑定 ${Object.keys(config.egress?.routes || {}).length} 个商家。已安装并启用的节点每 1 分钟自动检查健康地址和 HTTPS 代理，也可手动检查出口 IP。出口按商家生效，未绑定商家使用主服务器直连。修改后请保存网页请求卡片。大盘、库存监控/通知、分类读取和网页测试沿用对应商家出口；VPS 补货抢购可单独指定出口。`;
+  document.querySelector("#egress-status").textContent = `${nodes.length} 个出口节点；已绑定 ${Object.keys(config.egress?.routes || {}).length} 个商家。已安装并启用的节点每 1 分钟自动检查健康地址和 HTTPS 代理，也可手动检查出口 IP。出口按商家生效，未绑定商家使用主服务器直连。修改后修改后会自动保存。大盘、库存监控/通知、分类读取和网页测试沿用对应商家出口；VPS 补货抢购可单独指定出口。`;
 }
 function collectEgress() { return { nodes: egressNodes().map(node => ({ ...node })), routes: { ...(config.egress?.routes || {}) } }; }
 document.querySelector("#egress-add-node").addEventListener("click", () => { const node = { id: `egress-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name: `出口节点 ${egressNodes().length + 1}`, proxy_url: "", health_url: "", token: "", listen_port: 8787, pending_registration: true, enabled: true }; egressNodes().push(node); expandedEgressNodes.add(node.id); renderEgress(); updateDraftState(); scheduleAutoSave("egress"); document.querySelector("#egress-nodes").lastElementChild.scrollIntoView({ behavior: "smooth", block: "nearest" }); });
@@ -3004,9 +3004,9 @@ function renderProviderFlareSettings() {
 function updateFetcherStatus() {
   const mode = document.querySelector("#fetcher-mode").value;
   const names = { requests: "普通 HTTPS 请求", flaresolverr: "FlareSolverr 浏览器请求", cloudscraper: "cloudscraper 请求" };
-  document.querySelector("#fetcher-status").textContent = `全局默认使用 ${names[mode] || "未知请求方式"}；商家选择优先于全局设置，保存后自动应用。${mode === "cloudscraper" ? "cloudscraper 无需浏览器服务，不能完整执行网页 JavaScript，也不保证通过所有 Cloudflare 校验。" : ""}`;
+  document.querySelector("#fetcher-status").textContent = `全局默认使用 ${names[mode] || "未知请求方式"}；商家选择优先于全局设置，修改后自动应用。${mode === "cloudscraper" ? "cloudscraper 无需浏览器服务，不能完整执行网页 JavaScript，也不保证通过所有 Cloudflare 校验。" : ""}`;
   const legacy = [...document.querySelectorAll("[data-provider-mode]")].filter((input) => input.value === "legacy");
-  document.querySelector("#provider-request-note").textContent = legacy.length ? "部分商家原有商品使用不同请求方式，目前保留。为该商家选择统一方式并保存后，会覆盖这些旧选择。" : "新增商品自动使用对应商家设置，测试使用当前页面填写的请求方式；后台自动监控使用已保存的设置。";
+  document.querySelector("#provider-request-note").textContent = legacy.length ? "部分商家原有商品使用不同请求方式，目前保留。为该商家选择统一方式后，会自动覆盖这些旧选择。" : "新增商品自动使用对应商家设置，测试使用当前页面填写的请求方式；后台自动监控使用已保存的设置。";
 }
 
 function openAdvancedProducts() {
