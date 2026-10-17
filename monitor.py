@@ -1357,8 +1357,13 @@ def main() -> int:
     while True:
         try:
             config = read_config(config_path)
-            if not config.get("enabled", False):
-                logging.info("监控总开关关闭，不访问商品网站")
+            # The systemd monitor process is the long-lived HostWatch service.
+            # Manual module schedules mean "do not run an automatic check";
+            # they do not stop this process or the management service.
+            if not config.get("enabled", False) and not any(key in config for key in ("monitor_schedule", "notify_schedule")):
+                # Legacy configurations without independent schedules still
+                # use the old aggregate switch as an explicit stop marker.
+                logging.info("旧版监控总开关关闭，不访问商品网站")
                 return 0
             bot_token, chat_id = effective_telegram(config)
             telegram_config = config.get("telegram", {})

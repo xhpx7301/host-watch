@@ -600,11 +600,8 @@ def print_menu_status() -> None:
 
 
 def start_monitor() -> None:
-    config = json.loads((DATA_DIR / "config.json").read_text(encoding="utf-8"))
-    if config.get("enabled") is not True:
-        raise ValueError("监控配置处于暂停状态，请先保存网页配置，再点击“开始监控”")
     run("systemctl", "enable", "--now", MONITOR)
-    print("监控服务已启动并设置开机自启。")
+    print("HostWatch 监控服务已启动并设置开机自启；手动模式仍保持服务运行。")
 
 
 def stop_monitor() -> None:
@@ -613,23 +610,20 @@ def stop_monitor() -> None:
 
 
 def restart_monitor() -> None:
-    config = json.loads((DATA_DIR / "config.json").read_text(encoding="utf-8"))
-    if config.get("enabled") is not True:
-        raise ValueError("监控配置处于暂停状态，请先保存网页配置，再点击“开始监控”")
     run("systemctl", "restart", MONITOR)
-    print("监控服务已重启，将重新读取配置。")
+    print("HostWatch 监控服务已重启，将重新读取配置。")
 
 
 def apply_monitor() -> None:
-    """Make the service state match the enabled flag saved by the web admin."""
-    config = json.loads((DATA_DIR / "config.json").read_text(encoding="utf-8"))
-    if config.get("enabled") is True:
-        run("systemctl", "enable", MONITOR)
-        run("systemctl", "restart", MONITOR)
-        print("监控配置已应用：服务已重启并设置开机自启。")
-    else:
-        run("systemctl", "disable", "--now", MONITOR)
-        print("监控配置已应用：服务已停止并取消开机自启。")
+    """Apply configuration while keeping the HostWatch service available.
+
+    Automatic execution is controlled by each module schedule. The monitor
+    process remains alive when both schedules are manual so manual refreshes,
+    account checks, and the admin API do not appear to be a stopped service.
+    """
+    run("systemctl", "enable", MONITOR)
+    run("systemctl", "restart", MONITOR)
+    print("监控配置已应用：HostWatch 服务保持运行，自动任务按模块设置执行。")
 
 
 def _remove_path(path: Path) -> None:
@@ -791,6 +785,12 @@ def web_action(payload: dict) -> dict:
         else:
             {"monitor-restart": restart_monitor, "monitor-apply": apply_monitor}[action]()
         return {"ok": True, "message": "监控服务操作已完成。"}
+    if action == "hostwatch-restart":
+        # Restart both project services after the current admin request has
+        # returned. A delayed systemd job prevents the response from being
+        # cut off when the admin service itself is restarted.
+        run("systemd-run", "--quiet", "--on-active=2s", "/usr/bin/systemctl", "restart", MONITOR, ADMIN)
+        return {"ok": True, "message": "HostWatch 服务组将在 2 秒后重启：监控服务和管理页服务都会重新读取配置。"}
     if action == "backup":
         path = backup()
         return {"ok": True, "message": f"自动备份完成：{path.name}", "path": str(path), "storage": str(BACKUP_DIR)}

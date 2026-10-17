@@ -2285,8 +2285,9 @@ class Handler(BaseHTTPRequestHandler):
             for key in ("watch_order", "notify_order"):
                 if key not in submitted:
                     submitted[key] = current[key]
-            # The service follows the two independent automatic refresh switches.
-            # Manual-only modules still work through their page-level refresh buttons.
+            # Keep the legacy aggregate flag for compatibility with existing
+            # configs and status records. Service availability is managed
+            # separately below; manual schedules no longer stop the service.
             monitor_schedule = submitted.get("monitor_schedule", {})
             notify_schedule = submitted.get("notify_schedule", {})
             automatic_refresh = (

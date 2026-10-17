@@ -497,7 +497,11 @@ async function performManagementAction(action, extra = {}) {
       return;
     }
   }
-  if (!result.update_unit && !['admin-restart', 'monitor-restart'].includes(action)) {
+  if (action === "hostwatch-restart") {
+    document.querySelector("#manage-task-status").textContent = `${result.message} 页面将在服务恢复后自动刷新。`;
+    setTimeout(() => window.location.reload(), 5000);
+  }
+  if (!result.update_unit && !['admin-restart', 'monitor-restart', 'hostwatch-restart'].includes(action)) {
     try { await refreshManagement(); }
     catch (error) { setMessage(`${result.message || "操作已完成。"}状态刷新失败：${error.message}`, "error"); }
   }
@@ -622,12 +626,12 @@ function bindManagementActions() {
   }));
   for (const [id, action, label, message] of [
     ["manage-restart-admin", "admin-restart", "安排中…", "正在安排管理页服务重启…"],
-    ["manage-restart-monitor", "monitor-restart", "重启中…", "正在重启 HostWatch 服务…"],
+    ["manage-restart-monitor", "hostwatch-restart", "重启中…", "正在安排 HostWatch 服务组重启…"],
     ["manage-backup", "backup-download", "导出中…", "正在打包并导出备份…"],
     ["manage-update", "update", "启动中…", "正在启动 HostWatch 更新任务…"],
   ]) {
     document.querySelector(`#${id}`).addEventListener("click", (event) => {
-      if (action === "monitor-restart" && !window.confirm("确认重启 HostWatch 服务？库存监控会短暂中断，服务将重新读取已保存配置。")) return;
+      if (action === "hostwatch-restart" && !window.confirm("确认重启 HostWatch 服务组？监控服务和管理页服务会短暂重启，当前页面将在服务恢复后自动刷新。")) return;
       const operation = action === "backup-download" ? exportManagementBackup : () => performManagementAction(action);
       runAction(event.currentTarget, label, message, operation);
     });
@@ -1298,8 +1302,8 @@ function productMonitorLabel(item, saved) {
   if (JSON.stringify(item) !== JSON.stringify(saved)) return "商品修改待保存";
   if (!saved.enabled) return "未参与监控";
   const active = monitorService?.active;
-  if (active === "active") return config.enabled ? "监控运行中" : "暂停尚未生效（服务仍在运行）";
-  if (active === "inactive") return config.enabled ? "监控服务已停止" : "监控已暂停";
+  if (active === "active") return "HostWatch 服务运行中";
+  if (active === "inactive") return "HostWatch 服务已停止";
   return ({ failed: "监控服务运行失败", activating: "监控服务启动中", deactivating: "监控服务停止中" })[active] || "监控服务状态未知";
 }
 
@@ -2653,19 +2657,19 @@ document.querySelector("#vps-seckill-interval").addEventListener("input", event 
 function renderMonitorState() {
   const active = monitorService?.active;
   const transitionTimedOut = monitorService?.transition_timeout;
-  const labels = { active: "自动刷新服务运行中", inactive: "自动刷新服务已停止", failed: "自动刷新服务运行失败", activating: transitionTimedOut ? "自动刷新服务启动超时" : "自动刷新服务启动中", deactivating: transitionTimedOut ? "自动刷新服务停止超时" : "自动刷新服务停止中" };
+  const labels = { active: "HostWatch 服务运行中", inactive: "HostWatch 服务已停止", failed: "HostWatch 服务运行失败", activating: transitionTimedOut ? "HostWatch 服务启动超时" : "HostWatch 服务启动中", deactivating: transitionTimedOut ? "HostWatch 服务停止超时" : "HostWatch 服务停止中" };
   const label = labels[active] || "自动刷新服务状态未知";
   const automaticModules = [config.monitor_schedule?.mode === "auto" ? "库存监控" : "", config.notify_schedule?.mode === "auto" ? "库存通知" : ""].filter(Boolean);
   let note = automaticModules.length ? `已保存：${automaticModules.join("、")}开启自动刷新。` : "已保存：库存监控和库存通知均为仅手动刷新。";
   if (!savedConfig) note = "正在读取配置。";
   if (!monitorService) note += "请刷新状态核对服务器实际运行情况。";
-  else if (active === "active") note += "服务已启动，库存检查是否成功请查看各模块最近检查结果。";
+  else if (active === "active") note += "服务已启动；自动任务按库存监控和库存通知各自设置执行，手动模式不会停止服务。";
   else if (active === "activating" && transitionTimedOut) note += "超过 60 秒仍未确认启动；请刷新状态并查看服务日志。";
   else if (active === "activating") note += "服务尚未确认启动成功，正在自动刷新；超过 60 秒会提示启动超时。";
   else if (active === "deactivating" && transitionTimedOut) note += "超过 60 秒仍未确认停止；请刷新状态并查看服务日志。";
   else if (active === "deactivating") note += "服务正在停止，正在自动刷新最终状态。";
-  else if (automaticModules.length) note += "服务尚未运行，请查看最近检查错误及服务日志，修正配置后保存设置。";
-  else note += "当前没有启用自动刷新；可在对应栏目手动刷新。";
+  else if (automaticModules.length) note += "自动任务尚未运行，请查看最近检查错误及服务日志。";
+  else note += "当前没有启用自动刷新；HostWatch 服务仍保持运行，可在对应栏目手动刷新。";
   const runtime = document.querySelector("#monitor-runtime");
   const tone = serviceTone(active);
   runtime.textContent = label;
@@ -2679,7 +2683,7 @@ function renderMonitorState() {
   header.textContent = hostLabels[hostActive] || "HostWatch 服务状态未知";
   header.className = `state ${serviceTone(hostActive)}`;
   const overviewNote = document.querySelector("#overview-state-note");
-  if (overviewNote) overviewNote.textContent = active === "active" ? "按各模块设置后台刷新，关闭网页后仍运行" : active === "activating" && transitionTimedOut ? "启动超过 60 秒未完成，请查看服务日志" : active === "activating" ? "正在确认启动状态，页面自动刷新" : active === "failed" ? "请检查配置或查看服务日志" : active === "deactivating" && transitionTimedOut ? "停止超过 60 秒未完成，请查看服务日志" : active === "deactivating" ? "正在停止，等待最终状态" : active === "inactive" ? "没有模块启用自动刷新，保留最近库存记录" : "等待服务器返回服务状态";
+  if (overviewNote) overviewNote.textContent = active === "active" ? "服务持续运行，自动任务按各模块设置执行" : active === "activating" && transitionTimedOut ? "启动超过 60 秒未完成，请查看服务日志" : active === "activating" ? "正在确认启动状态，页面自动刷新" : active === "failed" ? "请检查配置或查看服务日志" : active === "deactivating" && transitionTimedOut ? "停止超过 60 秒未完成，请查看服务日志" : active === "deactivating" ? "正在停止，等待最终状态" : active === "inactive" ? "服务已停止，请检查服务日志" : "等待服务器返回服务状态";
   window.dispatchEvent(new Event("hostwatch-service-change"));
 }
 
@@ -3091,7 +3095,7 @@ async function saveConfig() {
   document.querySelector("#telegram-token").value = "";
   applyConfig(result.config);
   if (result.service?.ok) {
-    setMessage(result.config.enabled ? "配置已保存并应用，HostWatch 服务已按自动刷新设置运行。" : "配置已保存，当前没有启用自动刷新；手动刷新仍可单独使用。", "success");
+    setMessage("配置已保存并应用，HostWatch 服务保持运行；自动任务按库存监控和库存通知各自设置执行。", "success");
   } else {
     setMessage(`配置已保存，但自动应用服务失败：${result.service?.error || "请在监控设置中重试"}`, "error");
   }

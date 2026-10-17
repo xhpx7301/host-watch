@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import unittest
 import ssl
 from urllib.error import URLError, HTTPError
-from unittest.mock import patch, MagicMock
+from unittest.mock import call, patch, MagicMock
 
 
 @unittest.skipUnless(sys.platform == "linux", "菜单使用 Linux 的文件权限及服务接口")
@@ -63,12 +63,11 @@ class ManagementTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "不一致"):
                 self.manage.ask_password()
 
-    def test_start_requires_enabled_config_before_systemctl(self):
+    def test_start_keeps_service_available_for_manual_schedules(self):
         (self.directory / "config.json").write_text(json.dumps({"enabled": False}))
         with patch.object(self.manage, "DATA_DIR", self.directory), patch.object(self.manage, "run") as run:
-            with self.assertRaises(ValueError):
-                self.manage.start_monitor()
-            run.assert_not_called()
+            self.manage.start_monitor()
+        run.assert_called_once_with("systemctl", "enable", "--now", self.manage.MONITOR)
 
     def test_menu_status_shows_flaresolverr_monitor_and_admin_states(self):
         calls = []
@@ -108,11 +107,18 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual([call.args for call in run.call_args_list], [
             ("systemctl", "enable", self.manage.MONITOR), ("systemctl", "restart", self.manage.MONITOR)])
 
-    def test_web_apply_disabled_config_stops_monitor(self):
+    def test_web_apply_disabled_legacy_flag_keeps_monitor_service_running(self):
         (self.directory / "config.json").write_text(json.dumps({"enabled": False}))
         with patch.object(self.manage, "DATA_DIR", self.directory), patch.object(self.manage, "run") as run:
             self.manage.web_action({"action": "monitor-apply"})
-        run.assert_called_once_with("systemctl", "disable", "--now", self.manage.MONITOR)
+        self.assertEqual([call.args for call in run.call_args_list], [
+            ("systemctl", "enable", self.manage.MONITOR), ("systemctl", "restart", self.manage.MONITOR)])
+
+    def test_hostwatch_restart_restarts_monitor_and_admin_as_a_group(self):
+        with patch.object(self.manage, "run") as run:
+            result = self.manage.web_action({"action": "hostwatch-restart"})
+        run.assert_called_once_with("systemd-run", "--quiet", "--on-active=2s", "/usr/bin/systemctl", "restart", self.manage.MONITOR, self.manage.ADMIN)
+        self.assertIn("服务组", result["message"])
 
     def test_web_rejects_arbitrary_actions_and_update_unit_names(self):
         for payload in ({"action": "shell", "command": "id"}, {"action": "update-status", "unit": "ssh.service"}):
