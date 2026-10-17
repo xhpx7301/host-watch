@@ -2911,7 +2911,7 @@ function updateDraftState() {
   const node = document.querySelector("#monitor-draft");
   if (node) {
     const monitorDirty = scopeIsDirty("monitor");
-    node.textContent = monitorDirty ? "监控卡片有未保存修改，请点击本卡片的“保存”按钮；单次测试可直接使用当前填写的商品配置。" : "监控设置已保存。";
+    node.textContent = monitorDirty ? "监控设置有修改，正在自动保存；单次测试可直接使用当前填写的商品配置。" : "监控设置已保存。";
     node.className = monitorDirty ? "hint draft-note" : "hint";
   }
   const seconds = Number(document.querySelector("#interval").value || NaN);
@@ -2931,8 +2931,12 @@ function scheduleAutoSave(scope, delay = 650) {
   const timer = setTimeout(() => {
     autoSaveTimers.delete(scope);
     if (!savedConfig || !scopeIsDirty(scope)) return;
+    if (scope === "monitor") {
+      const seconds = Number(document.querySelector("#interval")?.value || NaN);
+      if (!Number.isInteger(seconds) || seconds < 0 || seconds > 86400) return;
+    }
     if (actionRunning) { scheduleAutoSave(scope, 900); return; }
-    runAction(null, "", `正在自动保存${autoSaveScopeNames[scope] || "配置"}…`, () => saveConfig(scope));
+    runAction(null, "", `正在自动保存${autoSaveScopeNames[scope] || "配置"}…`, () => saveConfig(scope, true));
   }, delay);
   autoSaveTimers.set(scope, timer);
 }
@@ -3294,7 +3298,7 @@ document.querySelector("#telegram-load-chats").addEventListener("click", (event)
   setMessage(`已读取 ${result.chats.length} 个聊天。`, "success");
 }));
 
-async function saveConfig(scope = "all") {
+async function saveConfig(scope = "all", automatic = false) {
   const draft = collectConfig();
   const saved = savedConfigSnapshot() || draft;
   const next = mergeConfigScope(saved, draft, scope);
@@ -3336,7 +3340,7 @@ async function saveConfig(scope = "all") {
   }
   updateDraftState();
   if (result.service?.ok) {
-    setMessage(scope === "all" ? "配置已保存并应用。" : "本卡片配置已保存并应用。", "success");
+    setMessage(automatic ? `${autoSaveScopeNames[scope] || "配置"}已自动保存并应用。` : scope === "all" ? "配置已保存并应用。" : "本卡片配置已保存并应用。", "success");
   } else {
     setMessage(`配置已保存，但自动应用服务失败：${result.service?.error || "请在设置中重试"}`, "error");
   }
