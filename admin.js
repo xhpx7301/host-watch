@@ -358,7 +358,8 @@ async function refreshManagement() {
   if (!backupDirty) backupScheduleDraft = backupScheduleSaved ? { ...backupScheduleSaved } : null;
   renderBackupSchedule();
   const backups = document.querySelector("#manage-backups");
-  backups.replaceChildren(...(state.backups.length ? state.backups.map((item) => text("span", `${item.name} · ${formatBytes(item.size)}`)) : [text("span", "暂无备份")]));
+  const recentBackups = (state.backups || []).slice(0, 5);
+  backups.replaceChildren(...(recentBackups.length ? recentBackups.map((item) => text("span", `${item.name} · ${formatBytes(item.size)}`)) : [text("span", "暂无备份")]));
   if (updateUnit) {
     const update = await refreshUpdateStatus();
     if (update.finished || update.LoadState === "not-found") {
