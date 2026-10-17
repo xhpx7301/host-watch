@@ -2481,7 +2481,7 @@ function addToVpsSeckill(product) {
     const couponLabel = defaults.coupon_code ? "已填入默认优惠码" : "暂无默认优惠码";
     addedDefaults = `${accountLabel}、${egressLabel}、${couponLabel}`;
   }
-  renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); setMessage(`${product.name} 已加入 VPS 补货抢购${addedDefaults ? `：${addedDefaults}` : ""}，正在自动保存；账户、出口节点和优惠码仍可修改。`, "pending", true, false);
+  renderVpsSeckill(); updateDraftState(); setMessage(`${product.name} 已加入 VPS 补货抢购${addedDefaults ? `：${addedDefaults}` : ""}，请在商品区右下角保存；账户、出口节点和优惠码仍可修改。`, "pending", true, false);
 }
 function renderVpsSeckill() {
   const value = config.vps_seckill || { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] };
@@ -3241,6 +3241,11 @@ document.querySelectorAll("[data-overview-log-detail]").forEach(button => button
   overviewLogDetail.textContent = formatModuleLogs(key);
   overviewLogDialog.showModal();
 }));
+document.querySelector("#vps-seckill-log-detail").addEventListener("click", () => {
+  overviewLogTitle.textContent = "抢购完整日志";
+  overviewLogDetail.textContent = formatModuleLogs("seckill");
+  overviewLogDialog.showModal();
+});
 document.querySelector("#overview-log-close").addEventListener("click", () => overviewLogDialog.close());
 overviewLogDialog.addEventListener("click", event => { if (event.target === overviewLogDialog) overviewLogDialog.close(); });
 document.querySelector("#fetcher-mode").addEventListener("change", updateFetcherStatus);
