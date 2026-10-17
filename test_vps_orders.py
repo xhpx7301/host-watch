@@ -342,6 +342,20 @@ class VmissOrderTests(OrderTaskTests):
                               Product("product60", "US.LA.CMIN2.Elite", 1, "https://app.vmiss.com/store/test"),
                               "https://app.vmiss.com/store/test", "abc123")
 
+    def test_native_checkout_rejects_invoice_for_different_product(self):
+        session = Mock()
+        config = VmissResponse(vmiss_config_page(), url="https://app.vmiss.com/cart.php?a=confproduct&i=0")
+        checkout = VmissResponse(vmiss_checkout_page(), url="https://app.vmiss.com/cart.php?a=checkout")
+        invoice = VmissResponse("", status_code=302, url="https://app.vmiss.com/cart.php?a=checkout")
+        invoice.headers = {"Location": "/viewinvoice.php?id=123"}
+        wrong_page = VmissResponse(vmiss_invoice_page(product="US.LA.OTHER.Elite"), url="https://app.vmiss.com/viewinvoice.php?id=123")
+        session.get.side_effect = [config, checkout, wrong_page]
+        session.post.side_effect = [VmissResponse(""), invoice]
+        with self.assertRaisesRegex(ValueError, "账单项目未匹配本次商品"):
+            admin.vmiss_order(session, {"quantity": 1}, {"username": "user@example.com"},
+                              Product("product60", "US.LA.CMIN2.Elite", 1, "https://app.vmiss.com/store/test"),
+                              "https://app.vmiss.com/store/test", "abc123")
+
     def test_native_checkout_finds_unpaid_invoice_from_invoice_list(self):
         session = Mock()
         config = VmissResponse(vmiss_config_page(), url="https://app.vmiss.com/cart.php?a=confproduct&i=0")
