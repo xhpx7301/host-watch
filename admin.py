@@ -1333,7 +1333,7 @@ class SeckillTask:
         ])
         try:
             telegram_call(token, "sendMessage", chat_id=chat_id, text=message, parse_mode="HTML",
-                          disable_web_page_preview=True, reply_markup=purchase_button(url))
+                          disable_web_page_preview=True, reply_markup=purchase_button(url, "💳 立即付款"))
         except TelegramAPIError:
             self.log("待付款订单已创建，但 Telegram 通知发送失败；请查看服务日志并到官网核对订单。", "error", item)
             return "failed"

@@ -59,6 +59,10 @@ class NotificationTests(unittest.TestCase):
             self.assertEqual(purchase_button(url), {})
             self.assertIsNone(BeautifulSoup(self.message(purchase_url=url), "html.parser").a)
 
+    def test_purchase_button_allows_order_action_label(self):
+        button = purchase_button("https://akile.ai/console/finance/order/202610180001", "💳 立即付款")
+        self.assertEqual(button["inline_keyboard"][0][0]["text"], "💳 立即付款")
+
     def test_formatters_keep_capacity_currency_and_network_units(self):
         for raw, expected in [("1 核 · 512 MB · 10 GB", "1C/0.5G/10GB"), ("4 核 · 4096 MB · 20 GB", "4C/4G/20GB"),
                               ("2 核 · 2 GB · 30 GB SSD", "2C/2G/30GB SSD"), ("CPU：1 核 · 内存：1 GB · 硬盘：10 GB", "1C/1G/10GB")]:

@@ -120,11 +120,11 @@ def price_text_cycle(value: str) -> str:
     return value
 
 
-def purchase_button(url: str) -> dict:
+def purchase_button(url: str, label: str = "🛒 立即购买") -> dict:
     try:
         parsed = urlsplit(url)
         if parsed.scheme in {"http", "https"} and parsed.hostname and not parsed.username and not parsed.password:
-            return {"inline_keyboard": [[{"text": "🛒 立即购买", "url": url}]]}
+            return {"inline_keyboard": [[{"text": label, "url": url}]]}
     except ValueError:
         pass
     return {}

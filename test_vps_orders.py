@@ -156,6 +156,7 @@ class OrderTaskTests(unittest.TestCase):
         self.assertEqual(payload['chat_id'], '123')
         self.assertIn('订单号：<code>order-123</code>', payload['text'])
         self.assertIn('状态：待付款', payload['text'])
+        self.assertEqual(payload['reply_markup']['inline_keyboard'][0][0]['text'], '💳 立即付款')
         self.assertEqual(payload['reply_markup']['inline_keyboard'][0][0]['url'], 'https://shop.example.com/buy')
 
     def test_seckill_test_checks_page_and_account_without_creating_order(self):
