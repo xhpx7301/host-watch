@@ -812,14 +812,15 @@ function productEditor(item, index) {
       const selected = membership(item, type);
       button.textContent = selected ? `✓ 已加入${label}` : `＋ 加入${label}`;
       button.setAttribute("aria-pressed", String(selected));
-      button.title = selected ? `点击移出${label}，保存监控卡片后生效` : `点击加入${label}，保存监控卡片后生效`;
+      button.title = selected ? `点击移出${label}，修改会自动保存` : `点击加入${label}，修改会自动保存`;
     };
     syncButton(); button.disabled = actionRunning;
     button.addEventListener("click", () => {
       if (actionRunning) return;
       setMembership(item, type, !membership(item, type)); syncButton();
       updateProductEditorTitle(article, item); renderOverview(); updateDraftState();
-      setMessage(`已${membership(item, type) ? "加入" : "移出"}${label}，请保存监控卡片后生效。`, "pending");
+      scheduleAutoSave(type === "watch" ? "monitor" : "notifications");
+      setMessage(`已${membership(item, type) ? "加入" : "移出"}${label}，正在自动保存。`, "pending");
     });
     actions.append(button);
   }
@@ -3180,7 +3181,7 @@ document.querySelector("#merchant-order-toggle").addEventListener("click", (even
   event.currentTarget.classList.toggle("merchant-order-editing", merchantOrderEditing);
   event.currentTarget.setAttribute("aria-expanded", String(merchantOrderEditing));
   renderMerchantOrder();
-  if (!merchantOrderEditing) setMessage("商家顺序编辑已完成；请保存监控卡片写入服务器。", "pending");
+  if (!merchantOrderEditing) { scheduleAutoSave("monitor"); setMessage("商家顺序编辑已完成，正在自动保存。", "pending"); }
 });
 document.querySelector("#add").addEventListener("click", () => {
   const item = { ...structuredClone(merchantPresets[merchantSelect.value].product), id: crypto.randomUUID(), enabled: false };
