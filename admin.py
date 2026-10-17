@@ -761,7 +761,7 @@ def _vmiss_unpaid_invoice_from_list(session) -> str:
 
     page = _vmiss_get(session, VMISS_INVOICES_URL)
     soup = BeautifulSoup(page.text, "html.parser")
-    candidates = []
+    candidates = {}
     for link in soup.select('a[href*="viewinvoice.php"]'):
         try:
             invoice_url = _vmiss_url(urljoin(page.url or VMISS_INVOICES_URL, str(link.get("href") or "")))
@@ -773,8 +773,10 @@ def _vmiss_unpaid_invoice_from_list(session) -> str:
         row = link.find_parent("tr") or link.parent
         status = _vmiss_invoice_status(row.get_text(" ", strip=True) if row else link.get_text(" ", strip=True))
         if status == "unpaid":
-            candidates.append((int(invoice_id), invoice_url))
-    return max(candidates, default=(0, ""))[1]
+            candidates[invoice_id] = invoice_url
+    if len(candidates) != 1:
+        return ""
+    return next(iter(candidates.values()))
 
 
 def vmiss_order(session, item: dict, account: dict, product, url: str, key: str) -> dict:
