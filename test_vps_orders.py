@@ -413,6 +413,30 @@ class VmissOrderTests(OrderTaskTests):
         with self.assertRaisesRegex(ValueError, "订单号格式无效"):
             admin.akile_order_result(response({"status_code": 0, "data": {"order_no": "../../payment"}}))
 
+    def test_akile_submit_notifies_with_official_order_page_and_never_payment_url(self):
+        task = admin.SeckillTask("akile-seckill-test", admin.default_config(), "rapid")
+        item = {"id": "akile-item", "product_id": "1047", "label": "TWLite-Mini", "quantity": 1,
+                "akile_protocol_agreed": True, "akile_broadcast_ip_ack": True}
+        product = {"adapter": "akile", "provider": "Akile", "name": "TWLite-Mini"}
+        inspected = Product("1047", "TWLite-Mini", 1,
+            "https://akile.ai/shop/server?areaId=6&nodeId=41&planId=1047", vendor="Akile",
+            area_id="6", area_name="中国台湾", node_name="TWLite",
+            match_details={"area_name": "中国台湾", "node_name": "TWLite", "plan_id": 1047,
+                           "plan": {"id": 1047, "plan_name": "TWLite-Mini"}})
+        session = Mock(headers={})
+        session.post.return_value = response({"status_code": 0, "data": {"order_no": "202610170001",
+            "payment_url": "https://pay.example/charge"}})
+        with patch.object(admin, "effective_telegram", return_value=("bot", "chat")), \
+             patch.object(admin, "telegram_call") as telegram:
+            result = task._submit(session, item, {}, inspected.url, product, inspected=inspected)
+        order_url = "https://akile.ai/console/finance/order/202610170001"
+        self.assertEqual(result["status"], "submitted")
+        self.assertEqual(result["url"], order_url)
+        self.assertEqual(result["telegram_status"], "sent")
+        self.assertEqual(session.post.call_args.args[0], admin.AKILE_ORDER_URL)
+        self.assertNotIn("payment_url", session.post.call_args.kwargs["json"])
+        self.assertEqual(telegram.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["url"], order_url)
+
 
 class AccountVerificationTests(unittest.TestCase):
     def test_requires_positive_authentication_and_matching_identity(self):
