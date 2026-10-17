@@ -446,6 +446,12 @@ class NativeAkileOrderTests(unittest.TestCase):
         self.assertEqual(result['status'], 'uncertain')
         self.assertEqual(session.post.call_count, 2)
 
+    def test_unpaid_order_notification_link_uses_affiliate_but_login_stays_separate(self):
+        item = self.item()
+        product = {'id': item['product_id'], 'adapter': 'akile', 'provider': 'Akile', 'purchase_url': item['target_url']}
+        task = admin.SeckillTask('akile-affiliate-123456', {'telegram': {'disabled': True}, 'affiliates': {'akile': 'aff-code'}, 'products': [product], 'vps_seckill': {}}, 'rapid')
+        self.assertEqual(task._affiliate_purchase_url(item, item['target_url'], product), item['target_url'] + '&aff_code=aff-code')
+
     def test_akile_api_requires_profile_identity_and_preserves_token_only_in_session(self):
         account = configuration()['vps_seckill']['accounts'][0]
         account.update(provider='akile', login_url=admin.AKILE_LOGIN_URL)

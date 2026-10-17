@@ -939,10 +939,16 @@ class SeckillTask:
         except (requests.RequestException, ValueError):
             self.log("已发送一次 Akile 待付款下单请求，但无法确认订单状态；已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
             return {"status": "uncertain", "url": url, "quantity": 1}
+        purchase_url = self._affiliate_purchase_url(item, url, product)
         self.log("已创建 Akile 待付款订单，数量 1；请手动前往官网核对订单并支付。", "success", item)
-        notification = self._notify_unpaid_order(item, order_id, 1, url)
-        return {"status": "submitted", "order_id": order_id, "url": url, "quantity": 1,
+        notification = self._notify_unpaid_order(item, order_id, 1, purchase_url)
+        return {"status": "submitted", "order_id": order_id, "url": purchase_url, "quantity": 1,
                 "payment_status": "unpaid", "telegram_status": notification}
+
+    def _affiliate_purchase_url(self, item, url, product=None):
+        product = product or next((row for row in self.config.get("products", []) if row.get("id") == item.get("product_id")), {})
+        provider = product.get("adapter") or product.get("provider") or ""
+        return affiliate_purchase_url(url, str(provider).casefold(), self.config, product)
 
     def _submit(self, session, item, account, url, product=None, fetcher=None):
         if product and merchant_login_id(product.get("provider") or product.get("adapter")) == "akile":
@@ -969,10 +975,11 @@ class SeckillTask:
             # A lost response may still have created an order. Never retry automatically.
             self.log("已发送一次下单请求，但无法确认待付款订单；已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
             return {"status": "uncertain", "url": url, "quantity": quantity}
+        purchase_url = self._affiliate_purchase_url(item, url)
         self.log(f"已创建待付款订单，数量 {quantity}；请手动前往官网核对订单并支付。", "success", item)
-        notification = self._notify_unpaid_order(item, data["order_id"], quantity, url)
+        notification = self._notify_unpaid_order(item, data["order_id"], quantity, purchase_url)
         # Do not expose or visit arbitrary response links, and never fetch payment_url.
-        return {"status": "submitted", "order_id": data["order_id"][:128], "url": url, "quantity": quantity,
+        return {"status": "submitted", "order_id": data["order_id"][:128], "url": purchase_url, "quantity": quantity,
                 "payment_status": "unpaid", "telegram_status": notification}
 
     def _notify_unpaid_order(self, item: dict, order_id: str, quantity: int, url: str) -> str:
