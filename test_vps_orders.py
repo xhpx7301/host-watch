@@ -292,7 +292,7 @@ class OrderTaskTests(unittest.TestCase):
         self.assertEqual(self.orders(), [])
 
 
-class VmissOrderTests(unittest.TestCase):
+class VmissOrderTests(OrderTaskTests):
     def test_native_checkout_prefills_coupon_and_alipay_without_payment_redirect(self):
         session = Mock()
         config = VmissResponse(vmiss_config_page(), url="https://app.vmiss.com/cart.php?a=confproduct&i=0")
