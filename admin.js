@@ -1789,13 +1789,14 @@ function renderLineEditor(cell, item) {
     const fit = () => { measure.textContent = input.value || input.placeholder; input.title = input.value; };
     fit();
     input.addEventListener("input", () => { fit(); item[field] = input.value; updateDraftState(); });
+    input.addEventListener("change", () => scheduleAutoSave("monitor"));
     value.append(measure, input); wrap.append(value); lines.append(wrap);
   }
   if (item.line_label) {
     const legacy = text("div", "", "legacy-line"), input = document.createElement("input");
     legacy.append(text("span", "原线路：")); input.className = "manual-field"; input.value = item.line_label; input.maxLength = 500;
     input.setAttribute("aria-label", `${item.name} 原线路`); input.disabled = actionRunning;
-    input.addEventListener("input", () => { item.line_label = input.value; updateDraftState(); }); legacy.append(input); lines.append(legacy);
+    input.addEventListener("input", () => { item.line_label = input.value; updateDraftState(); }); input.addEventListener("change", () => scheduleAutoSave("monitor")); legacy.append(input); lines.append(legacy);
   }
   cell.append(lines);
 }
@@ -1861,6 +1862,7 @@ function commitProductOrder(type, visibleIds, focusId) {
   // Filtered-out products keep their positions; only visible slots are reordered.
   config[`${type}_order`] = orderedProducts(type).map(item => selected.has(item.id) ? visibleIds[index++] : item.id);
   renderProductList(); updateDraftState();
+  if (type === "watch") scheduleAutoSave("monitor");
   const target = type === "watch" ? listNode : document.querySelector("#notification-list");
   restoreProductSortFocus(target, focusId);
   document.querySelector("#product-sort-status").textContent = "商品顺序已调整，请保存当前卡片；两个列表分别保存顺序。";
@@ -2082,7 +2084,7 @@ function renderProductList() {
     for (const [key, label] of [["remarks", "备注"]]) {
       const input = document.createElement("textarea"); input.className = "manual-field remarks-field"; input.rows = 1; input.value = item[key] || ""; input.maxLength = 500; input.placeholder = "管理员填写";
       input.setAttribute("aria-label", `${item.name} ${label}`); input.disabled = actionRunning;
-      input.addEventListener("input", () => { item[key] = input.value; resizeRemarkEditor(input); updateDraftState(); }); cell().append(input);
+      input.addEventListener("input", () => { item[key] = input.value; resizeRemarkEditor(input); updateDraftState(); }); input.addEventListener("change", () => scheduleAutoSave("monitor")); cell().append(input);
     }
     renderLineEditor(cell(), item);
     renderSpecs(cell("", "watch-specs"), p.specs); renderSpecs(cell("", "watch-specs"), p.traffic, true); renderPrice(cell("", "watch-price"), p.price, expanded.has(item.id));
@@ -2094,10 +2096,10 @@ function renderProductList() {
     else actions.append(text("small", "等待购买链接"));
     const notifyActive = membership(item, "notify");
     const notify = text("button", notifyActive ? "✓ 已加入库存通知" : "＋ 加入库存通知", "membership-toggle membership-notify"); notify.type = "button"; notify.disabled = actionRunning || notifyActive; notify.setAttribute("aria-pressed", String(notifyActive));
-    notify.addEventListener("click", () => { setMembership(item, "notify", true); renderProducts(); updateDraftState(); setMessage("已加入库存通知，请保存监控卡片后生效。", "pending"); });
+    notify.addEventListener("click", () => { setMembership(item, "notify", true); renderProducts(); updateDraftState(); scheduleAutoSave("notifications"); setMessage("已加入库存通知，正在自动保存。", "pending"); });
     const seckill = text("button", "加入 VPS 补货抢购", "membership-toggle"); seckill.type = "button"; seckill.disabled = actionRunning; seckill.addEventListener("click", () => addToVpsSeckill(item));
     const remove = text("button", "移出监控", "danger"); remove.type = "button"; remove.disabled = actionRunning;
-    remove.addEventListener("click", () => { setMembership(item, "watch", false); renderProducts(); updateDraftState(); setMessage("已移出库存监控，通知选择保持原样，请保存监控卡片。", "pending"); });
+    remove.addEventListener("click", () => { setMembership(item, "watch", false); renderProducts(); updateDraftState(); scheduleAutoSave("monitor"); setMessage("已移出库存监控，正在自动保存。", "pending"); });
     actions.append(moreActions(`watch-${item.id}`, item.name, [notify, seckill, remove])); cell().append(actions); body.append(row);
   }
   table.append(head, body); wrap.append(table); listNode.replaceChildren(wrap);
