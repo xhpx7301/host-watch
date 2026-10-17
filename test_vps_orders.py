@@ -28,6 +28,37 @@ def response(data=None, status=200):
     return result
 
 
+class VmissResponse:
+    def __init__(self, text="", status_code=200, url="https://app.vmiss.com/cart.php"):
+        self.text = text
+        self.content = text.encode()
+        self.status_code = status_code
+        self.url = url
+        self.headers = {}
+
+
+def vmiss_config_page():
+    return """<form id="frmConfigureProduct">
+      <input type="hidden" name="configure" value="true"><input type="hidden" name="i" value="0">
+      <input type="radio" name="billingcycle" value="monthly" checked>
+      <select name="configoption[35]"><option value="180">AlmaLinux 9</option><option value="173">Debian 12</option></select>
+      <input type="text" name="hostname" value=""><input type="password" name="rootpw" value="N/A">
+      <input type="text" name="ns1prefix" value="ns1"><input type="text" name="ns2prefix" value="ns2">
+    </form>"""
+
+
+def vmiss_checkout_page():
+    return """<form method="post" action="/cart.php?a=checkout" id="frmCheckout">
+      <input type="hidden" name="token" value="checkout-token"><input type="hidden" name="submit" value="true">
+      <input type="radio" name="custtype" value="existing" checked>
+      <input type="text" name="loginemail" value="user@example.com"><input type="password" name="loginpassword">
+      <input type="radio" name="applycredit" value="1" checked><input type="radio" name="applycredit" value="0">
+      <input type="radio" name="paymentmethod" value="stripe" checked><input type="radio" name="paymentmethod" value="motionpayalipay">
+      <input type="tel" name="ccnumber"><input type="checkbox" name="accepttos">
+    </form>
+    <form method="post" action="cart.php?a=checkout"><input type="hidden" name="token" value="checkout-token"><input name="promocode"><button name="validatepromo">Validate Code</button></form>"""
+
+
 class OrderTaskTests(unittest.TestCase):
     def setUp(self):
         self.config = configuration()
@@ -259,6 +290,35 @@ class OrderTaskTests(unittest.TestCase):
         self.stock.side_effect = inspect
         self.run_task()
         self.assertEqual(self.orders(), [])
+
+
+class VmissOrderTests(unittest.TestCase):
+    def test_native_checkout_prefills_coupon_and_alipay_without_payment_redirect(self):
+        session = Mock()
+        config = VmissResponse(vmiss_config_page(), url="https://app.vmiss.com/cart.php?a=confproduct&i=0")
+        checkout = VmissResponse(vmiss_checkout_page(), url="https://app.vmiss.com/cart.php?a=checkout")
+        after_coupon = VmissResponse(vmiss_checkout_page(), url="https://app.vmiss.com/cart.php?a=checkout")
+        invoice = VmissResponse("", status_code=302, url="https://app.vmiss.com/cart.php?a=checkout")
+        invoice.headers = {"Location": "/viewinvoice.php?id=123"}
+        session.get.side_effect = [config, checkout, after_coupon]
+        session.post.side_effect = [VmissResponse(""), VmissResponse("", status_code=302), invoice]
+        item = {"product_id": "product60", "coupon_code": "10%OFF", "operating_system": "Debian 12",
+                "billing_cycle": "monthly", "payment_method": "alipay"}
+        result = admin.vmiss_order(session, item, {"username": "user@example.com"},
+                                   Product("product60", "US.LA.CMIN2.Elite", 1, "https://app.vmiss.com/store/test"),
+                                   "https://app.vmiss.com/store/test", "abc123")
+        self.assertEqual(result["order_id"], "vmiss-invoice-123")
+        self.assertEqual(result["payment_status"], "unpaid")
+        config_data = session.post.call_args_list[0].kwargs["data"]
+        self.assertIn(("billingcycle", "monthly"), config_data)
+        self.assertIn(("configoption[35]", "173"), config_data)
+        promo_data = session.post.call_args_list[1].kwargs["data"]
+        self.assertIn(("promocode", "10%OFF"), promo_data)
+        order_data = session.post.call_args_list[2].kwargs["data"]
+        self.assertIn(("paymentmethod", "motionpayalipay"), order_data)
+        self.assertIn(("applycredit", "0"), order_data)
+        self.assertIn(("accepttos", "on"), order_data)
+        self.assertNotIn("ccnumber", {name for name, _ in order_data})
 
     def test_account_and_order_endpoints_must_share_origin(self):
         self.config['vps_seckill']['items'][0]['submit_url'] = 'https://other.example/order'
