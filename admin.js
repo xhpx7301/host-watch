@@ -196,14 +196,8 @@ async function requestJSON(url, options = {}) {
 }
 
 async function runAction(button, label, message, action, notify = true, inline = true) {
-  if (actionRunning) return;
   cancelProductDrag();
-  actionRunning = true;
-  document.querySelector(".shell").inert = !activeTest;
-  const controls = [...document.querySelectorAll("button,input,select,textarea")].filter((control) => control.id !== "toast-close" && !control.classList.contains("product-test-stop"));
-  const previousStates = controls.map((control) => control.disabled);
   const previousLabel = button?.textContent;
-  controls.forEach((control) => { control.disabled = true; });
   if (button) {
     button.textContent = label;
     button.setAttribute("aria-busy", "true");
@@ -212,13 +206,10 @@ async function runAction(button, label, message, action, notify = true, inline =
   try { await action(); }
   catch (error) { setMessage(error.message, "error", true, inline); }
   finally {
-    controls.forEach((control, index) => { control.disabled = previousStates[index]; });
     if (button) {
       button.textContent = previousLabel;
       button.removeAttribute("aria-busy");
     }
-    actionRunning = false;
-    document.querySelector(".shell").inert = false;
     syncUpdateControl();
     renderMerchantOrder();
     renderProductList();
@@ -2960,6 +2951,8 @@ const autoSaveScopeNames = { catalog: "大盘设置", monitor: "监控设置", n
 const AUTOSAVE_DELAY_MS = 350;
 const INTERVAL_AUTOSAVE_DELAY_MS = 1000;
 const AUTOSAVE_RETRY_DELAY_MS = 300;
+let automaticSaveRunning = false;
+const automaticSavePending = new Set();
 function scheduleAutoSave(scope, delay = AUTOSAVE_DELAY_MS) {
   if (!savedConfig || !scope) return;
   clearTimeout(autoSaveTimers.get(scope));
@@ -2975,9 +2968,24 @@ function scheduleAutoSave(scope, delay = AUTOSAVE_DELAY_MS) {
       if (!Number.isInteger(seconds) || seconds < 0 || seconds > 86400) return;
     }
     if (actionRunning) { scheduleAutoSave(scope, AUTOSAVE_RETRY_DELAY_MS); return; }
-    runAction(null, "", `正在自动保存${autoSaveScopeNames[scope] || "配置"}…`, () => saveConfig(scope, true), true, false);
+    if (automaticSaveRunning) { automaticSavePending.add(scope); return; }
+    runAutomaticSave(scope);
   }, delay);
   autoSaveTimers.set(scope, timer);
+}
+
+async function runAutomaticSave(scope) {
+  if (automaticSaveRunning) { automaticSavePending.add(scope); return; }
+  automaticSaveRunning = true;
+  setMessage(`正在自动保存${autoSaveScopeNames[scope] || "配置"}…`, "pending", true, false);
+  try { await saveConfig(scope, true); }
+  catch (error) { setMessage(error.message, "error", true, false); }
+  finally {
+    automaticSaveRunning = false;
+    const pending = [...automaticSavePending];
+    automaticSavePending.clear();
+    pending.forEach(item => scheduleAutoSave(item, 0));
+  }
 }
 
 function collectProviderModes() {
@@ -3160,35 +3168,6 @@ for (const [key, preset] of Object.entries(merchantPresets)) {
 function updateMerchantHint() { document.querySelector("#add-merchant-hint").textContent = merchantPresets[merchantSelect.value].hint; }
 merchantSelect.addEventListener("change", updateMerchantHint);
 updateMerchantHint();
-function openCustomProducts() {
-  navigatePage("notifications"); openAdvancedProducts();
-  merchantSelect.focus({ preventScroll: true });
-}
-const overviewQuickActions = {
-  "catalog-open": () => navigatePage("catalog"),
-  "catalog-refresh": () => document.querySelector("#catalog-refresh")?.click(),
-  "catalog-watch": () => navigatePage("monitor"),
-  "monitor-open": () => navigatePage("monitor"),
-  "monitor-refresh": () => document.querySelector("#monitor-refresh-manual")?.click(),
-  "monitor-catalog": () => navigatePage("catalog"),
-  "notifications-open": () => navigatePage("notifications"),
-  "notifications-refresh": () => document.querySelector("#notify-refresh-manual")?.click(),
-  "notifications-catalog": () => navigatePage("catalog"),
-  "seckill-open": () => navigatePage("seckill"),
-  "seckill-watch": () => { navigatePage("seckill"); openSeckillPicker("watch"); },
-  "seckill-notifications": () => { navigatePage("seckill"); openSeckillPicker("notify"); },
-  "products-add": openCustomProducts,
-  "products-manage": () => { navigatePage("notifications"); openAdvancedProducts(); },
-};
-document.querySelectorAll("[data-overview-action]").forEach(button => button.addEventListener("click", () => {
-  const action = overviewQuickActions[button.dataset.overviewAction];
-  if (action) action();
-  button.closest(".action-popover")?.hidePopover();
-}));
-document.querySelectorAll(".overview-quick-actions .action-popover").forEach(menu => menu.addEventListener("toggle", event => {
-  const trigger = document.querySelector(`[popovertarget="${CSS.escape(menu.id)}"]`);
-  trigger?.setAttribute("aria-expanded", String(event.newState === "open"));
-}));
 document.querySelector("#catalog-open-seckill").addEventListener("click", () => navigatePage("seckill"));
 document.querySelector("#requests-open-seckill").addEventListener("click", () => navigatePage("seckill"));
 document.querySelector("#notification-browse").addEventListener("click", () => navigatePage("catalog"));
@@ -3365,7 +3344,10 @@ async function saveConfig(scope = "all", automatic = false) {
   document.querySelector("#telegram-token").value = "";
   // Keep unrelated cards' drafts visible after saving this card. Their values
   // remain local until their own save button is pressed.
-  const visibleDraft = scope === "all" ? result.config : mergeConfigScope(result.config, draft, "all");
+  // Automatic saves do not lock the page. Preserve edits made while the
+  // request was in flight so a later change can be saved by the next cycle.
+  const visibleDraftSource = automatic ? collectConfig() : draft;
+  const visibleDraft = scope === "all" ? result.config : mergeConfigScope(result.config, visibleDraftSource, "all");
   if (scope !== "all") {
     if (scope === "affiliates") Object.assign(visibleDraft, { affiliate_id: result.config.affiliate_id, affiliates: result.config.affiliates, affiliate_notes: result.config.affiliate_notes, affiliate_accounts: result.config.affiliate_accounts, affiliate_rates: result.config.affiliate_rates, affiliate_coupons: result.config.affiliate_coupons, merchant_order: result.config.merchant_order });
     else if (scope === "fetcher" || scope === "provider-modes" || scope === "egress") visibleDraft.fetcher = draft.fetcher;
@@ -3390,6 +3372,20 @@ async function saveConfig(scope = "all", automatic = false) {
   const telegramTokenDraft = draft.telegram?.bot_token || "";
   // Normalize the server response into the same public shape used by
   // collectConfig(), then restore unrelated local drafts for card isolation.
+  if (automatic) {
+    // The page already contains the current draft. Updating the saved
+    // snapshot directly avoids rebuilding every product table while the user
+    // is working, which is especially noticeable from the catalog page.
+    const savedBaseline = savedConfigSnapshot() || collectConfig();
+    savedConfig = JSON.stringify(mergeConfigScope(savedBaseline, result.config, scope));
+    updateDraftState();
+    if (result.service?.ok) {
+      setMessage(`${autoSaveScopeNames[scope] || "配置"}已自动保存，服务正在后台应用。`, "success", true, false);
+    } else {
+      setMessage(`配置已保存，但自动应用服务失败：${result.service?.error || "请在设置中重试"}`, "error", true, false);
+    }
+    return;
+  }
   applyConfig(result.config);
   savedConfig = JSON.stringify(collectConfig());
   if (scope !== "all") {
@@ -3414,7 +3410,7 @@ async function saveConfig(scope = "all", automatic = false) {
 }
 document.addEventListener("click", event => {
   const button = event.target.closest("[data-save-card]");
-  if (!button || actionRunning) return;
+  if (!button || button.getAttribute("aria-busy") === "true") return;
   event.preventDefault();
   runAction(button, "保存中…", "正在保存本卡片配置…", () => saveConfig(button.dataset.saveCard));
 }, true);
