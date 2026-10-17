@@ -542,6 +542,7 @@
     .seckill-item .form-grid,.seckill-account .form-grid { margin-top:10px; }
     .seckill-item .form-grid label,.seckill-account .form-grid label { min-width:0; }
     .seckill-item > .actions,.seckill-account > .actions { margin-top:12px; }
+    .seckill-panel-actions { justify-content:flex-end; margin-top:14px; padding-top:12px; border-top:1px solid rgba(71,91,116,.16); }
     #page-seckill .section-head { flex-wrap:wrap; }
     .seckill-logs { min-height:120px; max-height:360px; margin:0; padding:12px; overflow:auto; border:1px solid #2f4058; border-radius:6px; color:#e8eef8; background:#1f2937; font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; }
     .egress-panel { margin-top:18px; padding:14px; border:1px solid #cbd9f5; border-radius:8px; background:#f7faff; }
@@ -738,7 +739,7 @@
 
   <section class="page-panel panel-card" id="page-seckill" data-page="seckill" aria-labelledby="page-title" hidden>
     <div class="section-body">
-    <div class="section-head"><div><h2>VPS 补货抢购</h2><p>从 VPS 库存监控或 VPS 库存通知逐个加入商品。下架商品仍可保留目标链接，恢复上架后继续检查。</p></div><div class="actions"><span id="seckill-task-state" class="state">未运行</span><button type="button" class="card-save" data-save-card="seckill">保存抢购设置</button></div></div>
+    <div class="section-head"><div><h2>VPS 补货抢购</h2><p>从 VPS 库存监控或 VPS 库存通知逐个加入商品。下架商品仍可保留目标链接，恢复上架后继续检查。</p></div><div class="actions"><span id="seckill-task-state" class="state">未运行</span></div></div>
       <div class="seckill-control-grid">
       <div class="seckill-panel vps-seckill-panel">
         <div class="section-head"><div><h3>执行模式</h3><p>所有模式均不自动付款。自动模式仅创建待付款订单，付款需要你手动前往商家官网完成。</p></div><div class="actions"><button id="vps-seckill-test" type="button">测试抢购配置</button><button id="vps-seckill-start" type="button" class="primary">启动补货抢购</button><button id="vps-seckill-stop" type="button" class="danger" hidden>暂停补货抢购</button></div></div>
@@ -752,10 +753,10 @@
         <p class="hint">两种自动模式均使用上方检查间隔（每轮结束后的等待时间），每个商品每次任务最多发送一次下单请求。数量库存不足时继续等待；商家只提供有货状态时，由下单接口最终核验数量，不自动减少数量。</p>
         <p class="hint">自动模式会在库存满足、账户检查通过且商家有内置待付款下单适配时提交订单；付款仍需你到商家官网手动完成。未适配的商家只提供购买链接。保存抢购卡片后长期生效。</p>
       </div>
-      <div class="seckill-panel seckill-log-panel"><div class="section-head"><div><h3>执行日志</h3><p id="vps-seckill-log-note">尚未启动补货抢购任务。</p></div><button id="vps-seckill-clear-log" type="button">清空显示</button></div><div id="vps-seckill-results" aria-live="polite"></div><pre id="vps-seckill-logs" class="seckill-logs" aria-live="polite">暂无日志</pre></div>
+      <div class="seckill-panel seckill-log-panel"><div class="section-head"><div><h3>执行日志</h3><p id="vps-seckill-log-note">尚未启动补货抢购任务。</p></div><div class="actions"><button id="vps-seckill-clear-log" type="button">清空显示</button><button id="vps-seckill-log-detail" type="button">完整日志</button></div></div><div id="vps-seckill-results" aria-live="polite"></div><pre id="vps-seckill-logs" class="seckill-logs" aria-live="polite">暂无日志</pre></div>
       </div>
-      <div class="seckill-panel"><div class="section-head"><div><h3>补货抢购商品</h3><p>在库存监控 / 通知商品的“更多”中点击“加入 VPS 补货抢购”；数量、优惠码、系统、付款周期和付款方式按商品保存；每个商品可按所选出口检查绑定账户。自动模式会按商家内置下单适配提交待付款订单；未适配商家只提供购买链接。每个商品卡片单独保存。</p></div><div class="actions"><button id="vps-seckill-open-monitor" type="button">从库存监控添加</button><button id="vps-seckill-open-notifications" type="button">从库存通知添加</button><button id="vps-seckill-delete-all" type="button" class="danger" disabled>删除全部商品</button></div></div><div id="vps-seckill-items" class="seckill-items"></div></div>
-      <div class="seckill-panel"><div class="section-head"><div><h3>网站账户</h3><p>选择商家后填写官网登录名和密码。VMISS、VPS.SOY、搬瓦工、DMIT、Akile 可自动检查登录；遇到 Cloudflare 或安全验证时，请在网页请求中为该商家选择 FlareSolverr 或 cloudscraper。检查不下单、不付款。自动模式会直接使用商家内置下单适配；未适配商家不会自动创建订单。密码保存后不回显；每个账户卡片单独保存。</p></div><div class="actions"><button id="vps-seckill-add-account" type="button">添加账户</button><button id="vps-seckill-delete-all-accounts" type="button" class="danger" disabled>删除全部账户</button></div></div><div id="vps-seckill-accounts" class="seckill-accounts"></div></div>
+      <div class="seckill-panel"><div class="section-head"><div><h3>补货抢购商品</h3><p>在库存监控 / 通知商品的“更多”中点击“加入 VPS 补货抢购”；数量、优惠码、系统、付款周期和付款方式按商品保存；每个商品可按所选出口检查绑定账户。自动模式会按商家内置下单适配提交待付款订单；未适配商家只提供购买链接。商品修改后点击本区域右下角的保存按钮。</p></div><div class="actions"><button id="vps-seckill-open-monitor" type="button">从库存监控添加</button><button id="vps-seckill-open-notifications" type="button">从库存通知添加</button><button id="vps-seckill-delete-all" type="button" class="danger" disabled>删除全部商品</button></div></div><div id="vps-seckill-items" class="seckill-items"></div><div class="seckill-panel-actions actions"><button type="button" class="card-save" data-save-card="seckill">保存补货抢购商品</button></div></div>
+      <div class="seckill-panel"><div class="section-head"><div><h3>网站账户</h3><p>选择商家后填写官网登录名和密码。VMISS、VPS.SOY、搬瓦工、DMIT、Akile 可自动检查登录；遇到 Cloudflare 或安全验证时，请在网页请求中为该商家选择 FlareSolverr 或 cloudscraper。检查不下单、不付款。自动模式会直接使用商家内置下单适配；未适配商家不会自动创建订单。密码保存后不回显；账户修改后点击本区域右下角的保存按钮。</p></div><div class="actions"><button id="vps-seckill-add-account" type="button">添加账户</button><button id="vps-seckill-delete-all-accounts" type="button" class="danger" disabled>删除全部账户</button></div></div><div id="vps-seckill-accounts" class="seckill-accounts"></div><div class="seckill-panel-actions actions"><button type="button" class="card-save" data-save-card="seckill">保存网站账号</button></div></div>
     </div>
   </section>
 

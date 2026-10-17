@@ -2533,21 +2533,12 @@ function renderVpsSeckill() {
     [["下单数量（台，1–100）", quantity], ["优惠码", coupon], ["系统", operatingSystem], ["付款周期", billingCycle], ["付款方式", paymentMethod], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
     const enabled = settingButton("商品状态", item.enabled !== false, value => { item.enabled = value; renderVpsSeckillTask(); }, ["已停用", "已启用"]);
     const flags = text("div", "", "actions"); flags.append(enabled);
-    const check = text("button", "检查账户", "seckill-check-account"); check.type = "button"; check.disabled = actionRunning || !item.account_id;
-    check.setAttribute("aria-label", `检查补货抢购账户 ${title.textContent}`);
     const status = text("p", seckillAccountNote(item), "hint seckill-account-status"); status.setAttribute("role", "status");
-    check.addEventListener("click", () => {
-      runAction(check, "检查中…", "正在检查账户，不创建订单、不付款…", async () => {
-        const account = seckillAccounts().find(row => row.id === item.account_id);
-        const result = await requestJSON("/api/seckill/account-check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: collectConfig(), account_id: item.account_id, item_id: item.id, account, item: { ...item } }) });
-        seckillAccountChecks.set(item.id, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : "error");
-      });
-    });
-    flags.append(check); card.append(status);
+    card.append(status);
     const remove = text("button", "删除商品", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.setAttribute("aria-label", `删除补货抢购商品 ${title.textContent}`);
     remove.addEventListener("click", () => { const index = seckillItems().indexOf(item); if (index >= 0) seckillItems().splice(index, 1); renderVpsSeckill(); updateDraftState(); setMessage("已删除该补货抢购商品。", "pending"); }); flags.append(remove);
-    const saveItem = text("button", "保存商品", "card-save"); saveItem.type = "button"; saveItem.dataset.saveCard = `seckill-item:${item.id}`; flags.append(saveItem); card.append(grid, submitHint, flags); itemTarget.append(card);
+    card.append(grid, submitHint, flags); itemTarget.append(card);
   });
   const accountTarget = document.querySelector("#vps-seckill-accounts"); accountTarget.replaceChildren();
   if (!seckillAccounts().length) accountTarget.append(text("p", "尚未配置网站账户。手动抢购不需要账户。", "empty"));
@@ -2614,7 +2605,7 @@ function renderVpsSeckill() {
     remove.setAttribute("aria-label", `删除补货抢购账户 ${account.name || account.id}`);
     remove.addEventListener("click", () => deleteSeckillAccounts([account.id]));
     card.append(grid, adapterNote, providerExtra, text("p", standaloneAccountNote(account), "hint seckill-account-status"), text("div", "", "actions")); card.lastChild.append(check, remove);
-    const saveAccount = text("button", "保存账户", "card-save"); saveAccount.type = "button"; saveAccount.dataset.saveCard = `seckill-account:${account.id}`; card.lastChild.append(saveAccount); accountTarget.append(card);
+    accountTarget.append(card);
   });
   renderVpsSeckillTask();
 }
@@ -2745,8 +2736,8 @@ document.querySelector("#vps-seckill-delete-all").addEventListener("click", () =
 document.querySelector("#vps-seckill-delete-all-accounts").addEventListener("click", () => deleteSeckillAccounts(seckillAccounts().map(account => account.id)));
 document.querySelector("#vps-seckill-add-account").addEventListener("click", () => { seckillAccounts().push({ id: `account-${Date.now()}`, name: "", provider: "", username: "", password: "", login_url: "" }); renderVpsSeckill(); updateDraftState(); });
 document.querySelector("#vps-seckill-clear-log").addEventListener("click", () => { if (vpsSeckillTask) { vpsSeckillTask.logs = []; renderVpsSeckillTask(); } });
-document.querySelector("#vps-seckill-mode").addEventListener("change", event => { config.vps_seckill.mode = event.target.value; updateDraftState(); });
-document.querySelector("#vps-seckill-interval").addEventListener("input", event => { config.vps_seckill.interval_seconds = Number(event.target.value); updateDraftState(); });
+document.querySelector("#vps-seckill-mode").addEventListener("change", event => { config.vps_seckill.mode = event.target.value; updateDraftState(); scheduleAutoSave("seckill"); });
+document.querySelector("#vps-seckill-interval").addEventListener("input", event => { config.vps_seckill.interval_seconds = Number(event.target.value); updateDraftState(); scheduleAutoSave("seckill"); });
 
 function renderMonitorState() {
   const active = monitorService?.active;
