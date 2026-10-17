@@ -81,7 +81,7 @@ def normalize_affiliate_accounts(value: dict) -> dict:
 
 
 def normalize_affiliate_rates(value: dict) -> dict:
-    return _normalize_affiliate_text_map(value, "affiliate_rates", "AFF 推广比例", 40)
+    return _normalize_affiliate_text_map(value, "affiliate_rates", "AFF 佣金比例", 40)
 
 
 def normalize_affiliates(value: dict) -> dict:
