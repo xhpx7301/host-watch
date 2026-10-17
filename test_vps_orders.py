@@ -114,6 +114,8 @@ class OrderTaskTests(unittest.TestCase):
                 admin.validate_config(self.config)
 
     def test_rapid_checks_once_and_creates_only_unpaid_order_with_quantity_coupon(self):
+        self.config['vps_seckill']['items'][0]['auto_submit'] = False
+        self.config['vps_seckill']['accounts'][0]['auto_submit'] = False
         self.config['vps_seckill']['items'][0]['coupon_code'] = 'SPECIAL'
         self.config['vps_seckill']['items'][0].update({
             'operating_system': 'Debian 12', 'billing_cycle': 'monthly', 'payment_method': 'alipay'})
