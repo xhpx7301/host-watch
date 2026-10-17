@@ -220,7 +220,10 @@
       if (membership(item, type) !== enabled) { setMembership(item, type, enabled); changed++; }
     }
     renderProducts(); updateDraftState(); renderTable();
-    setMessage(changed ? `已${enabled ? "加入" : "移出"} ${changed} 个商品的${type === "watch" ? "库存监控（不通知）" : "库存通知"}，请保存对应卡片后生效。` : "选择无需更改。", changed ? "pending" : "success");
+    if (changed) {
+      scheduleAutoSave(type === "watch" ? "monitor" : "notifications");
+      setMessage(`已${enabled ? "加入" : "移出"} ${changed} 个商品的${type === "watch" ? "库存监控（不通知）" : "库存通知"}，正在自动保存。`, "pending");
+    } else setMessage("选择无需更改。", "success");
   }
 
   function schedule() {
@@ -288,10 +291,13 @@
     sessionStorage.setItem(catalogAutoKey, get("catalog-auto").value);
     schedule();
     if (typeof updateDraftState === "function") updateDraftState();
+    if (typeof scheduleAutoSave === "function") scheduleAutoSave("catalog");
   });
   get("catalog-refresh").addEventListener("click", () => { task = task?.pending ? task : null; void refresh(); });
   get("catalog-stop").addEventListener("click", async () => {
     get("catalog-auto").value = "0"; sessionStorage.setItem(catalogAutoKey, "0"); clearTimeout(autoTimer);
+    if (typeof updateDraftState === "function") updateDraftState();
+    if (typeof scheduleAutoSave === "function") scheduleAutoSave("catalog");
     try { task = await requestJSON("/api/catalog/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", timeoutMs: 10000 }); }
     catch (error) { setMessage(`停止刷新尚未确认：${error.message}，请重试。`, "error"); }
     render(); schedule();
