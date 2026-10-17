@@ -1064,7 +1064,7 @@ def seckill_test(submitted: dict) -> dict:
                 result["order_submission"] = {"ok": False, "required": True, "message": "未绑定账户，本次不会创建订单"}
             elif (str((product or {}).get("adapter", "")).casefold() not in {"akile", "vmiss"}
                   and not str(item.get("submit_url", "")).strip()):
-                result["order_submission"] = {"ok": False, "required": True, "message": "未配置待付款下单接口，本次不会创建订单"}
+                result["order_submission"] = {"ok": False, "required": True, "message": "未配置商家待付款下单适配，本次不会创建订单"}
             else:
                 adapter_id = str((product or {}).get("adapter", "")).casefold()
                 result["order_submission"] = {"ok": True, "required": True,
@@ -1261,10 +1261,12 @@ class SeckillTask:
                         native_adapter = str((product or {}).get("adapter", "")).casefold()
                         native_akile = native_adapter == "akile"
                         native_vmiss = native_adapter == "vmiss"
-                        auto_requested = self.mode != "manual" and account is not None
+                        auto_requested = self.mode != "manual"
+                        if auto_requested and not account:
+                            raise ValueError("自动模式必须绑定网站账户")
                         auto = bool(auto_requested and (native_akile or native_vmiss or str(item.get("submit_url", "")).strip()))
                         if auto_requested and not auto:
-                            self.log("该商家尚未配置内置或兼容的待付款下单适配；本次不会创建订单，仅提供官网购买链接。", "error", item)
+                            raise ValueError("该商家尚未配置内置或兼容的待付款下单适配")
                         if auto and not native_akile and not native_vmiss:
                             if not account.get("login_url") or urlsplit(account["login_url"]).netloc != urlsplit(item["submit_url"]).netloc:
                                 raise ValueError("账户检查接口与待付款下单接口必须同源，以复用认证会话")
