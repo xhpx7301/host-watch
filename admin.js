@@ -217,7 +217,7 @@ async function runAction(button, label, message, action, notify = true) {
     renderMerchantOrder();
     renderProductList();
     syncTestControls();
-    updateDiscardControl();
+    updateCardSaveStates();
     window.dispatchEvent(new Event("hostwatch-action-change"));
   }
 }
@@ -807,14 +807,14 @@ function productEditor(item, index) {
       const selected = membership(item, type);
       button.textContent = selected ? `✓ 已加入${label}` : `＋ 加入${label}`;
       button.setAttribute("aria-pressed", String(selected));
-      button.title = selected ? `点击移出${label}，保存配置后生效` : `点击加入${label}，保存配置后生效`;
+      button.title = selected ? `点击移出${label}，保存监控卡片后生效` : `点击加入${label}，保存监控卡片后生效`;
     };
     syncButton(); button.disabled = actionRunning;
     button.addEventListener("click", () => {
       if (actionRunning) return;
       setMembership(item, type, !membership(item, type)); syncButton();
       updateProductEditorTitle(article, item); renderOverview(); updateDraftState();
-      setMessage(`已${membership(item, type) ? "加入" : "移出"}${label}，保存配置后生效。`, "pending");
+      setMessage(`已${membership(item, type) ? "加入" : "移出"}${label}，请保存监控卡片后生效。`, "pending");
     });
     actions.append(button);
   }
@@ -838,6 +838,10 @@ function productEditor(item, index) {
     setMessage("商品已移除，保存后生效。", "pending");
   });
   actions.append(remove);
+  const saveProduct = text("button", "保存商品", "card-save");
+  saveProduct.type = "button";
+  saveProduct.dataset.saveCard = `product:${item.id}`;
+  actions.append(saveProduct);
   head.append(identity, toggle, actions);
 
   const grid = text("div", "", "form-grid");
@@ -1035,7 +1039,6 @@ function syncTestControls() {
   renderCloudscraperTest();
   document.querySelector("#stock-test-bar").hidden = !activeTest;
   document.querySelector("#stock-test-status").textContent = activeTest?.notifying ? "库存检查已结束，正在发送 Telegram 结果，页面仍可操作。" : activeTest?.stopping ? "正在停止测试并释放资源…" : activeTest?.id === cloudscraperTestId ? "cloudscraper 访问测试正在运行，可停止测试，页面仍可操作。" : "商品测试正在运行，页面仍可操作。";
-  updateDiscardControl();
   const globalStop = document.querySelector("#stock-test-stop");
   globalStop.disabled = Boolean(activeTest?.stopping || activeTest?.notifying);
   globalStop.textContent = activeTest?.stopUnconfirmed ? "重试停止" : "停止测试";
@@ -1429,7 +1432,7 @@ function renderMerchantOrder() {
       if (from < 0 || to < 0 || from === to) return;
       next.splice(from, 1); next.splice(to, 0, source); config.merchant_order = next;
       renderMerchantOrder(); renderProducts(); updateDraftState();
-      setMessage("商家顺序已调整，点击“保存商家顺序”完成编辑，再点击底部“保存配置”保存到服务器。", "pending");
+      setMessage("商家顺序已调整，点击“保存商家顺序”完成编辑，再保存监控卡片。", "pending");
     });
     tabs.addEventListener("click", event => {
       if (merchantOrderEditing && event.target.closest("[data-catalog-provider]")) {
@@ -1855,7 +1858,7 @@ function commitProductOrder(type, visibleIds, focusId) {
   renderProductList(); updateDraftState();
   const target = type === "watch" ? listNode : document.querySelector("#notification-list");
   restoreProductSortFocus(target, focusId);
-  document.querySelector("#product-sort-status").textContent = "商品顺序已调整，请保存配置；两个列表分别保存顺序。";
+  document.querySelector("#product-sort-status").textContent = "商品顺序已调整，请保存当前卡片；两个列表分别保存顺序。";
 }
 function finishProductDrag(cancelled = false) {
   const drag = productDrag;
@@ -2086,10 +2089,10 @@ function renderProductList() {
     else actions.append(text("small", "等待购买链接"));
     const notifyActive = membership(item, "notify");
     const notify = text("button", notifyActive ? "✓ 已加入库存通知" : "＋ 加入库存通知", "membership-toggle membership-notify"); notify.type = "button"; notify.disabled = actionRunning || notifyActive; notify.setAttribute("aria-pressed", String(notifyActive));
-    notify.addEventListener("click", () => { setMembership(item, "notify", true); renderProducts(); updateDraftState(); setMessage("已加入库存通知，保存配置后生效。", "pending"); });
+    notify.addEventListener("click", () => { setMembership(item, "notify", true); renderProducts(); updateDraftState(); setMessage("已加入库存通知，请保存监控卡片后生效。", "pending"); });
     const seckill = text("button", "加入 VPS 补货抢购", "membership-toggle"); seckill.type = "button"; seckill.disabled = actionRunning; seckill.addEventListener("click", () => addToVpsSeckill(item));
     const remove = text("button", "移出监控", "danger"); remove.type = "button"; remove.disabled = actionRunning;
-    remove.addEventListener("click", () => { setMembership(item, "watch", false); renderProducts(); updateDraftState(); setMessage("已移出库存监控，通知选择保持原样，请保存配置。", "pending"); });
+    remove.addEventListener("click", () => { setMembership(item, "watch", false); renderProducts(); updateDraftState(); setMessage("已移出库存监控，通知选择保持原样，请保存监控卡片。", "pending"); });
     actions.append(moreActions(`watch-${item.id}`, item.name, [notify, seckill, remove])); cell().append(actions); body.append(row);
   }
   table.append(head, body); wrap.append(table); listNode.replaceChildren(wrap);
@@ -2157,7 +2160,7 @@ function renderNotificationList() {
     const edit = text("button", "编辑商品"); edit.type = "button"; edit.disabled = actionRunning;
     edit.addEventListener("click", () => { openProducts.add(item.id); renderProducts(); openAdvancedProducts(); editorNode.querySelector(`[data-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }); });
     const remove = text("button", "移出通知", "danger product-remove"); remove.type = "button";
-    remove.addEventListener("click", () => { if (actionRunning) return; setMembership(item, "notify", false); renderProducts(); updateDraftState(); setMessage("已移出库存通知，库存监控选择保留，请保存配置。", "pending"); });
+    remove.addEventListener("click", () => { if (actionRunning) return; setMembership(item, "notify", false); renderProducts(); updateDraftState(); setMessage("已移出库存通知，库存监控选择保留，请保存通知卡片。", "pending"); });
     actions.append(test, stop, moreActions(`notify-${item.id}`, item.name, [seckill, edit, remove])); cell().append(actions); body.append(row);
     const resultRow = text("tr", "", "notification-result-row"), resultCell = document.createElement("td"); resultCell.colSpan = 8;
     resultCell.append(text("div", "", "product-test-result")); resultRow.append(resultCell); body.append(resultRow); table.append(body);
@@ -2333,7 +2336,7 @@ async function copyEgressUninstallCommand(input) {
     input.focus(); input.select();
     if (!document.execCommand("copy")) { setMessage("卸载命令已显示，请在命令框中手动复制。", "pending"); return; }
   }
-  setMessage("卸载命令已复制，请在要卸载的子服务器执行；卸载后在管理页移除节点并保存配置。", "success");
+  setMessage("卸载命令已复制，请在要卸载的子服务器执行；卸载后在管理页移除节点并保存网页请求卡片。", "success");
 }
 function renderEgress() {
   const nodes = egressNodes(), target = document.querySelector("#egress-nodes"); target.replaceChildren();
@@ -2361,7 +2364,7 @@ function renderEgress() {
     setup.append(commandActions, text("p", "支持 Debian / Alpine，默认端口 8787，节点令牌自动生成。复制安装命令时仅保存此节点，其他栏目草稿保留；在子服务器以 root 执行。", "hint"));
     const command = document.createElement("textarea"); command.className = "egress-command"; command.dataset.egressCommand = node.id; command.rows = 3; command.readOnly = true; command.setAttribute("aria-label", `${node.name} 安装命令`); command.value = egressInstallCommands.get(node.id)?.command || ""; command.placeholder = "点击上方按钮，自动生成并复制安装命令，无需修改下方默认配置。"; setup.append(command);
     const registration = egressInstallCommands.get(node.id);
-    setup.append(text("p", "卸载命令所有节点通用，仅在目标子服务器执行，停止并删除节点程序、配置和专用账户。卸载后需在管理页调整出口路由、移除节点并保存配置。", "hint"), uninstallCommand);
+    setup.append(text("p", "卸载命令所有节点通用，仅在目标子服务器执行，停止并删除节点程序、配置和专用账户。卸载后需在管理页调整出口路由、移除节点并保存网页请求卡片。", "hint"), uninstallCommand);
     if (registration) setup.append(text("p", registration.auto_register ? `自动回报至 ${registration.register_url}；安装后点击“刷新节点”。` : "当前主服务地址仅本机可访问。安装后将终端输出的 JSON 粘贴到“回填安装结果”，即可自动填入 IP 和连接地址。", "hint"));
     const fallback = document.createElement("details"); fallback.className = "egress-import"; fallback.append(text("summary", "回填安装结果（SSH 隧道或自动回报不可用时）"));
     const info = document.createElement("textarea"); info.rows = 3; info.placeholder = "粘贴子服务器安装完成后输出的 JSON"; info.setAttribute("aria-label", `${node.name} 安装结果`);
@@ -2389,11 +2392,11 @@ function renderEgress() {
     const select = document.createElement("select"); select.replaceChildren(...options.map(option => option.cloneNode(true)));
     select.value = config.egress?.routes?.[id] || "";
     const hint = text("small", "", "hint");
-    const updateHint = () => { const node = nodes.find(row => row.id === select.value); hint.textContent = !node ? "仅此商家使用主服务器直连" : node.enabled === false ? "此节点已停用，绑定商家将无法读取；请启用并保存。" : !node.proxy_url ? "此节点尚未完成安装回报，暂时无法读取。" : `仅此商家使用 ${node.name}；修改后需保存配置。`; hint.className = node && (node.enabled === false || !node.proxy_url) ? "error" : "hint"; };
+  const updateHint = () => { const node = nodes.find(row => row.id === select.value); hint.textContent = !node ? "仅此商家使用主服务器直连" : node.enabled === false ? "此节点已停用，绑定商家将无法读取；请启用并保存网页请求卡片。" : !node.proxy_url ? "此节点尚未完成安装回报，暂时无法读取。" : `仅此商家使用 ${node.name}；修改后请保存网页请求卡片。`; hint.className = node && (node.enabled === false || !node.proxy_url) ? "error" : "hint"; };
     select.addEventListener("change", () => { config.egress.routes[id] = select.value; if (!select.value) delete config.egress.routes[id]; updateHint(); updateDraftState(); });
     updateHint(); const node = document.createElement("label"); node.append(text("span", label), select, hint); routes.append(node);
   });
-  document.querySelector("#egress-status").textContent = `${nodes.length} 个出口节点；已绑定 ${Object.keys(config.egress?.routes || {}).length} 个商家。已安装并启用的节点每 1 分钟自动检查健康地址和 HTTPS 代理，也可手动检查出口 IP。出口按商家生效，未绑定商家使用主服务器直连。修改后请点击底部“保存配置”。大盘、库存监控/通知、分类读取和网页测试沿用对应商家出口；VPS 补货抢购可单独指定出口。`;
+  document.querySelector("#egress-status").textContent = `${nodes.length} 个出口节点；已绑定 ${Object.keys(config.egress?.routes || {}).length} 个商家。已安装并启用的节点每 1 分钟自动检查健康地址和 HTTPS 代理，也可手动检查出口 IP。出口按商家生效，未绑定商家使用主服务器直连。修改后请保存网页请求卡片。大盘、库存监控/通知、分类读取和网页测试沿用对应商家出口；VPS 补货抢购可单独指定出口。`;
 }
 function collectEgress() { return { nodes: egressNodes().map(node => ({ ...node })), routes: { ...(config.egress?.routes || {}) } }; }
 document.querySelector("#egress-add-node").addEventListener("click", () => { const node = { id: `egress-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name: `出口节点 ${egressNodes().length + 1}`, proxy_url: "", health_url: "", token: "", listen_port: 8787, pending_registration: true, enabled: true }; egressNodes().push(node); expandedEgressNodes.add(node.id); renderEgress(); updateDraftState(); document.querySelector("#egress-nodes").lastElementChild.scrollIntoView({ behavior: "smooth", block: "nearest" }); });
@@ -2456,7 +2459,7 @@ function addToVpsSeckill(product) {
     const couponLabel = defaults.coupon_code ? "已填入默认优惠码" : "暂无默认优惠码";
     addedDefaults = `${accountLabel}、${egressLabel}、${couponLabel}`;
   }
-  navigatePage("seckill"); renderVpsSeckill(); updateDraftState(); setMessage(`${product.name} 已加入 VPS 补货抢购${addedDefaults ? `：${addedDefaults}` : ""}，保存配置后可启动；账户、出口节点和优惠码仍可修改。`, "pending");
+  navigatePage("seckill"); renderVpsSeckill(); updateDraftState(); setMessage(`${product.name} 已加入 VPS 补货抢购${addedDefaults ? `：${addedDefaults}` : ""}，保存抢购卡片后可长期使用；账户、出口节点和优惠码仍可修改。`, "pending");
 }
 function renderVpsSeckill() {
   const value = config.vps_seckill || { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] };
@@ -2508,7 +2511,8 @@ function renderVpsSeckill() {
     flags.append(check); card.append(status); updateSubmitHint();
     const remove = text("button", "删除商品", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.setAttribute("aria-label", `删除补货抢购商品 ${title.textContent}`);
-    remove.addEventListener("click", () => { const index = seckillItems().indexOf(item); if (index >= 0) seckillItems().splice(index, 1); renderVpsSeckill(); updateDraftState(); setMessage("已删除该补货抢购商品，请保存配置。", "pending"); }); flags.append(remove); card.append(grid, submitHint, flags); itemTarget.append(card);
+    remove.addEventListener("click", () => { const index = seckillItems().indexOf(item); if (index >= 0) seckillItems().splice(index, 1); renderVpsSeckill(); updateDraftState(); setMessage("已删除该补货抢购商品。", "pending"); }); flags.append(remove);
+    const saveItem = text("button", "保存商品", "card-save"); saveItem.type = "button"; saveItem.dataset.saveCard = `seckill-item:${item.id}`; flags.append(saveItem); card.append(grid, submitHint, flags); itemTarget.append(card);
   });
   const accountTarget = document.querySelector("#vps-seckill-accounts"); accountTarget.replaceChildren();
   if (!seckillAccounts().length) accountTarget.append(text("p", "尚未配置网站账户。手动抢购不需要账户。", "empty"));
@@ -2575,7 +2579,8 @@ function renderVpsSeckill() {
     const remove = text("button", "删除账户", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.setAttribute("aria-label", `删除补货抢购账户 ${account.name || account.id}`);
     remove.addEventListener("click", () => deleteSeckillAccounts([account.id]));
-    card.append(grid, adapterNote, providerExtra, text("p", standaloneAccountNote(account), "hint seckill-account-status"), text("div", "", "actions")); card.lastChild.append(autoLabel, check, remove); accountTarget.append(card);
+    card.append(grid, adapterNote, providerExtra, text("p", standaloneAccountNote(account), "hint seckill-account-status"), text("div", "", "actions")); card.lastChild.append(autoLabel, check, remove);
+    const saveAccount = text("button", "保存账户", "card-save"); saveAccount.type = "button"; saveAccount.dataset.saveCard = `seckill-account:${account.id}`; card.lastChild.append(saveAccount); accountTarget.append(card);
   });
   renderVpsSeckillTask();
 }
@@ -2585,7 +2590,7 @@ function deleteSeckillAccounts(ids) {
   config.vps_seckill.accounts = seckillAccounts().filter(account => !deleted.has(account.id));
   seckillItems().forEach(item => { if (deleted.has(item.account_id)) item.account_id = ""; });
   renderVpsSeckill(); updateDraftState();
-  setMessage("已删除补货抢购账户并解除对应商品绑定，请保存配置。", "pending");
+  setMessage("已删除补货抢购账户并解除对应商品绑定，请保存抢购卡片。", "pending");
 }
 function collectVpsSeckill() {
   return { enabled: seckillItems().some(item => item.enabled !== false), mode: document.querySelector("#vps-seckill-mode")?.value || "manual", interval_seconds: Number(document.querySelector("#vps-seckill-interval")?.value || 5), items: seckillItems().map(item => ({ ...item })), accounts: seckillAccounts().map(account => ({ ...account })) };
@@ -2700,7 +2705,7 @@ function openSeckillPicker(type) {
 document.querySelector("#vps-seckill-open-monitor").addEventListener("click", () => openSeckillPicker("watch"));
 document.querySelector("#vps-seckill-open-notifications").addEventListener("click", () => openSeckillPicker("notify"));
 document.querySelector("#seckill-picker-close").addEventListener("click", () => document.querySelector("#seckill-picker-dialog").close());
-document.querySelector("#vps-seckill-delete-all").addEventListener("click", () => { seckillItems().splice(0); renderVpsSeckill(); updateDraftState(); setMessage("已删除全部补货抢购商品，请保存配置。", "pending"); });
+document.querySelector("#vps-seckill-delete-all").addEventListener("click", () => { seckillItems().splice(0); renderVpsSeckill(); updateDraftState(); setMessage("已删除全部补货抢购商品，请保存抢购卡片。", "pending"); });
 document.querySelector("#vps-seckill-delete-all-accounts").addEventListener("click", () => deleteSeckillAccounts(seckillAccounts().map(account => account.id)));
 document.querySelector("#vps-seckill-add-account").addEventListener("click", () => { seckillAccounts().push({ id: `account-${Date.now()}`, name: "", provider: "", username: "", password: "", login_url: "", auto_submit: false }); renderVpsSeckill(); updateDraftState(); });
 document.querySelector("#vps-seckill-clear-log").addEventListener("click", () => { if (vpsSeckillTask) { vpsSeckillTask.logs = []; renderVpsSeckillTask(); } });
@@ -2771,6 +2776,92 @@ function hasUnsavedChanges() {
   return savedConfig !== null && JSON.stringify(collectConfig()) !== savedConfig;
 }
 
+function cloneConfig(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function mergeProductMemberships(baseProducts, draftProducts, type) {
+  const baseRows = Array.isArray(baseProducts) ? baseProducts : [];
+  const draftRows = Array.isArray(draftProducts) ? draftProducts : [];
+  const baseById = new Map(baseRows.map(item => [String(item.id), item]));
+  const enabledKey = `${type}_enabled`;
+  const otherType = type === "watch" ? "notify" : "watch";
+  const draftIds = new Set(draftRows.map(item => String(item.id || "")));
+  return draftRows.reduce((rows, draftItem) => {
+    const id = String(draftItem.id || "");
+    const savedItem = baseById.get(id);
+    if (!savedItem) {
+      // A newly selected item belongs to this card only when this card's
+      // membership is enabled; leave notification-only drafts for the
+      // notification card and vice versa.
+      if (membership(draftItem, type)) {
+        const item = cloneConfig(draftItem);
+        item[enabledKey] = true;
+        item[`${otherType}_enabled`] = false;
+        item.enabled = true;
+        rows.push(item);
+      }
+      return rows;
+    }
+    const item = cloneConfig(savedItem);
+    item[enabledKey] = membership(draftItem, type);
+    item.enabled = item[enabledKey] || membership(savedItem, otherType);
+    if (Object.hasOwn(draftItem, "snapshot")) item.snapshot = cloneConfig(draftItem.snapshot);
+    rows.push(item);
+    return rows;
+  }, baseRows.filter(item => !draftIds.has(String(item.id))).map(cloneConfig));
+}
+
+function mergeConfigScope(baseValue, draftValue, scope) {
+  const base = cloneConfig(baseValue || draftValue);
+  const draft = cloneConfig(draftValue);
+  if (!scope || scope === "all") return draft;
+  if (scope === "affiliates") {
+    for (const key of ["affiliate_id", "affiliates", "affiliate_notes", "affiliate_coupons"]) base[key] = draft[key];
+  } else if (scope === "catalog") base.catalog_schedule = draft.catalog_schedule;
+  else if (scope === "fetcher") {
+    const keys = ["mode", "flaresolverr_url", "timeout_seconds", "wait_seconds", "disable_media", "provider_flaresolverr", "cloudscraper"];
+    base.fetcher = { ...base.fetcher, ...Object.fromEntries(keys.map(key => [key, draft.fetcher[key]])) };
+  }
+  else if (scope === "provider-modes") base.fetcher = { ...base.fetcher, provider_modes: draft.fetcher.provider_modes };
+  else if (scope === "egress") { base.egress = draft.egress; base.fetcher = { ...base.fetcher, egress: draft.egress }; }
+  else if (scope === "telegram") base.telegram = draft.telegram;
+  else if (scope === "monitor") {
+    for (const key of ["interval_seconds", "monitor_schedule", "watch_order", "merchant_order"]) base[key] = draft[key];
+    base.products = mergeProductMemberships(base.products, draft.products, "watch");
+  } else if (scope === "notifications") {
+    for (const key of ["notify_schedule", "notify_current_stock_on_start", "isvoro_seckill", "notify_order"]) base[key] = draft[key];
+    base.products = mergeProductMemberships(base.products, draft.products, "notify");
+  } else if (scope === "seckill") base.vps_seckill = draft.vps_seckill;
+  else if (scope.startsWith("product:")) {
+    const id = scope.slice("product:".length), item = draft.products.find(row => row.id === id);
+    base.products = base.products.filter(row => row.id !== id);
+    if (item) base.products.push(item);
+  } else if (scope.startsWith("seckill-item:") || scope.startsWith("seckill-account:")) {
+    const [kind, id] = scope.split(":", 2), key = kind === "seckill-item" ? "items" : "accounts";
+    const draftRows = draft.vps_seckill[key] || [], baseRows = base.vps_seckill[key] || [];
+    const row = draftRows.find(entry => entry.id === id);
+    base.vps_seckill = { ...base.vps_seckill, [key]: baseRows.filter(entry => entry.id !== id) };
+    if (row) base.vps_seckill[key].push(row);
+  }
+  return base;
+}
+
+function scopeIsDirty(scope) {
+  if (!savedConfig) return false;
+  const saved = savedConfigSnapshot();
+  return JSON.stringify(mergeConfigScope(saved, collectConfig(), scope)) !== JSON.stringify(saved);
+}
+
+function updateCardSaveStates() {
+  document.querySelectorAll("[data-save-card]").forEach(button => {
+    const dirty = scopeIsDirty(button.dataset.saveCard);
+    button.disabled = actionRunning;
+    button.classList.toggle("is-dirty", dirty);
+    button.setAttribute("aria-label", dirty ? `${button.textContent.trim()}（有未保存修改）` : button.textContent.trim());
+  });
+}
+
 function intervalLabel(seconds) {
   if (!Number.isInteger(seconds) || seconds < 0) return "未设置";
   if (seconds === 0) return "连续检查";
@@ -2781,29 +2872,20 @@ function updateDraftState() {
   if (savedConfig === null) return;
   syncProviderFlareSettings();
   const dirty = hasUnsavedChanges();
-  updateDiscardControl();
   const node = document.querySelector("#monitor-draft");
-  node.textContent = dirty ? "有未保存的修改，请点击底部“保存配置”；单次测试可直接使用当前填写的商品配置。" : "页面配置已保存。";
-  node.className = dirty ? "hint draft-note" : "hint";
-  const saveState = document.querySelector("#save-state");
-  saveState.textContent = dirty ? "有未保存的修改" : "全部配置已保存";
-  saveState.className = dirty ? "draft-note" : "";
+  if (node) {
+    const monitorDirty = scopeIsDirty("monitor");
+    node.textContent = monitorDirty ? "监控卡片有未保存修改，请点击本卡片的“保存”按钮；单次测试可直接使用当前填写的商品配置。" : "监控设置已保存。";
+    node.className = monitorDirty ? "hint draft-note" : "hint";
+  }
   const seconds = Number(document.querySelector("#interval").value || NaN);
   const valid = Number.isInteger(seconds) && seconds >= 0 && seconds <= 86400;
-  document.querySelector("#interval-description").textContent = valid ? (seconds === 0 ? "本轮检查完成后立即检查下一轮，不额外等待；各轮顺序执行。" : `每轮检查完成后等待 ${intervalLabel(seconds)}，再检查下一轮；保存后自动刷新生效。`) : "检查间隔必须是 0–86400 秒的整数。";
-  document.querySelector("#interval-preset").value = [0, 1, 5, 10, 30, 60, 300, 600, 1800, 3600].includes(seconds) ? String(seconds) : "";
+  const description = document.querySelector("#interval-description");
+  if (description) description.textContent = valid ? (seconds === 0 ? "本轮检查完成后立即检查下一轮，不额外等待；各轮顺序执行。保存监控设置后生效。" : `每轮检查完成后等待 ${intervalLabel(seconds)}，再检查下一轮；保存监控设置后生效。`) : "检查间隔必须是 0–86400 秒的整数。";
+  const preset = document.querySelector("#interval-preset");
+  if (preset) preset.value = [0, 1, 5, 10, 30, 60, 300, 600, 1800, 3600].includes(seconds) ? String(seconds) : "";
+  updateCardSaveStates();
   window.dispatchEvent(new Event("hostwatch-draft-change"));
-}
-
-function updateDiscardControl() {
-  document.querySelector("#discard-changes").disabled = actionRunning || Boolean(activeTest) || !savedConfig || !hasUnsavedChanges();
-}
-async function discardChanges() {
-  // Fetch first: a read failure must leave the draft intact.
-  const saved = await requestJSON("/api/config");
-  productTests.clear();
-  applyConfig(saved);
-  setMessage("已取消未保存的修改，恢复服务器已保存的配置；未执行保存或更改服务状态。", "success");
 }
 
 function collectProviderModes() {
@@ -3023,7 +3105,7 @@ document.querySelector("#merchant-order-toggle").addEventListener("click", (even
   event.currentTarget.classList.toggle("merchant-order-editing", merchantOrderEditing);
   event.currentTarget.setAttribute("aria-expanded", String(merchantOrderEditing));
   renderMerchantOrder();
-  if (!merchantOrderEditing) setMessage("商家顺序编辑已完成；请点击底部“保存配置”保存到服务器。", "pending");
+  if (!merchantOrderEditing) setMessage("商家顺序编辑已完成；请保存监控卡片写入服务器。", "pending");
 });
 document.querySelector("#add").addEventListener("click", () => {
   const item = { ...structuredClone(merchantPresets[merchantSelect.value].product), id: crypto.randomUUID(), enabled: false };
@@ -3096,8 +3178,8 @@ document.querySelector("#fetcher-test").addEventListener("click", (event) => run
   document.querySelector("#fetcher-health").textContent = `版本 ${result.version}：${result.message}`;
   setMessage(`FlareSolverr ${result.version} 服务连接成功；实际库存请在 VPS 库存通知中点击“测试通知”，无需开启监控。`, "success");
 }));
-document.querySelector("#interval").addEventListener("input", () => { config.interval_seconds = Number(document.querySelector("#interval").value || NaN); config.monitor_schedule = { ...(config.monitor_schedule || {}), interval_seconds: config.interval_seconds }; renderOverview(); });
-document.querySelector("#notify-interval").addEventListener("input", () => { config.notify_schedule = { ...(config.notify_schedule || {}), interval_seconds: Number(document.querySelector("#notify-interval").value || NaN) }; renderOverview(); });
+document.querySelector("#interval").addEventListener("input", () => { config.interval_seconds = Number(document.querySelector("#interval").value || NaN); config.monitor_schedule = { ...(config.monitor_schedule || {}), interval_seconds: config.interval_seconds }; renderOverview(); updateDraftState(); });
+document.querySelector("#notify-interval").addEventListener("input", () => { config.notify_schedule = { ...(config.notify_schedule || {}), interval_seconds: Number(document.querySelector("#notify-interval").value || NaN) }; renderOverview(); updateDraftState(); });
 document.querySelector("#monitor-schedule-mode").addEventListener("change", event => { config.monitor_schedule = { ...(config.monitor_schedule || {}), mode: event.target.value }; renderOverview(); updateDraftState(); });
 document.querySelector("#notify-schedule-mode").addEventListener("change", event => { config.notify_schedule = { ...(config.notify_schedule || {}), mode: event.target.value }; renderOverview(); updateDraftState(); });
 document.querySelector("#interval-preset").addEventListener("change", (event) => {
@@ -3142,21 +3224,51 @@ document.querySelector("#telegram-load-chats").addEventListener("click", (event)
   setMessage(`已读取 ${result.chats.length} 个聊天。`, "success");
 }));
 
-async function saveConfig() {
-  const next = collectConfig();
+async function saveConfig(scope = "all") {
+  const draft = collectConfig();
+  const saved = savedConfigSnapshot() || draft;
+  const next = mergeConfigScope(saved, draft, scope);
   const result = await requestJSON("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
   document.querySelector("#telegram-token").value = "";
+  // Keep unrelated cards' drafts visible after saving this card. Their values
+  // remain local until their own save button is pressed.
+  const visibleDraft = scope === "all" ? result.config : mergeConfigScope(result.config, draft, "all");
+  if (scope !== "all") {
+    if (scope === "affiliates") Object.assign(visibleDraft, { affiliate_id: result.config.affiliate_id, affiliates: result.config.affiliates, affiliate_notes: result.config.affiliate_notes, affiliate_coupons: result.config.affiliate_coupons, merchant_order: result.config.merchant_order });
+    else if (scope === "fetcher" || scope === "provider-modes" || scope === "egress") visibleDraft.fetcher = draft.fetcher;
+    else if (scope === "telegram") visibleDraft.telegram = draft.telegram;
+    else if (scope === "catalog") visibleDraft.catalog_schedule = draft.catalog_schedule;
+    else if (scope === "monitor" || scope === "notifications") visibleDraft.products = draft.products;
+    else if (scope === "seckill") visibleDraft.vps_seckill = draft.vps_seckill;
+    else if (scope.startsWith("product:")) visibleDraft.products = draft.products;
+    else if (scope.startsWith("seckill-")) visibleDraft.vps_seckill = draft.vps_seckill;
+  }
+  const telegramTokenDraft = draft.telegram?.bot_token || "";
+  // Normalize the server response into the same public shape used by
+  // collectConfig(), then restore unrelated local drafts for card isolation.
   applyConfig(result.config);
+  savedConfig = JSON.stringify(collectConfig());
+  if (scope !== "all") {
+    applyConfig(visibleDraft);
+    if (scope !== "telegram" && telegramTokenDraft) {
+      document.querySelector("#telegram-token").value = telegramTokenDraft;
+    }
+  }
+  updateDraftState();
   if (result.service?.ok) {
-    setMessage("配置已保存并应用，HostWatch 服务保持运行；自动任务按库存监控和库存通知各自设置执行。", "success");
+    setMessage(scope === "all" ? "配置已保存并应用。" : "本卡片配置已保存并应用。", "success");
   } else {
-    setMessage(`配置已保存，但自动应用服务失败：${result.service?.error || "请在监控设置中重试"}`, "error");
+    setMessage(`配置已保存，但自动应用服务失败：${result.service?.error || "请在设置中重试"}`, "error");
   }
   try { await Promise.all([refreshManagement(), loadStatus()]); }
   catch (error) { document.querySelector("#manage-task-status").textContent = `配置已保存，管理状态刷新失败：${error.message}`; }
 }
-document.querySelector("#discard-changes").addEventListener("click", (event) => { if (!activeTest) runAction(event.currentTarget, "恢复中…", "正在恢复已保存配置…", discardChanges); });
-document.querySelector("#save").addEventListener("click", (event) => runAction(event.currentTarget, "保存中…", "正在保存配置…", () => saveConfig()));
+document.addEventListener("click", event => {
+  const button = event.target.closest("[data-save-card]");
+  if (!button || actionRunning) return;
+  event.preventDefault();
+  runAction(button, "保存中…", "正在保存本卡片配置…", () => saveConfig(button.dataset.saveCard));
+}, true);
 renderExchangeRates();
 exchangeClockTimer = setInterval(renderCurrentTime, 1_000);
 exchangeRateRefreshTimer = setInterval(() => { if (!document.hidden) void loadExchangeRates(); }, 60 * 60 * 1000);

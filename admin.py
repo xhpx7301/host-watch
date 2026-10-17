@@ -2011,11 +2011,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if not self._guard():
             return
-        if self.path in {"/", "/admin.html"}:
+        path = urlsplit(self.path).path
+        if path in {"/", "/admin.html"}:
             self._send(200, "text/html; charset=utf-8", PAGE_PATH.read_bytes())
-        elif self.path in {"/admin.js", "/catalog.js"}:
-            self._send(200, "text/javascript; charset=utf-8", (ROOT / self.path[1:]).read_bytes())
-        elif self.path == "/api/config":
+        elif path in {"/admin.js", "/catalog.js"}:
+            self._send(200, "text/javascript; charset=utf-8", (ROOT / path[1:]).read_bytes())
+        elif path == "/api/config":
             try:
                 raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else default_config()
                 data = json.dumps(public_config(raw), ensure_ascii=False).encode("utf-8")
@@ -2023,15 +2024,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, "application/json; charset=utf-8", json.dumps({"error": f"配置文件无法读取：{exc}"}, ensure_ascii=False).encode("utf-8"))
                 return
             self._send(200, "application/json; charset=utf-8", data)
-        elif self.path == "/api/egress":
+        elif path == "/api/egress":
             try:
                 data = json.dumps(public_config(json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else default_config()).get("egress", {"nodes": [], "routes": {}}), ensure_ascii=False).encode("utf-8")
             except (OSError, ValueError, json.JSONDecodeError) as exc:
                 self._send(500, "application/json; charset=utf-8", json.dumps({"error": f"出口节点配置无法读取：{exc}"}, ensure_ascii=False).encode("utf-8")); return
             self._send(200, "application/json; charset=utf-8", data)
-        elif self.path == "/api/rates":
+        elif path == "/api/rates":
             self._send(200, "application/json; charset=utf-8", json.dumps(exchange_rates(), ensure_ascii=False).encode("utf-8"))
-        elif self.path == "/api/status":
+        elif path == "/api/status":
             data = json.dumps(read_json(STATUS_PATH, {"state": "unknown", "products": []}), ensure_ascii=False).encode("utf-8")
             self._send(200, "application/json; charset=utf-8", data)
         elif urlsplit(self.path).path == "/api/catalog":

@@ -43,6 +43,13 @@ class AdminAPITests(unittest.TestCase):
         response = connection.getresponse()
         return response.status, response.read()
 
+    def test_versioned_static_assets_are_served(self):
+        for asset in ("admin.js", "catalog.js"):
+            with self.subTest(asset=asset):
+                status, body = self.get_request(f"/{asset}?v=card-save-test")
+                self.assertEqual(status, 200)
+                self.assertEqual(body, (Path(admin.ROOT) / asset).read_bytes())
+
     def test_save_applies_service_and_returns_redacted_config(self):
         value = admin.default_config()
         value["telegram"] = {"bot_token": "private-token", "chat_id": "123"}

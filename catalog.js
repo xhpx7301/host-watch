@@ -66,7 +66,7 @@
     const notifications = config.products.filter(p => membership(p, "notify")).length;
     get("catalog-watch-count").textContent = `${count} / ${notifications}`;
     const dirty = savedConfig !== null && hasUnsavedChanges();
-    let note = dirty ? "选择已修改，点击底部“保存配置”应用全部栏目修改。" : "选择已保存。";
+    let note = dirty ? "选择已修改，请保存库存监控或库存通知卡片。" : "选择已保存。";
     if (!config.enabled || monitorService?.active !== "active") note += "后台自动刷新尚未运行，请检查监控 / 通知的独立刷新设置并保存。";
     else note += "HostWatch 服务已按保存的自动刷新设置运行，关闭网页后继续检查。";
     if (notifications && (!config.telegram?.configured || config.telegram?.disabled)) note += "请在 Telegram 通知中配置并启用机器人后保存。";
@@ -180,7 +180,7 @@
     const routeHint = get("catalog-route");
     const hints = [`${providers[provider]} 已保存的读取设置：${requestRouteLabel(effectiveRoute)}。`];
     if (provider === "dmit") hints.push("有货须通过购买页校验；价格页可购买但下单页缺货时统一显示缺货，验证失败显示未知。不同时间的快照可能变化。");
-    if (changed) hints.push("此商家的出口或请求设置尚未保存；当前刷新仍使用上面的已保存设置，请先点击底部“保存配置”。");
+    if (changed) hints.push("此商家的出口或请求设置尚未保存；当前刷新仍使用上面的已保存设置，请先保存网页请求卡片。");
     if (effectiveRoute.error) hints.push(effectiveRoute.error);
     if (busy && task.provider === provider && task.route) hints.push(`本次刷新使用：${requestRouteLabel(task.route)}。执行期间修改设置将在下次刷新生效。`);
     if (data?.fetched_at) {
@@ -220,7 +220,7 @@
       if (membership(item, type) !== enabled) { setMembership(item, type, enabled); changed++; }
     }
     renderProducts(); updateDraftState(); renderTable();
-    setMessage(changed ? `已${enabled ? "加入" : "移出"} ${changed} 个商品的${type === "watch" ? "库存监控（不通知）" : "库存通知"}，点击底部“保存配置”生效。` : "选择无需更改。", changed ? "pending" : "success");
+    setMessage(changed ? `已${enabled ? "加入" : "移出"} ${changed} 个商品的${type === "watch" ? "库存监控（不通知）" : "库存通知"}，请保存对应卡片后生效。` : "选择无需更改。", changed ? "pending" : "success");
   }
 
   function schedule() {
