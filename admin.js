@@ -2919,7 +2919,7 @@ function updateDraftState() {
   const seconds = Number(document.querySelector("#interval").value || NaN);
   const valid = Number.isInteger(seconds) && seconds >= 0 && seconds <= 86400;
   const description = document.querySelector("#interval-description");
-  if (description) description.textContent = valid ? (seconds === 0 ? "本轮检查完成后立即检查下一轮，不额外等待；各轮顺序执行。保存监控设置后生效。" : `每轮检查完成后等待 ${intervalLabel(seconds)}，再检查下一轮；保存监控设置后生效。`) : "检查间隔必须是 0–86400 秒的整数。";
+  if (description) description.textContent = valid ? (seconds === 0 ? "本轮检查完成后立即检查下一轮，不额外等待；各轮顺序执行。修改后自动保存。" : `每轮检查完成后等待 ${intervalLabel(seconds)}，再检查下一轮；修改后自动保存。`) : "检查间隔必须是 0–86400 秒的整数。";
   const preset = document.querySelector("#interval-preset");
   if (preset) preset.value = [0, 1, 5, 10, 30, 60, 300, 600, 1800, 3600].includes(seconds) ? String(seconds) : "";
   updateCardSaveStates();
