@@ -27,6 +27,7 @@ const toastNode = document.querySelector("#toast");
 let toastTimer;
 const TOAST_TIMEOUT_MS = 30_000;
 let actionRunning = false;
+const autoSaveTimers = new Map();
 let updateUnit = sessionStorage.getItem("hostwatch-update-unit") || "";
 const UPDATE_RELOAD_KEY = "hostwatch-update-reload-at";
 let updateReloadTimer;
@@ -2921,6 +2922,19 @@ function updateDraftState() {
   window.dispatchEvent(new Event("hostwatch-draft-change"));
 }
 
+const autoSaveScopeNames = { catalog: "大盘设置", monitor: "监控设置", notifications: "通知设置", seckill: "抢购设置" };
+function scheduleAutoSave(scope, delay = 650) {
+  if (!savedConfig || !scope) return;
+  clearTimeout(autoSaveTimers.get(scope));
+  const timer = setTimeout(() => {
+    autoSaveTimers.delete(scope);
+    if (!savedConfig || !scopeIsDirty(scope)) return;
+    if (actionRunning) { scheduleAutoSave(scope, 900); return; }
+    runAction(null, "", `正在自动保存${autoSaveScopeNames[scope] || "配置"}…`, () => saveConfig(scope));
+  }, delay);
+  autoSaveTimers.set(scope, timer);
+}
+
 function collectProviderModes() {
   return Object.fromEntries([...document.querySelectorAll("[data-provider-mode]")].filter((input) => input.value !== "legacy").map((input) => [input.dataset.providerMode, input.value]));
 }
@@ -3232,9 +3246,9 @@ document.querySelector("#fetcher-test").addEventListener("click", (event) => run
   document.querySelector("#fetcher-health").textContent = `版本 ${result.version}：${result.message}`;
   setMessage(`FlareSolverr ${result.version} 服务连接成功；实际库存请在 VPS 库存通知中点击“测试通知”，无需开启监控。`, "success");
 }));
-document.querySelector("#interval").addEventListener("input", () => { config.interval_seconds = Number(document.querySelector("#interval").value || NaN); config.monitor_schedule = { ...(config.monitor_schedule || {}), interval_seconds: config.interval_seconds }; renderOverview(); updateDraftState(); });
+document.querySelector("#interval").addEventListener("input", () => { config.interval_seconds = Number(document.querySelector("#interval").value || NaN); config.monitor_schedule = { ...(config.monitor_schedule || {}), interval_seconds: config.interval_seconds }; renderOverview(); updateDraftState(); scheduleAutoSave("monitor"); });
 document.querySelector("#notify-interval").addEventListener("input", () => { config.notify_schedule = { ...(config.notify_schedule || {}), interval_seconds: Number(document.querySelector("#notify-interval").value || NaN) }; renderOverview(); updateDraftState(); });
-document.querySelector("#monitor-schedule-mode").addEventListener("change", event => { config.monitor_schedule = { ...(config.monitor_schedule || {}), mode: event.target.value }; renderOverview(); updateDraftState(); });
+document.querySelector("#monitor-schedule-mode").addEventListener("change", event => { config.monitor_schedule = { ...(config.monitor_schedule || {}), mode: event.target.value }; renderOverview(); updateDraftState(); scheduleAutoSave("monitor"); });
 document.querySelector("#notify-schedule-mode").addEventListener("change", event => { config.notify_schedule = { ...(config.notify_schedule || {}), mode: event.target.value }; renderOverview(); updateDraftState(); });
 document.querySelector("#interval-preset").addEventListener("change", (event) => {
   if (event.target.value) {
@@ -3242,7 +3256,7 @@ document.querySelector("#interval-preset").addEventListener("change", (event) =>
     config.interval_seconds = Number(event.target.value);
     config.monitor_schedule = { ...(config.monitor_schedule || {}), interval_seconds: config.interval_seconds };
     renderOverview();
-    updateDraftState();
+    updateDraftState(); scheduleAutoSave("monitor");
   }
 });
 document.querySelector(".shell").addEventListener("input", (event) => {
