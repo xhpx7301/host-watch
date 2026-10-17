@@ -3400,6 +3400,11 @@ async function saveConfig(scope = "all", automatic = false) {
   } else {
     setMessage(`配置已保存，但自动应用服务失败：${result.service?.error || "请在设置中重试"}`, "error", true, automatic ? false : true);
   }
+  // Automatic saves should release the page as soon as the configuration API
+  // has completed. The regular live-state refresh will pick up service status
+  // shortly; waiting for two extra management requests here made every small
+  // edit keep the whole page locked for too long.
+  if (automatic) return;
   try { await Promise.all([refreshManagement(), loadStatus()]); }
   catch (error) { document.querySelector("#manage-task-status").textContent = `配置已保存，管理状态刷新失败：${error.message}`; }
 }
