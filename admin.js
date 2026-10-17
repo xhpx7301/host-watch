@@ -2390,14 +2390,14 @@ function renderEgress() {
     }));
     fallback.append(info, importButton); setup.append(fallback); body.append(setup);
     const grid = text("div", "", "form-grid");
-    [["节点 ID", "id", "自动生成"], ["节点名称", "name", "出口节点"], ["代理地址", "proxy_url", "安装后自动回填"], ["健康检查地址", "health_url", "安装后自动回填"]].forEach(([label, key, placeholder]) => { const input = document.createElement("input"); input.value = node[key] || ""; input.placeholder = placeholder; input.disabled = key === "id" && Boolean(node.id); input.addEventListener("input", () => { node[key] = input.value.trim(); if (key === "name") { title.textContent = node.name || node.id || "未命名节点"; syncExpanded(); } updateDraftState(); }); const labelNode = document.createElement("label"); labelNode.append(text("span", label), input); grid.append(labelNode); });
-    const port = document.createElement("input"); port.type = "number"; port.min = "1"; port.max = "65535"; port.value = node.listen_port || 8787; port.addEventListener("input", () => { node.listen_port = Number(port.value); updateDraftState(); }); const portLabel = document.createElement("label"); portLabel.append(text("span", "节点监听端口"), port); grid.append(portLabel);
-    const token = document.createElement("input"); token.type = "password"; token.autocomplete = "new-password"; token.placeholder = node.token_configured ? "已配置，留空保持不变" : "复制安装命令时自动生成"; token.addEventListener("input", () => { node.token = token.value; updateDraftState(); }); const tokenLabel = document.createElement("label"); tokenLabel.append(text("span", "代理令牌"), token); grid.append(tokenLabel);
+    [["节点 ID", "id", "自动生成"], ["节点名称", "name", "出口节点"], ["代理地址", "proxy_url", "安装后自动回填"], ["健康检查地址", "health_url", "安装后自动回填"]].forEach(([label, key, placeholder]) => { const input = document.createElement("input"); input.value = node[key] || ""; input.placeholder = placeholder; input.disabled = key === "id" && Boolean(node.id); input.addEventListener("input", () => { node[key] = input.value.trim(); if (key === "name") { title.textContent = node.name || node.id || "未命名节点"; syncExpanded(); } updateDraftState(); scheduleAutoSave("egress"); }); const labelNode = document.createElement("label"); labelNode.append(text("span", label), input); grid.append(labelNode); });
+    const port = document.createElement("input"); port.type = "number"; port.min = "1"; port.max = "65535"; port.value = node.listen_port || 8787; port.addEventListener("input", () => { node.listen_port = Number(port.value); updateDraftState(); scheduleAutoSave("egress"); }); const portLabel = document.createElement("label"); portLabel.append(text("span", "节点监听端口"), port); grid.append(portLabel);
+    const token = document.createElement("input"); token.type = "password"; token.autocomplete = "new-password"; token.placeholder = node.token_configured ? "已配置，留空保持不变" : "复制安装命令时自动生成"; token.addEventListener("input", () => { node.token = token.value; updateDraftState(); scheduleAutoSave("egress"); }); const tokenLabel = document.createElement("label"); tokenLabel.append(text("span", "代理令牌"), token); grid.append(tokenLabel);
     const health = egressHealth(node), healthLabel = text("span", health.label, `egress-health ${health.tone}`); healthLabel.title = health.detail;
-    const enabledLabel = settingButton("出口节点", node.enabled !== false, value => { node.enabled = value; renderEgress(); }, ["已停用", "已启用"]);
+    const enabledLabel = settingButton("出口节点", node.enabled !== false, value => { node.enabled = value; renderEgress(); scheduleAutoSave("egress"); }, ["已停用", "已启用"]);
     const probe = text("button", "检查出口 IP"); probe.type = "button";
     probe.addEventListener("click", () => { if (!egressHealthRunning) void probeEgressNode(node); });
-    const remove = text("button", "移除节点", "danger"); remove.type = "button"; remove.addEventListener("click", () => { const index = egressNodes().indexOf(node); if (index >= 0) egressNodes().splice(index, 1); expandedEgressNodes.delete(node.id); Object.keys(config.egress.routes || {}).forEach(provider => { if (config.egress.routes[provider] === node.id) delete config.egress.routes[provider]; }); renderEgress(); updateDraftState(); });
+    const remove = text("button", "移除节点", "danger"); remove.type = "button"; remove.addEventListener("click", () => { const index = egressNodes().indexOf(node); if (index >= 0) egressNodes().splice(index, 1); expandedEgressNodes.delete(node.id); Object.keys(config.egress.routes || {}).forEach(provider => { if (config.egress.routes[provider] === node.id) delete config.egress.routes[provider]; }); renderEgress(); updateDraftState(); scheduleAutoSave("egress"); });
     const actions = text("div", "", "actions egress-node-actions"); actions.append(healthLabel, enabledLabel, probe, remove); probe.disabled = remove.disabled = actionRunning || egressHealthRunning || Boolean(node._egressHealthChecking); head.append(actions); body.append(grid); if (node.last_error) card.append(text("p", node.last_error, "error")); target.append(card);
   });
   const routes = document.querySelector("#egress-routes"); routes.replaceChildren(); const options = [new Option("主服务器直连", "")]; nodes.forEach(node => options.push(new Option(`${node.name} · ${node.public_ip || "未检查"}`, node.id)));
@@ -2406,13 +2406,13 @@ function renderEgress() {
     select.value = config.egress?.routes?.[id] || "";
     const hint = text("small", "", "hint");
   const updateHint = () => { const node = nodes.find(row => row.id === select.value); hint.textContent = !node ? "仅此商家使用主服务器直连" : node.enabled === false ? "此节点已停用，绑定商家将无法读取；请启用并保存网页请求卡片。" : !node.proxy_url ? "此节点尚未完成安装回报，暂时无法读取。" : `仅此商家使用 ${node.name}；修改后请保存网页请求卡片。`; hint.className = node && (node.enabled === false || !node.proxy_url) ? "error" : "hint"; };
-    select.addEventListener("change", () => { config.egress.routes[id] = select.value; if (!select.value) delete config.egress.routes[id]; updateHint(); updateDraftState(); });
+    select.addEventListener("change", () => { config.egress.routes[id] = select.value; if (!select.value) delete config.egress.routes[id]; updateHint(); updateDraftState(); scheduleAutoSave("egress"); });
     updateHint(); const node = document.createElement("label"); node.append(text("span", label), select, hint); routes.append(node);
   });
   document.querySelector("#egress-status").textContent = `${nodes.length} 个出口节点；已绑定 ${Object.keys(config.egress?.routes || {}).length} 个商家。已安装并启用的节点每 1 分钟自动检查健康地址和 HTTPS 代理，也可手动检查出口 IP。出口按商家生效，未绑定商家使用主服务器直连。修改后请保存网页请求卡片。大盘、库存监控/通知、分类读取和网页测试沿用对应商家出口；VPS 补货抢购可单独指定出口。`;
 }
 function collectEgress() { return { nodes: egressNodes().map(node => ({ ...node })), routes: { ...(config.egress?.routes || {}) } }; }
-document.querySelector("#egress-add-node").addEventListener("click", () => { const node = { id: `egress-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name: `出口节点 ${egressNodes().length + 1}`, proxy_url: "", health_url: "", token: "", listen_port: 8787, pending_registration: true, enabled: true }; egressNodes().push(node); expandedEgressNodes.add(node.id); renderEgress(); updateDraftState(); document.querySelector("#egress-nodes").lastElementChild.scrollIntoView({ behavior: "smooth", block: "nearest" }); });
+document.querySelector("#egress-add-node").addEventListener("click", () => { const node = { id: `egress-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name: `出口节点 ${egressNodes().length + 1}`, proxy_url: "", health_url: "", token: "", listen_port: 8787, pending_registration: true, enabled: true }; egressNodes().push(node); expandedEgressNodes.add(node.id); renderEgress(); updateDraftState(); scheduleAutoSave("egress"); document.querySelector("#egress-nodes").lastElementChild.scrollIntoView({ behavior: "smooth", block: "nearest" }); });
 document.querySelector("#egress-refresh").addEventListener("click", async () => { try { mergeEgressStatus(await requestJSON("/api/egress")); renderEgress(); updateDraftState(); setMessage("出口节点状态已刷新，其他未保存修改已保留。", "success"); } catch (error) { setMessage(error.message, "error"); } });
 
 let vpsSeckillTask = null;
@@ -2981,6 +2981,7 @@ function renderProviderFlareSettings() {
       if (enabled) providerFlareDraft.set(provider, flareDefaults());
       else providerFlareDraft.delete(provider);
       renderProviderFlareSettings();
+      scheduleAutoSave("fetcher");
       target.querySelector(`[data-provider-flare="${provider}"] .provider-flare-source`).focus({ preventScroll: true });
     }, ["跟随默认", "独立设置"]);
     toggle.classList.add("provider-flare-source");
@@ -2990,10 +2991,10 @@ function renderProviderFlareSettings() {
       for (const [key, name, min, max] of [["timeout_seconds", "请求超时（秒）", 10, 180], ["wait_seconds", "渲染等待（秒）", 0, 30]]) {
         const input = document.createElement("input"); input.type = "number"; input.min = min; input.max = max; input.step = "1"; input.value = options[key]; input.dataset.flareOption = key; input.disabled = actionRunning;
         input.setAttribute("aria-label", `${label} ${name}`);
-        input.addEventListener("input", () => { options[key] = input.value === "" ? NaN : Number(input.value); updateDraftState(); });
+        input.addEventListener("input", () => { options[key] = input.value === "" ? NaN : Number(input.value); updateDraftState(); scheduleAutoSave("fetcher"); });
         const field = text("label", name); field.append(input); grid.append(field);
       }
-      grid.append(createFlareModeButtons(label, options.disable_media, enabled => { options.disable_media = enabled; }));
+      grid.append(createFlareModeButtons(label, options.disable_media, enabled => { options.disable_media = enabled; scheduleAutoSave("fetcher"); }));
       card.append(grid);
     }
     return card;
