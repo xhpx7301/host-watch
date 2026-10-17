@@ -2874,7 +2874,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send(status, "application/json; charset=utf-8", json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"))
             return
         try:
-            service = manager_action({"action": "monitor-apply"})
+            # Automatic saves only need to submit the service reload. Let the
+            # monitor restart in the background so a small page edit does not
+            # keep the management UI locked until systemd reports completion.
+            service_action = {"action": "monitor-apply"}
+            if self.headers.get("X-HostWatch-Auto-Save") == "1":
+                service_action["background"] = True
+            service = manager_action(service_action)
         except ValueError as exc:
             service = {"ok": False, "error": str(exc)}
         self._send(200, "application/json; charset=utf-8", json.dumps({"ok": True, "config": public_config(value), "service": service}, ensure_ascii=False).encode("utf-8"))

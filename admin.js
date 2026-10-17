@@ -3357,7 +3357,11 @@ async function saveConfig(scope = "all", automatic = false) {
   const draft = collectConfig();
   const saved = savedConfigSnapshot() || draft;
   const next = mergeConfigScope(saved, draft, scope);
-  const result = await requestJSON("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
+  const result = await requestJSON("/api/config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(automatic ? { "X-HostWatch-Auto-Save": "1" } : {}) },
+    body: JSON.stringify(next),
+  });
   document.querySelector("#telegram-token").value = "";
   // Keep unrelated cards' drafts visible after saving this card. Their values
   // remain local until their own save button is pressed.
@@ -3396,7 +3400,7 @@ async function saveConfig(scope = "all", automatic = false) {
   }
   updateDraftState();
   if (result.service?.ok) {
-    setMessage(automatic ? `${autoSaveScopeNames[scope] || "配置"}已自动保存并应用。` : scope === "all" ? "配置已保存并应用。" : "本卡片配置已保存并应用。", "success", true, automatic ? false : true);
+    setMessage(automatic ? `${autoSaveScopeNames[scope] || "配置"}已自动保存，服务正在后台应用。` : scope === "all" ? "配置已保存并应用。" : "本卡片配置已保存并应用。", "success", true, automatic ? false : true);
   } else {
     setMessage(`配置已保存，但自动应用服务失败：${result.service?.error || "请在设置中重试"}`, "error", true, automatic ? false : true);
   }

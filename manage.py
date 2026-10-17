@@ -626,6 +626,12 @@ def apply_monitor() -> None:
     print("监控配置已应用：HostWatch 服务保持运行，自动任务按模块设置执行。")
 
 
+def apply_monitor_background() -> None:
+    """Queue a monitor restart for automatic saves and return immediately."""
+    run("systemctl", "enable", MONITOR)
+    run("systemctl", "--no-block", "restart", MONITOR)
+
+
 def _remove_path(path: Path) -> None:
     """Remove an owned path without ever following a symlink."""
     if path.is_symlink():
@@ -783,8 +789,11 @@ def web_action(payload: dict) -> dict:
             set_monitor_enabled(False)
             stop_monitor()
         else:
-            {"monitor-restart": restart_monitor, "monitor-apply": apply_monitor}[action]()
-        return {"ok": True, "message": "监控服务操作已完成。"}
+            if action == "monitor-apply" and payload.get("background") is True:
+                apply_monitor_background()
+            else:
+                {"monitor-restart": restart_monitor, "monitor-apply": apply_monitor}[action]()
+        return {"ok": True, "message": "监控配置已提交，服务将在后台应用。" if action == "monitor-apply" and payload.get("background") is True else "监控服务操作已完成。"}
     if action == "hostwatch-restart":
         # Restart both project services after the current admin request has
         # returned. A delayed systemd job prevents the response from being
