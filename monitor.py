@@ -456,8 +456,13 @@ def fetch_with_flaresolverr(session: requests.Session, url: str, fetcher: dict, 
 def _copy_browser_state(session: requests.Session, solution: dict, expected_host: str) -> None:
     """Copy only same-site browser state into the dedicated follow-up session."""
     user_agent = str(solution.get("userAgent", "")).strip()
-    if user_agent and len(user_agent) <= 512 and "\r" not in user_agent and "\n" not in user_agent:
+    if (user_agent and not getattr(session, "_hostwatch_preserve_user_agent", False)
+            and len(user_agent) <= 512 and "\r" not in user_agent and "\n" not in user_agent):
         session.headers["User-Agent"] = user_agent
+    raw_preserve_names = getattr(session, "_hostwatch_preserve_cookie_names", ())
+    if not isinstance(raw_preserve_names, (list, tuple, set, frozenset)):
+        raw_preserve_names = ()
+    preserve_names = {str(name).strip().casefold() for name in raw_preserve_names if str(name).strip()}
     cookies = solution.get("cookies", [])
     if isinstance(cookies, dict):
         cookies = [{"name": name, "value": value} for name, value in cookies.items()]
@@ -474,6 +479,8 @@ def _copy_browser_state(session: requests.Session, solution: dict, expected_host
         if (not name or len(name) > 256 or len(value) > 4096 or "\r" in name or "\n" in name
                 or "\r" in value or "\n" in value or not path.startswith("/")
                 or not host or not (host == domain or host.endswith("." + domain))):
+            continue
+        if name.casefold() in preserve_names:
             continue
         session.cookies.set(name, value, domain=domain, path=path)
 

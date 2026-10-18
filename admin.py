@@ -1176,6 +1176,16 @@ def _dmit_order(session, item: dict, account: dict, product, url: str, fetcher: 
     browser_fetcher = dict(fetcher or {})
     if browser_fetcher.get("mode") == "flaresolverr":
         browser_fetcher["_copy_browser_state"] = True
+        # FlareSolverr solves the page in a fresh anonymous browser. Preserve
+        # the authenticated DMIT session and its browser fingerprint when its
+        # clearance cookies are copied back for the follow-up POST; otherwise
+        # the anonymous WHMCS session replaces the logged-in one and DMIT
+        # rejects the configuration request with HTTP 403.
+        session._hostwatch_preserve_user_agent = True
+        preserve = [cookie.name for cookie in session.cookies
+                    if str(cookie.name).casefold() == "cf_app_sid"
+                    or str(cookie.name).casefold().startswith("whmcsp")]
+        session._hostwatch_preserve_cookie_names = preserve
     body, final_url = fetch_page(session, cart_url, browser_fetcher, "www.dmit.io")
     soup = BeautifulSoup(body, "html.parser")
     form = soup.select_one("form#frmConfigureProduct, form[action*='a=confproduct']")

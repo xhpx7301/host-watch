@@ -99,6 +99,26 @@ class ProviderFlareSettingsTests(unittest.TestCase):
         self.assertIsNone(session.cookies.get("other"))
         self.assertEqual(session.headers["User-Agent"], "Mozilla/5.0 browser")
 
+    def test_browser_state_copy_preserves_authenticated_dmit_session(self):
+        session = requests.Session()
+        session.headers["User-Agent"] = "Mozilla/5.0 authenticated"
+        session.cookies.set("WHMCSP8D3Nbb7msEy", "logged-in", domain="www.dmit.io", path="/")
+        session.cookies.set("cf_app_sid", "authenticated", domain="www.dmit.io", path="/")
+        session._hostwatch_preserve_user_agent = True
+        session._hostwatch_preserve_cookie_names = ["WHMCSP8D3Nbb7msEy", "cf_app_sid"]
+        monitor._copy_browser_state(session, {
+            "userAgent": "Mozilla/5.0 anonymous browser",
+            "cookies": [
+                {"name": "WHMCSP8D3Nbb7msEy", "value": "anonymous", "domain": "www.dmit.io", "path": "/"},
+                {"name": "cf_app_sid", "value": "anonymous", "domain": "www.dmit.io", "path": "/"},
+                {"name": "cf_clearance", "value": "fresh", "domain": ".dmit.io", "path": "/"},
+            ],
+        }, "www.dmit.io")
+        self.assertEqual(session.headers["User-Agent"], "Mozilla/5.0 authenticated")
+        self.assertEqual(session.cookies.get("WHMCSP8D3Nbb7msEy"), "logged-in")
+        self.assertEqual(session.cookies.get("cf_app_sid"), "authenticated")
+        self.assertEqual(session.cookies.get("cf_clearance"), "fresh")
+
     def test_catalog_route_and_worker_use_the_same_effective_parameters(self):
         options = settings()
         route = monitor.fetcher_route(options, {"adapter": "dmit"})
