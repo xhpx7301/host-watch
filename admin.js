@@ -2605,13 +2605,14 @@ function renderVpsSeckill() {
       } else if (selected === "vmiss" || selected === "vps_soy" || selected === "bwh" || selected === "akile" || selected === "isvoro" || selected === "dmit") {
         const urls = { vmiss: "https://app.vmiss.com/login", vps_soy: "https://www.vps.soy/login", bwh: "https://bwh81.net/clientarea.php", akile: "https://api.akile.ai/api/v1/user/login", isvoro: "https://isvoro.com/api/v1/auth/login", dmit: "https://www.dmit.io/login" };
         account.provider = selected; account.login_url = urls[selected];
-        adapterNote.textContent = selected === "akile" ? "Akile 已内置 API 登录检查；填写邮箱和密码。若要求邮箱验证、二步验证、Passkey 或验证码，请到官网完成。检查不下单、不付款。" : selected === "isvoro" ? "Isvoro 已内置 API 登录检查；首次请先在官网手动完成 hCaptcha，再复制浏览器 Cookie 粘贴到下方。会话仅在服务内存中缓存 10 分钟，不写入配置。" : selected === "vmiss" ? "VMISS 已内置登录与官网结算适配；填写官网登录邮箱和密码。自动抢购会预填商品配置并创建待付款发票，不会自动付款。" : selected === "bwh" ? "搬瓦工已内置登录与官网结算适配；邮箱验证码提交成功后会短期复用认证会话，减少同一出口重复验证。抢购只创建未付款账单，不会自动付款。" : `${ids[selected]} 已内置登录检查；只需填写官网登录名和密码。检查仅登录，不下单、不付款。遇到安全验证时，请在网页请求中为该商家选择 FlareSolverr 或 cloudscraper。`;
+        adapterNote.textContent = selected === "akile" ? "Akile 已内置 API 登录检查；填写邮箱和密码。若要求邮箱验证、二步验证、Passkey 或验证码，请到官网完成。检查不下单、不付款。" : selected === "isvoro" ? "Isvoro 已内置 API 登录检查；首次在官网完成 hCaptcha 后导入 Cookie。服务会在内存中缓存 24 小时，并在 access Cookie 过期时自动使用 refresh Cookie 续期。" : selected === "vmiss" ? "VMISS 已内置登录与官网结算适配；填写官网登录邮箱和密码。自动抢购会预填商品配置并创建待付款发票，不会自动付款。" : selected === "bwh" ? "搬瓦工已内置登录与官网结算适配；邮箱验证码提交成功后会短期复用认证会话，减少同一出口重复验证。抢购只创建未付款账单，不会自动付款。" : `${ids[selected]} 已内置登录检查；只需填写官网登录名和密码。检查仅登录，不下单、不付款。遇到安全验证时，请在网页请求中为该商家选择 FlareSolverr 或 cloudscraper。`;
         const destinations = { ...urls, akile: "https://akile.ai/login", isvoro: "https://isvoro.com/login" };
-        const link = text("a", `打开 ${ids[selected]} 官网登录页`); link.href = destinations[selected]; link.target = "_blank"; link.rel = "noopener noreferrer"; providerExtra.append(link);
+        const link = text("a", `打开 ${ids[selected]} 官网登录页`); link.href = destinations[selected]; link.target = "_blank"; link.rel = "noopener noreferrer"; link.className = "provider-login-link"; providerExtra.append(link);
         if (selected === "isvoro") {
           const cookie = document.createElement("input"); cookie.type = "password"; cookie.autocomplete = "off"; cookie.value = account.session_cookie || ""; cookie.placeholder = "首次手动登录后粘贴 Cookie: name=value; …";
           cookie.addEventListener("input", () => { account.session_cookie = cookie.value; updateDraftState(); });
           const cookieLabel = document.createElement("label"); cookieLabel.append(text("span", "Isvoro 会话 Cookie（仅本次检查）"), cookie); providerExtra.append(cookieLabel);
+          providerExtra.append(text("p", "导入步骤：打开登录页 → 完成 hCaptcha 并登录 → F12 打开 Network → 刷新 → 找到 /api/v1/auth/me → Headers → Request Headers → Cookie，复制整行粘贴到上方。只需导入一次，后续由服务自动缓存和续期。", "isvoro-cookie-help"));
         }
       } else if (selected) {
         account.provider = selected; account.login_url = "";
