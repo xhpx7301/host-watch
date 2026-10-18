@@ -815,9 +815,13 @@ def _isvoro_profile_data(payload: object) -> dict | None:
 
 
 def _session_cookie(session, name: str) -> str:
-    for cookie in getattr(session, "cookies", ()):
-        if getattr(cookie, "name", "") == name:
-            return str(getattr(cookie, "value", "") or "")
+    try:
+        cookies = getattr(session, "cookies", ())
+        for cookie in cookies:
+            if getattr(cookie, "name", "") == name:
+                return str(getattr(cookie, "value", "") or "")
+    except TypeError:
+        return ""
     return ""
 
 

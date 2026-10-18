@@ -552,9 +552,9 @@ class BwhOrderTests(unittest.TestCase):
 
 class IsvoroOrderTests(unittest.TestCase):
     def test_creates_unpaid_debian12_alipay_order(self):
-        session = Mock()
-        session.post.side_effect = [response({'code': 0, 'data': {}}), response({'code': 0, 'data': {'invoice_id': 'inv-188-361'}})]
-        session.get.return_value = response({'code': 0, 'data': [{'id': 65, 'name': '支付宝', 'extension': 'Antom', 'enabled': True}]})
+        session = requests.Session()
+        session.post = Mock(side_effect=[response({'code': 0, 'data': {}}), response({'code': 0, 'data': {'invoice_id': 'inv-188-361'}})])
+        session.get = Mock(return_value=response({'code': 0, 'data': [{'id': 65, 'name': '支付宝', 'extension': 'Antom', 'enabled': True}]}))
         session.cookies.set('pmt_csrf', 'csrf-token')
         product = Product('188', 'HK PROD MiNi', 1, 'https://isvoro.com/buy/HK-prod?product=188', vendor='Isvoro',
                           match_details={'product_id': '188', 'plans': [{'id': 361, 'billing_period': 1, 'billing_unit': 'month', 'hidden': False}],
