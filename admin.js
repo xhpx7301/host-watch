@@ -2446,7 +2446,9 @@ function seckillAccountNote(item) {
 }
 function standaloneAccountNote(account) {
   const result = standaloneAccountChecks.get(account.id);
-  return result ? `上次检查：${result.message} · ${formatBeijingDate(result.checked_at)}` : "账户待检查：此检查只验证登录，不创建订单、不付款。";
+  if (!result) return "账户待检查：此检查只验证登录，不创建订单、不付款。";
+  const cache = result.session_reused ? " · 已复用认证缓存" : result.ok ? " · 已建立认证缓存" : "";
+  return `上次检查：${result.message}${cache} · ${formatBeijingDate(result.checked_at)}`;
 }
 let vpsSeckillPoll = null;
 function seckillItemId() { return `seckill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; }
@@ -2653,6 +2655,14 @@ function renderVpsSeckill() {
     const remove = text("button", "删除账户", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.setAttribute("aria-label", `删除补货抢购账户 ${account.name || account.id}`);
     remove.addEventListener("click", () => deleteSeckillAccounts([account.id]));
+    const clearCache = text("button", "清除登录缓存"); clearCache.type = "button"; clearCache.disabled = actionRunning;
+    clearCache.setAttribute("aria-label", `清除网站账户 ${account.name || account.id} 的登录缓存`);
+    clearCache.addEventListener("click", () => {
+      runAction(clearCache, "清除中…", "正在清除该账户的认证缓存…", async () => {
+        const result = await requestJSON("/api/seckill/account-cache-clear", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account_id: account.id }) });
+        standaloneAccountChecks.delete(account.id); renderVpsSeckill(); setMessage(result.message, "success");
+      });
+    });
     const verification = standaloneAccountChecks.get(account.id);
     const verificationBox = text("div", "", "form-grid span-2");
     if (verification?.verification_required && verification.challenge_id) {
@@ -2670,7 +2680,7 @@ function renderVpsSeckill() {
     const accountParts = [grid, adapterNote, providerExtra];
     if (verificationBox.childElementCount) accountParts.push(verificationBox);
     accountParts.push(text("p", standaloneAccountNote(account), "hint seckill-account-status"), text("div", "", "actions"));
-    card.append(...accountParts); card.lastChild.append(check, remove);
+    card.append(...accountParts); card.lastChild.append(check, clearCache, remove);
     accountTarget.append(card);
   });
   renderVpsSeckillTask();

@@ -552,6 +552,21 @@ def _remove_merchant_session(adapter_id: str, account: dict, fetcher: dict | Non
         _close_bwh_session(value.get("session"))
 
 
+def _clear_merchant_sessions_for_account(account: dict) -> int:
+    """Remove every in-memory merchant session for one saved account."""
+    adapter_id = merchant_login_id(account.get("provider"))
+    account_id = str(account.get("id", ""))
+    username = str(account.get("username", "")).strip().casefold()
+    removed = []
+    with SECKILL_LOCK:
+        for key in list(MERCHANT_AUTH_SESSIONS):
+            if key[0] == adapter_id and key[1] == account_id and key[2] == username:
+                removed.append(MERCHANT_AUTH_SESSIONS.pop(key))
+    for value in removed:
+        _close_bwh_session(value.get("session"))
+    return len(removed)
+
+
 def _merchant_authenticated(session, adapter: dict) -> bool:
     """Confirm a cached HTML login still reaches an authenticated page."""
     try:
@@ -3522,7 +3537,7 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/refresh", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-verification", "/api/seckill/test", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
+        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/refresh", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-verification", "/api/seckill/account-cache-clear", "/api/seckill/test", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
             self.send_error(404)
             return
         try:
@@ -3608,6 +3623,14 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/seckill/account-verification":
                 output = seckill_account_verification(submitted)
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
+                return
+            if self.path == "/api/seckill/account-cache-clear":
+                account_id = str(submitted.get("account_id", "")).strip()
+                account = next((row for row in current_config()["vps_seckill"].get("accounts", []) if row.get("id") == account_id), None)
+                if not account:
+                    raise ValueError("网站账户不存在")
+                removed = _clear_merchant_sessions_for_account(account)
+                self._send(200, "application/json; charset=utf-8", json.dumps({"ok": True, "removed": removed, "message": "登录缓存已清除，请下次检查时重新认证"}, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/seckill/test":
                 output = seckill_test(submitted)

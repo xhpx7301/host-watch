@@ -872,6 +872,14 @@ class AccountVerificationTests(unittest.TestCase):
         self.assertGreater(admin.MERCHANT_AUTH_SESSIONS[key]['expires_at'], old_expiry)
         admin._remove_merchant_session('vmiss', account, route)
 
+    def test_account_cache_can_be_cleared_across_routes(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='vmiss', login_url='https://app.vmiss.com/login')
+        for route in ({'egress_node_id': 'route-a'}, {'egress_node_id': 'route-b'}):
+            admin._store_merchant_session('vmiss', account, route, requests.Session())
+        self.assertEqual(admin._clear_merchant_sessions_for_account(account), 2)
+        self.assertIsNone(admin._get_merchant_session('vmiss', account, {'egress_node_id': 'route-a'}))
+
     def test_akile_cached_auth_session_skips_api_login(self):
         account = configuration()['vps_seckill']['accounts'][0]
         account.update(provider='akile', login_url=admin.AKILE_LOGIN_URL)
