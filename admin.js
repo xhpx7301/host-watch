@@ -171,6 +171,19 @@ document.querySelector("#toast-close").addEventListener("click", () => {
   toastNode.hidden = true;
 });
 
+document.querySelector("#logout-button")?.addEventListener("click", async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = "退出中…";
+  try {
+    await requestJSON("/api/auth/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", timeoutMs: 10_000 });
+  } catch {
+    // The session may already have expired; returning to the login page is
+    // still the safest and clearest outcome.
+  }
+  window.location.replace("/");
+});
+
 async function requestJSON(url, options = {}) {
   const controller = new AbortController();
   const { timeoutMs = 40000, signal, ...fetchOptions } = options;
@@ -185,6 +198,10 @@ async function requestJSON(url, options = {}) {
     catch {
       if (!response.ok) throw new Error(`请求失败（HTTP ${response.status}），请检查登录状态或服务器。`);
       throw new Error("服务器响应无法识别，请刷新状态核对结果。");
+    }
+    if (response.status === 401 && !url.startsWith("/api/auth/")) {
+      window.location.replace("/");
+      throw Object.assign(new Error("登录状态已失效，正在返回登录页"), { status: response.status });
     }
     if (!response.ok) throw Object.assign(new Error(result.error || `请求失败（HTTP ${response.status}）`), { status: response.status });
     return result;

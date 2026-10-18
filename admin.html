@@ -42,6 +42,8 @@
     .page-heading h1:focus { outline:none; }
     .page-heading p:last-child { margin:0; color:var(--muted); font-size:13px; line-height:1.45; }
     .header-status { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:8px 14px; max-width:530px; flex-shrink:0; }
+    .logout-button { color:#6d7890; border-color:#d5deea; background:#fff; }
+    .logout-button:hover:not(:disabled) { color:#c3464e; border-color:#e7c1bc; background:#fff7f7; }
     .exchange-time { color:var(--ink); font-size:15px; font-weight:650; font-variant-numeric:tabular-nums; white-space:nowrap; }
     .exchange-rate-list { display:grid; justify-items:start; gap:2px; min-width:0; font-variant-numeric:tabular-nums; }
     .exchange-rate-item { display:block; white-space:nowrap; }
@@ -691,7 +693,7 @@
     <button id="mobile-nav-toggle" class="mobile-nav-toggle" type="button" aria-label="打开导航" aria-expanded="false" aria-controls="mobile-nav-close" title="打开导航"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
     <div class="page-heading"><p class="eyebrow">HOSTWATCH / CONSOLE</p><h1 id="page-title" tabindex="-1">运行概览</h1><p id="page-description">每分钟查看大盘、监控、通知、抢购的状态与最近刷新记录。</p></div>
     <div id="exchange-rate-list" class="exchange-rate-list" role="status" aria-live="polite"></div><span id="exchange-rate-note" class="exchange-rate-note" role="status" aria-live="polite">汇率读取中</span><span id="exchange-time" class="exchange-time" role="status" aria-live="polite">当前时间读取中</span>
-    <div class="header-status"><span id="header-monitor-state" class="state" role="status" aria-live="polite">读取服务状态中</span><div class="status-line"><span id="state" class="state">状态读取中</span><button id="refresh-status" type="button" title="刷新服务状态和最近检查记录">刷新服务状态</button></div><span id="last-checked" class="subtle"></span></div>
+    <div class="header-status"><span id="header-monitor-state" class="state" role="status" aria-live="polite">读取服务状态中</span><div class="status-line"><span id="state" class="state">状态读取中</span><button id="refresh-status" type="button" title="刷新服务状态和最近检查记录">刷新服务状态</button><button id="logout-button" type="button" class="logout-button">退出登录</button></div><span id="last-checked" class="subtle"></span></div>
   </header>
   <div id="message"></div>
   <div id="product-sort-status" class="sr-only" role="status" aria-live="polite"></div>

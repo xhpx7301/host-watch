@@ -41,15 +41,43 @@ class HostGateTests(unittest.TestCase):
         for host in ("new.example", "other.example:8443", "192.0.2.10:8765"):
             with self.subTest(host=host):
                 status, headers, _ = self.get(host)
-                self.assertEqual(status, 401)
-                self.assertIn("WWW-Authenticate", dict(headers))
-                self.assertEqual(self.get(host, authorization="Basic invalid")[0], 401)
+                self.assertEqual(status, 200)
+                self.assertNotIn("WWW-Authenticate", dict(headers))
+                self.assertIn(b"login-form", self.get(host)[2])
+                self.assertEqual(self.get(host, authorization="Basic invalid")[0], 200)
                 status, _, body = self.get(host, authorization=self.credential)
                 self.assertEqual(status, 200)
                 self.assertIn(b"HostWatch", body)
                 status, _, body = self.get(host, "/api/config", self.credential)
                 self.assertEqual(status, 200)
                 self.assertIn("products", json.loads(body))
+
+    def test_login_page_creates_cookie_session_and_logout_revokes_it(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port)
+        self.addCleanup(connection.close)
+        connection.request("POST", "/api/auth/login", json.dumps({"username": "admin", "password": "initial random password"}), {"Host": "new.example", "Content-Type": "application/json"})
+        response = connection.getresponse()
+        self.assertEqual(response.status, 200)
+        cookie = next(value for name, value in response.getheaders() if name.casefold() == "set-cookie")
+        self.assertIn("HttpOnly", cookie)
+        self.assertIn("SameSite=Lax", cookie)
+        response.read()
+
+        connection.request("GET", "/api/config", headers={"Host": "new.example", "Cookie": cookie.split(";", 1)[0]})
+        response = connection.getresponse()
+        self.assertEqual(response.status, 200)
+        response.read()
+
+        connection.request("POST", "/api/auth/logout", headers={"Host": "new.example", "Cookie": cookie.split(";", 1)[0]})
+        response = connection.getresponse()
+        self.assertEqual(response.status, 200)
+        self.assertIn("Max-Age=0", dict(response.getheaders())["Set-Cookie"])
+        response.read()
+
+        connection.request("GET", "/api/config", headers={"Host": "new.example", "Cookie": cookie.split(";", 1)[0]})
+        response = connection.getresponse()
+        self.assertEqual(response.status, 401)
+        response.read()
 
     def test_old_allowlist_including_wildcard_does_not_prevent_startup(self):
         for hosts in ("*", "localhost,old.example", ""):

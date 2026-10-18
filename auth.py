@@ -64,15 +64,12 @@ def authentication_required() -> bool:
     return users_path() is not None or bool(os.getenv("ADMIN_PASSWORD", ""))
 
 
-def authorized(header: str) -> bool:
+def credentials_authorized(username: str, password: str) -> bool:
+    """Validate a username/password pair without requiring an HTTP header."""
     path = users_path()
     if path is None and not os.getenv("ADMIN_PASSWORD", ""):
         return True  # Preserve password-free local SSH-tunnel installations.
     try:
-        scheme, encoded = header.split(" ", 1)
-        if scheme.casefold() != "basic" or len(encoded) > 2048:
-            return False
-        username, password = base64.b64decode(encoded, validate=True).decode("utf-8").split(":", 1)
         if len(username) > 64 or len(password) > 256:
             return False
         if path is not None:
@@ -86,5 +83,21 @@ def authorized(header: str) -> bool:
         supplied = f"{username}:{password}"
         return hmac.compare_digest(expected.encode("utf-8"), supplied.encode("utf-8"))
     except (OSError, ValueError, TypeError, KeyError):
+        return False
+
+
+def authorized(header: str) -> bool:
+    path = users_path()
+    if path is None and not os.getenv("ADMIN_PASSWORD", ""):
+        return True  # Preserve password-free local SSH-tunnel installations.
+    try:
+        scheme, encoded = header.split(" ", 1)
+        if scheme.casefold() != "basic" or len(encoded) > 2048:
+            return False
+        username, password = base64.b64decode(encoded, validate=True).decode("utf-8").split(":", 1)
+        if len(username) > 64 or len(password) > 256:
+            return False
+        return credentials_authorized(username, password)
+    except (UnicodeError, ValueError, TypeError):
         # A missing/unreadable configured account file must never remove auth.
         return False

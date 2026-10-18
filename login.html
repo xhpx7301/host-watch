@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>登录 · HostWatch</title>
+  <style>
+    :root { color-scheme: light; --navy:#10213f; --navy-soft:#25466d; --blue:#2f6fed; --cyan:#54c4ce; --ink:#16253c; --muted:#74829a; --line:#e0e7f1; --paper:#fff; }
+    * { box-sizing:border-box; }
+    html,body { min-height:100%; }
+    body { margin:0; min-height:100vh; color:var(--ink); background:#f4f7fb; font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    button,input { font:inherit; }
+    .login-shell { position:relative; display:grid; grid-template-columns:minmax(360px,.92fr) minmax(460px,1.08fr); min-height:100vh; overflow:hidden; }
+    .login-brand { position:relative; display:flex; flex-direction:column; justify-content:space-between; padding:42px clamp(32px,7vw,112px) 36px; color:#fff; background:linear-gradient(145deg,#10213f 0%,#193964 55%,#24617c 100%); overflow:hidden; }
+    .login-brand::before,.login-brand::after { content:""; position:absolute; border:1px solid rgba(255,255,255,.13); border-radius:50%; pointer-events:none; }
+    .login-brand::before { width:560px; height:560px; right:-260px; top:-170px; box-shadow:0 0 0 72px rgba(255,255,255,.035),0 0 0 144px rgba(255,255,255,.025); }
+    .login-brand::after { width:300px; height:300px; left:-180px; bottom:-120px; box-shadow:0 0 0 54px rgba(84,196,206,.08); }
+    .brand-lockup,.brand-copy,.brand-foot { position:relative; z-index:1; }
+    .brand-lockup { display:flex; align-items:center; gap:13px; }
+    .brand-mark { display:grid; place-items:center; width:42px; height:42px; border-radius:13px; color:#14314a; background:linear-gradient(145deg,#9ce7dd,#4bc3d0); box-shadow:0 10px 26px rgba(2,18,41,.24); font-size:22px; font-weight:800; }
+    .brand-name { font-size:20px; font-weight:760; letter-spacing:-.4px; }
+    .brand-copy { max-width:430px; margin-top:auto; margin-bottom:auto; padding:70px 0 55px; }
+    .brand-copy .kicker { margin:0 0 16px; color:#9ce7dd; font-size:11px; font-weight:750; letter-spacing:2.4px; text-transform:uppercase; }
+    .brand-copy h1 { margin:0; max-width:420px; font-size:clamp(30px,4vw,48px); line-height:1.1; letter-spacing:-1.8px; }
+    .brand-copy p { max-width:380px; margin:22px 0 0; color:rgba(255,255,255,.72); font-size:15px; line-height:1.75; }
+    .brand-points { display:grid; gap:11px; margin-top:28px; color:rgba(255,255,255,.82); font-size:13px; }
+    .brand-points span { display:flex; align-items:center; gap:9px; }
+    .brand-points i { display:grid; place-items:center; width:19px; height:19px; border:1px solid rgba(156,231,221,.55); border-radius:50%; color:#9ce7dd; font-style:normal; font-size:11px; }
+    .brand-foot { color:rgba(255,255,255,.52); font-size:12px; }
+    .login-main { display:grid; place-items:center; padding:32px; background:radial-gradient(circle at 20% 15%,#fff 0,#f4f7fb 55%); }
+    .login-card { width:min(440px,100%); padding:42px 42px 34px; border:1px solid rgba(211,221,235,.9); border-radius:22px; background:rgba(255,255,255,.94); box-shadow:0 24px 70px rgba(23,48,81,.12); }
+    .login-card h2 { margin:0; color:var(--navy); font-size:28px; letter-spacing:-.8px; }
+    .login-card .intro { margin:8px 0 30px; color:var(--muted); }
+    .field { display:grid; gap:8px; margin-top:18px; }
+    .field label { color:#44536a; font-size:13px; font-weight:700; }
+    .input-wrap { position:relative; }
+    .field input { width:100%; height:48px; padding:0 14px; border:1px solid #d7e0ec; border-radius:11px; outline:none; color:var(--ink); background:#fbfcfe; transition:border-color .18s,box-shadow .18s,background-color .18s; }
+    .field input:focus { border-color:var(--blue); background:#fff; box-shadow:0 0 0 4px rgba(47,111,237,.12); }
+    .field input[type=password] { padding-right:52px; }
+    .toggle-password { position:absolute; top:50%; right:8px; display:grid; place-items:center; width:34px; height:34px; padding:0; border:0; border-radius:8px; color:#78879b; background:transparent; cursor:pointer; transform:translateY(-50%); }
+    .toggle-password:hover { color:var(--blue); background:#eef4ff; }
+    .toggle-password svg { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+    .login-submit { width:100%; height:50px; margin-top:28px; border:0; border-radius:11px; color:#fff; background:linear-gradient(135deg,#316fea,#2457c8); box-shadow:0 9px 20px rgba(47,111,237,.24); cursor:pointer; font-weight:750; transition:transform .18s,box-shadow .18s,opacity .18s; }
+    .login-submit:hover:not(:disabled) { box-shadow:0 12px 24px rgba(47,111,237,.32); transform:translateY(-1px); }
+    .login-submit:disabled { opacity:.66; cursor:wait; }
+    .login-error { min-height:20px; margin:16px 0 0; color:#c44754; font-size:13px; }
+    .login-note { display:flex; gap:8px; margin:26px 0 0; padding-top:20px; border-top:1px solid #edf1f6; color:#8a96a8; font-size:12px; line-height:1.6; }
+    .login-note svg { flex:0 0 auto; width:16px; height:16px; margin-top:2px; fill:none; stroke:#6c89ad; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+    .login-copyright { display:none; }
+    @media (max-width:860px) { .login-shell { grid-template-columns:1fr; } .login-brand { min-height:270px; padding:27px 28px; } .brand-copy { padding:40px 0 18px; } .brand-copy h1 { font-size:32px; } .brand-copy p,.brand-points { display:none; } .brand-foot { display:none; } .login-main { min-height:calc(100vh - 270px); padding:28px 20px 34px; } .login-card { padding:32px 25px 28px; } }
+    @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto !important; transition-duration:.01ms !important; animation-duration:.01ms !important; } }
+  </style>
+</head>
+<body>
+  <main class="login-shell">
+    <section class="login-brand" aria-label="HostWatch 产品介绍">
+      <div class="brand-lockup"><div class="brand-mark" aria-hidden="true">H</div><div class="brand-name">HostWatch</div></div>
+      <div class="brand-copy">
+        <p class="kicker">SERVER · INVENTORY · CONTROL</p>
+        <h1>让每一次库存变化，都及时被看见。</h1>
+        <p>集中管理主机库存、补货通知与自动化任务，让服务器运维更清晰、更从容。</p>
+        <div class="brand-points"><span><i>✓</i>统一查看多家商家库存</span><span><i>✓</i>安全的管理员会话</span><span><i>✓</i>实时任务与通知状态</span></div>
+      </div>
+      <div class="brand-foot">HostWatch Admin · 安全控制台</div>
+    </section>
+    <section class="login-main">
+      <form id="login-form" class="login-card" novalidate>
+        <h2>欢迎回来</h2>
+        <p class="intro">登录管理员账号，继续管理你的 HostWatch。</p>
+        <div class="field"><label for="login-username">用户名</label><input id="login-username" name="username" type="text" autocomplete="username" maxlength="64" placeholder="请输入用户名" required></div>
+        <div class="field"><label for="login-password">密码</label><div class="input-wrap"><input id="login-password" name="password" type="password" autocomplete="current-password" maxlength="256" placeholder="请输入密码" required><button type="button" class="toggle-password" id="toggle-password" aria-label="显示密码"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-5 9.5-5 9.5 5 9.5 5-3.5 5-9.5 5-9.5-5-9.5-5Z"></path><circle cx="12" cy="12" r="2.5"></circle></svg></button></div></div>
+        <p id="login-error" class="login-error" role="alert" aria-live="polite"></p>
+        <button id="login-submit" class="login-submit" type="submit">登录管理台</button>
+        <p class="login-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.6 2.8 8.1 7 10 4.2-1.9 7-5.4 7-10V6l-7-3Z"></path><path d="m9 12 2 2 4-4"></path></svg><span>登录状态仅保存在当前浏览器的安全会话中。请勿在公共设备上保存密码。</span></p>
+      </form>
+    </section>
+  </main>
+  <script src="/login.js"></script>
+</body>
+</html>

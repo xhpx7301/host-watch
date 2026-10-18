@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from auth import authentication_required, authorized, load_users, password_record
+from auth import authentication_required, authorized, credentials_authorized, load_users, password_record
 
 
 def basic(username, password):
@@ -36,6 +36,10 @@ class AuthenticationTests(unittest.TestCase):
         self.assertFalse(authorized(basic("alice", "wrong")))
         self.assertFalse(authorized(basic("unknown", "correct horse battery staple")))
         self.assertFalse(authorized(basic("legacy", "legacy-pass")))
+
+    def test_validates_credentials_without_basic_header(self):
+        self.assertTrue(credentials_authorized("alice", "correct horse battery staple"))
+        self.assertFalse(credentials_authorized("alice", "wrong"))
 
     def test_missing_or_corrupt_account_file_fails_closed(self):
         self.path.unlink()

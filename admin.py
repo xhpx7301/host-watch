@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urljoin, urlsplit, urlu
 
 import requests
 
-from auth import DEFAULT_USERS_PATH, authentication_required, authorized, users_path
+from auth import DEFAULT_USERS_PATH, authentication_required, authorized, credentials_authorized, users_path
 from catalog import CatalogBusy, CatalogService
 from affiliates import DEFAULT_AFFILIATES, PROVIDERS, affiliate_purchase_url, effective_coupon, normalize_affiliate_accounts, normalize_affiliate_coupons, normalize_affiliate_notes, normalize_affiliate_rates, normalize_affiliates, normalize_merchant_order
 from time_utils import beijing_iso, format_beijing
@@ -34,6 +34,8 @@ CONFIG_PATH = Path(os.getenv("VMISS_CONFIG", str(ROOT / "config.json")))
 STATUS_PATH = Path(os.getenv("VMISS_STATUS", str(CONFIG_PATH.parent / "status.json")))
 RATES_PATH = Path(os.getenv("VMISS_RATES", str(CONFIG_PATH.parent / "exchange-rates.json")))
 PAGE_PATH = ROOT / "admin.html"
+LOGIN_PAGE_PATH = ROOT / "login.html"
+LOGIN_SCRIPT_PATH = ROOT / "login.js"
 MAX_BODY = 64 * 1024
 MAX_BACKUP_UPLOAD = 20 * 1024 * 1024
 MANAGER = Path("/opt/vmiss-monitor/manage.py")
@@ -59,6 +61,10 @@ REFRESH_LOCK = threading.Lock()
 REFRESH_TASKS = {}
 BROWSER_CLEANUP_SECONDS = 8
 BROWSER_CLEANUP_WARNING = "本地测试进程已结束，但未能确认 FlareSolverr 浏览器释放；请检查服务日志，必要时重启 FlareSolverr，避免继续启动浏览器测试"
+ADMIN_SESSION_COOKIE = "hostwatch_session"
+ADMIN_SESSION_TTL = 12 * 60 * 60
+ADMIN_SESSIONS = {}
+ADMIN_SESSION_LOCK = threading.Lock()
 CATALOG = CatalogService(lambda: CONFIG_PATH.parent / "catalog.json", lambda: current_config()["fetcher"])
 CLOUDSCRAPER_TEST_ID = "cloudscraper-probe"
 CLOUDSCRAPER_TEST_TARGETS = {
@@ -3117,6 +3123,60 @@ def manager_action(value: dict) -> dict:
     return response
 
 
+def _session_cookie_value(header: str) -> str:
+    for part in str(header or "").split(";"):
+        name, separator, value = part.strip().partition("=")
+        if separator and name == ADMIN_SESSION_COOKIE:
+            token = value.strip()
+            if re.fullmatch(r"[A-Za-z0-9_-]{32,128}", token):
+                return token
+    return ""
+
+
+def _create_admin_session(username: str) -> str:
+    token = secrets.token_urlsafe(32)
+    with ADMIN_SESSION_LOCK:
+        ADMIN_SESSIONS[token] = {"username": username, "auth_fingerprint": _admin_auth_fingerprint(), "expires_at": time.time() + ADMIN_SESSION_TTL}
+    return token
+
+
+def _admin_auth_fingerprint() -> tuple[str, str]:
+    path = users_path()
+    if path is not None:
+        try:
+            return ("file", hashlib.sha256(path.read_bytes()).hexdigest())
+        except OSError:
+            return ("missing", "")
+    password = os.getenv("ADMIN_PASSWORD", "")
+    return ("legacy", hashlib.sha256(f"{os.getenv('ADMIN_USERNAME', 'admin')}:{password}".encode("utf-8")).hexdigest())
+
+
+def _admin_session_username(header: str) -> str:
+    token = _session_cookie_value(header)
+    if not token:
+        return ""
+    with ADMIN_SESSION_LOCK:
+        record = ADMIN_SESSIONS.get(token)
+        if not record:
+            return ""
+        if record.get("expires_at", 0) <= time.time() or record.get("auth_fingerprint") != _admin_auth_fingerprint():
+            ADMIN_SESSIONS.pop(token, None)
+            return ""
+        return str(record.get("username", ""))
+
+
+def _revoke_admin_session(header: str) -> None:
+    token = _session_cookie_value(header)
+    if token:
+        with ADMIN_SESSION_LOCK:
+            ADMIN_SESSIONS.pop(token, None)
+
+
+def _clear_admin_sessions() -> None:
+    with ADMIN_SESSION_LOCK:
+        ADMIN_SESSIONS.clear()
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "HostWatchAdmin/1.0"
     # Reuse the browser's authenticated HTTP connection for the lightweight
@@ -3155,19 +3215,65 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self._send(503, "text/html; charset=utf-8", ('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>请初始化管理员 · HostWatch</title><h1>请初始化管理员账号</h1><p>' + message + '</p></html>').encode("utf-8"))
                 return False
-        if authorized(self.headers.get("Authorization", "")):
+        if _admin_session_username(self.headers.get("Cookie", "")) or authorized(self.headers.get("Authorization", "")):
             return True
+        if urlsplit(self.path).path in {"/", "/admin.html"}:
+            self._send(200, "text/html; charset=utf-8", LOGIN_PAGE_PATH.read_bytes())
+            return False
+        self._send_unauthorized()
+        return False
+
+    def _send_unauthorized(self) -> None:
         self.close_connection = True
         self.send_response(401)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        body = json.dumps({"error": "需要登录管理员账号", "code": "admin_auth_required"}, ensure_ascii=False).encode("utf-8")
         self.send_header("WWW-Authenticate", 'Basic realm="HostWatch admin", charset="UTF-8"')
-        self.send_header("Content-Length", "0")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        return False
+        self.wfile.write(body)
+
+    def _cookie_header(self, token: str = "", max_age: int | None = None) -> str:
+        parts = [f"{ADMIN_SESSION_COOKIE}={token}", "Path=/", "HttpOnly", "SameSite=Lax"]
+        if max_age is not None:
+            parts.append(f"Max-Age={max_age}")
+        return "; ".join(parts)
+
+    def _auth_login(self) -> None:
+        if not authentication_required():
+            self._send(503, "application/json; charset=utf-8", json.dumps({"error": "尚未配置管理员账号，请先运行 hw init-admin", "code": "admin_auth_not_configured"}, ensure_ascii=False).encode("utf-8"))
+            return
+        try:
+            value = request_body(self)
+            username = str(value.get("username", ""))
+            password = str(value.get("password", ""))
+            if not username or not password or len(username) > 64 or len(password) > 256:
+                raise ValueError("请输入用户名和密码")
+            if not credentials_authorized(username, password):
+                self._send(401, "application/json; charset=utf-8", json.dumps({"error": "用户名或密码错误"}, ensure_ascii=False).encode("utf-8"))
+                return
+            token = _create_admin_session(username)
+            self._send(200, "application/json; charset=utf-8", json.dumps({"ok": True, "username": username}, ensure_ascii=False).encode("utf-8"), {"Set-Cookie": self._cookie_header(token, ADMIN_SESSION_TTL)})
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            self._send(400, "application/json; charset=utf-8", json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"))
+
+    def _auth_status(self) -> None:
+        username = _admin_session_username(self.headers.get("Cookie", ""))
+        authenticated = bool(username) or (not authentication_required() and self._is_local_host())
+        self._send(200, "application/json; charset=utf-8", json.dumps({"authenticated": authenticated, "username": username}, ensure_ascii=False).encode("utf-8"))
+
+    def _is_local_host(self) -> bool:
+        try:
+            host = (urlsplit("//" + self.headers.get("Host", "")).hostname or "").casefold().rstrip(".")
+            return host == "localhost" or ip_address(host).is_loopback
+        except ValueError:
+            return False
 
     def _guard(self) -> bool:
         return self._secure() and self._authorized()
 
-    def _send(self, status: int, content_type: str, body: bytes) -> None:
+    def _send(self, status: int, content_type: str, body: bytes, headers: dict[str, str] | None = None) -> None:
         reusable = status < 400
         if not reusable:
             self.close_connection = True
@@ -3178,6 +3284,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -3193,9 +3301,20 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:
-        if not self._guard():
+        if not self._secure():
             return
         path = urlsplit(self.path).path
+        if path == "/login.html":
+            self._send(200, "text/html; charset=utf-8", LOGIN_PAGE_PATH.read_bytes())
+            return
+        if path == "/login.js":
+            self._send(200, "text/javascript; charset=utf-8", LOGIN_SCRIPT_PATH.read_bytes())
+            return
+        if path == "/api/auth/status":
+            self._auth_status()
+            return
+        if not self._authorized():
+            return
         if path in {"/", "/admin.html"}:
             self._send(200, "text/html; charset=utf-8", PAGE_PATH.read_bytes())
         elif path in {"/admin.js", "/catalog.js"}:
@@ -3297,6 +3416,21 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self) -> None:
+        path = urlsplit(self.path).path
+        if path == "/api/auth/login":
+            if not self._secure():
+                return
+            if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+                self._send(415, "application/json; charset=utf-8", b'{"error":"Content-Type must be application/json"}')
+                return
+            self._auth_login()
+            return
+        if path == "/api/auth/logout":
+            if not self._secure():
+                return
+            _revoke_admin_session(self.headers.get("Cookie", ""))
+            self._send(200, "application/json; charset=utf-8", b'{"ok":true}', {"Set-Cookie": self._cookie_header("", 0)})
+            return
         if self.path == "/api/egress/register":
             if not self._secure():
                 return
@@ -3466,6 +3600,8 @@ class Handler(BaseHTTPRequestHandler):
                 if submitted.get("action") == "monitor-start":
                     validate_config({**current_config(), "enabled": True})
                 result = manager_action(submitted)
+                if submitted.get("action") in {"admin-add", "admin-passwd", "admin-delete"}:
+                    _clear_admin_sessions()
                 if submitted.get("action") == "backup-download":
                     filename = result.get("name", "host-watch-backup.tar.gz")
                     if not isinstance(filename, str) or not re.fullmatch(r"host-watch-[0-9]{8}-[0-9]{6}-[a-z0-9_]{1,64}\.tar\.gz", filename):
