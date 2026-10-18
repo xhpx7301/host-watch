@@ -2564,7 +2564,7 @@ function renderVpsSeckill() {
       : providerKey === "akile"
         ? "Akile 使用内置待付款适配：固定 Debian 12 和 1 个月周期创建订单；不会自动付款。"
         : providerKey === "bwh"
-          ? "搬瓦工使用内置官网结算适配：复用最长 30 天的内存认证会话，按商品周期和付款方式创建未付款账单；不会自动付款。"
+          ? "搬瓦工使用内置官网结算适配：密码登录时自动启用官网 Remember Me，以请求更持久的登录 Cookie；认证会话在内存中缓存最长 30 天，验证仍有效时会续延本地缓存。官网未提供可用的 refresh Cookie 接口，手动导入的普通 Cookie 过期后仍需重新登录。"
         : "自动模式仅对已配置商家待付款适配的商品创建订单；未适配商家只提供购买链接。", "hint span-2");
     [["下单数量（台，1–100）", quantity], ["优惠码", coupon], ["系统", operatingSystem], ["付款周期", billingCycle], ["付款方式", paymentMethod], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
     const enabled = settingButton("商品状态", item.enabled !== false, value => { item.enabled = value; renderVpsSeckillTask(); }, ["已停用", "已启用"]);
@@ -2616,7 +2616,7 @@ function renderVpsSeckill() {
           const cookieLabel = document.createElement("label"); cookieLabel.append(text("span", `${ids[selected]} 会话 Cookie（仅本次检查）`), cookie); providerExtra.append(cookieLabel);
           const instructions = selected === "isvoro"
             ? "导入步骤：打开登录页 → 完成 hCaptcha 并登录 → F12 打开 Network → 刷新 → 找到 /api/v1/auth/me → Headers → Request Headers → Cookie，复制整行粘贴到上方。验证通过后只保存在服务器内存，最长 30 天；access Cookie 过期时会尝试使用 refresh Cookie 续期。"
-            : "导入步骤：打开搬瓦工官网登录页并完成邮箱验证码 → F12 打开 Network → 刷新 → 找到 clientarea.php 请求 → Headers → Request Headers → Cookie，复制整行粘贴到上方。验证通过后只保存在服务器内存，最长 30 天；搬瓦工 Cookie 本身过期或服务重启后需重新导入。";
+            : "导入步骤：打开搬瓦工官网登录页并完成邮箱验证码 → F12 打开 Network → 刷新 → 找到 clientarea.php 请求 → Headers → Request Headers → Cookie，复制整行粘贴到上方。验证通过后只保存在服务器内存，最长 30 天；Cookie 本身过期、被撤销或服务重启后需重新导入。密码登录时 HostWatch 会自动启用官网 Remember Me；它请求商家签发更持久的 Cookie，但不是 refresh Cookie 自动续期。";
           providerExtra.append(text("p", instructions, "merchant-cookie-help"));
         }
       } else if (selected) {

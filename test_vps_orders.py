@@ -694,7 +694,7 @@ class AccountVerificationTests(unittest.TestCase):
     def test_bandwagon_form_login_uses_login_origin_token_and_logout_marker(self):
         account = configuration()['vps_seckill']['accounts'][0]
         account.update(provider='bwh', login_url='https://bwh81.net/clientarea.php')
-        page = Mock(status_code=200, url='https://bwh81.net/clientarea.php', content=b'<form action="dologin.php"><input type="hidden" name="token" value="csrf"><input type="hidden" name="loginorigin" value="clientarea"><input name="username"><input name="password"></form>')
+        page = Mock(status_code=200, url='https://bwh81.net/clientarea.php', content=b'<form action="dologin.php"><input type="hidden" name="token" value="csrf"><input type="hidden" name="loginorigin" value="clientarea"><input name="username"><input name="password"><input type="checkbox" name="rememberme"></form>')
         redirected = Mock(status_code=302, headers={'Location': '/clientarea.php'})
         logged_in = Mock(status_code=200, url='https://bwh81.net/clientarea.php', content=b'<a href="logout.php">Logout</a>')
         session = Mock()
@@ -702,7 +702,7 @@ class AccountVerificationTests(unittest.TestCase):
         session.post.return_value = redirected
         result = admin.check_order_account(session, account)
         self.assertEqual(result['status'], 'valid')
-        self.assertEqual(session.post.call_args.kwargs['data'], {'token': 'csrf', 'loginorigin': 'clientarea', 'username': 'user', 'password': 'private-password'})
+        self.assertEqual(session.post.call_args.kwargs['data'], {'token': 'csrf', 'loginorigin': 'clientarea', 'rememberme': 'on', 'username': 'user', 'password': 'private-password'})
 
     def test_bandwagon_browser_auth_is_not_reported_as_logged_in(self):
         account = configuration()['vps_seckill']['accounts'][0]

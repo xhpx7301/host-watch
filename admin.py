@@ -693,6 +693,16 @@ def _merchant_form_login(session, account: dict, adapter: dict, fetcher: dict | 
     if not _same_merchant_url(action, adapter):
         return {"status": "unknown", "message": "官网登录表单跳转地址不符合商家域名，请到官网检查"}
     payload = {key: node.get("value", "") for key, node in fields.items() if key and node.get("type", "").casefold() == "hidden"}
+    # WHMCS exposes a first-party "Remember Me" checkbox on BandwagonHost.
+    # Ask the vendor to issue its persistent login cookie for password-based
+    # authentication; this is distinct from renewing an imported cookie.
+    if adapter.get("name") == "搬瓦工":
+        remember_field = next((key for key, node in fields.items()
+                               if key and key.casefold() in {"rememberme", "remember_me"}
+                               and node.get("type", "").casefold() == "checkbox"), "")
+        if remember_field:
+            payload[remember_field] = next((node.get("value", "on") for key, node in fields.items()
+                                            if key == remember_field), "on") or "on"
     payload[adapter["username_field"]] = account["username"]
     payload["password"] = account["password"]
     origin = f"{urlsplit(action).scheme}://{urlsplit(action).netloc}"
