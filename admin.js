@@ -2614,11 +2614,16 @@ function renderVpsSeckill() {
           const cookie = document.createElement("input"); cookie.type = "password"; cookie.autocomplete = "off"; cookie.value = account.session_cookie || ""; cookie.placeholder = "官网手动登录后粘贴 Cookie: name=value; …";
           cookie.addEventListener("input", () => { account.session_cookie = cookie.value; updateDraftState(); });
           const cookieLabel = document.createElement("label"); cookieLabel.append(text("span", `${ids[selected]} 会话 Cookie（仅本次检查）`), cookie); providerExtra.append(cookieLabel);
+          if (selected === "dmit") {
+            const userAgent = document.createElement("input"); userAgent.type = "text"; userAgent.autocomplete = "off"; userAgent.value = account.session_user_agent || ""; userAgent.placeholder = "可选：Network → Headers → User-Agent";
+            userAgent.addEventListener("input", () => { account.session_user_agent = userAgent.value; updateDraftState(); });
+            const userAgentLabel = document.createElement("label"); userAgentLabel.append(text("span", "DMIT 浏览器 User-Agent（可选）"), userAgent); providerExtra.append(userAgentLabel);
+          }
           const instructions = selected === "isvoro"
             ? "导入步骤：打开登录页 → 完成 hCaptcha 并登录 → F12 打开 Network → 刷新 → 找到 /api/v1/auth/me → Headers → Request Headers → Cookie，复制整行粘贴到上方。验证通过后只保存在服务器内存，最长 30 天；access Cookie 过期时会尝试使用 refresh Cookie 续期。"
             : selected === "bwh"
               ? "导入步骤：打开搬瓦工官网登录页并完成邮箱验证码 → F12 打开 Network → 刷新 → 找到 clientarea.php 请求 → Headers → Request Headers → Cookie，复制整行粘贴到上方。验证通过后只保存在服务器内存，最长 30 天；Cookie 本身过期、被撤销或服务重启后需重新导入。密码登录时 HostWatch 会自动启用官网 Remember Me；它请求商家签发更持久的 Cookie，但不是 refresh Cookie 自动续期。"
-              : "导入步骤：打开 DMIT 官网，用账户邮箱和密码正常登录（如果官网要求安全验证，请先完成）→ 登录后打开 F12 的 Network → 刷新账户页面 → 找到 clientarea.php 请求 → Headers → Request Headers → Cookie，复制整行粘贴到上方。验证通过后只保存在服务器内存，最长 24 小时；过期、被撤销或服务重启后需重新登录并导入。Cookie 可能受浏览器/IP 绑定，服务器出口验证不一定成功。";
+              : "导入步骤：打开 DMIT 官网，用账户邮箱和密码正常登录（如果官网要求安全验证，请先完成）→ 登录后打开 F12 的 Network → 刷新账户页面 → 找到 clientarea.php?action=details 请求 → Headers → Request Headers → Cookie，复制整行粘贴到上方。若仍失败，再复制该请求的 User-Agent 填入下方。验证通过后只保存在服务器内存，最长 24 小时；过期、被撤销或服务重启后需重新登录并导入。Cookie 可能受浏览器/IP 绑定，服务器出口验证不一定成功。";
           providerExtra.append(text("p", instructions, "merchant-cookie-help"));
         }
       } else if (selected) {
@@ -2651,6 +2656,7 @@ function renderVpsSeckill() {
           // Manually imported merchant cookies are transient credentials; never
           // leave them in the browser draft after the check request completes.
           delete account.session_cookie;
+          delete account.session_user_agent;
           delete account.captcha_token;
           delete account.captcha_provider;
         }
@@ -2700,7 +2706,7 @@ function deleteSeckillAccounts(ids) {
 }
 function collectVpsSeckill() {
   const items = seckillItems().map(({ submit_url, auto_submit, ...item }) => item);
-  const accounts = seckillAccounts().map(({ auto_submit, session_cookie, captcha_token, captcha_provider, ...account }) => account);
+  const accounts = seckillAccounts().map(({ auto_submit, session_cookie, session_user_agent, captcha_token, captcha_provider, ...account }) => account);
   return { enabled: items.some(item => item.enabled !== false), mode: document.querySelector("#vps-seckill-mode")?.value || "manual", interval_seconds: Number(document.querySelector("#vps-seckill-interval")?.value || 5), items, accounts };
 }
 function savedConfigSnapshot() {

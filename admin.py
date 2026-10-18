@@ -429,7 +429,7 @@ MERCHANT_LOGIN_ADAPTERS = {
     "vmiss": {"name": "VMISS", "url": "https://app.vmiss.com/login", "host": "app.vmiss.com", "username_field": "username"},
     "vps_soy": {"name": "VPS.SOY", "url": "https://www.vps.soy/login", "host": "www.vps.soy", "username_field": "email"},
     "bwh": {"name": "搬瓦工", "url": "https://bwh81.net/clientarea.php", "host": "bwh81.net", "username_field": "username"},
-    "dmit": {"name": "DMIT", "url": "https://www.dmit.io/clientarea.php", "host": "www.dmit.io", "username_field": "username"},
+    "dmit": {"name": "DMIT", "url": "https://www.dmit.io/clientarea.php", "auth_probe_url": "https://www.dmit.io/clientarea.php?action=details", "host": "www.dmit.io", "username_field": "username"},
 }
 ISVORO_API_BASE_URL = "https://isvoro.com/api/v1"
 ISVORO_LOGIN_URL = f"{ISVORO_API_BASE_URL}/auth/login"
@@ -575,11 +575,12 @@ def _clear_merchant_sessions_for_account(account: dict) -> int:
 def _merchant_authenticated(session, adapter: dict) -> bool:
     """Confirm a cached HTML login still reaches an authenticated page."""
     try:
-        page = session.get(adapter["url"], timeout=(5, 20), allow_redirects=False,
-                           headers={**MERCHANT_BROWSER_HEADERS, "Sec-Fetch-Site": "none", "Sec-Fetch-User": "?1"})
+        probe_url = adapter.get("auth_probe_url") or adapter["url"]
+        page = session.get(probe_url, timeout=(5, 20), allow_redirects=False,
+                           headers={**MERCHANT_BROWSER_HEADERS, "Referer": adapter["url"], "Sec-Fetch-Site": "none", "Sec-Fetch-User": "?1"})
     except (requests.RequestException, OSError):
         return False
-    if not 200 <= page.status_code < 300 or not _same_merchant_url(page.url or adapter["url"], adapter):
+    if not 200 <= page.status_code < 300 or not _same_merchant_url(page.url or probe_url, adapter):
         return False
     from bs4 import BeautifulSoup
     soup = BeautifulSoup(page.content or page.text or "", "html.parser")
@@ -909,6 +910,18 @@ def _import_dmit_session_cookie(session, raw_cookie: object) -> bool:
     # DMIT uses www.dmit.io for its client area; keep imported credentials
     # scoped to the merchant's own domain and its subdomains.
     return _import_merchant_session_cookie(session, raw_cookie, ".dmit.io")
+
+
+def _merchant_cookie_names(raw_cookie: object) -> list[str]:
+    value = str(raw_cookie or "").strip()
+    if value.lower().startswith("cookie:"):
+        value = value[7:].strip()
+    names = []
+    for part in value.split(";"):
+        name, separator, _ = part.strip().partition("=")
+        if separator and re.fullmatch(r"[A-Za-z0-9_!#$%&'*+.^`|~-]{1,128}", name.strip()):
+            names.append(name.strip())
+    return names
 
 
 def _isvoro_login(session, account: dict) -> dict:
@@ -1895,10 +1908,13 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
         "checked_at": beijing_iso()}
     adapter_id = merchant_login_id(account.get("provider"))
     supplied_cookie = str(account.get("_session_cookie", "")).strip()
+    supplied_user_agent = str(account.get("_session_user_agent", "")).strip()
     cached_cookie_session = _get_merchant_session(adapter_id, account, fetcher) if adapter_id in {"bwh", "dmit"} else None
     if not account.get("username") or (not account.get("password") and not (adapter_id in {"bwh", "dmit"} and (supplied_cookie or cached_cookie_session))):
         return {**result, "message": "请填写用户名和密码；DMIT、搬瓦工也可填写用户名并导入有效 Cookie 检查"}
     try:
+        if supplied_user_agent and len(supplied_user_agent) <= 512 and "\r" not in supplied_user_agent and "\n" not in supplied_user_agent:
+            session.headers["User-Agent"] = supplied_user_agent
         adapter = MERCHANT_LOGIN_ADAPTERS.get(adapter_id)
         if adapter:
             if account.get("login_url") != adapter["url"]:
@@ -1940,7 +1956,8 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
                     _store_merchant_session(adapter_id, account, fetcher, session)
                     return {**result, "ok": True, "status": "valid", "session_reused": True,
                             "message": "DMIT 已导入并缓存官网登录会话（最长 24 小时；不代表具有购买资格或库存）"}
-                return {**result, "message": "DMIT 会话 Cookie 无效或官网仍要求安全验证；请确认官网已登录，并检查 DMIT 是否限制服务器出口/IP"}
+                cookie_names = ", ".join(_merchant_cookie_names(supplied_cookie)[:20]) or "未识别"
+                return {**result, "message": f"DMIT 会话 Cookie 未通过详情页验证（已读取 {len(_merchant_cookie_names(supplied_cookie))} 个 Cookie：{cookie_names}）；可能是 Cookie 不完整、浏览器 User-Agent 不匹配，或 DMIT/Cloudflare 绑定浏览器与出口 IP。请复制完整 Cookie，并填写浏览器 User-Agent 后重试"}
             cached = _get_merchant_session(adapter_id, account, fetcher)
             if cached and (_merchant_cached_session_reusable(fetcher) or _merchant_authenticated(cached, adapter)):
                 _renew_merchant_session(adapter_id, account, fetcher, cached)
@@ -2047,6 +2064,7 @@ def seckill_account_check(submitted: dict) -> dict:
     from monitor import product_fetcher
     account_override = submitted.get("account")
     transient_session_cookie = str(account_override.get("session_cookie", "")).strip() if isinstance(account_override, dict) else ""
+    transient_session_user_agent = str(account_override.get("session_user_agent", "")).strip() if isinstance(account_override, dict) else ""
     transient_captcha_token = str(account_override.get("captcha_token", "")).strip() if isinstance(account_override, dict) else ""
     transient_captcha_provider = str(account_override.get("captcha_provider", "hcaptcha")).strip() if isinstance(account_override, dict) else "hcaptcha"
     current = _seckill_action_config(submitted)
@@ -2070,10 +2088,12 @@ def seckill_account_check(submitted: dict) -> dict:
     account = next((row for row in current["vps_seckill"]["accounts"] if row["id"] == submitted.get("account_id")), None)
     if not account:
         raise ValueError("网站账户不存在，请先保存账户配置")
-    if transient_session_cookie or transient_captcha_token:
+    if transient_session_cookie or transient_session_user_agent or transient_captcha_token:
         account = dict(account)
         if transient_session_cookie:
             account["_session_cookie"] = transient_session_cookie
+        if transient_session_user_agent:
+            account["_session_user_agent"] = transient_session_user_agent
         if transient_captcha_token:
             account["_captcha_token"] = transient_captcha_token
             account["_captcha_provider"] = transient_captcha_provider or "hcaptcha"

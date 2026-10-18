@@ -906,6 +906,20 @@ class AccountVerificationTests(unittest.TestCase):
         self.assertNotIn('session_cookie', normalized)
         self.assertNotIn('opaque-session', json.dumps(normalized))
 
+    def test_dmit_cookie_probe_uses_account_details_url_and_browser_user_agent(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='dmit', username='user@example.com', password='', login_url=admin.MERCHANT_LOGIN_ADAPTERS['dmit']['url'],
+                       _session_cookie='WHMCSUser=opaque-session', _session_user_agent='Mozilla/5.0 CustomBrowser')
+        page = Mock(status_code=200, url='https://www.dmit.io/clientarea.php?action=details',
+                    content=b'<a href="/logout.php">Logout</a>', headers={})
+        session = requests.Session()
+        session.get = Mock(return_value=page)
+        with patch('admin._store_merchant_session'):
+            result = admin.check_order_account(session, account)
+        self.assertTrue(result['ok'])
+        self.assertEqual(session.headers['User-Agent'], 'Mozilla/5.0 CustomBrowser')
+        self.assertEqual(session.get.call_args.args[0], 'https://www.dmit.io/clientarea.php?action=details')
+
     def test_known_merchant_url_is_canonical_and_unsupported_auth_stays_unknown(self):
         value = admin.default_config()
         value['vps_seckill']['accounts'] = [{'id': 'v', 'name': 'VMISS', 'provider': 'VMISS', 'username': 'user', 'password': 'pw', 'login_url': 'https://attacker.example/collect'}]
