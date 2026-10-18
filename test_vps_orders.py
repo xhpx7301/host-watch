@@ -797,6 +797,18 @@ class AccountVerificationTests(unittest.TestCase):
         cached.post.assert_called_once_with(admin.ISVORO_API_BASE_URL + '/auth/refresh', timeout=(5, 20), allow_redirects=False,
                                             headers={'Accept': 'application/json', 'Content-Type': 'application/json', 'X-CSRF-Token': 'csrf-token'})
 
+    def test_isvoro_auth_session_cache_ttl_is_thirty_days(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='isvoro', username='user@example.com', password='pw', login_url=admin.ISVORO_LOGIN_URL)
+        route = {'egress_node_id': 'route-isvoro'}
+        source = requests.Session()
+        key = admin._merchant_session_key('isvoro', account, route)
+        with patch('admin.time.time', return_value=1000):
+            admin._store_merchant_session('isvoro', account, route, source)
+        self.assertEqual(admin.ISVORO_AUTH_SESSION_TTL, 30 * 24 * 60 * 60)
+        self.assertEqual(admin.MERCHANT_AUTH_SESSIONS[key]['expires_at'], 1000 + 30 * 24 * 60 * 60)
+        admin._remove_merchant_session('isvoro', account, route)
+
     def test_known_merchant_url_is_canonical_and_unsupported_auth_stays_unknown(self):
         value = admin.default_config()
         value['vps_seckill']['accounts'] = [{'id': 'v', 'name': 'VMISS', 'provider': 'VMISS', 'username': 'user', 'password': 'pw', 'login_url': 'https://attacker.example/collect'}]
