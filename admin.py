@@ -1955,7 +1955,7 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
                 if _merchant_authenticated(session, adapter):
                     _store_merchant_session(adapter_id, account, fetcher, session)
                     return {**result, "ok": True, "status": "valid", "session_reused": True,
-                            "message": "DMIT 已导入并缓存官网登录会话（最长 24 小时；不代表具有购买资格或库存）"}
+                            "message": "DMIT 已导入并缓存官网登录会话（最长 30 天；不代表具有购买资格或库存）"}
                 cookie_names = ", ".join(_merchant_cookie_names(supplied_cookie)[:20]) or "未识别"
                 return {**result, "message": f"DMIT 会话 Cookie 未通过详情页验证（已读取 {len(_merchant_cookie_names(supplied_cookie))} 个 Cookie：{cookie_names}）；可能是 Cookie 不完整、浏览器 User-Agent 不匹配，或 DMIT/Cloudflare 绑定浏览器与出口 IP。请复制完整 Cookie，并填写浏览器 User-Agent 后重试"}
             cached = _get_merchant_session(adapter_id, account, fetcher)
@@ -1963,7 +1963,7 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
                 _renew_merchant_session(adapter_id, account, fetcher, cached)
                 _copy_merchant_session(cached, session)
                 return {**result, "ok": True, "status": "valid", "session_reused": True,
-                        "message": f"{adapter['name']} 已复用认证会话（内存缓存最长 {'30 天' if adapter_id == 'bwh' else '24 小时'}；不代表具有购买资格或库存）"}
+                        "message": f"{adapter['name']} 已复用认证会话（内存缓存最长 30 天；不代表具有购买资格或库存）"}
             if cached:
                 _remove_merchant_session(adapter_id, account, fetcher)
             if adapter_id == "bwh" and not account.get("password"):
@@ -1983,7 +1983,7 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
                 _renew_merchant_session(adapter_id, account, fetcher, cached)
                 _copy_merchant_session(cached, session)
                 return {**result, "ok": True, "status": "valid", "session_reused": True,
-                        "message": "Akile 已复用认证会话（内存缓存最长 24 小时；不代表具有购买资格或库存）"}
+                        "message": "Akile 已复用认证会话（内存缓存最长 30 天；不代表具有购买资格或库存）"}
             if cached:
                 _remove_merchant_session(adapter_id, account, fetcher)
             checked = _akile_login(session, account)
