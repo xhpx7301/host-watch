@@ -428,7 +428,7 @@ MERCHANT_LOGIN_ADAPTERS = {
     "vmiss": {"name": "VMISS", "url": "https://app.vmiss.com/login", "host": "app.vmiss.com", "username_field": "username"},
     "vps_soy": {"name": "VPS.SOY", "url": "https://www.vps.soy/login", "host": "www.vps.soy", "username_field": "email"},
     "bwh": {"name": "搬瓦工", "url": "https://bwh81.net/clientarea.php", "host": "bwh81.net", "username_field": "username"},
-    "dmit": {"name": "DMIT", "url": "https://www.dmit.io/login", "host": "www.dmit.io", "username_field": "username"},
+    "dmit": {"name": "DMIT", "url": "https://www.dmit.io/clientarea.php", "host": "www.dmit.io", "username_field": "username"},
 }
 ISVORO_API_BASE_URL = "https://isvoro.com/api/v1"
 ISVORO_LOGIN_URL = f"{ISVORO_API_BASE_URL}/auth/login"
@@ -1085,6 +1085,92 @@ def isvoro_order(session, item: dict, account: dict, product, url: str, key: str
     invoice_url = f"https://isvoro.com/invoices/{invoice_id}"
     return {"order_id": invoice_id, "invoice_url": invoice_url, "payment_status": "unpaid",
             "plan_id": plan_id, "os": "Debian12", "payment_method": "alipay"}
+
+
+def _dmit_form_values(form) -> dict:
+    from bs4 import BeautifulSoup
+    values = {}
+    for node in form.find_all(["input", "select", "textarea"]):
+        name = str(node.get("name", "")).strip()
+        if not name:
+            continue
+        if node.name == "select":
+            option = node.find("option", selected=True) or node.find("option")
+            if option is not None:
+                values[name] = str(option.get("value", ""))
+            continue
+        typ = str(node.get("type", "text")).casefold()
+        if typ in {"submit", "button", "image", "file", "radio", "checkbox"}:
+            if typ in {"checkbox", "radio"} and node.has_attr("checked"):
+                values[name] = str(node.get("value", "on"))
+            continue
+        values[name] = str(node.get("value", ""))
+    return values
+
+
+def _dmit_order(session, item: dict, account: dict, product, url: str, fetcher: dict | None = None, key: str | None = None) -> dict:
+    """Configure one DMIT cart item and create an unpaid Alipay invoice."""
+    from bs4 import BeautifulSoup
+    from monitor import fetch_page
+    pid = str(getattr(product, "id", "") or "").split(":")[-1]
+    if not re.fullmatch(r"[1-9][0-9]{0,9}", pid):
+        pid = str(urlsplit(url).query.split("pid=")[-1]).split("&", 1)[0]
+    if not re.fullmatch(r"[1-9][0-9]{0,9}", pid):
+        raise ValueError("DMIT 商品 PID 无效，未提交订单")
+    cart_url = f"https://www.dmit.io/cart.php?a=add&pid={pid}"
+    browser_fetcher = dict(fetcher or {})
+    if browser_fetcher.get("mode") == "flaresolverr":
+        browser_fetcher["_copy_browser_state"] = True
+    body, final_url = fetch_page(session, cart_url, browser_fetcher, "www.dmit.io")
+    soup = BeautifulSoup(body, "html.parser")
+    form = soup.select_one("form#frmConfigureProduct, form[action*='a=confproduct']")
+    if form is None:
+        raise ValueError("DMIT 商品配置页结构已变化，未提交订单")
+    action = urljoin(final_url, form.get("action") or final_url)
+    if not _same_merchant_url(action, MERCHANT_LOGIN_ADAPTERS["dmit"]):
+        raise ValueError("DMIT 配置提交地址不符合商家域名，未提交订单")
+    config = _dmit_form_values(form)
+    config.update({"configure": "true", "billingcycle": "monthly", "hostname": "pz", "configoption[29]": "471", "configoption[118]": "0", "customfield[1025]": ""})
+    configured = session.post(action, data=config, timeout=(5, 25), allow_redirects=True,
+                              headers={"Referer": final_url, "Content-Type": "application/x-www-form-urlencoded"})
+    if not 200 <= configured.status_code < 300 or not _same_merchant_url(configured.url or action, MERCHANT_LOGIN_ADAPTERS["dmit"]):
+        raise ValueError("DMIT 商品配置提交失败，未提交订单")
+    checkout = configured
+    if urlsplit(checkout.url or "").path != "/cart.php" or parse_qs(urlsplit(checkout.url).query).get("a") != ["checkout"]:
+        checkout = session.get("https://www.dmit.io/cart.php?a=checkout", timeout=(5, 25), allow_redirects=True,
+                               headers={"Referer": configured.url or action})
+    if not 200 <= checkout.status_code < 300 or not _same_merchant_url(checkout.url or "", MERCHANT_LOGIN_ADAPTERS["dmit"]):
+        raise ValueError("DMIT 结算页无法读取，未提交订单")
+    checkout_soup = BeautifulSoup(checkout.content or checkout.text or "", "html.parser")
+    checkout_form = next((candidate for candidate in checkout_soup.find_all("form") if "checkout" in str(candidate.get("action", ""))), None)
+    if checkout_form is None:
+        raise ValueError("DMIT 结算页结构已变化，未提交订单")
+    checkout_action = urljoin(checkout.url, checkout_form.get("action") or checkout.url)
+    payload = _dmit_form_values(checkout_form)
+    payload.update({"submit": "true", "custtype": "existing", "paymentmethod": "alipay"})
+    for node in checkout_form.select("input[type=radio]"):
+        label = node.parent.get_text(" ", strip=True).casefold()
+        if "alipay" in label or "支付宝" in label:
+            payload["paymentmethod"] = str(node.get("value") or "alipay")
+            break
+    for name in ("accepttos", "accept_terms", "tos"):
+        if any(node.get("name") == name for node in checkout_form.find_all("input")):
+            payload[name] = "on"
+    submitted = session.post(checkout_action, data=payload, timeout=(5, 25), allow_redirects=True,
+                             headers={"Referer": checkout.url, "Content-Type": "application/x-www-form-urlencoded"})
+    if not 200 <= submitted.status_code < 300 or not _same_merchant_url(submitted.url or checkout_action, MERCHANT_LOGIN_ADAPTERS["dmit"]):
+        raise ValueError("DMIT 结算提交失败，未确认账单")
+    text = BeautifulSoup(submitted.content or submitted.text or "", "html.parser").get_text(" ", strip=True)
+    if not re.search(r"\b(?:unpaid|pending)\b|未付款|待付款|未付", text, re.I):
+        raise ValueError("DMIT 未返回可确认的未付款账单")
+    parsed = urlsplit(submitted.url or "")
+    invoice_id = (parse_qs(parsed.query).get("id") or parse_qs(parsed.query).get("invoiceid") or [""])[0]
+    match = re.search(r"(?:Invoice|账单)\s*(?:#|No\.?|编号)?\s*([0-9]{3,20})", text, re.I)
+    invoice_id = invoice_id or (match.group(1) if match else "")
+    if not re.fullmatch(r"[1-9][0-9]{2,20}", str(invoice_id)):
+        raise ValueError("DMIT 账单响应缺少账单号，未确认订单")
+    return {"order_id": str(invoice_id), "invoice_url": f"https://www.dmit.io/viewinvoice.php?id={invoice_id}", "payment_status": "unpaid",
+            "os": "Debian12", "payment_method": "alipay", "hostname": "pz", "extra_disk_gb": 0}
 
 
 def _vmiss_url(url: str) -> str:
@@ -2075,7 +2161,7 @@ def seckill_test(submitted: dict) -> dict:
         if required_account:
             if not account:
                 result["order_submission"] = {"ok": False, "required": True, "message": "未绑定账户，本次不会创建订单"}
-            elif (str((product or {}).get("adapter", "")).casefold() not in {"akile", "vmiss", "bwh", "isvoro"}
+            elif (str((product or {}).get("adapter", "")).casefold() not in {"akile", "vmiss", "bwh", "isvoro", "dmit"}
                   and not str(item.get("submit_url", "")).strip()):
                 result["order_submission"] = {"ok": False, "required": True, "message": "未配置商家待付款下单适配，本次不会创建订单"}
             else:
@@ -2089,6 +2175,8 @@ def seckill_test(submitted: dict) -> dict:
                                                             if adapter_id == "bwh" else
                                                             "已启用 Isvoro 原生待付款适配，固定使用 Debian12 和支付宝"
                                                             if adapter_id == "isvoro" else
+                                                            "已启用 DMIT 原生待付款适配，固定使用月付、PZ、Debian12、支付宝、订单后自动生成 SSH Key 和 0GB 额外硬盘"
+                                                            if adapter_id == "dmit" else
                                                             "已配置统一 hostwatch-unpaid-v1 待付款接口，启动时还会校验接口能力")}
         try:
             with requests.Session() as session:
@@ -2228,6 +2316,19 @@ class SeckillTask:
             return {"status": "submitted", "order_id": order["order_id"], "url": order["invoice_url"],
                     "quantity": quantity, "payment_status": "unpaid", "telegram_status": notification,
                     "os": order["os"], "payment_method": order["payment_method"]}
+        if product and str(product.get("adapter", "")).casefold() == "dmit":
+            try:
+                order = _dmit_order(session, item, account, inspected, url, fetcher, key)
+                self.log(f"DMIT 已创建待付款账单 {order['order_id']}（月付 / PZ / Debian12 / 支付宝 / SSH Key 订单后生成 / 额外硬盘 0GB），正在准备订单通知", "success", item)
+            except (requests.RequestException, ValueError) as exc:
+                detail = _order_exception_detail(exc)
+                self.log(f"已发送一次 DMIT 下单请求，但无法确认待付款账单；原因：{detail[:240]}。已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
+                return {"status": "uncertain", "url": url, "quantity": quantity}
+            notification = self._notify_unpaid_order(item, order["order_id"], quantity, order["invoice_url"])
+            return {"status": "submitted", "order_id": order["order_id"], "url": order["invoice_url"],
+                    "quantity": quantity, "payment_status": "unpaid", "telegram_status": notification,
+                    "os": order["os"], "payment_method": order["payment_method"], "hostname": order["hostname"],
+                    "extra_disk_gb": order["extra_disk_gb"]}
         payload = {"protocol": ORDER_PROTOCOL, "action": "create_unpaid_order",
             "product_id": item["product_id"], "purchase_url": url, "quantity": quantity,
             "coupon_code": item.get("coupon_code", ""), "payment_mode": "manual",
@@ -2322,13 +2423,14 @@ class SeckillTask:
                         native_vmiss = native_adapter == "vmiss"
                         native_bwh = native_adapter == "bwh"
                         native_isvoro = native_adapter == "isvoro"
+                        native_dmit = native_adapter == "dmit"
                         auto_requested = self.mode != "manual"
                         if auto_requested and not account:
                             raise ValueError("自动模式必须绑定网站账户")
-                        auto = bool(auto_requested and (native_akile or native_vmiss or native_bwh or native_isvoro or str(item.get("submit_url", "")).strip()))
+                        auto = bool(auto_requested and (native_akile or native_vmiss or native_bwh or native_isvoro or native_dmit or str(item.get("submit_url", "")).strip()))
                         if auto_requested and not auto:
                             raise ValueError("该商家尚未配置内置或兼容的待付款下单适配")
-                        if auto and not native_akile and not native_vmiss and not native_bwh and not native_isvoro:
+                        if auto and not native_akile and not native_vmiss and not native_bwh and not native_isvoro and not native_dmit:
                             if not account.get("login_url") or urlsplit(account["login_url"]).netloc != urlsplit(item["submit_url"]).netloc:
                                 raise ValueError("账户检查接口与待付款下单接口必须同源，以复用认证会话")
                             capability = order_json(order_session.get(item["submit_url"], timeout=(5, 20), allow_redirects=False))

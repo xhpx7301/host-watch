@@ -568,6 +568,26 @@ class IsvoroOrderTests(unittest.TestCase):
         self.assertEqual(session.post.call_args_list[1].kwargs['json'], {'gateway_id': 65})
 
 
+class DMitOrderTests(unittest.TestCase):
+    def test_dmit_order_uses_requested_defaults_and_alipay(self):
+        class Resp:
+            def __init__(self, body, url): self.content = body.encode(); self.text = body; self.status_code = 200; self.url = url
+        session = requests.Session()
+        config = Resp('<form id="frmConfigureProduct" action="/cart.php?a=confproduct&i=0"><input name="configure" value="true"><input name="hostname"><select name="billingcycle"><option value="monthly" selected>Monthly</option></select><input name="configoption[29]" value="472"><input name="configoption[118]" value="0"></form>', 'https://www.dmit.io/cart.php?a=confproduct&i=0')
+        checkout = Resp('<form action="/cart.php?a=checkout"><input name="token" value="csrf"><input name="paymentmethod" value="alipay"></form>', 'https://www.dmit.io/cart.php?a=checkout')
+        invoice = Resp('<h1>Invoice 1171903: Unpaid</h1><p>HKG.AS3.Pro.TINY</p>', 'https://www.dmit.io/viewinvoice.php?id=1171903')
+        session.get = Mock(side_effect=[config, checkout]); session.post = Mock(side_effect=[checkout, invoice])
+        product = Product('dmit:HKG:AN5:PREMIUM:MINI', 'HKG.AS3.Pro.MINI', 1, 'https://www.dmit.io/cart.php?a=add&pid=125', vendor='DMIT')
+        result = admin._dmit_order(session, {'quantity': 1}, {'username': 'user@example.com'}, product, product.url, {'mode': 'requests'})
+        self.assertEqual(result['order_id'], '1171903')
+        payload = session.post.call_args_list[0].kwargs['data']
+        self.assertEqual(payload['billingcycle'], 'monthly')
+        self.assertEqual(payload['hostname'], 'pz')
+        self.assertEqual(payload['configoption[29]'], '471')
+        self.assertEqual(payload['configoption[118]'], '0')
+        self.assertEqual(payload['customfield[1025]'], '')
+
+
 class AccountVerificationTests(unittest.TestCase):
     def setUp(self):
         # Authentication caches are intentionally process-global in production;
