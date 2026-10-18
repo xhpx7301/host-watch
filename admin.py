@@ -423,6 +423,13 @@ MERCHANT_LOGIN_ADAPTERS = {
     "bwh": {"name": "搬瓦工", "url": "https://bwh81.net/clientarea.php", "host": "bwh81.net", "username_field": "username"},
     "dmit": {"name": "DMIT", "url": "https://www.dmit.io/login", "host": "www.dmit.io", "username_field": "username"},
 }
+ISVORO_API_BASE_URL = "https://isvoro.com/api/v1"
+ISVORO_LOGIN_URL = f"{ISVORO_API_BASE_URL}/auth/login"
+ISVORO_PROFILE_URL = f"{ISVORO_API_BASE_URL}/auth/me"
+MERCHANT_LOGIN_ADAPTERS["isvoro"] = {
+    "name": "Isvoro", "url": ISVORO_LOGIN_URL, "host": "isvoro.com",
+    "username_field": "email", "kind": "api",
+}
 AKILE_LOGIN_URL = "https://api.akile.ai/api/v1/user/login"
 AKILE_PROFILE_URL = "https://api.akile.ai/api/v1/user/info"
 AKILE_STORE_URL = "https://api.akile.ai/api/v1/store/GetVpsStoreV3"
@@ -754,6 +761,82 @@ def _merchant_submit_verification(session, account: dict, adapter: dict, challen
     if _merchant_additional_verification_required(checked, checked_soup, adapter):
         return {"status": "invalid", "message": "搬瓦工验证码未通过，请确认使用最新邮件中的验证码"}
     return {"status": "unknown", "message": "搬瓦工未返回可确认的登录状态，请到官网检查"}
+
+
+def _isvoro_profile_data(payload: object) -> dict | None:
+    if not isinstance(payload, dict) or payload.get("code") not in {0, "0"}:
+        return None
+    data = payload.get("data")
+    if isinstance(data, dict) and isinstance(data.get("user"), dict):
+        data = data["user"]
+    return data if isinstance(data, dict) else None
+
+
+def _isvoro_authenticated(session, account: dict) -> bool:
+    """Validate an Isvoro browser/API session without sending credentials."""
+    try:
+        response = session.get(ISVORO_PROFILE_URL, timeout=(5, 20), allow_redirects=False,
+                               headers={"Accept": "application/json", "Referer": "https://isvoro.com/"})
+        if not 200 <= response.status_code < 300:
+            return False
+        profile = _isvoro_profile_data(response.json())
+    except (requests.RequestException, OSError, ValueError, TypeError, AttributeError):
+        return False
+    if profile is None:
+        return False
+    email = str(profile.get("email") or profile.get("username") or "").strip().casefold()
+    expected = str(account.get("username", "")).strip().casefold()
+    return bool(email and expected and email == expected)
+
+
+def _import_isvoro_session_cookie(session, raw_cookie: object) -> bool:
+    """Import a manually copied Isvoro Cookie header into a task session.
+
+    The value is transient: callers must never put it into the persisted account
+    configuration.  Restricting the cookie domain prevents a pasted header from
+    granting access to an unrelated host.
+    """
+    value = str(raw_cookie or "").strip()
+    if value.lower().startswith("cookie:"):
+        value = value[7:].strip()
+    if not value or len(value) > 16_384 or any(ord(char) < 32 for char in value):
+        return False
+    found = False
+    for part in value.split(";"):
+        name, separator, cookie_value = part.strip().partition("=")
+        if not separator or not re.fullmatch(r"[A-Za-z0-9_!#$%&'*+.^`|~-]{1,128}", name.strip()):
+            continue
+        cookie_value = cookie_value.strip()
+        if len(cookie_value) > 8192 or any(ord(char) < 32 for char in cookie_value):
+            return False
+        session.cookies.set(name.strip(), cookie_value, domain="isvoro.com", path="/")
+        found = True
+    return found
+
+
+def _isvoro_login(session, account: dict) -> dict:
+    """Log in through Isvoro's API when a captcha token is available."""
+    payload = {"email": account["username"], "password": account["password"]}
+    captcha_token = str(account.get("_captcha_token", "")).strip()
+    captcha_provider = str(account.get("_captcha_provider", "hcaptcha")).strip()
+    if captcha_token:
+        payload.update(captcha_token=captcha_token, captcha_provider=captcha_provider or "hcaptcha")
+    try:
+        response = session.post(ISVORO_LOGIN_URL, json=payload, timeout=(5, 20), allow_redirects=False,
+                                headers={"Accept": "application/json", "Content-Type": "application/json", "Referer": "https://isvoro.com/login"})
+        data = response.json()
+    except (requests.RequestException, OSError, ValueError, TypeError, AttributeError):
+        return {"status": "unknown", "message": "Isvoro 登录请求失败，请检查出口节点或官网状态"}
+    message = str(data.get("message", "")) if isinstance(data, dict) else ""
+    if response.status_code in {401, 403} or any(marker in message.casefold() for marker in ("captcha", "hcaptcha", "人机", "验证")):
+        return {"status": "unknown", "captcha_required": True,
+                "message": "Isvoro 要求人机验证；请先在官网手动完成 hCaptcha，再导入该浏览器的 Cookie"}
+    if not 200 <= response.status_code < 300 or _isvoro_profile_data(data) is None:
+        return {"status": "invalid" if response.status_code in {400, 422} else "unknown",
+                "message": "Isvoro 账户认证失败，请检查邮箱和密码" if response.status_code in {400, 422} else "Isvoro 登录响应无法确认，请到官网检查"}
+    if not _isvoro_authenticated(session, account):
+        return {"status": "unknown", "message": "Isvoro 登录成功但无法确认账户身份，请到官网检查"}
+    return {"status": "valid", "message": "Isvoro 账户认证正常（不代表具有购买资格或库存）"}
 
 
 def _akile_login(session, account: dict) -> dict:
@@ -1538,6 +1621,27 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
         if adapter:
             if account.get("login_url") != adapter["url"]:
                 return {**result, "message": "商家登录地址与内置适配不一致，请重新选择商家并保存"}
+            if adapter_id == "isvoro":
+                supplied_cookie = str(account.get("_session_cookie", "")).strip()
+                if supplied_cookie:
+                    if not _import_isvoro_session_cookie(session, supplied_cookie):
+                        return {**result, "message": "Isvoro 会话 Cookie 格式无效，请复制完整 Cookie 后重试"}
+                    if _isvoro_authenticated(session, account):
+                        _store_merchant_session(adapter_id, account, fetcher, session)
+                        return {**result, "ok": True, "status": "valid", "session_reused": True,
+                                "message": "Isvoro 已导入并缓存人工登录会话（不代表具有购买资格或库存）"}
+                    return {**result, "message": "Isvoro 会话 Cookie 已失效，请重新登录官网并复制最新 Cookie"}
+                cached = _get_merchant_session(adapter_id, account, fetcher)
+                if cached and _isvoro_authenticated(cached, account):
+                    _copy_merchant_session(cached, session)
+                    return {**result, "ok": True, "status": "valid", "session_reused": True,
+                            "message": "Isvoro 已复用短期认证会话（不代表具有购买资格或库存）"}
+                if cached:
+                    _remove_merchant_session(adapter_id, account, fetcher)
+                checked = _isvoro_login(session, account)
+                if checked["status"] == "valid":
+                    _store_merchant_session(adapter_id, account, fetcher, session)
+                return {**result, "ok": checked["status"] == "valid", **checked}
             cached = _get_merchant_session(adapter_id, account, fetcher)
             if cached and _merchant_authenticated(cached, adapter):
                 _copy_merchant_session(cached, session)
@@ -1636,8 +1740,11 @@ def _seckill_action_config(submitted: dict) -> dict:
 
 def seckill_account_check(submitted: dict) -> dict:
     from monitor import product_fetcher
-    current = _seckill_action_config(submitted)
     account_override = submitted.get("account")
+    transient_session_cookie = str(account_override.get("session_cookie", "")).strip() if isinstance(account_override, dict) else ""
+    transient_captcha_token = str(account_override.get("captcha_token", "")).strip() if isinstance(account_override, dict) else ""
+    transient_captcha_provider = str(account_override.get("captcha_provider", "hcaptcha")).strip() if isinstance(account_override, dict) else "hcaptcha"
+    current = _seckill_action_config(submitted)
     if isinstance(account_override, dict):
         account_id = str(submitted.get("account_id", ""))
         if str(account_override.get("id", "")) != account_id:
@@ -1658,6 +1765,13 @@ def seckill_account_check(submitted: dict) -> dict:
     account = next((row for row in current["vps_seckill"]["accounts"] if row["id"] == submitted.get("account_id")), None)
     if not account:
         raise ValueError("网站账户不存在，请先保存账户配置")
+    if transient_session_cookie or transient_captcha_token:
+        account = dict(account)
+        if transient_session_cookie:
+            account["_session_cookie"] = transient_session_cookie
+        if transient_captcha_token:
+            account["_captcha_token"] = transient_captcha_token
+            account["_captcha_provider"] = transient_captcha_provider or "hcaptcha"
     item_id = str(submitted.get("item_id", "")).strip()
     item = next((row for row in current["vps_seckill"]["items"] if row["id"] == item_id), None) if item_id else None
     item_override = submitted.get("item")

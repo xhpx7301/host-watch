@@ -705,6 +705,36 @@ class AccountVerificationTests(unittest.TestCase):
         self.assertEqual(result['status'], 'valid')
         self.assertEqual(session.post.call_args.args[0], 'https://www.dmit.io/login')
 
+    def test_isvoro_api_login_verifies_profile_and_caches_session(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='isvoro', username='user@example.com', password='pw', login_url=admin.ISVORO_LOGIN_URL)
+        login = response({'code': 0, 'data': {'user': {'email': 'user@example.com'}}})
+        profile = response({'code': 0, 'data': {'email': 'user@example.com', 'id': 42}})
+        session = requests.Session()
+        session.post = Mock(return_value=login)
+        session.get = Mock(return_value=profile)
+        with patch('admin._store_merchant_session') as store:
+            result = admin.check_order_account(session, account)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['status'], 'valid')
+        self.assertEqual(session.post.call_args.kwargs['json'], {'email': 'user@example.com', 'password': 'pw'})
+        store.assert_called_once_with('isvoro', account, None, session)
+
+    def test_isvoro_manual_cookie_is_verified_and_never_returned(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='isvoro', username='user@example.com', password='pw', login_url=admin.ISVORO_LOGIN_URL,
+                       _session_cookie='pmt_access=secret; pmt_csrf=csrf')
+        profile = response({'code': 0, 'data': {'email': 'user@example.com', 'id': 42}})
+        session = requests.Session()
+        session.get = Mock(return_value=profile)
+        with patch('admin._store_merchant_session') as store:
+            result = admin.check_order_account(session, account)
+        self.assertTrue(result['ok'])
+        self.assertTrue(result['session_reused'])
+        self.assertEqual(session.cookies.get('pmt_access'), 'secret')
+        self.assertNotIn('secret', json.dumps(result))
+        store.assert_called_once()
+
     def test_known_merchant_url_is_canonical_and_unsupported_auth_stays_unknown(self):
         value = admin.default_config()
         value['vps_seckill']['accounts'] = [{'id': 'v', 'name': 'VMISS', 'provider': 'VMISS', 'username': 'user', 'password': 'pw', 'login_url': 'https://attacker.example/collect'}]
