@@ -59,6 +59,9 @@ def pages(body):
 
 
 class DMITCurrentPricingTests(unittest.TestCase):
+    def test_account_probe_uses_clientarea_root(self):
+        self.assertEqual(admin.MERCHANT_LOGIN_ADAPTERS["dmit"]["auth_probe_url"], "https://www.dmit.io/clientarea.php")
+
     def test_current_theme_parses_regions_platforms_lines_and_icon_metadata(self):
         body = pricing_card() + pricing_card(sold=True, hw="an4") + pricing_card(pid="259", net="eyeball") + pricing_card(pid="270", loc="tyo", net="tier1")
         rows = dmit.parse_cards(body, dmit.PRICING_URL)

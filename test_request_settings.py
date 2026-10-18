@@ -26,10 +26,24 @@ class MerchantRequestTests(unittest.TestCase):
         self.assertEqual(monitor.product_fetcher(fetcher, item)["mode"], "flaresolverr")
         self.assertEqual(monitor.product_fetcher(fetcher, {"adapter": "vmiss"})["mode"], "flaresolverr")
 
+    def test_login_policy_is_independent_from_product_policy(self):
+        fetcher = admin.normalize_fetcher({
+            "mode": "requests",
+            "provider_modes": {"dmit": "flaresolverr"},
+            "provider_login_modes": {"dmit": "cloudscraper"},
+        })
+        self.assertEqual(monitor.product_fetcher(fetcher, {"adapter": "dmit"})["mode"], "flaresolverr")
+        self.assertEqual(monitor.login_fetcher(fetcher, "dmit")["mode"], "cloudscraper")
+        fetcher["provider_login_modes"]["dmit"] = "inherit"
+        self.assertEqual(monitor.login_fetcher(fetcher, "dmit")["mode"], "flaresolverr")
+
     def test_rejects_invalid_policy(self):
         for value in [None, [], "requests", {"unknown": "requests"}, {"vmiss": "automatic"}, {"akile": []}, {"html": True}]:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 admin.normalize_fetcher({"provider_modes": value})
+        for value in [None, [], {"unknown": "requests"}, {"dmit": "automatic"}, {"dmit": []}]:
+            with self.subTest(login_value=value), self.assertRaises(ValueError):
+                admin.normalize_fetcher({"provider_login_modes": value})
 
     def test_browser_light_loading_defaults_to_light_and_requires_a_boolean(self):
         self.assertTrue(admin.normalize_fetcher({})["disable_media"])
