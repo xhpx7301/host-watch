@@ -1174,6 +1174,16 @@ def _dmit_page_errors(response) -> str:
     return "；".join(dict.fromkeys(errors))[:320]
 
 
+def _dmit_generated_root_password() -> str:
+    """Match DMIT's browser-generated password policy for the hidden field."""
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*"
+    parts = [secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ"), secrets.choice("abcdefghijkmnopqrstuvwxyz"),
+             secrets.choice("23456789"), secrets.choice("!@#$%^&*")]
+    parts.extend(secrets.choice(alphabet) for _ in range(12))
+    secrets.SystemRandom().shuffle(parts)
+    return "".join(parts)
+
+
 def _dmit_browser_response(solution):
     from types import SimpleNamespace
     body = str(solution.get("response", ""))
@@ -1239,7 +1249,8 @@ def _dmit_order_flaresolverr(item: dict, account: dict, product, url: str, fetch
             config = _dmit_form_values(form)
             hostname = "hw-" + re.sub(r"[^a-z0-9-]", "", str(key).casefold())[:12]
             config.update({"configure": "true", "billingcycle": "monthly", "hostname": hostname,
-                           "configoption[29]": "471", "configoption[118]": "0", "customfield[1025]": ""})
+                           "configoption[29]": "471", "configoption[118]": "0", "customfield[1025]": "",
+                           "rootpw": _dmit_generated_root_password()})
             if form.find("input", attrs={"name": "beta_ack"}) is not None:
                 config["beta_ack"] = "1"
             # DMIT's order form has no HTML action. Its frontend submits an
@@ -1252,9 +1263,10 @@ def _dmit_order_flaresolverr(item: dict, account: dict, product, url: str, fetch
             if not 200 <= configured.status_code < 300 or not _same_merchant_url(configured.url or action, MERCHANT_LOGIN_ADAPTERS["dmit"]):
                 detail = _dmit_page_errors(configured)
                 raise DmitOrderFailure("DMIT 商品配置请求被拒绝；最终结算请求尚未发送" + (f"：{detail}" if detail else ""))
-            if str(configured.text or "").strip():
+            ajax_error_text = BeautifulSoup(configured.content or configured.text or "", "html.parser").get_text(" ", strip=True)
+            if ajax_error_text:
                 detail = _dmit_page_errors(configured)
-                raise DmitOrderFailure("DMIT 商品配置未通过校验；最终结算请求尚未发送" + (f"：{detail}" if detail else ""))
+                raise DmitOrderFailure("DMIT 商品配置未通过校验；最终结算请求尚未发送：" + (detail or ajax_error_text[:320]))
             config_errors = _dmit_page_errors(configured)
             if config_errors:
                 raise DmitOrderFailure(f"DMIT 商品配置未通过校验；最终结算请求尚未发送：{config_errors}")
@@ -1390,7 +1402,8 @@ def _dmit_order(session, item: dict, account: dict, product, url: str, fetcher: 
     if not seed:
         seed = hashlib.sha256(json.dumps(item, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
     hostname = "hw-" + re.sub(r"[^a-z0-9-]", "", seed.casefold())[:12]
-    config.update({"configure": "true", "billingcycle": "monthly", "hostname": hostname, "configoption[29]": "471", "configoption[118]": "0", "customfield[1025]": ""})
+    config.update({"configure": "true", "billingcycle": "monthly", "hostname": hostname, "configoption[29]": "471", "configoption[118]": "0", "customfield[1025]": "",
+                   "rootpw": _dmit_generated_root_password()})
     # DMIT's Beta plan form blocks its first submit in JavaScript until the
     # customer acknowledges the Beta notice. The browser's confirmation sets
     # this hidden field; mirror that affirmative step for this explicitly
