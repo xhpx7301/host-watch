@@ -17,7 +17,7 @@ from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
 from pathlib import Path
-from urllib.parse import parse_qs, parse_qsl, urlencode, urljoin, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 import requests
 
@@ -50,6 +50,11 @@ STOPPED_SECKILL_IDS = {}
 # without persisting the code or merchant cookies in configuration backups.
 BWH_VERIFICATION_CHALLENGES = {}
 BWH_VERIFICATION_TTL = 10 * 60
+# Short-lived authentication state for merchants whose login can be checked
+# without submitting credentials again.  Values stay in process memory only;
+# each task still receives its own requests.Session clone.
+MERCHANT_AUTH_SESSIONS = {}
+MERCHANT_AUTH_SESSION_TTL = 10 * 60
 REFRESH_LOCK = threading.Lock()
 REFRESH_TASKS = {}
 BROWSER_CLEANUP_SECONDS = 8
@@ -407,6 +412,10 @@ ORDER_PROTOCOL = "hostwatch-unpaid-v1"
 # describe the invoice that the user will pay later on the merchant site.
 ORDER_BILLING_CYCLES = {"monthly", "quarterly", "annually"}
 ORDER_PAYMENT_METHODS = {"alipay", "credit_card", "usdt"}
+BWH_PAYMENT_METHODS = {
+    "alipay": "payssionalipaycn",
+    "credit_card": "roudiappstripecheckout",
+}
 
 MERCHANT_LOGIN_ADAPTERS = {
     "vmiss": {"name": "VMISS", "url": "https://app.vmiss.com/login", "host": "app.vmiss.com", "username_field": "username"},
@@ -428,6 +437,12 @@ AKILE_DEBIAN_TEMPLATES = {
 VMISS_HOST = "app.vmiss.com"
 VMISS_BASE_URL = "https://app.vmiss.com/"
 VMISS_INVOICES_URL = "https://app.vmiss.com/clientarea.php?action=invoices"
+# WHMCS can make a newly-created invoice visible a few seconds after the
+# checkout response.  Poll only the read-only invoice list; never retry the
+# order POST itself.
+VMISS_INVOICE_POLL_ATTEMPTS = 6
+VMISS_INVOICE_POLL_DELAY = 0.6
+VMISS_INVOICE_MAX_CANDIDATES = 24
 VMISS_PAYMENT_METHODS = {"alipay": "motionpayalipay", "credit_card": "stripe", "usdt": "cryptomusgateway"}
 MERCHANT_LOGIN_IDS = {
     "vmiss": "vmiss", "vps.soy": "vps_soy", "vps_soy": "vps_soy",
@@ -444,6 +459,88 @@ def merchant_login_id(provider: object) -> str:
 def _same_merchant_url(url: str, adapter: dict) -> bool:
     parsed = urlsplit(url)
     return parsed.scheme == "https" and parsed.hostname == adapter["host"] and parsed.port in {None, 443} and not parsed.username and not parsed.password
+
+
+def _merchant_session_key(adapter_id: str, account: dict, fetcher: dict | None = None) -> tuple[str, str, str, str, str]:
+    """Keep auth state separate by merchant, account and egress identity."""
+    route = str((fetcher or {}).get("egress_node_id") or (fetcher or {}).get("egress_proxy_url") or "direct")
+    password_hash = hashlib.sha256(str(account.get("password", "")).encode("utf-8")).hexdigest()
+    return (str(adapter_id), str(account.get("id", "")),
+            str(account.get("username", "")).strip().casefold(), route, password_hash)
+
+
+def _close_bwh_session(session) -> None:
+    try:
+        session.close()
+    except (AttributeError, OSError):
+        pass
+
+
+def _copy_bwh_session(source, target) -> None:
+    """Copy only the authenticated HTTP state into a task-owned session."""
+    target.headers.update(dict(getattr(source, "headers", {}) or {}))
+    target.cookies.update(getattr(source, "cookies", {}) or {})
+    target.proxies = dict(getattr(source, "proxies", {}) or {})
+
+
+def _copy_merchant_session(source, target) -> None:
+    """Copy reusable authentication state, never share a mutable Session."""
+    _copy_bwh_session(source, target)
+    if hasattr(source, "_hostwatch_akile_user_id"):
+        target._hostwatch_akile_user_id = source._hostwatch_akile_user_id
+
+
+def _store_merchant_session(adapter_id: str, account: dict, fetcher: dict | None, session) -> None:
+    if not isinstance(session, requests.Session):
+        return
+    cached = requests.Session()
+    cached.trust_env = False
+    _copy_merchant_session(session, cached)
+    key = _merchant_session_key(adapter_id, account, fetcher)
+    with SECKILL_LOCK:
+        old = MERCHANT_AUTH_SESSIONS.pop(key, None)
+        MERCHANT_AUTH_SESSIONS[key] = {"session": cached, "expires_at": time.time() + MERCHANT_AUTH_SESSION_TTL}
+    if old:
+        _close_bwh_session(old.get("session"))
+
+
+def _get_merchant_session(adapter_id: str, account: dict, fetcher: dict | None = None):
+    key = _merchant_session_key(adapter_id, account, fetcher)
+    with SECKILL_LOCK:
+        value = MERCHANT_AUTH_SESSIONS.get(key)
+        if not value:
+            return None
+        if value.get("expires_at", 0) <= time.time():
+            MERCHANT_AUTH_SESSIONS.pop(key, None)
+            session = value.get("session")
+        else:
+            return value.get("session")
+    _close_bwh_session(session)
+    return None
+
+
+def _remove_merchant_session(adapter_id: str, account: dict, fetcher: dict | None = None) -> None:
+    key = _merchant_session_key(adapter_id, account, fetcher)
+    with SECKILL_LOCK:
+        value = MERCHANT_AUTH_SESSIONS.pop(key, None)
+    if value:
+        _close_bwh_session(value.get("session"))
+
+
+def _merchant_authenticated(session, adapter: dict) -> bool:
+    """Confirm a cached HTML login still reaches an authenticated page."""
+    try:
+        page = session.get(adapter["url"], timeout=(5, 20), allow_redirects=False,
+                           headers={**MERCHANT_BROWSER_HEADERS, "Sec-Fetch-Site": "none", "Sec-Fetch-User": "?1"})
+    except (requests.RequestException, OSError):
+        return False
+    if not 200 <= page.status_code < 300 or not _same_merchant_url(page.url or adapter["url"], adapter):
+        return False
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(page.content or page.text or "", "html.parser")
+    if _merchant_additional_verification_required(page, soup, adapter):
+        return False
+    return bool(soup.find("a", href=re.compile(r"logout|clientarea\.php\?action=details", re.I)))
 
 
 def _login_form(response, username_field: str):
@@ -712,6 +809,34 @@ def _akile_login(session, account: dict) -> dict:
     return {"status": "valid", "message": "Akile 账户认证正常（不代表具有购买资格或库存）"}
 
 
+def _akile_authenticated(session, account: dict) -> bool:
+    """Validate a cached Akile token and refresh the user id used by orders."""
+    token = str(getattr(session, "headers", {}).get("Authorization", "")).strip()
+    if not token or len(token) > 4096 or any(ord(char) < 33 for char in token):
+        return False
+    try:
+        response = session.get(AKILE_PROFILE_URL, headers={"Authorization": token},
+                               timeout=(5, 20), allow_redirects=False)
+        if not 200 <= response.status_code < 300:
+            return False
+        payload = response.json()
+    except (requests.RequestException, OSError, ValueError, TypeError, AttributeError):
+        return False
+    profile = payload.get("data") if isinstance(payload, dict) else None
+    email = str(profile.get("email", "")).strip().casefold() if isinstance(profile, dict) else ""
+    if (not isinstance(payload, dict) or payload.get("status_code") not in {0, 200, "0", "200"}
+            or not email or email != str(account.get("username", "")).strip().casefold()):
+        return False
+    user_id = profile.get("id") or profile.get("user_id") or profile.get("uid") if isinstance(profile, dict) else None
+    if type(user_id) is int and user_id > 0:
+        session._hostwatch_akile_user_id = user_id
+    elif isinstance(user_id, str) and re.fullmatch(r"[1-9][0-9]{0,18}", user_id.strip()):
+        session._hostwatch_akile_user_id = int(user_id.strip())
+    else:
+        session._hostwatch_akile_user_id = None
+    return True
+
+
 def order_json(response) -> dict:
     # Never follow checkout/payment redirects or mistake a login HTML page for success.
     if not 200 <= response.status_code < 300:
@@ -789,7 +914,14 @@ def _vmiss_invoice_url(response, fallback: str = "") -> str:
     location = str(getattr(response, "headers", {}).get("Location", "")).strip()
     candidates = [location, str(getattr(response, "url", "") or ""), str(fallback or "")]
     body = str(getattr(response, "text", "") or "")
-    candidates.extend(re.findall(r"(?:https://app\.vmiss\.com)?/viewinvoice\.php\?id=[0-9]+", body, re.I))
+    body_links = list(dict.fromkeys(re.findall(
+        r"(?:https://app\.vmiss\.com)?/(?:viewinvoice|invoice)\.php\?(?:[^\"'<>\s]*&)?(?:id|invoiceid)=[0-9]+",
+        body, re.I)))
+    # A client invoice list contains many viewinvoice links.  Do not pick the
+    # first historical invoice just because it appeared in the response body;
+    # the list reconciliation below matches the requested product instead.
+    if len(body_links) == 1:
+        candidates.extend(body_links)
     for candidate in candidates:
         if not candidate:
             continue
@@ -798,9 +930,41 @@ def _vmiss_invoice_url(response, fallback: str = "") -> str:
         except ValueError:
             continue
         parsed = urlsplit(target)
-        if parsed.path.casefold() == "/viewinvoice.php" and re.fullmatch(r"[1-9][0-9]{0,18}", parse_qs(parsed.query).get("id", [""])[0]):
+        if parsed.path.casefold() in {"/viewinvoice.php", "/invoice.php"} and re.fullmatch(r"[1-9][0-9]{0,18}", (parse_qs(parsed.query).get("id") or parse_qs(parsed.query).get("invoiceid") or [""])[0]):
             return target
     return ""
+
+
+def _vmiss_invoice_id(value: object) -> str:
+    """Extract a VMISS invoice number from a detail URL or confirmation page."""
+    raw = str(value or "")
+    parsed = urlsplit(raw)
+    query = parse_qs(parsed.query)
+    for key in ("id", "invoiceid", "invoice_id"):
+        candidate = query.get(key, [""])[0]
+        if re.fullmatch(r"[1-9][0-9]{0,18}", candidate or ""):
+            return candidate
+    match = re.search(r"\bVMISS[-\s#:]*([1-9][0-9]{5,18})\b", raw, re.I)
+    return match.group(1) if match else ""
+
+
+def _vmiss_order_detail_url(response, fallback: str = "") -> str:
+    """Return a same-host page that looks like the post-order detail view."""
+    try:
+        target = _vmiss_url(str(getattr(response, "url", "") or fallback))
+    except ValueError:
+        return ""
+    parsed = urlsplit(target)
+    query = parse_qs(parsed.query)
+    body = str(getattr(response, "text", "") or "")
+    detail_marker = re.search(r"(?:view\s*invoice|invoice\s*[#№]|\bVMISS[-\s#:]*[1-9][0-9]{5,18}\b)", body, re.I)
+    if parsed.path.casefold() == "/clientarea.php" and str(query.get("action", [""])[0]).casefold() in {"invoices", "invoice"}:
+        return ""
+    if parsed.path.casefold() == "/cart.php" and str(query.get("a", [""])[0]).casefold() in {"checkout", "view"} and not detail_marker:
+        return ""
+    if not detail_marker and not re.search(r"(?:账单|未付款|待付款|unpaid|pending)", body, re.I):
+        return ""
+    return target
 
 
 def _vmiss_invoice_status(text: str) -> str:
@@ -817,14 +981,22 @@ def _vmiss_normalize_invoice_text(value: object) -> str:
     return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", str(value or "").casefold())
 
 
-def _vmiss_confirm_invoice(session, invoice_url: str, item: dict, product) -> dict:
-    """Read one invoice page and verify status plus the requested order details."""
+def _vmiss_confirm_invoice_page(page, invoice_url: str, item: dict, product) -> dict:
+    """Verify one already-loaded VMISS invoice/order detail page."""
     from bs4 import BeautifulSoup
 
-    page = _vmiss_get(session, invoice_url)
     soup = BeautifulSoup(page.text, "html.parser")
     text = soup.get_text(" ", strip=True)
     status = _vmiss_invoice_status(text)
+    status_nodes = soup.select('[class*="status"], [class*="label"], [data-status], [data-state]')
+    if status_nodes:
+        marked_text = []
+        for node in status_nodes:
+            marked_text.append(node.get_text(" ", strip=True))
+            marked_text.extend(str(node.get(key, "")) for key in ("class", "id", "data-status", "data-state"))
+        marked_status = _vmiss_invoice_status(" ".join(marked_text))
+        if marked_status != "unknown":
+            status = marked_status
     if status != "unpaid":
         raise ValueError("VMISS 账单页未确认未付款状态，已停止且不会重复下单")
     normalized_text = _vmiss_normalize_invoice_text(text)
@@ -842,14 +1014,65 @@ def _vmiss_confirm_invoice(session, invoice_url: str, item: dict, product) -> di
     return {"status": "unpaid", "product": product_name, "operating_system": operating_system, "coupon_code": coupon}
 
 
-def _vmiss_unpaid_invoice_candidates(session) -> list[str]:
-    """Return visible unpaid invoice URLs from the client list."""
+def _vmiss_confirm_invoice(session, invoice_url: str, item: dict, product) -> dict:
+    """Read one invoice page and verify status plus the requested order details."""
+    page = _vmiss_get(session, invoice_url)
+    return _vmiss_confirm_invoice_page(page, invoice_url, item, product)
+
+
+def _vmiss_invoice_status_text(node) -> str:
+    """Include status attributes used by different VMISS/WHMCS themes."""
+    if node is None:
+        return ""
+    values = [node.get_text(" ", strip=True)]
+    for key, value in getattr(node, "attrs", {}).items():
+        if key in {"class", "id", "data-status", "data-state", "status", "title"}:
+            if isinstance(value, (list, tuple)):
+                values.extend(str(item) for item in value)
+            else:
+                values.append(str(value))
+    return " ".join(values)
+
+
+def _vmiss_link_status(link) -> str:
+    """Read an invoice row status without depending on one WHMCS theme."""
+    # The normal table layout puts the status in the same <tr>.  Some themes
+    # use a div row or put the status in a child with a class/data attribute,
+    # so inspect a few ancestors and status-marked descendants as well.
+    ancestors = []
+    current = link
+    for _ in range(5):
+        current = getattr(current, "parent", None)
+        if current is None:
+            break
+        ancestors.append(current)
+        if getattr(current, "name", "") == "tr":
+            break
+    for node in ancestors:
+        marked = node.select('[class*="status"], [class*="label"], [data-status], [data-state]')
+        sources = marked or [node]
+        status = _vmiss_invoice_status(" ".join(_vmiss_invoice_status_text(item) for item in sources))
+        if status != "unknown":
+            return status
+    return _vmiss_invoice_status(" ".join(_vmiss_invoice_status_text(item) for item in ancestors[:2]))
+
+
+def _vmiss_unpaid_invoice_candidates(session, *, include_unknown: bool = False,
+                                     list_url: str = "") -> list[str]:
+    """Return visible invoice URLs from the client list.
+
+    ``include_unknown`` is used immediately after checkout.  A few VMISS
+    themes render the status with a CSS/data attribute and the surrounding
+    text contains no literal ``Unpaid`` label.  The invoice detail page still
+    performs the authoritative status check, so inspecting these candidates is
+    safe and lets the order flow recover from that presentation difference.
+    """
     from bs4 import BeautifulSoup
 
-    page = _vmiss_get(session, VMISS_INVOICES_URL)
+    page = _vmiss_get(session, list_url or VMISS_INVOICES_URL)
     soup = BeautifulSoup(page.text, "html.parser")
     candidates = {}
-    for link in soup.select('a[href*="viewinvoice.php"]'):
+    for link in soup.select('a[href*="viewinvoice.php"]')[:VMISS_INVOICE_MAX_CANDIDATES]:
         try:
             invoice_url = _vmiss_url(urljoin(page.url or VMISS_INVOICES_URL, str(link.get("href") or "")))
         except ValueError:
@@ -857,9 +1080,8 @@ def _vmiss_unpaid_invoice_candidates(session) -> list[str]:
         invoice_id = parse_qs(urlsplit(invoice_url).query).get("id", [""])[0]
         if not re.fullmatch(r"[1-9][0-9]{0,18}", invoice_id):
             continue
-        row = link.find_parent("tr") or link.parent
-        status = _vmiss_invoice_status(row.get_text(" ", strip=True) if row else link.get_text(" ", strip=True))
-        if status == "unpaid":
+        status = _vmiss_link_status(link)
+        if status == "unpaid" or include_unknown and status == "unknown":
             candidates[invoice_id] = invoice_url
     return list(candidates.values())
 
@@ -959,37 +1181,111 @@ def vmiss_order(session, item: dict, account: dict, product, url: str, key: str,
         headers={"Idempotency-Key": key}, timeout=(5, 30), allow_redirects=False)
     progress("VMISS 下单响应已返回，正在定位待付款账单")
     invoice_url = _vmiss_invoice_url(order_response, checkout.url)
+    response_invoice_url = bool(invoice_url)
+    verification = None
+    direct_detail_error = None
+    if not invoice_url and 200 <= order_response.status_code < 300:
+        # Some VMISS deployments return the completed order/invoice detail as
+        # the POST response itself (the browser would display this page after
+        # following the redirect).  Verify that page directly before touching
+        # the invoice list.
+        detail_url = _vmiss_order_detail_url(order_response, checkout.url)
+        if detail_url:
+            try:
+                verification = _vmiss_confirm_invoice_page(order_response, detail_url, item, product)
+                invoice_url = _vmiss_invoice_url(order_response, detail_url)
+                if not invoice_url:
+                    invoice_id = _vmiss_invoice_id(getattr(order_response, "text", ""))
+                    invoice_url = f"{VMISS_BASE_URL}viewinvoice.php?id={invoice_id}" if invoice_id else detail_url
+                progress("已从 VMISS 下单响应定位订单详情并直接核验")
+            except (requests.RequestException, ValueError) as exc:
+                direct_detail_error = str(exc).strip() or exc.__class__.__name__
     if not invoice_url and 300 <= order_response.status_code < 400:
         location = str(order_response.headers.get("Location", "")).strip()
         if location:
             try:
                 destination = _vmiss_url(urljoin(order_response.url or checkout.url, location))
-                if urlsplit(destination).path.casefold() != "/cart.php":
+                destination_path = urlsplit(destination).path.casefold()
+                destination_query = parse_qs(urlsplit(destination).query)
+                destination_action = str(destination_query.get("a", [""])[0]).casefold()
+                should_read_destination = destination_path in {"/viewinvoice.php", "/invoice.php"} or (
+                    destination_path == "/cart.php" and destination_action in {"complete", "orderconfirmation"}
+                ) or bool(destination_query.get("id") or destination_query.get("invoiceid"))
+                if should_read_destination:
                     invoice_page = _vmiss_get(session, destination)
-                    invoice_url = _vmiss_invoice_url(invoice_page, invoice_page.url)
+                    linked_invoice_url = _vmiss_invoice_url(invoice_page, destination)
+                    detail_url = _vmiss_order_detail_url(invoice_page, destination)
+                    if linked_invoice_url:
+                        try:
+                            if urlsplit(invoice_page.url or destination).path.casefold() in {"/viewinvoice.php", "/invoice.php"}:
+                                verification = _vmiss_confirm_invoice_page(invoice_page, linked_invoice_url, item, product)
+                            else:
+                                verification = _vmiss_confirm_invoice(session, linked_invoice_url, item, product)
+                            invoice_url = linked_invoice_url
+                            progress("已从 VMISS 订单跳转定位账单详情并直接核验")
+                        except (requests.RequestException, ValueError) as exc:
+                            direct_detail_error = str(exc).strip() or exc.__class__.__name__
+                    elif detail_url:
+                        try:
+                            verification = _vmiss_confirm_invoice_page(invoice_page, detail_url, item, product)
+                            invoice_id = _vmiss_invoice_id(getattr(invoice_page, "text", ""))
+                            invoice_url = f"{VMISS_BASE_URL}viewinvoice.php?id={invoice_id}" if invoice_id else detail_url
+                            progress("已从 VMISS 订单跳转定位订单详情并直接核验")
+                        except (requests.RequestException, ValueError) as exc:
+                            direct_detail_error = str(exc).strip() or exc.__class__.__name__
             except ValueError:
                 pass
-    verification = None
+    if invoice_url and verification is None:
+        try:
+            verification = _vmiss_confirm_invoice(session, invoice_url, item, product)
+        except (requests.RequestException, ValueError) as exc:
+            # If the response did not provide an authoritative invoice URL,
+            # let the read-only list reconciliation locate the new invoice.
+            direct_detail_error = str(exc).strip() or exc.__class__.__name__
+            if not response_invoice_url:
+                invoice_url = ""
     if not invoice_url:
         progress("订单响应未直接返回账单链接，正在读取 VMISS 账单列表")
-        candidates = _vmiss_unpaid_invoice_candidates(session)
-        progress(f"账单列表找到 {len(candidates)} 张未付款账单，正在检查账单详情")
+        # The invoice row can lag behind the successful checkout response.
+        # Re-read only the list and invoice details; the order submission above
+        # is deliberately never repeated.
         matches = []
         reasons = []
-        for candidate in candidates:
-            candidate_id = parse_qs(urlsplit(candidate).query).get("id", [""])[0]
-            progress(f"已找到 VMISS 待付款账单 {candidate_id or '未知'}（订单已创建），正在检查订单详情")
+        candidates = []
+        for attempt in range(VMISS_INVOICE_POLL_ATTEMPTS):
+            # Keep the first request identical to the normal client URL.  A
+            # cache-busting query is used only for later reads so an upstream
+            # proxy cannot keep returning the pre-order invoice list.
+            list_url = VMISS_INVOICES_URL
+            if attempt:
+                list_url = f"{VMISS_INVOICES_URL}&hostwatch_refresh={int(time.time() * 1000)}"
             try:
-                candidate_verification = _vmiss_confirm_invoice(session, candidate, item, product)
+                candidates = _vmiss_unpaid_invoice_candidates(session, include_unknown=True, list_url=list_url)
             except (requests.RequestException, ValueError) as exc:
                 reasons.append(str(exc).strip() or exc.__class__.__name__)
-                continue
-            matches.append((candidate, candidate_verification))
+                candidates = []
+            progress(f"账单列表找到 {len(candidates)} 张待核验账单，正在检查账单详情")
+            matches = []
+            for candidate in candidates:
+                candidate_id = parse_qs(urlsplit(candidate).query).get("id", [""])[0]
+                progress(f"已找到 VMISS 待付款账单 {candidate_id or '未知'}（订单已创建），正在检查订单详情")
+                try:
+                    candidate_verification = _vmiss_confirm_invoice(session, candidate, item, product)
+                except (requests.RequestException, ValueError) as exc:
+                    reasons.append(str(exc).strip() or exc.__class__.__name__)
+                    continue
+                matches.append((candidate, candidate_verification))
+            if matches:
+                break
+            if attempt + 1 < VMISS_INVOICE_POLL_ATTEMPTS:
+                progress("新账单尚未出现在列表，稍后重试核验（不会重复下单）")
+                time.sleep(VMISS_INVOICE_POLL_DELAY)
         if len(matches) == 1:
             invoice_url, verification = matches[0]
             progress(f"VMISS 账单 {parse_qs(urlsplit(invoice_url).query).get('id', ['未知'])[0]} 检查正常")
         elif not candidates:
-            raise ValueError("VMISS 账单列表没有明确的未付款账单，未确认订单")
+            detail = f"；直接订单详情核验失败：{direct_detail_error[:120]}" if direct_detail_error else ""
+            raise ValueError(f"VMISS 账单列表没有明确的未付款账单，未确认订单{detail}")
         elif not matches:
             detail = reasons[0][:180] if reasons else "账单详情均不匹配"
             raise ValueError(f"VMISS 账单列表找到 {len(candidates)} 张未付款账单，但没有匹配本次商品：{detail}")
@@ -999,8 +1295,14 @@ def vmiss_order(session, item: dict, account: dict, product, url: str, key: str,
         if 300 <= order_response.status_code < 400:
             raise ValueError("VMISS 订单提交后跳转到支付或未知页面，已停止且未确认订单")
         raise ValueError("VMISS 未返回待付款发票，未确认订单")
-    invoice_id = parse_qs(urlsplit(invoice_url).query)["id"][0]
+    invoice_id = _vmiss_invoice_id(invoice_url)
+    if not invoice_id and verification is not None:
+        invoice_id = _vmiss_invoice_id(getattr(order_response, "text", ""))
+    if not invoice_id:
+        raise ValueError("VMISS 已返回订单详情，但无法提取账单号，未确认订单")
     if verification is None:
+        if direct_detail_error and response_invoice_url:
+            raise ValueError(direct_detail_error)
         progress(f"已创建 VMISS 待付款订单，账单 {invoice_id} 已定位；正在检查订单详情")
         verification = _vmiss_confirm_invoice(session, invoice_url, item, product)
         progress(f"VMISS 账单 {invoice_id} 检查正常")
@@ -1107,6 +1409,124 @@ def akile_confirm_order(session, order_id: str, item: dict | None = None, produc
             "order_url": akile_order_page_url(order_id), "order_status": 1}
 
 
+def _bwh_canonical_url(url: str) -> str:
+    parsed = urlsplit(str(url or "").strip())
+    if parsed.scheme != "https" or (parsed.hostname or "").casefold() not in {"bwh81.net", "www.bwh81.net", "bandwagonhost.com", "www.bandwagonhost.com"}:
+        raise ValueError("搬瓦工购买链接域名无效")
+    return urlunsplit(("https", "bwh81.net", parsed.path or "/", parsed.query, ""))
+
+
+def _bwh_form_values(form) -> dict:
+    """Collect hidden and selected form values without submitting payment fields."""
+    values = {}
+    for node in form.find_all(["input", "select", "textarea"]):
+        name = str(node.get("name", "")).strip()
+        if not name:
+            continue
+        if node.name == "select":
+            option = node.find("option", selected=True) or node.find("option")
+            if option is not None:
+                values[name] = option.get("value", "")
+            continue
+        input_type = str(node.get("type", "text")).casefold()
+        if input_type in {"submit", "button", "image", "file", "radio", "checkbox"}:
+            if input_type == "checkbox" and node.has_attr("checked"):
+                values[name] = node.get("value", "on")
+            continue
+        values[name] = node.get("value", "")
+    return values
+
+
+def bwh_order(session, item: dict, account: dict, product, url: str, key: str | None = None) -> dict:
+    """Create one BandwagonHost invoice and stop at its unpaid billing page."""
+    from bs4 import BeautifulSoup
+    from urllib.parse import parse_qs
+
+    if item.get("quantity", 1) != 1:
+        raise ValueError("搬瓦工官网结算适配目前只支持单台订单")
+    cart_url = _bwh_canonical_url(url)
+    parsed = urlsplit(cart_url)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    cycle = str(item.get("billing_cycle") or (query.get("billingcycle") or [""])[0]).strip().casefold()
+    if cycle not in ORDER_BILLING_CYCLES:
+        raise ValueError("搬瓦工付款周期必须是月付、季付、半年付或年付")
+    query["billingcycle"] = [cycle]
+    cart_url = urlunsplit(("https", "bwh81.net", parsed.path, urlencode(query, doseq=True), ""))
+    response = session.get(cart_url, timeout=(5, 20), allow_redirects=True, headers={**MERCHANT_BROWSER_HEADERS, "Sec-Fetch-Site": "same-origin"})
+    if not 200 <= response.status_code < 300 or not _same_merchant_url(response.url or cart_url, MERCHANT_LOGIN_ADAPTERS["bwh"]):
+        raise ValueError("搬瓦工商品配置页无法读取，未提交订单")
+    soup = BeautifulSoup(response.content or response.text or "", "html.parser")
+    config_form = next((form for form in soup.find_all("form") if form.find("select", attrs={"name": "configoption[17]"})), None)
+    if config_form is None:
+        raise ValueError("搬瓦工商品配置页结构已变化，未提交订单")
+    config_action = urljoin(response.url, config_form.get("action") or response.url)
+    if not _same_merchant_url(config_action, MERCHANT_LOGIN_ADAPTERS["bwh"]):
+        raise ValueError("搬瓦工配置提交地址不符合商家域名，未提交订单")
+    config = _bwh_form_values(config_form)
+    config["configure"] = "true"
+    config["billingcycle"] = cycle
+    config_response = session.post(config_action, data=config, timeout=(5, 20), allow_redirects=True,
+                                   headers={**MERCHANT_BROWSER_HEADERS, "Referer": response.url, "Sec-Fetch-Site": "same-origin"})
+    if not 200 <= config_response.status_code < 300 or not _same_merchant_url(config_response.url or config_action, MERCHANT_LOGIN_ADAPTERS["bwh"]):
+        raise ValueError("搬瓦工商品配置提交失败，未提交订单")
+    checkout = session.get("https://bwh81.net/cart.php?a=checkout", timeout=(5, 20), allow_redirects=False,
+                           headers={**MERCHANT_BROWSER_HEADERS, "Referer": config_response.url, "Sec-Fetch-Site": "same-origin"})
+    if not 200 <= checkout.status_code < 300:
+        raise ValueError("搬瓦工结算页无法读取，未提交订单")
+    checkout_soup = BeautifulSoup(checkout.content or checkout.text or "", "html.parser")
+    checkout_form = next((form for form in checkout_soup.find_all("form") if form.get("action", "").endswith("cart.php?a=checkout")), None)
+    if checkout_form is None:
+        raise ValueError("搬瓦工结算页结构已变化，未提交订单")
+    checkout_action = urljoin(checkout.url, checkout_form.get("action") or checkout.url)
+    if not _same_merchant_url(checkout_action, MERCHANT_LOGIN_ADAPTERS["bwh"]):
+        raise ValueError("搬瓦工结算提交地址不符合商家域名，未提交订单")
+    payload = _bwh_form_values(checkout_form)
+    payload.update({"submit": "true", "custtype": "existing", "paymentmethod": BWH_PAYMENT_METHODS.get(str(item.get("payment_method") or "alipay").strip().casefold(), "")})
+    if not payload["paymentmethod"]:
+        raise ValueError("搬瓦工付款方式不受支持，未提交订单")
+    payload["accepttos"] = "on"
+    payload["loginemail"] = account.get("username", "")
+    # The session is already authenticated. Do not send credit-card fields or
+    # account-credit flags; this request only creates the invoice.
+    for name in ("ccnumber", "cccvv", "ccinfo", "ccexpirydate", "ccexpirymonth", "ccexpiryyear", "applycredit"):
+        payload.pop(name, None)
+    submitted = session.post(checkout_action, data=payload, timeout=(5, 20), allow_redirects=False,
+                             headers={**MERCHANT_BROWSER_HEADERS, "Referer": checkout.url, "Sec-Fetch-Site": "same-origin",
+                                      "Content-Type": "application/x-www-form-urlencoded"})
+    checked = submitted
+    for _ in range(6):
+        location = checked.headers.get("Location", "")
+        if not location:
+            break
+        destination = urljoin(checked.url or checkout_action, location)
+        if not _same_merchant_url(destination, MERCHANT_LOGIN_ADAPTERS["bwh"]):
+            raise ValueError("搬瓦工下单跳转无法安全确认，未进入支付")
+        if "/payment" in urlsplit(destination).path.casefold():
+            raise ValueError("搬瓦工下单跳转到了支付页面，已停止")
+        checked = session.get(destination, timeout=(5, 20), allow_redirects=False,
+                              headers={**MERCHANT_BROWSER_HEADERS, "Referer": checked.url or checkout_action, "Sec-Fetch-Site": "same-origin"})
+        if not 300 <= checked.status_code < 400:
+            break
+    if not 200 <= checked.status_code < 300:
+        raise ValueError(f"搬瓦工下单返回 HTTP {checked.status_code}，未确认订单")
+    invoice_soup = BeautifulSoup(checked.content or checked.text or "", "html.parser")
+    text = invoice_soup.get_text(" ", strip=True)
+    invoice_match = re.search(r"Invoice\s+(\d+)\s*:\s*Unpaid", text, re.I)
+    if not invoice_match or not re.search(r"\b(?:unpaid|pending)\b|未付款|待付款", text, re.I):
+        raise ValueError("搬瓦工未返回可确认的未付款账单")
+    invoice_id = invoice_match.group(1)
+    if product:
+        product_name = str(getattr(product, "name", "") or "").split(" · ", 1)[0]
+        if product_name and product_name.casefold() not in text.casefold():
+            raise ValueError("搬瓦工账单商品与本次商品不匹配")
+        details = getattr(product, "match_details", None) or {}
+        datacenter_id = str(details.get("datacenter_id", "")).strip()
+        if datacenter_id and datacenter_id.casefold() not in text.casefold():
+            raise ValueError("搬瓦工账单机房与本次商品不匹配")
+    invoice_url = f"https://bwh81.net/billing/{invoice_id}"
+    return {"order_id": invoice_id, "invoice_url": invoice_url, "payment_status": "unpaid"}
+
+
 def check_order_account(session, account: dict, fetcher: dict | None = None) -> dict:
     result = {"status": "unknown", "ok": False, "account_id": account.get("id", ""),
         "checked_at": beijing_iso()}
@@ -1118,15 +1538,31 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
         if adapter:
             if account.get("login_url") != adapter["url"]:
                 return {**result, "message": "商家登录地址与内置适配不一致，请重新选择商家并保存"}
+            cached = _get_merchant_session(adapter_id, account, fetcher)
+            if cached and _merchant_authenticated(cached, adapter):
+                _copy_merchant_session(cached, session)
+                return {**result, "ok": True, "status": "valid", "session_reused": True,
+                        "message": f"{adapter['name']} 已复用短期认证会话（不代表具有购买资格或库存）"}
+            if cached:
+                _remove_merchant_session(adapter_id, account, fetcher)
             checked = _merchant_form_login(session, account, adapter, fetcher)
             if checked["status"] == "valid":
+                _store_merchant_session(adapter_id, account, fetcher, session)
                 return {**result, "ok": True, **checked}
             return {**result, **checked}
         if adapter_id == "akile":
             if account.get("login_url") != AKILE_LOGIN_URL:
                 return {**result, "message": "Akile 登录地址与内置适配不一致，请重新选择商家并保存"}
+            cached = _get_merchant_session(adapter_id, account, fetcher)
+            if cached and _akile_authenticated(cached, account):
+                _copy_merchant_session(cached, session)
+                return {**result, "ok": True, "status": "valid", "session_reused": True,
+                        "message": "Akile 已复用短期认证会话（不代表具有购买资格或库存）"}
+            if cached:
+                _remove_merchant_session(adapter_id, account, fetcher)
             checked = _akile_login(session, account)
             if checked["status"] == "valid":
+                _store_merchant_session(adapter_id, account, fetcher, session)
                 return {**result, "ok": True, **checked}
             return {**result, **checked}
         if adapter_id:
@@ -1264,7 +1700,7 @@ def seckill_account_check(submitted: dict) -> dict:
                             old["session"].close()
                 BWH_VERIFICATION_CHALLENGES[challenge_id] = {
                     "account_id": account["id"], "username": account["username"], "provider": merchant_login_id(account.get("provider")),
-                    "session": session, "url": pending_url, "expires_at": now + BWH_VERIFICATION_TTL,
+                    "session": session, "url": pending_url, "fetcher": fetcher, "expires_at": now + BWH_VERIFICATION_TTL,
                 }
             result["challenge_id"] = challenge_id
             result["verification_expires_at"] = int((now + BWH_VERIFICATION_TTL) * 1000)
@@ -1294,7 +1730,14 @@ def seckill_account_verification(submitted: dict) -> dict:
         raise ValueError("邮箱验证码会话已失效，请重新检查账户")
     current = current_config()
     supplied_account = submitted.get("account")
-    account = supplied_account if isinstance(supplied_account, dict) and str(supplied_account.get("id", "")) == account_id else next((row for row in current["vps_seckill"].get("accounts", []) if row["id"] == account_id), None)
+    saved_account = next((row for row in current["vps_seckill"].get("accounts", []) if row["id"] == account_id), None)
+    if isinstance(supplied_account, dict) and str(supplied_account.get("id", "")) == account_id:
+        account = dict(saved_account or {})
+        account.update({key: value for key, value in supplied_account.items() if key in {"id", "name", "provider", "username", "login_url", "password"}})
+        if not account.get("password") and saved_account:
+            account["password"] = saved_account.get("password", "")
+    else:
+        account = saved_account
     if not account or account.get("username") != challenge.get("username") or merchant_login_id(account.get("provider")) != "bwh":
         raise ValueError("网站账户已修改，请重新检查搬瓦工账户")
     adapter = MERCHANT_LOGIN_ADAPTERS["bwh"]
@@ -1304,7 +1747,9 @@ def seckill_account_verification(submitted: dict) -> dict:
         checked = {"status": "unknown", "message": "无法提交搬瓦工验证码：网络异常或会话已失效，请重新检查账户"}
     with SECKILL_LOCK:
         BWH_VERIFICATION_CHALLENGES.pop(challenge_id, None)
-    challenge["session"].close()
+    if checked.get("status") == "valid":
+        _store_merchant_session("bwh", account, challenge.get("fetcher"), challenge["session"])
+    _close_bwh_session(challenge["session"])
     return {"account_id": account_id, "checked_at": beijing_iso(), "ok": checked.get("status") == "valid", **checked}
 
 
@@ -1344,7 +1789,7 @@ def seckill_test(submitted: dict) -> dict:
         if required_account:
             if not account:
                 result["order_submission"] = {"ok": False, "required": True, "message": "未绑定账户，本次不会创建订单"}
-            elif (str((product or {}).get("adapter", "")).casefold() not in {"akile", "vmiss"}
+            elif (str((product or {}).get("adapter", "")).casefold() not in {"akile", "vmiss", "bwh"}
                   and not str(item.get("submit_url", "")).strip()):
                 result["order_submission"] = {"ok": False, "required": True, "message": "未配置商家待付款下单适配，本次不会创建订单"}
             else:
@@ -1354,6 +1799,8 @@ def seckill_test(submitted: dict) -> dict:
                                                             if adapter_id == "akile" else
                                                             "已启用 VMISS 原生结算适配，启动时会登录、预填配置并创建待付款发票"
                                                             if adapter_id == "vmiss" else
+                                                            "已启用搬瓦工原生官网结算适配，认证会话会短期复用并只创建未付款账单"
+                                                            if adapter_id == "bwh" else
                                                             "已配置统一 hostwatch-unpaid-v1 待付款接口，启动时还会校验接口能力")}
         try:
             with requests.Session() as session:
@@ -1466,6 +1913,17 @@ class SeckillTask:
             notification = self._notify_unpaid_order(item, order["order_id"], quantity, order["invoice_url"])
             return {"status": "submitted", "order_id": order["order_id"], "url": order["invoice_url"],
                     "quantity": quantity, "payment_status": "unpaid", "telegram_status": notification}
+        if product and str(product.get("adapter", "")).casefold() == "bwh":
+            try:
+                order = bwh_order(session, item, account, inspected, url, key)
+            except (requests.RequestException, ValueError) as exc:
+                detail = _order_exception_detail(exc)
+                self.log(f"已发送一次搬瓦工下单请求，但无法确认未付款账单；原因：{detail[:240]}。已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
+                return {"status": "uncertain", "url": url, "quantity": quantity}
+            self.log(f"搬瓦工待付款账单 {order['order_id']} 已确认，数量 {quantity}；正在准备订单通知。", "success", item)
+            notification = self._notify_unpaid_order(item, order["order_id"], quantity, order["invoice_url"])
+            return {"status": "submitted", "order_id": order["order_id"], "url": order["invoice_url"],
+                    "quantity": quantity, "payment_status": "unpaid", "telegram_status": notification}
         payload = {"protocol": ORDER_PROTOCOL, "action": "create_unpaid_order",
             "product_id": item["product_id"], "purchase_url": url, "quantity": quantity,
             "coupon_code": item.get("coupon_code", ""), "payment_mode": "manual",
@@ -1556,13 +2014,14 @@ class SeckillTask:
                         native_adapter = str((product or {}).get("adapter", "")).casefold()
                         native_akile = native_adapter == "akile"
                         native_vmiss = native_adapter == "vmiss"
+                        native_bwh = native_adapter == "bwh"
                         auto_requested = self.mode != "manual"
                         if auto_requested and not account:
                             raise ValueError("自动模式必须绑定网站账户")
-                        auto = bool(auto_requested and (native_akile or native_vmiss or str(item.get("submit_url", "")).strip()))
+                        auto = bool(auto_requested and (native_akile or native_vmiss or native_bwh or str(item.get("submit_url", "")).strip()))
                         if auto_requested and not auto:
                             raise ValueError("该商家尚未配置内置或兼容的待付款下单适配")
-                        if auto and not native_akile and not native_vmiss:
+                        if auto and not native_akile and not native_vmiss and not native_bwh:
                             if not account.get("login_url") or urlsplit(account["login_url"]).netloc != urlsplit(item["submit_url"]).netloc:
                                 raise ValueError("账户检查接口与待付款下单接口必须同源，以复用认证会话")
                             capability = order_json(order_session.get(item["submit_url"], timeout=(5, 20), allow_redirects=False))

@@ -395,6 +395,49 @@ class VmissOrderTests(OrderTaskTests):
         self.assertEqual(result["order_id"], "vmiss-invoice-456")
         self.assertEqual(result["payment_status"], "unpaid")
 
+    def test_native_checkout_polls_when_new_invoice_is_not_visible_yet(self):
+        session = Mock()
+        config = VmissResponse(vmiss_config_page(), url="https://app.vmiss.com/cart.php?a=confproduct&i=0")
+        checkout = VmissResponse(vmiss_checkout_page(), url="https://app.vmiss.com/cart.php?a=checkout")
+        empty_list = VmissResponse("<table></table>", url=admin.VMISS_INVOICES_URL)
+        delayed_list = VmissResponse(
+            '<div class="invoice-row"><a href="/viewinvoice.php?id=789">VMISS-2026</a>'
+            '<span class="status unpaid"></span></div>', url=admin.VMISS_INVOICES_URL)
+        invoice_page = VmissResponse(vmiss_invoice_page(), url="https://app.vmiss.com/viewinvoice.php?id=789")
+        session.get.side_effect = [config, checkout, empty_list, delayed_list, invoice_page]
+        session.post.side_effect = [VmissResponse(""), VmissResponse(vmiss_checkout_page(), url=checkout.url),
+                                     VmissResponse("<html>Order accepted</html>", url=checkout.url)]
+        item = {"quantity": 1, "coupon_code": "10%OFF", "operating_system": "Debian 12",
+                "billing_cycle": "monthly", "payment_method": "alipay"}
+        with patch.object(admin.time, "sleep") as sleep:
+            result = admin.vmiss_order(session, item, {"username": "user@example.com"},
+                                       Product("product60", "US.LA.CMIN2.Elite", 1, "https://app.vmiss.com/store/test"),
+                                       "https://app.vmiss.com/store/test", "abc123")
+        self.assertEqual(result["order_id"], "vmiss-invoice-789")
+        self.assertEqual(result["payment_status"], "unpaid")
+        self.assertEqual(session.post.call_count, 3)
+        sleep.assert_called_once_with(admin.VMISS_INVOICE_POLL_DELAY)
+
+    def test_native_checkout_verifies_completed_order_detail_response_before_invoice_list(self):
+        session = Mock()
+        config = VmissResponse(vmiss_config_page(), url="https://app.vmiss.com/cart.php?a=confproduct&i=0")
+        checkout = VmissResponse(vmiss_checkout_page(), url="https://app.vmiss.com/cart.php?a=checkout")
+        completed = VmissResponse(
+            '<main><h1>View Invoice</h1><strong>VMISS-2026611667</strong>'
+            '<span class="status">Unpaid</span><div class="invoice-item">'
+            'US.LA.CMIN2.Elite<br>Operating System: Debian 12<br>优惠码: 10%OFF</div></main>',
+            url="https://app.vmiss.com/cart.php?a=checkout")
+        session.get.side_effect = [config, checkout]
+        session.post.side_effect = [VmissResponse(""), VmissResponse(vmiss_checkout_page(), url=checkout.url), completed]
+        result = admin.vmiss_order(session, {"quantity": 1, "coupon_code": "10%OFF",
+                                             "operating_system": "Debian 12", "billing_cycle": "monthly",
+                                             "payment_method": "alipay"}, {"username": "user@example.com"},
+                                   Product("product60", "US.LA.CMIN2.Elite", 1, "https://app.vmiss.com/store/test"),
+                                   "https://app.vmiss.com/store/test", "abc123")
+        self.assertEqual(result["order_id"], "vmiss-invoice-2026611667")
+        self.assertEqual(result["payment_status"], "unpaid")
+        self.assertEqual(session.get.call_count, 2)
+
     def test_native_checkout_rejects_multi_quantity_instead_of_misreporting(self):
         with self.assertRaisesRegex(ValueError, "单台"):
             admin.vmiss_order(Mock(), {"quantity": 2}, {}, None,
@@ -471,7 +514,49 @@ class VmissOrderTests(OrderTaskTests):
             admin.akile_confirm_order(session, "202610170001")
 
 
+class BwhOrderTests(unittest.TestCase):
+    @staticmethod
+    def config_page():
+        return '<form method="post" action="/cart.php?a=confproduct&i=0"><input type="hidden" name="token" value="csrf"><input type="hidden" name="configure" value="true"><select name="billingcycle"><option value="annually" selected>Annual</option></select><select name="configoption[17]"><option value="158" selected>EUNL_1</option></select></form>'
+
+    @staticmethod
+    def checkout_page():
+        return '<form method="post" action="/cart.php?a=checkout"><input type="hidden" name="token" value="csrf"><input type="hidden" name="submit" value="true"><input type="hidden" name="custtype" value="new"><input type="radio" name="paymentmethod" value="paypal" checked><input type="radio" name="paymentmethod" value="payssionalipaycn"><input type="checkbox" name="accepttos"><input name="ccnumber"><input name="cccvv"></form>'
+
+    def test_creates_unpaid_invoice_with_alipay_and_never_payment_redirect(self):
+        session = Mock()
+        config = VmissResponse(self.config_page(), url='https://bwh81.net/cart.php?a=confproduct&i=0')
+        checkout = VmissResponse(self.checkout_page(), url='https://bwh81.net/cart.php?a=checkout')
+        redirect = VmissResponse('', status_code=302, url='https://bwh81.net/cart.php?a=checkout')
+        redirect.headers = {'Location': '/billing/24290771'}
+        invoice = VmissResponse('<h3>Invoice 24290771: Unpaid</h3><p>SPECIAL 20G KVM PROMO V5 - CN2 GIA ECOMMERCE</p><p>Location: NL - Amsterdam DC1 (EUNL_1)</p>', url='https://bwh81.net/billing/24290771')
+        session.get.side_effect = [config, checkout, invoice]
+        session.post.side_effect = [config, redirect]
+        product = Product('87:EUNL_1:annually:16999', 'SPECIAL 20G KVM PROMO V5 - CN2 GIA ECOMMERCE · 年付', 1,
+                          'https://bwh81.net/cart.php?a=add&pid=87&billingcycle=annually&configoption%5B17%5D=158')
+        result = admin.bwh_order(session, {'quantity': 1, 'billing_cycle': 'annually', 'payment_method': 'alipay'},
+                                 {'username': 'user@example.com'}, product, product.url)
+        self.assertEqual(result['order_id'], '24290771')
+        self.assertEqual(result['payment_status'], 'unpaid')
+        payload = session.post.call_args_list[-1].kwargs['data']
+        self.assertEqual(payload['paymentmethod'], 'payssionalipaycn')
+        self.assertEqual(payload['accepttos'], 'on')
+        self.assertNotIn('ccnumber', payload)
+        self.assertNotIn('payment', session.get.call_args_list[-1].args[0])
+
+
 class AccountVerificationTests(unittest.TestCase):
+    def setUp(self):
+        # Authentication caches are intentionally process-global in production;
+        # isolate account-check examples so one test cannot reuse another's
+        # short-lived session.
+        for cache in (admin.BWH_VERIFICATION_CHALLENGES, admin.MERCHANT_AUTH_SESSIONS):
+            for value in cache.values():
+                session = value.get('session') if isinstance(value, dict) else None
+                if session:
+                    session.close()
+            cache.clear()
+
     def test_requires_positive_authentication_and_matching_identity(self):
         account = configuration()['vps_seckill']['accounts'][0]
         for data in ({}, {'authenticated': True},
@@ -631,6 +716,92 @@ class AccountVerificationTests(unittest.TestCase):
         result = admin.check_order_account(session, account)
         self.assertEqual(result['status'], 'unknown')
         session.get.assert_not_called()
+
+    def test_bandwagon_cached_auth_session_is_reused_for_next_check(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='bwh', login_url='https://bwh81.net/clientarea.php')
+        first_page = Mock(status_code=200, url='https://bwh81.net/clientarea.php', content=b'<form action="dologin.php"><input name="username"><input name="password"></form>')
+        redirect = Mock(status_code=302, url='https://bwh81.net/dologin.php', headers={'Location': '/clientarea.php'})
+        logged_in = Mock(status_code=200, url='https://bwh81.net/clientarea.php', content=b'<a href="logout.php">Logout</a>')
+        session = requests.Session()
+        with patch('admin._store_merchant_session') as store:
+            session.get = Mock(side_effect=[first_page, logged_in])
+            session.post = Mock(return_value=redirect)
+            first = admin.check_order_account(session, account)
+            self.assertTrue(first['ok'])
+            store.assert_called_once_with('bwh', account, None, session)
+
+    def test_bandwagon_cached_auth_state_copies_into_task_session(self):
+        source = requests.Session()
+        source.cookies.set('session', 'verified')
+        target = requests.Session()
+        admin._copy_bwh_session(source, target)
+        self.assertEqual(target.cookies.get('session'), 'verified')
+
+    def test_bandwagon_cached_auth_session_skips_password_login(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='bwh', login_url='https://bwh81.net/clientarea.php')
+        source = requests.Session()
+        source.cookies.set('bwh_session', 'verified')
+        route = {'egress_node_id': 'bwh-route'}
+        admin._store_merchant_session('bwh', account, route, source)
+        target = requests.Session()
+        with patch.object(admin, '_merchant_authenticated', return_value=True) as authenticated, \
+             patch.object(admin, '_merchant_form_login') as login:
+            result = admin.check_order_account(target, account, route)
+        self.assertTrue(result['ok'])
+        self.assertTrue(result['session_reused'])
+        self.assertEqual(target.cookies.get('bwh_session'), 'verified')
+        authenticated.assert_called_once()
+        login.assert_not_called()
+        admin._remove_merchant_session('bwh', account, route)
+
+    def test_vmiss_cached_auth_session_skips_password_login(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='vmiss', login_url='https://app.vmiss.com/login')
+        source = requests.Session()
+        source.cookies.set('vmiss_session', 'cached')
+        admin._store_merchant_session('vmiss', account, {'egress_node_id': 'route-a'}, source)
+        target = requests.Session()
+        with patch.object(admin, '_merchant_authenticated', return_value=True) as authenticated, \
+             patch.object(admin, '_merchant_form_login') as login:
+            result = admin.check_order_account(target, account, {'egress_node_id': 'route-a'})
+        self.assertTrue(result['ok'])
+        self.assertTrue(result['session_reused'])
+        self.assertEqual(target.cookies.get('vmiss_session'), 'cached')
+        authenticated.assert_called_once()
+        login.assert_not_called()
+        admin._remove_merchant_session('vmiss', account, {'egress_node_id': 'route-a'})
+
+    def test_merchant_auth_cache_expires_and_isolated_by_route(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='vmiss', login_url='https://app.vmiss.com/login')
+        source = requests.Session()
+        admin._store_merchant_session('vmiss', account, {'egress_node_id': 'route-a'}, source)
+        self.assertIsNotNone(admin._get_merchant_session('vmiss', account, {'egress_node_id': 'route-a'}))
+        self.assertIsNone(admin._get_merchant_session('vmiss', account, {'egress_node_id': 'route-b'}))
+        key = admin._merchant_session_key('vmiss', account, {'egress_node_id': 'route-a'})
+        admin.MERCHANT_AUTH_SESSIONS[key]['expires_at'] = 0
+        self.assertIsNone(admin._get_merchant_session('vmiss', account, {'egress_node_id': 'route-a'}))
+
+    def test_akile_cached_auth_session_skips_api_login(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='akile', login_url=admin.AKILE_LOGIN_URL)
+        source = requests.Session()
+        source.headers['Authorization'] = 'cached-token'
+        source._hostwatch_akile_user_id = 42
+        admin._store_merchant_session('akile', account, {'egress_node_id': 'route-a'}, source)
+        target = requests.Session()
+        with patch.object(admin, '_akile_authenticated', return_value=True) as authenticated, \
+             patch.object(admin, '_akile_login') as login:
+            result = admin.check_order_account(target, account, {'egress_node_id': 'route-a'})
+        self.assertTrue(result['ok'])
+        self.assertTrue(result['session_reused'])
+        self.assertEqual(target.headers['Authorization'], 'cached-token')
+        self.assertEqual(target._hostwatch_akile_user_id, 42)
+        authenticated.assert_called_once()
+        login.assert_not_called()
+        admin._remove_merchant_session('akile', account, {'egress_node_id': 'route-a'})
 
 
 class AccountCheckAPITests(unittest.TestCase):
