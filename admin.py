@@ -54,7 +54,7 @@ BWH_VERIFICATION_TTL = 10 * 60
 # without submitting credentials again.  Values stay in process memory only;
 # each task still receives its own requests.Session clone.
 MERCHANT_AUTH_SESSIONS = {}
-MERCHANT_AUTH_SESSION_TTL = 10 * 60
+MERCHANT_AUTH_SESSION_TTL = 20 * 60
 REFRESH_LOCK = threading.Lock()
 REFRESH_TASKS = {}
 BROWSER_CLEANUP_SECONDS = 8
