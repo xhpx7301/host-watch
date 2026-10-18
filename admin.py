@@ -565,6 +565,11 @@ def _merchant_authenticated(session, adapter: dict) -> bool:
     return bool(soup.find("a", href=re.compile(r"logout|clientarea\.php\?action=details", re.I)))
 
 
+def _merchant_cached_session_reusable(fetcher: dict | None) -> bool:
+    """Trust a short-lived browser-solved session without a second challenge probe."""
+    return str((fetcher or {}).get("mode", "")).strip().casefold() in {"flaresolverr", "cloudscraper"}
+
+
 def _login_form(response, username_field: str):
     from bs4 import BeautifulSoup
     soup = BeautifulSoup(response.content or response.text or "", "html.parser")
@@ -1659,7 +1664,7 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
                     _store_merchant_session(adapter_id, account, fetcher, session)
                 return {**result, "ok": checked["status"] == "valid", **checked}
             cached = _get_merchant_session(adapter_id, account, fetcher)
-            if cached and _merchant_authenticated(cached, adapter):
+            if cached and (_merchant_cached_session_reusable(fetcher) or _merchant_authenticated(cached, adapter)):
                 _renew_merchant_session(adapter_id, account, fetcher, cached)
                 _copy_merchant_session(cached, session)
                 return {**result, "ok": True, "status": "valid", "session_reused": True,

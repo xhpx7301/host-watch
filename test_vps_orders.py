@@ -804,6 +804,24 @@ class AccountVerificationTests(unittest.TestCase):
         login.assert_not_called()
         admin._remove_merchant_session('vmiss', account, {'egress_node_id': 'route-a'})
 
+    def test_browser_solved_cached_session_skips_second_challenge_probe(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='vmiss', login_url='https://app.vmiss.com/login')
+        route = {'egress_node_id': 'route-a', 'mode': 'flaresolverr'}
+        source = requests.Session()
+        source.cookies.set('vmiss_session', 'browser-solved')
+        admin._store_merchant_session('vmiss', account, route, source)
+        target = requests.Session()
+        with patch.object(admin, '_merchant_authenticated', return_value=False) as authenticated, \
+             patch.object(admin, '_merchant_form_login') as login:
+            result = admin.check_order_account(target, account, route)
+        self.assertTrue(result['ok'])
+        self.assertTrue(result['session_reused'])
+        authenticated.assert_not_called()
+        login.assert_not_called()
+        self.assertEqual(target.cookies.get('vmiss_session'), 'browser-solved')
+        admin._remove_merchant_session('vmiss', account, route)
+
     def test_merchant_auth_cache_expires_and_isolated_by_route(self):
         account = configuration()['vps_seckill']['accounts'][0]
         account.update(provider='vmiss', login_url='https://app.vmiss.com/login')
