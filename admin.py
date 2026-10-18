@@ -1163,6 +1163,134 @@ def _dmit_page_errors(response) -> str:
     return "；".join(dict.fromkeys(errors))[:320]
 
 
+def _dmit_browser_response(solution):
+    from types import SimpleNamespace
+    body = str(solution.get("response", ""))
+    return SimpleNamespace(content=body.encode("utf-8"), text=body,
+                           status_code=int(solution.get("status", 0)),
+                           url=str(solution.get("url", "")), headers=solution.get("headers", {}) or {})
+
+
+def _dmit_order_flaresolverr(item: dict, account: dict, product, url: str, fetcher: dict, key: str) -> dict:
+    """Log in and complete DMIT checkout inside one FlareSolverr browser session."""
+    from bs4 import BeautifulSoup
+    from monitor import (browser_request_slot, flaresolverr_session_create,
+                         flaresolverr_session_destroy, flaresolverr_session_request)
+
+    pid = str(getattr(product, "id", "") or "").split(":")[-1]
+    if not re.fullmatch(r"[1-9][0-9]{0,9}", pid):
+        pid = str(urlsplit(url).query.split("pid=")[-1]).split("&", 1)[0]
+    if not re.fullmatch(r"[1-9][0-9]{0,9}", pid):
+        raise DmitOrderFailure("DMIT 商品 PID 无效；最终结算请求尚未发送")
+    session_id = ""
+    try:
+        with browser_request_slot(wait=True):
+            session_id = flaresolverr_session_create(fetcher)
+            login = flaresolverr_session_request(fetcher, session_id, MERCHANT_LOGIN_ADAPTERS["dmit"]["url"])
+            login_page = _dmit_browser_response(login)
+            login_soup = BeautifulSoup(login_page.content, "html.parser")
+            login_form = next((candidate for candidate in login_soup.find_all("form")
+                               if candidate.find("input", attrs={"name": "username"})
+                               and candidate.find("input", attrs={"name": "password"})), None)
+            if login_form is not None:
+                login_action = urljoin(login_page.url, login_form.get("action") or login_page.url)
+                if not _same_merchant_url(login_action, MERCHANT_LOGIN_ADAPTERS["dmit"]):
+                    raise DmitOrderFailure("DMIT 登录表单跳转地址不符合商家域名；最终结算请求尚未发送")
+                payload = _dmit_form_values(login_form)
+                payload["username"] = str(account.get("username", ""))
+                payload["password"] = str(account.get("password", ""))
+                for node in login_form.find_all("input", attrs={"type": "checkbox"}):
+                    name = str(node.get("name", ""))
+                    if name.casefold() in {"rememberme", "remember_me", "remember"}:
+                        payload[name] = str(node.get("value") or "on")
+                posted = flaresolverr_session_request(fetcher, session_id, login_action, "post",
+                    urlencode(payload), {"Referer": login_page.url, "Origin": "https://www.dmit.io",
+                                         "Content-Type": "application/x-www-form-urlencoded"})
+                posted_page = _dmit_browser_response(posted)
+                if not 200 <= posted_page.status_code < 300:
+                    raise DmitOrderFailure("DMIT 浏览器登录失败；最终结算请求尚未发送")
+            authenticated = flaresolverr_session_request(fetcher, session_id,
+                MERCHANT_LOGIN_ADAPTERS["dmit"]["auth_probe_url"])
+            auth_page = _dmit_browser_response(authenticated)
+            auth_text = BeautifulSoup(auth_page.content, "html.parser").get_text(" ", strip=True).casefold()
+            if not 200 <= auth_page.status_code < 300 or "logout" not in auth_text and "clientarea.php?action=details" not in auth_text:
+                raise DmitOrderFailure("DMIT 浏览器会话未通过账户验证；最终结算请求尚未发送")
+
+            cart_url = f"https://www.dmit.io/cart.php?a=add&pid={pid}"
+            cart = _dmit_browser_response(flaresolverr_session_request(fetcher, session_id, cart_url))
+            soup = BeautifulSoup(cart.content, "html.parser")
+            form = soup.select_one("form#frmConfigureProduct, form[action*='a=confproduct']")
+            if form is None:
+                raise DmitOrderFailure("DMIT 商品配置页结构已变化；最终结算请求尚未发送")
+            action = urljoin(cart.url, form.get("action") or cart.url)
+            if not _same_merchant_url(action, MERCHANT_LOGIN_ADAPTERS["dmit"]):
+                raise DmitOrderFailure("DMIT 配置提交地址不符合商家域名；最终结算请求尚未发送")
+            config = _dmit_form_values(form)
+            hostname = "hw-" + re.sub(r"[^a-z0-9-]", "", str(key).casefold())[:12]
+            config.update({"configure": "true", "billingcycle": "monthly", "hostname": hostname,
+                           "configoption[29]": "471", "configoption[118]": "0", "customfield[1025]": ""})
+            if form.find("input", attrs={"name": "beta_ack"}) is not None and soup.select_one("#modalBetaConfirm") is not None:
+                config["beta_ack"] = "1"
+            configured = _dmit_browser_response(flaresolverr_session_request(fetcher, session_id, action, "post",
+                urlencode(config), {"Referer": cart.url, "Origin": "https://www.dmit.io",
+                                    "Content-Type": "application/x-www-form-urlencoded"}))
+            if not 200 <= configured.status_code < 300 or not _same_merchant_url(configured.url or action, MERCHANT_LOGIN_ADAPTERS["dmit"]):
+                detail = _dmit_page_errors(configured)
+                raise DmitOrderFailure("DMIT 商品配置请求被拒绝；最终结算请求尚未发送" + (f"：{detail}" if detail else ""))
+            config_errors = _dmit_page_errors(configured)
+            if config_errors:
+                raise DmitOrderFailure(f"DMIT 商品配置未通过校验；最终结算请求尚未发送：{config_errors}")
+            checkout = configured
+            if urlsplit(checkout.url or "").path != "/cart.php" or parse_qs(urlsplit(checkout.url).query).get("a") != ["checkout"]:
+                checkout = _dmit_browser_response(flaresolverr_session_request(fetcher, session_id, "https://www.dmit.io/cart.php?a=checkout"))
+            if not 200 <= checkout.status_code < 300 or not _same_merchant_url(checkout.url or "", MERCHANT_LOGIN_ADAPTERS["dmit"]):
+                raise DmitOrderFailure("DMIT 结算页无法读取；最终结算请求尚未发送")
+            checkout_soup = BeautifulSoup(checkout.content, "html.parser")
+            checkout_form = next((candidate for candidate in checkout_soup.find_all("form") if "checkout" in str(candidate.get("action", ""))), None)
+            if checkout_form is None:
+                raise DmitOrderFailure("DMIT 结算页结构已变化；最终结算请求尚未发送")
+            checkout_action = urljoin(checkout.url, checkout_form.get("action") or checkout.url)
+            payload = _dmit_form_values(checkout_form)
+            payload.update({"submit": "true", "custtype": "existing", "paymentmethod": "alipay"})
+            for node in checkout_form.select("input[type=radio]"):
+                label = node.parent.get_text(" ", strip=True).casefold()
+                if "alipay" in label or "支付宝" in label:
+                    payload["paymentmethod"] = str(node.get("value") or "alipay")
+                    break
+            for name in ("accepttos", "accept_terms", "tos"):
+                if any(node.get("name") == name for node in checkout_form.find_all("input")):
+                    payload[name] = "on"
+            submitted = _dmit_browser_response(flaresolverr_session_request(fetcher, session_id, checkout_action, "post",
+                urlencode(payload), {"Referer": checkout.url, "Origin": "https://www.dmit.io",
+                                     "Content-Type": "application/x-www-form-urlencoded"}))
+            if not 200 <= submitted.status_code < 300 or not _same_merchant_url(submitted.url or checkout_action, MERCHANT_LOGIN_ADAPTERS["dmit"]):
+                raise DmitOrderFailure("DMIT 最终结算请求返回异常；结果待核对", True)
+            text = BeautifulSoup(submitted.content, "html.parser").get_text(" ", strip=True)
+            if not re.search(r"\b(?:unpaid|pending)\b|未付款|待付款|未付", text, re.I):
+                raise DmitOrderFailure("DMIT 最终结算响应未确认待付款账单；结果待核对", True)
+            parsed = urlsplit(submitted.url or "")
+            invoice_id = (parse_qs(parsed.query).get("id") or parse_qs(parsed.query).get("invoiceid") or [""])[0]
+            match = re.search(r"(?:Invoice|账单)\s*(?:#|No\.?|编号)?\s*([0-9]{3,20})", text, re.I)
+            invoice_id = invoice_id or (match.group(1) if match else "")
+            if not re.fullmatch(r"[1-9][0-9]{2,20}", str(invoice_id)):
+                raise DmitOrderFailure("DMIT 响应缺少账单号；结果待核对", True)
+            invoice_url = f"https://www.dmit.io/viewinvoice.php?id={invoice_id}"
+            invoice = _dmit_browser_response(flaresolverr_session_request(fetcher, session_id, invoice_url))
+            if not 200 <= invoice.status_code < 300:
+                raise DmitOrderFailure("DMIT 账单详情读取失败；结果待核对", True)
+            invoice_text = BeautifulSoup(invoice.content, "html.parser").get_text(" ", strip=True)
+            if not re.search(r"\b(?:unpaid|pending)\b|未付款|待付款|未付", invoice_text, re.I):
+                raise DmitOrderFailure("DMIT 账单详情未显示待付款状态；结果待核对", True)
+            product_name = str(getattr(product, "name", "") or "").strip()
+            if product_name and product_name.casefold() not in invoice_text.casefold():
+                raise DmitOrderFailure("DMIT 账单详情中的商品与本次商品不匹配；结果待核对", True)
+            return {"order_id": str(invoice_id), "invoice_url": invoice_url, "payment_status": "unpaid",
+                    "os": "Debian12", "payment_method": "alipay", "hostname": hostname, "extra_disk_gb": 0}
+    finally:
+        if session_id:
+            flaresolverr_session_destroy(fetcher, session_id)
+
+
 def _dmit_order(session, item: dict, account: dict, product, url: str, fetcher: dict | None = None, key: str | None = None) -> dict:
     """Configure one DMIT cart item and create an unpaid Alipay invoice."""
     from bs4 import BeautifulSoup
@@ -2455,7 +2583,9 @@ class SeckillTask:
                     "os": order["os"], "payment_method": order["payment_method"]}
         if product and str(product.get("adapter", "")).casefold() == "dmit":
             try:
-                order = _dmit_order(session, item, account, inspected, url, fetcher, key)
+                order = (_dmit_order_flaresolverr(item, account, inspected, url, fetcher, key)
+                         if str((fetcher or {}).get("mode", "")).casefold() == "flaresolverr"
+                         else _dmit_order(session, item, account, inspected, url, fetcher, key))
                 self.log(f"DMIT 已创建待付款账单 {order['order_id']}（月付 / PZ / Debian12 / 支付宝 / SSH Key 订单后生成 / 额外硬盘 0GB），正在准备订单通知", "success", item)
             except DmitOrderFailure as exc:
                 detail = str(exc)[:300]

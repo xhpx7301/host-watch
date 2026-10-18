@@ -445,6 +445,66 @@ def check_browser_memory(fetcher: dict) -> None:
         raise RequestServiceError("服务器可用内存不足 256 MiB，已取消启动浏览器；请释放内存或使用普通 HTTPS 请求")
 
 
+def _flaresolverr_api_call(fetcher: dict, request: dict, timeout_seconds: int | None = None) -> dict:
+    """Call FlareSolverr for a stateful browser request."""
+    endpoint = str(fetcher.get("flaresolverr_url", "")).strip()
+    if not endpoint:
+        raise RequestServiceError("未配置 FlareSolverr API 地址")
+    control = requests.Session()
+    control.trust_env = False
+    kwargs = {"json": request, "timeout": (10, timeout_seconds or int(fetcher.get("timeout_seconds", 60)) + 15)}
+    try:
+        response = control.post(endpoint, **kwargs)
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        raise RequestServiceError("无法连接 FlareSolverr 或读取其响应") from None
+    if not isinstance(payload, dict) or payload.get("status") != "ok":
+        message = str(payload.get("message", "")) if isinstance(payload, dict) else ""
+        if any(marker in message.casefold() for marker in ("captcha", "challenge")):
+            raise SiteBlocked("FlareSolverr 浏览器验证未完成")
+        raise RequestServiceError("FlareSolverr 浏览器请求失败，请检查服务日志")
+    return payload
+
+
+def flaresolverr_session_create(fetcher: dict) -> str:
+    request = {"cmd": "sessions.create", "maxTimeout": int(fetcher.get("timeout_seconds", 60)) * 1000}
+    payload = _flaresolverr_api_call(fetcher, request)
+    session_id = str(payload.get("session", "")).strip()
+    if not session_id:
+        raise RequestServiceError("FlareSolverr 未返回浏览器会话编号")
+    return session_id
+
+
+def flaresolverr_session_destroy(fetcher: dict, session_id: str) -> None:
+    if not session_id:
+        return
+    try:
+        _flaresolverr_api_call(fetcher, {"cmd": "sessions.destroy", "session": session_id}, 30)
+    except (MonitorError, OSError, ValueError, requests.RequestException):
+        logging.warning("FlareSolverr 浏览器会话释放失败")
+
+
+def flaresolverr_session_request(fetcher: dict, session_id: str, url: str, method: str = "get",
+                                 post_data: str = "", headers: dict | None = None) -> dict:
+    command = "request.post" if str(method).casefold() == "post" else "request.get"
+    request = {"cmd": command, "url": url, "session": session_id,
+               "maxTimeout": int(fetcher.get("timeout_seconds", 60)) * 1000,
+               "disableMedia": bool(fetcher.get("disable_media", True))}
+    if fetcher.get("wait_seconds"):
+        request["waitInSeconds"] = int(fetcher["wait_seconds"])
+    if post_data:
+        request["postData"] = post_data
+    if headers:
+        request["headers"] = headers
+    if fetcher.get("egress_proxy_url"):
+        request["proxy"] = egress.browser_proxy(fetcher)
+    payload = _flaresolverr_api_call(fetcher, request, int(fetcher.get("timeout_seconds", 60)) + int(fetcher.get("wait_seconds", 0)) + 30)
+    solution = payload.get("solution")
+    if not isinstance(solution, dict) or not isinstance(solution.get("response"), str) or not isinstance(solution.get("url"), str) or not isinstance(solution.get("status"), int):
+        raise RequestServiceError("FlareSolverr 响应缺少页面结果")
+    return solution
+
+
 def fetch_with_flaresolverr(session: requests.Session, url: str, fetcher: dict, expected_host: str = "app.vmiss.com") -> tuple[str, str]:
     if fetcher.get("_browser_slot_held"):
         return _fetch_with_flaresolverr(session, url, fetcher, expected_host)
