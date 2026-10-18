@@ -647,8 +647,8 @@ class AccountVerificationTests(unittest.TestCase):
 
     def test_dmit_cloudflare_challenge_is_reported_before_login_form(self):
         account = configuration()['vps_seckill']['accounts'][0]
-        account.update(provider='dmit', login_url='https://www.dmit.io/login')
-        blocked = Mock(status_code=403, headers={'cf-mitigated': 'challenge', 'CF-Ray': 'ray-123'}, url='https://www.dmit.io/login')
+        account.update(provider='dmit', login_url=admin.MERCHANT_LOGIN_ADAPTERS['dmit']['url'])
+        blocked = Mock(status_code=403, headers={'cf-mitigated': 'challenge', 'CF-Ray': 'ray-123'}, url=admin.MERCHANT_LOGIN_ADAPTERS['dmit']['url'])
         blocked.text = '<title>Just a moment...</title><div>Cloudflare</div>'
         session = Mock(headers={})
         session.get.return_value = blocked
@@ -737,8 +737,8 @@ class AccountVerificationTests(unittest.TestCase):
 
     def test_dmit_form_login_uses_builtin_adapter(self):
         account = configuration()['vps_seckill']['accounts'][0]
-        account.update(provider='dmit', login_url='https://www.dmit.io/login')
-        page = Mock(status_code=200, url='https://www.dmit.io/login', content=b'<form action="/login" method="post"><input type="hidden" name="token" value="csrf"><input name="username"><input name="password"></form>')
+        account.update(provider='dmit', login_url=admin.MERCHANT_LOGIN_ADAPTERS['dmit']['url'])
+        page = Mock(status_code=200, url=admin.MERCHANT_LOGIN_ADAPTERS['dmit']['url'], content=b'<form action="/login" method="post"><input type="hidden" name="token" value="csrf"><input name="username"><input name="password"></form>')
         redirected = Mock(status_code=302, headers={'Location': '/clientarea.php'})
         logged_in = Mock(status_code=200, url='https://www.dmit.io/clientarea.php', content=b'<a href="logout.php">Logout</a>')
         session = Mock()
@@ -808,6 +808,72 @@ class AccountVerificationTests(unittest.TestCase):
         self.assertEqual(admin.ISVORO_AUTH_SESSION_TTL, 30 * 24 * 60 * 60)
         self.assertEqual(admin.MERCHANT_AUTH_SESSIONS[key]['expires_at'], 1000 + 30 * 24 * 60 * 60)
         admin._remove_merchant_session('isvoro', account, route)
+
+    def test_bwh_auth_session_cache_ttl_is_thirty_days(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='bwh', username='user@example.com', password='pw', login_url=admin.MERCHANT_LOGIN_ADAPTERS['bwh']['url'])
+        route = {'egress_node_id': 'route-bwh'}
+        source = requests.Session()
+        key = admin._merchant_session_key('bwh', account, route)
+        with patch('admin.time.time', return_value=2000):
+            admin._store_merchant_session('bwh', account, route, source)
+        self.assertEqual(admin.BWH_AUTH_SESSION_TTL, 30 * 24 * 60 * 60)
+        self.assertEqual(admin.MERCHANT_AUTH_SESSIONS[key]['expires_at'], 2000 + 30 * 24 * 60 * 60)
+        admin._remove_merchant_session('bwh', account, route)
+
+    def test_other_native_merchant_auth_cache_ttl_is_twenty_four_hours(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='vmiss', username='user@example.com', password='pw', login_url=admin.MERCHANT_LOGIN_ADAPTERS['vmiss']['url'])
+        route = {'egress_node_id': 'route-vmiss'}
+        source = requests.Session()
+        key = admin._merchant_session_key('vmiss', account, route)
+        with patch('admin.time.time', return_value=3000):
+            admin._store_merchant_session('vmiss', account, route, source)
+        self.assertEqual(admin.MERCHANT_AUTH_SESSION_TTL, 24 * 60 * 60)
+        self.assertEqual(admin.MERCHANT_AUTH_SESSIONS[key]['expires_at'], 3000 + 24 * 60 * 60)
+        admin._remove_merchant_session('vmiss', account, route)
+
+    def test_bwh_manual_cookie_is_verified_and_cached_without_password(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='bwh', username='user@example.com', password='', login_url=admin.MERCHANT_LOGIN_ADAPTERS['bwh']['url'],
+                       _session_cookie='WHMCSUser=opaque-session; currency=USD')
+        page = Mock(status_code=200, url=admin.MERCHANT_LOGIN_ADAPTERS['bwh']['url'],
+                    content=b'<a href="/logout.php">Logout</a>', headers={})
+        session = requests.Session()
+        session.get = Mock(return_value=page)
+        with patch('admin._store_merchant_session') as store:
+            result = admin.check_order_account(session, account)
+        self.assertTrue(result['ok'])
+        self.assertTrue(result['session_reused'])
+        self.assertEqual(session.cookies.get('WHMCSUser'), 'opaque-session')
+        self.assertNotIn('opaque-session', json.dumps(result))
+        store.assert_called_once_with('bwh', account, None, session)
+
+    def test_bwh_manual_cookie_is_not_kept_in_saved_config(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='bwh', username='user@example.com', password='', login_url=admin.MERCHANT_LOGIN_ADAPTERS['bwh']['url'],
+                       session_cookie='WHMCSUser=opaque-session')
+        config = admin.default_config()
+        config['vps_seckill']['accounts'] = [account]
+        normalized = admin.validate_config(config)['vps_seckill']['accounts'][0]
+        self.assertNotIn('session_cookie', normalized)
+        self.assertNotIn('opaque-session', json.dumps(normalized))
+
+    def test_bwh_cached_manual_cookie_session_can_be_reused_without_password(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='bwh', username='user@example.com', password='', login_url=admin.MERCHANT_LOGIN_ADAPTERS['bwh']['url'])
+        route = {'egress_node_id': 'route-bwh'}
+        source = requests.Session()
+        source.cookies.set('WHMCSUser', 'opaque-session', domain='bwh81.net', path='/')
+        admin._store_merchant_session('bwh', account, route, source)
+        cached = admin._get_merchant_session('bwh', account, route)
+        with patch('admin._merchant_authenticated', return_value=True):
+            result = admin.check_order_account(requests.Session(), account, route)
+        self.assertTrue(result['ok'])
+        self.assertTrue(result['session_reused'])
+        self.assertIn('30 天', result['message'])
+        self.assertEqual(cached.cookies.get('WHMCSUser'), 'opaque-session')
+        admin._remove_merchant_session('bwh', account, route)
 
     def test_known_merchant_url_is_canonical_and_unsupported_auth_stays_unknown(self):
         value = admin.default_config()

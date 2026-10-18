@@ -56,8 +56,9 @@ BWH_VERIFICATION_TTL = 10 * 60
 # without submitting credentials again.  Values stay in process memory only;
 # each task still receives its own requests.Session clone.
 MERCHANT_AUTH_SESSIONS = {}
-MERCHANT_AUTH_SESSION_TTL = 20 * 60
+MERCHANT_AUTH_SESSION_TTL = 24 * 60 * 60
 ISVORO_AUTH_SESSION_TTL = 30 * 24 * 60 * 60
+BWH_AUTH_SESSION_TTL = 30 * 24 * 60 * 60
 REFRESH_LOCK = threading.Lock()
 REFRESH_TASKS = {}
 BROWSER_CLEANUP_SECONDS = 8
@@ -517,7 +518,7 @@ def _store_merchant_session(adapter_id: str, account: dict, fetcher: dict | None
     key = _merchant_session_key(adapter_id, account, fetcher)
     with SECKILL_LOCK:
         old = MERCHANT_AUTH_SESSIONS.pop(key, None)
-        ttl = ISVORO_AUTH_SESSION_TTL if adapter_id == "isvoro" else MERCHANT_AUTH_SESSION_TTL
+        ttl = ISVORO_AUTH_SESSION_TTL if adapter_id == "isvoro" else BWH_AUTH_SESSION_TTL if adapter_id == "bwh" else MERCHANT_AUTH_SESSION_TTL
         MERCHANT_AUTH_SESSIONS[key] = {"session": cached, "expires_at": time.time() + ttl}
     if old:
         _close_bwh_session(old.get("session"))
@@ -544,7 +545,7 @@ def _renew_merchant_session(adapter_id: str, account: dict, fetcher: dict | None
     with SECKILL_LOCK:
         value = MERCHANT_AUTH_SESSIONS.get(key)
         if value and value.get("session") is session:
-            ttl = ISVORO_AUTH_SESSION_TTL if adapter_id == "isvoro" else MERCHANT_AUTH_SESSION_TTL
+            ttl = ISVORO_AUTH_SESSION_TTL if adapter_id == "isvoro" else BWH_AUTH_SESSION_TTL if adapter_id == "bwh" else MERCHANT_AUTH_SESSION_TTL
             value["expires_at"] = time.time() + ttl
 
 
@@ -861,12 +862,12 @@ def _isvoro_authenticated(session, account: dict) -> bool:
     return _isvoro_refresh_session(session) and _isvoro_profile_authenticated(session, account)
 
 
-def _import_isvoro_session_cookie(session, raw_cookie: object) -> bool:
-    """Import a manually copied Isvoro Cookie header into a task session.
+def _import_merchant_session_cookie(session, raw_cookie: object, domain: str) -> bool:
+    """Import a manually copied merchant Cookie header into a task session.
 
     The value is transient: callers must never put it into the persisted account
-    configuration.  Restricting the cookie domain prevents a pasted header from
-    granting access to an unrelated host.
+    configuration. The caller supplies an allowlisted merchant domain, so the
+    pasted header cannot grant access to an unrelated host.
     """
     value = str(raw_cookie or "").strip()
     if value.lower().startswith("cookie:"):
@@ -881,9 +882,17 @@ def _import_isvoro_session_cookie(session, raw_cookie: object) -> bool:
         cookie_value = cookie_value.strip()
         if len(cookie_value) > 8192 or any(ord(char) < 32 for char in cookie_value):
             return False
-        session.cookies.set(name.strip(), cookie_value, domain="isvoro.com", path="/")
+        session.cookies.set(name.strip(), cookie_value, domain=domain, path="/")
         found = True
     return found
+
+
+def _import_isvoro_session_cookie(session, raw_cookie: object) -> bool:
+    return _import_merchant_session_cookie(session, raw_cookie, "isvoro.com")
+
+
+def _import_bwh_session_cookie(session, raw_cookie: object) -> bool:
+    return _import_merchant_session_cookie(session, raw_cookie, "bwh81.net")
 
 
 def _isvoro_login(session, account: dict) -> dict:
@@ -1868,10 +1877,12 @@ def bwh_order(session, item: dict, account: dict, product, url: str, key: str | 
 def check_order_account(session, account: dict, fetcher: dict | None = None) -> dict:
     result = {"status": "unknown", "ok": False, "account_id": account.get("id", ""),
         "checked_at": beijing_iso()}
-    if not account.get("username") or not account.get("password"):
-        return {**result, "message": "请填写用户名和密码，才能检查账户状态"}
+    adapter_id = merchant_login_id(account.get("provider"))
+    supplied_cookie = str(account.get("_session_cookie", "")).strip()
+    cached_bwh_session = _get_merchant_session(adapter_id, account, fetcher) if adapter_id == "bwh" else None
+    if not account.get("username") or (not account.get("password") and not (adapter_id == "bwh" and (supplied_cookie or cached_bwh_session))):
+        return {**result, "message": "请填写用户名和密码；搬瓦工也可填写用户名并导入有效 Cookie 检查"}
     try:
-        adapter_id = merchant_login_id(account.get("provider"))
         adapter = MERCHANT_LOGIN_ADAPTERS.get(adapter_id)
         if adapter:
             if account.get("login_url") != adapter["url"]:
@@ -1891,21 +1902,31 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
                     _renew_merchant_session(adapter_id, account, fetcher, cached)
                     _copy_merchant_session(cached, session)
                     return {**result, "ok": True, "status": "valid", "session_reused": True,
-                            "message": "Isvoro 已复用短期认证会话（不代表具有购买资格或库存）"}
+                            "message": "Isvoro 已复用认证会话（内存缓存最长 30 天；不代表具有购买资格或库存）"}
                 if cached:
                     _remove_merchant_session(adapter_id, account, fetcher)
                 checked = _isvoro_login(session, account)
                 if checked["status"] == "valid":
                     _store_merchant_session(adapter_id, account, fetcher, session)
                 return {**result, "ok": checked["status"] == "valid", **checked}
+            if adapter_id == "bwh" and supplied_cookie:
+                if not _import_bwh_session_cookie(session, supplied_cookie):
+                    return {**result, "message": "搬瓦工会话 Cookie 格式无效，请复制完整 Cookie 后重试"}
+                if _merchant_authenticated(session, adapter):
+                    _store_merchant_session(adapter_id, account, fetcher, session)
+                    return {**result, "ok": True, "status": "valid", "session_reused": True,
+                            "message": "搬瓦工已导入并缓存官网登录会话（最长 30 天；不代表具有购买资格或库存）"}
+                return {**result, "message": "搬瓦工会话 Cookie 无效或已过期，请重新登录官网并复制最新 Cookie"}
             cached = _get_merchant_session(adapter_id, account, fetcher)
             if cached and (_merchant_cached_session_reusable(fetcher) or _merchant_authenticated(cached, adapter)):
                 _renew_merchant_session(adapter_id, account, fetcher, cached)
                 _copy_merchant_session(cached, session)
                 return {**result, "ok": True, "status": "valid", "session_reused": True,
-                        "message": f"{adapter['name']} 已复用短期认证会话（不代表具有购买资格或库存）"}
+                        "message": f"{adapter['name']} 已复用认证会话（内存缓存最长 {'30 天' if adapter_id == 'bwh' else '24 小时'}；不代表具有购买资格或库存）"}
             if cached:
                 _remove_merchant_session(adapter_id, account, fetcher)
+            if adapter_id == "bwh" and not account.get("password"):
+                return {**result, "message": "搬瓦工 Cookie 已失效；请重新导入 Cookie，或填写密码后通过邮箱验证码登录"}
             checked = _merchant_form_login(session, account, adapter, fetcher)
             if checked["status"] == "valid":
                 _store_merchant_session(adapter_id, account, fetcher, session)
@@ -1919,7 +1940,7 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
                 _renew_merchant_session(adapter_id, account, fetcher, cached)
                 _copy_merchant_session(cached, session)
                 return {**result, "ok": True, "status": "valid", "session_reused": True,
-                        "message": "Akile 已复用短期认证会话（不代表具有购买资格或库存）"}
+                        "message": "Akile 已复用认证会话（内存缓存最长 24 小时；不代表具有购买资格或库存）"}
             if cached:
                 _remove_merchant_session(adapter_id, account, fetcher)
             checked = _akile_login(session, account)

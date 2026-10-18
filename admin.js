@@ -2564,7 +2564,7 @@ function renderVpsSeckill() {
       : providerKey === "akile"
         ? "Akile 使用内置待付款适配：固定 Debian 12 和 1 个月周期创建订单；不会自动付款。"
         : providerKey === "bwh"
-          ? "搬瓦工使用内置官网结算适配：复用短期认证会话，按商品周期和付款方式创建未付款账单；不会自动付款。"
+          ? "搬瓦工使用内置官网结算适配：复用最长 30 天的内存认证会话，按商品周期和付款方式创建未付款账单；不会自动付款。"
         : "自动模式仅对已配置商家待付款适配的商品创建订单；未适配商家只提供购买链接。", "hint span-2");
     [["下单数量（台，1–100）", quantity], ["优惠码", coupon], ["系统", operatingSystem], ["付款周期", billingCycle], ["付款方式", paymentMethod], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
     const enabled = settingButton("商品状态", item.enabled !== false, value => { item.enabled = value; renderVpsSeckillTask(); }, ["已停用", "已启用"]);
@@ -2607,14 +2607,17 @@ function renderVpsSeckill() {
       } else if (selected === "vmiss" || selected === "vps_soy" || selected === "bwh" || selected === "akile" || selected === "isvoro" || selected === "dmit") {
         const urls = { vmiss: "https://app.vmiss.com/login", vps_soy: "https://www.vps.soy/login", bwh: "https://bwh81.net/clientarea.php", akile: "https://api.akile.ai/api/v1/user/login", isvoro: "https://isvoro.com/api/v1/auth/login", dmit: "https://www.dmit.io/clientarea.php" };
         account.provider = selected; account.login_url = urls[selected];
-        adapterNote.textContent = selected === "akile" ? "Akile 已内置 API 登录检查；填写邮箱和密码。若要求邮箱验证、二步验证、Passkey 或验证码，请到官网完成。检查不下单、不付款。" : selected === "isvoro" ? "Isvoro 已内置 API 登录检查；首次在官网完成 hCaptcha 后导入 Cookie。服务会在内存中缓存最长 30 天，并在 access Cookie 过期时自动使用 refresh Cookie 续期；服务重启或 refresh Cookie 失效后需重新导入。" : selected === "vmiss" ? "VMISS 已内置登录与官网结算适配；填写官网登录邮箱和密码。自动抢购会预填商品配置并创建待付款发票，不会自动付款。" : selected === "bwh" ? "搬瓦工已内置登录与官网结算适配；邮箱验证码提交成功后会短期复用认证会话，减少同一出口重复验证。抢购只创建未付款账单，不会自动付款。" : `${ids[selected]} 已内置登录检查；只需填写官网登录名和密码。检查仅登录，不下单、不付款。遇到安全验证时，请在网页请求中为该商家选择 FlareSolverr 或 cloudscraper。`;
+        adapterNote.textContent = selected === "akile" ? "Akile 已内置 API 登录检查；填写邮箱和密码。若要求邮箱验证、二步验证、Passkey 或验证码，请到官网完成。检查不下单、不付款。" : selected === "isvoro" ? "Isvoro 已内置 API 登录检查；首次在官网完成 hCaptcha 后导入 Cookie。服务会在内存中缓存最长 30 天，并在 access Cookie 过期时自动使用 refresh Cookie 续期；服务重启或 refresh Cookie 失效后需重新导入。" : selected === "vmiss" ? "VMISS 已内置登录与官网结算适配；填写官网登录邮箱和密码。自动抢购会预填商品配置并创建待付款发票，不会自动付款。" : selected === "bwh" ? "搬瓦工已内置登录与官网结算适配；可在官网完成邮箱验证后导入 Cookie，服务在内存中缓存最长 30 天。Cookie 不会写入配置或备份；过期或服务重启后需重新导入，密码登录仍可能要求邮箱验证码。" : `${ids[selected]} 已内置登录检查；只需填写官网登录名和密码。检查仅登录，不下单、不付款。遇到安全验证时，请在网页请求中为该商家选择 FlareSolverr 或 cloudscraper。`;
         const destinations = { ...urls, akile: "https://akile.ai/login", isvoro: "https://isvoro.com/login" };
         const link = text("a", `打开 ${ids[selected]} 官网登录页`); link.href = destinations[selected]; link.target = "_blank"; link.rel = "noopener noreferrer"; link.className = "provider-login-link"; providerExtra.append(link);
-        if (selected === "isvoro") {
-          const cookie = document.createElement("input"); cookie.type = "password"; cookie.autocomplete = "off"; cookie.value = account.session_cookie || ""; cookie.placeholder = "首次手动登录后粘贴 Cookie: name=value; …";
+        if (selected === "isvoro" || selected === "bwh") {
+          const cookie = document.createElement("input"); cookie.type = "password"; cookie.autocomplete = "off"; cookie.value = account.session_cookie || ""; cookie.placeholder = "官网手动登录后粘贴 Cookie: name=value; …";
           cookie.addEventListener("input", () => { account.session_cookie = cookie.value; updateDraftState(); });
-          const cookieLabel = document.createElement("label"); cookieLabel.append(text("span", "Isvoro 会话 Cookie（仅本次检查）"), cookie); providerExtra.append(cookieLabel);
-          providerExtra.append(text("p", "导入步骤：打开登录页 → 完成 hCaptcha 并登录 → F12 打开 Network → 刷新 → 找到 /api/v1/auth/me → Headers → Request Headers → Cookie，复制整行粘贴到上方。只需导入一次，后续由服务自动缓存和续期。", "isvoro-cookie-help"));
+          const cookieLabel = document.createElement("label"); cookieLabel.append(text("span", `${ids[selected]} 会话 Cookie（仅本次检查）`), cookie); providerExtra.append(cookieLabel);
+          const instructions = selected === "isvoro"
+            ? "导入步骤：打开登录页 → 完成 hCaptcha 并登录 → F12 打开 Network → 刷新 → 找到 /api/v1/auth/me → Headers → Request Headers → Cookie，复制整行粘贴到上方。验证通过后只保存在服务器内存，最长 30 天；access Cookie 过期时会尝试使用 refresh Cookie 续期。"
+            : "导入步骤：打开搬瓦工官网登录页并完成邮箱验证码 → F12 打开 Network → 刷新 → 找到 clientarea.php 请求 → Headers → Request Headers → Cookie，复制整行粘贴到上方。验证通过后只保存在服务器内存，最长 30 天；搬瓦工 Cookie 本身过期或服务重启后需重新导入。";
+          providerExtra.append(text("p", instructions, "merchant-cookie-help"));
         }
       } else if (selected) {
         account.provider = selected; account.login_url = "";
@@ -2643,8 +2646,8 @@ function renderVpsSeckill() {
         try {
           result = await requestJSON("/api/seckill/account-check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: collectConfig(), account_id: account.id, account: { ...account } }) });
         } finally {
-          // A manually imported Isvoro Cookie is a transient credential; never
-          // leave it in the browser draft after the check request completes.
+          // Manually imported merchant cookies are transient credentials; never
+          // leave them in the browser draft after the check request completes.
           delete account.session_cookie;
           delete account.captcha_token;
           delete account.captcha_provider;
