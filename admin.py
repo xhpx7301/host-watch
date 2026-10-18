@@ -1146,6 +1146,23 @@ def _dmit_form_values(form) -> dict:
     return values
 
 
+class DmitOrderFailure(ValueError):
+    """DMIT flow failure with an explicit marker for final checkout submission."""
+
+    def __init__(self, message: str, checkout_request_sent: bool = False):
+        super().__init__(message)
+        self.checkout_request_sent = checkout_request_sent
+
+
+def _dmit_page_errors(response) -> str:
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(response.content or response.text or "", "html.parser")
+    errors = [" ".join(node.get_text(" ", strip=True).split()) for node in
+              soup.select(".alert-danger, .alert-error, .error, .validation-error, .field-error")]
+    errors = [value for value in errors if value and value.casefold() not in {"error", "errors"}]
+    return "；".join(dict.fromkeys(errors))[:320]
+
+
 def _dmit_order(session, item: dict, account: dict, product, url: str, fetcher: dict | None = None, key: str | None = None) -> dict:
     """Configure one DMIT cart item and create an unpaid Alipay invoice."""
     from bs4 import BeautifulSoup
@@ -1177,10 +1194,25 @@ def _dmit_order(session, item: dict, account: dict, product, url: str, fetcher: 
         seed = hashlib.sha256(json.dumps(item, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
     hostname = "hw-" + re.sub(r"[^a-z0-9-]", "", seed.casefold())[:12]
     config.update({"configure": "true", "billingcycle": "monthly", "hostname": hostname, "configoption[29]": "471", "configoption[118]": "0", "customfield[1025]": ""})
-    configured = session.post(action, data=config, timeout=(5, 25), allow_redirects=True,
-                              headers={"Referer": final_url, "Content-Type": "application/x-www-form-urlencoded"})
-    if not 200 <= configured.status_code < 300 or not _same_merchant_url(configured.url or action, MERCHANT_LOGIN_ADAPTERS["dmit"]):
-        raise ValueError("DMIT 商品配置提交失败，未提交订单")
+    # DMIT's Beta plan form blocks its first submit in JavaScript until the
+    # customer acknowledges the Beta notice. The browser's confirmation sets
+    # this hidden field; mirror that affirmative step for this explicitly
+    # requested order flow.
+    if form.find("input", attrs={"name": "beta_ack"}) is not None and soup.select_one("#modalBetaConfirm") is not None:
+        config["beta_ack"] = "1"
+    try:
+        configured = session.post(action, data=config, timeout=(5, 25), allow_redirects=True,
+                                  headers={"Referer": final_url, "Content-Type": "application/x-www-form-urlencoded"})
+    except requests.RequestException:
+        raise DmitOrderFailure("DMIT 商品配置请求网络失败；最终结算请求尚未发送") from None
+    if not 200 <= configured.status_code < 300:
+        detail = _dmit_page_errors(configured)
+        raise DmitOrderFailure(f"DMIT 商品配置请求返回 HTTP {configured.status_code}；尚未发送最终结算请求" + (f"：{detail}" if detail else ""))
+    if not _same_merchant_url(configured.url or action, MERCHANT_LOGIN_ADAPTERS["dmit"]):
+        raise DmitOrderFailure("DMIT 商品配置请求跳转离开官网；尚未发送最终结算请求")
+    config_errors = _dmit_page_errors(configured)
+    if config_errors:
+        raise DmitOrderFailure(f"DMIT 商品配置未通过校验；尚未发送最终结算请求：{config_errors}")
     checkout = configured
     if urlsplit(checkout.url or "").path != "/cart.php" or parse_qs(urlsplit(checkout.url).query).get("a") != ["checkout"]:
         checkout = session.get("https://www.dmit.io/cart.php?a=checkout", timeout=(5, 25), allow_redirects=True,
@@ -1202,20 +1234,40 @@ def _dmit_order(session, item: dict, account: dict, product, url: str, fetcher: 
     for name in ("accepttos", "accept_terms", "tos"):
         if any(node.get("name") == name for node in checkout_form.find_all("input")):
             payload[name] = "on"
-    submitted = session.post(checkout_action, data=payload, timeout=(5, 25), allow_redirects=True,
-                             headers={"Referer": checkout.url, "Content-Type": "application/x-www-form-urlencoded"})
-    if not 200 <= submitted.status_code < 300 or not _same_merchant_url(submitted.url or checkout_action, MERCHANT_LOGIN_ADAPTERS["dmit"]):
-        raise ValueError("DMIT 结算提交失败，未确认账单")
+    try:
+        submitted = session.post(checkout_action, data=payload, timeout=(5, 25), allow_redirects=True,
+                                 headers={"Referer": checkout.url, "Content-Type": "application/x-www-form-urlencoded"})
+    except requests.RequestException:
+        raise DmitOrderFailure("DMIT 最终结算请求的响应未收到；账单是否创建无法确认，请先检查官网账单列表", True) from None
+    if not 200 <= submitted.status_code < 300:
+        raise DmitOrderFailure(f"DMIT 最终结算请求已发出，但返回 HTTP {submitted.status_code}，未确认账单", True)
+    if not _same_merchant_url(submitted.url or checkout_action, MERCHANT_LOGIN_ADAPTERS["dmit"]):
+        raise DmitOrderFailure("DMIT 最终结算请求已发出，但跳转离开官网，未确认账单", True)
     text = BeautifulSoup(submitted.content or submitted.text or "", "html.parser").get_text(" ", strip=True)
     if not re.search(r"\b(?:unpaid|pending)\b|未付款|待付款|未付", text, re.I):
-        raise ValueError("DMIT 未返回可确认的未付款账单")
+        detail = _dmit_page_errors(submitted)
+        raise DmitOrderFailure("DMIT 最终结算请求已发出，但响应未确认待付款账单" + (f"：{detail}" if detail else ""), True)
     parsed = urlsplit(submitted.url or "")
     invoice_id = (parse_qs(parsed.query).get("id") or parse_qs(parsed.query).get("invoiceid") or [""])[0]
     match = re.search(r"(?:Invoice|账单)\s*(?:#|No\.?|编号)?\s*([0-9]{3,20})", text, re.I)
     invoice_id = invoice_id or (match.group(1) if match else "")
     if not re.fullmatch(r"[1-9][0-9]{2,20}", str(invoice_id)):
-        raise ValueError("DMIT 账单响应缺少账单号，未确认订单")
-    return {"order_id": str(invoice_id), "invoice_url": f"https://www.dmit.io/viewinvoice.php?id={invoice_id}", "payment_status": "unpaid",
+        raise DmitOrderFailure("DMIT 最终结算请求已发出，但响应缺少账单号；结果待核对", True)
+    invoice_url = f"https://www.dmit.io/viewinvoice.php?id={invoice_id}"
+    try:
+        invoice = session.get(invoice_url, timeout=(5, 25), allow_redirects=False,
+                              headers={"Referer": submitted.url or checkout_action})
+    except requests.RequestException:
+        raise DmitOrderFailure("DMIT 结算请求已发出并返回账单号，但读取账单详情失败；结果待核对", True) from None
+    if not 200 <= invoice.status_code < 300 or not _same_merchant_url(invoice.url or invoice_url, MERCHANT_LOGIN_ADAPTERS["dmit"]):
+        raise DmitOrderFailure(f"DMIT 结算请求已发出并返回账单号，但账单详情返回 HTTP {invoice.status_code}；结果待核对", True)
+    invoice_text = BeautifulSoup(invoice.content or invoice.text or "", "html.parser").get_text(" ", strip=True)
+    if not re.search(r"\b(?:unpaid|pending)\b|未付款|待付款|未付", invoice_text, re.I):
+        raise DmitOrderFailure("DMIT 账单详情未显示待付款状态；结果待核对", True)
+    product_name = str(getattr(product, "name", "") or "").strip()
+    if product_name and product_name.casefold() not in invoice_text.casefold():
+        raise DmitOrderFailure("DMIT 账单详情中的商品与本次商品不匹配；结果待核对", True)
+    return {"order_id": str(invoice_id), "invoice_url": invoice_url, "payment_status": "unpaid",
             "os": "Debian12", "payment_method": "alipay", "hostname": hostname, "extra_disk_gb": 0}
 
 
@@ -2395,9 +2447,16 @@ class SeckillTask:
             try:
                 order = _dmit_order(session, item, account, inspected, url, fetcher, key)
                 self.log(f"DMIT 已创建待付款账单 {order['order_id']}（月付 / PZ / Debian12 / 支付宝 / SSH Key 订单后生成 / 额外硬盘 0GB），正在准备订单通知", "success", item)
+            except DmitOrderFailure as exc:
+                detail = str(exc)[:300]
+                if exc.checkout_request_sent:
+                    self.log(f"DMIT 最终结算请求已发出，但账单核验未通过；原因：{detail}。结果待核对，请先查看官网账单，勿重复启动。未发起付款请求。", "error", item)
+                    return {"status": "uncertain", "url": url, "quantity": quantity}
+                self.log(f"DMIT 商品配置失败，未发送最终结算请求，也未创建或核验账单；原因：{detail}。修正配置后可重试。", "error", item)
+                return {"status": "failed_before_submit", "url": url, "quantity": quantity}
             except (requests.RequestException, ValueError) as exc:
                 detail = _order_exception_detail(exc)
-                self.log(f"已发送一次 DMIT 下单请求，但无法确认待付款账单；原因：{detail[:240]}。已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
+                self.log(f"DMIT 抢购流程在账单核验前异常；最终结算请求是否发出无法确认。原因：{detail[:240]}。请先检查官网账单，勿重复启动。未发起付款请求。", "error", item)
                 return {"status": "uncertain", "url": url, "quantity": quantity}
             notification = self._notify_unpaid_order(item, order["order_id"], quantity, order["invoice_url"])
             return {"status": "submitted", "order_id": order["order_id"], "url": order["invoice_url"],
@@ -2590,9 +2649,18 @@ class SeckillTask:
                     cancelled=self.cancelled.is_set(), checked_at=beijing_iso(),
                     duration_seconds=round(time.monotonic() - self.started, 1))
                 self.done.set()
-            self.log("秒杀任务已停止" if self.output.get("cancelled") else "秒杀任务已完成；如有待付款订单，请到官网手动支付")
-            self.publish_module_status("error" if any(item.get("status") == "blocked" for item in finished.values()) else "success",
-                                       "任务已停止" if self.output.get("cancelled") else "任务已完成")
+            completed_items = list(finished.values())
+            if self.output.get("cancelled"):
+                final_message = "秒杀任务已停止"
+            elif any(item.get("status") == "submitted" for item in completed_items):
+                final_message = "秒杀任务已完成；已确认的待付款订单请到官网手动支付"
+            elif any(item.get("status") == "uncertain" for item in completed_items):
+                final_message = "秒杀任务已完成；存在结果待核对商品，请先检查官网账单，勿重复启动"
+            else:
+                final_message = "秒杀任务已完成；没有确认创建待付款订单"
+            self.log(final_message)
+            failed = any(item.get("status") in {"blocked", "failed_before_submit", "uncertain"} for item in completed_items)
+            self.publish_module_status("error" if failed else "success", final_message)
 
     def mode_label(self):
         return {"rapid": "极速秒杀（自动）", "precise": "精准秒杀（自动）", "manual": "手动秒杀"}.get(self.mode, self.mode)

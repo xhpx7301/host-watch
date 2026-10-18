@@ -575,8 +575,9 @@ class DMitOrderTests(unittest.TestCase):
         session = requests.Session()
         config = Resp('<form id="frmConfigureProduct" action="/cart.php?a=confproduct&i=0"><input name="configure" value="true"><input name="hostname"><select name="billingcycle"><option value="monthly" selected>Monthly</option></select><input name="configoption[29]" value="472"><input name="configoption[118]" value="0"></form>', 'https://www.dmit.io/cart.php?a=confproduct&i=0')
         checkout = Resp('<form action="/cart.php?a=checkout"><input name="token" value="csrf"><input name="paymentmethod" value="alipay"></form>', 'https://www.dmit.io/cart.php?a=checkout')
-        invoice = Resp('<h1>Invoice 1171903: Unpaid</h1><p>HKG.AS3.Pro.TINY</p>', 'https://www.dmit.io/viewinvoice.php?id=1171903')
-        session.get = Mock(side_effect=[config, checkout]); session.post = Mock(side_effect=[checkout, invoice])
+        invoice = Resp('<h1>Invoice 1171903: Unpaid</h1><p>HKG.AS3.Pro.MINI</p>', 'https://www.dmit.io/viewinvoice.php?id=1171903')
+        invoice_detail = Resp('<h1>Invoice 1171903: Unpaid</h1><p>HKG.AS3.Pro.MINI</p>', 'https://www.dmit.io/viewinvoice.php?id=1171903')
+        session.get = Mock(side_effect=[config, invoice_detail]); session.post = Mock(side_effect=[checkout, invoice])
         product = Product('dmit:HKG:AN5:PREMIUM:MINI', 'HKG.AS3.Pro.MINI', 1, 'https://www.dmit.io/cart.php?a=add&pid=125', vendor='DMIT')
         result = admin._dmit_order(session, {'quantity': 1}, {'username': 'user@example.com'}, product, product.url, {'mode': 'requests'})
         self.assertEqual(result['order_id'], '1171903')
@@ -587,6 +588,34 @@ class DMitOrderTests(unittest.TestCase):
         self.assertEqual(payload['configoption[29]'], '471')
         self.assertEqual(payload['configoption[118]'], '0')
         self.assertEqual(payload['customfield[1025]'], '')
+        self.assertEqual(session.get.call_args_list[-1].args[0], 'https://www.dmit.io/viewinvoice.php?id=1171903')
+
+    def test_dmit_beta_configuration_ack_is_sent_before_final_checkout(self):
+        class Resp:
+            def __init__(self, body, url, status=200): self.content = body.encode(); self.text = body; self.status_code = status; self.url = url
+        session = requests.Session()
+        config = Resp('<form id="frmConfigureProduct" action="/cart.php?a=confproduct&i=0"><input name="configure" value="true"><input name="beta_ack" value=""><input name="hostname"><select name="billingcycle"><option value="monthly" selected>Monthly</option></select><input name="configoption[29]" value="472"><input name="configoption[118]" value="0"></form><div id="modalBetaConfirm"></div>', 'https://www.dmit.io/cart.php?a=confproduct&i=0')
+        checkout = Resp('<form action="/cart.php?a=checkout"><input name="token" value="csrf"><input name="paymentmethod" value="alipay"></form>', 'https://www.dmit.io/cart.php?a=checkout')
+        invoice = Resp('<h1>Invoice 1171904: Unpaid</h1><p>HKG.AS3.Pro.MINI</p>', 'https://www.dmit.io/viewinvoice.php?id=1171904')
+        invoice_detail = Resp('<h1>Invoice 1171904: Unpaid</h1><p>HKG.AS3.Pro.MINI</p>', 'https://www.dmit.io/viewinvoice.php?id=1171904')
+        session.get = Mock(side_effect=[config, invoice_detail]); session.post = Mock(side_effect=[checkout, invoice])
+        product = Product('dmit:HKG:AN5:PREMIUM:MINI', 'HKG.AS3.Pro.MINI', 1, 'https://www.dmit.io/cart.php?a=add&pid=125', vendor='DMIT')
+        result = admin._dmit_order(session, {'quantity': 1}, {'username': 'user@example.com'}, product, product.url, {'mode': 'requests'}, 'task-item')
+        self.assertEqual(result['order_id'], '1171904')
+        self.assertEqual(session.post.call_args_list[0].kwargs['data']['beta_ack'], '1')
+
+    def test_dmit_configuration_rejection_marks_no_final_checkout_request(self):
+        class Resp:
+            def __init__(self, body, url, status=200): self.content = body.encode(); self.text = body; self.status_code = status; self.url = url
+        session = requests.Session()
+        config = Resp('<form id="frmConfigureProduct" action="/cart.php?a=confproduct&i=0"><input name="hostname"></form>', 'https://www.dmit.io/cart.php?a=confproduct&i=0')
+        rejected = Resp('<div class="alert-danger">Hostname is already in use</div>', 'https://www.dmit.io/cart.php?a=confproduct&i=0', 403)
+        session.get = Mock(return_value=config); session.post = Mock(return_value=rejected)
+        product = Product('dmit:HKG:AN5:PREMIUM:MINI', 'HKG.AS3.Pro.MINI', 1, 'https://www.dmit.io/cart.php?a=add&pid=125', vendor='DMIT')
+        with self.assertRaises(admin.DmitOrderFailure) as raised:
+            admin._dmit_order(session, {'quantity': 1}, {'username': 'user@example.com'}, product, product.url, {'mode': 'requests'}, 'task-item')
+        self.assertFalse(raised.exception.checkout_request_sent)
+        self.assertEqual(session.post.call_count, 1)
 
 
 class AccountVerificationTests(unittest.TestCase):

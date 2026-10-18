@@ -2785,7 +2785,7 @@ function renderVpsSeckillTask() {
   const state = document.querySelector("#seckill-task-state"), start = document.querySelector("#vps-seckill-start"), stop = document.querySelector("#vps-seckill-stop");
   const running = vpsSeckillTask && vpsSeckillTask.pending !== false; state.textContent = running ? "执行中" : vpsSeckillTask ? (vpsSeckillTask.cancelled ? "已暂停" : "已完成") : "未运行"; state.className = `state ${running ? "pending" : vpsSeckillTask?.cancelled ? "error" : vpsSeckillTask ? "ok" : ""}`; start.disabled = Boolean(running) || actionRunning || !seckillItems().some(item => item.enabled !== false); stop.hidden = !running; stop.disabled = !running;
   const results = document.querySelector("#vps-seckill-results"); results.replaceChildren();
-  const labels = { submitted: "已创建待付款订单", ready: "请手动下单", uncertain: "结果待核对，请勿重复下单", blocked: "预检查未通过", cancelled: "已停止" };
+  const labels = { submitted: "已创建待付款订单", ready: "请手动下单", uncertain: "结果待核对，请勿重复下单", blocked: "预检查未通过", failed_before_submit: "配置失败，未提交账单", cancelled: "已停止" };
   (vpsSeckillTask?.items || []).forEach(result => {
     const item = seckillItems().find(row => row.id === result.item_id);
     const row = text("div", "", "seckill-result");
