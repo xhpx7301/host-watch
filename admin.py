@@ -1228,7 +1228,8 @@ def _dmit_order_flaresolverr(item: dict, account: dict, product, url: str, fetch
             config = _dmit_form_values(form)
             hostname = "hw-" + re.sub(r"[^a-z0-9-]", "", str(key).casefold())[:12]
             config.update({"configure": "true", "billingcycle": "monthly", "hostname": hostname,
-                           "configoption[29]": "471", "configoption[118]": "0", "customfield[1025]": ""})
+                           "configoption[29]": "471", "configoption[118]": "0", "customfield[1025]": "",
+                           "rootpw": secrets.token_urlsafe(12)})
             if form.find("input", attrs={"name": "beta_ack"}) is not None and soup.select_one("#modalBetaConfirm") is not None:
                 config["beta_ack"] = "1"
             configured = _dmit_browser_response(flaresolverr_session_request(fetcher, session_id, action, "post",
@@ -1372,7 +1373,8 @@ def _dmit_order(session, item: dict, account: dict, product, url: str, fetcher: 
     if not seed:
         seed = hashlib.sha256(json.dumps(item, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
     hostname = "hw-" + re.sub(r"[^a-z0-9-]", "", seed.casefold())[:12]
-    config.update({"configure": "true", "billingcycle": "monthly", "hostname": hostname, "configoption[29]": "471", "configoption[118]": "0", "customfield[1025]": ""})
+    config.update({"configure": "true", "billingcycle": "monthly", "hostname": hostname, "configoption[29]": "471", "configoption[118]": "0", "customfield[1025]": "",
+                   "rootpw": secrets.token_urlsafe(12)})
     # DMIT's Beta plan form blocks its first submit in JavaScript until the
     # customer acknowledges the Beta notice. The browser's confirmation sets
     # this hidden field; mirror that affirmative step for this explicitly
