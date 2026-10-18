@@ -526,6 +526,15 @@ def _get_merchant_session(adapter_id: str, account: dict, fetcher: dict | None =
     return None
 
 
+def _renew_merchant_session(adapter_id: str, account: dict, fetcher: dict | None, session) -> None:
+    """Extend a cached session only after its authentication was revalidated."""
+    key = _merchant_session_key(adapter_id, account, fetcher)
+    with SECKILL_LOCK:
+        value = MERCHANT_AUTH_SESSIONS.get(key)
+        if value and value.get("session") is session:
+            value["expires_at"] = time.time() + MERCHANT_AUTH_SESSION_TTL
+
+
 def _remove_merchant_session(adapter_id: str, account: dict, fetcher: dict | None = None) -> None:
     key = _merchant_session_key(adapter_id, account, fetcher)
     with SECKILL_LOCK:
@@ -1633,6 +1642,7 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
                     return {**result, "message": "Isvoro 会话 Cookie 已失效，请重新登录官网并复制最新 Cookie"}
                 cached = _get_merchant_session(adapter_id, account, fetcher)
                 if cached and _isvoro_authenticated(cached, account):
+                    _renew_merchant_session(adapter_id, account, fetcher, cached)
                     _copy_merchant_session(cached, session)
                     return {**result, "ok": True, "status": "valid", "session_reused": True,
                             "message": "Isvoro 已复用短期认证会话（不代表具有购买资格或库存）"}
@@ -1644,6 +1654,7 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
                 return {**result, "ok": checked["status"] == "valid", **checked}
             cached = _get_merchant_session(adapter_id, account, fetcher)
             if cached and _merchant_authenticated(cached, adapter):
+                _renew_merchant_session(adapter_id, account, fetcher, cached)
                 _copy_merchant_session(cached, session)
                 return {**result, "ok": True, "status": "valid", "session_reused": True,
                         "message": f"{adapter['name']} 已复用短期认证会话（不代表具有购买资格或库存）"}
@@ -1659,6 +1670,7 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
                 return {**result, "message": "Akile 登录地址与内置适配不一致，请重新选择商家并保存"}
             cached = _get_merchant_session(adapter_id, account, fetcher)
             if cached and _akile_authenticated(cached, account):
+                _renew_merchant_session(adapter_id, account, fetcher, cached)
                 _copy_merchant_session(cached, session)
                 return {**result, "ok": True, "status": "valid", "session_reused": True,
                         "message": "Akile 已复用短期认证会话（不代表具有购买资格或库存）"}

@@ -1,6 +1,7 @@
 """Order-only seckill regressions: no live merchant requests or payments."""
 import copy
 import json
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -813,6 +814,22 @@ class AccountVerificationTests(unittest.TestCase):
         key = admin._merchant_session_key('vmiss', account, {'egress_node_id': 'route-a'})
         admin.MERCHANT_AUTH_SESSIONS[key]['expires_at'] = 0
         self.assertIsNone(admin._get_merchant_session('vmiss', account, {'egress_node_id': 'route-a'}))
+
+    def test_merchant_auth_cache_renews_after_successful_reuse(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='vmiss', login_url='https://app.vmiss.com/login')
+        route = {'egress_node_id': 'route-a'}
+        source = requests.Session()
+        source.cookies.set('vmiss_session', 'cached')
+        admin._store_merchant_session('vmiss', account, route, source)
+        key = admin._merchant_session_key('vmiss', account, route)
+        admin.MERCHANT_AUTH_SESSIONS[key]['expires_at'] = time.time() + 1
+        old_expiry = admin.MERCHANT_AUTH_SESSIONS[key]['expires_at']
+        with patch.object(admin, '_merchant_authenticated', return_value=True):
+            result = admin.check_order_account(requests.Session(), account, route)
+        self.assertTrue(result['session_reused'])
+        self.assertGreater(admin.MERCHANT_AUTH_SESSIONS[key]['expires_at'], old_expiry)
+        admin._remove_merchant_session('vmiss', account, route)
 
     def test_akile_cached_auth_session_skips_api_login(self):
         account = configuration()['vps_seckill']['accounts'][0]
