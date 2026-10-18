@@ -1157,8 +1157,19 @@ class DmitOrderFailure(ValueError):
 def _dmit_page_errors(response) -> str:
     from bs4 import BeautifulSoup
     soup = BeautifulSoup(response.content or response.text or "", "html.parser")
+    def visible(node):
+        current = node
+        while current is not None and getattr(current, "name", None):
+            classes = {str(value).casefold() for value in (current.get("class") or [])}
+            style = re.sub(r"\s+", "", str(current.get("style", "")).casefold())
+            if ("hidden" in classes or "hide" in classes or current.get("hidden") is not None
+                    or str(current.get("aria-hidden", "")).casefold() == "true"
+                    or "display:none" in style or "visibility:hidden" in style):
+                return False
+            current = current.parent
+        return True
     errors = [" ".join(node.get_text(" ", strip=True).split()) for node in
-              soup.select(".alert-danger, .alert-error, .error, .validation-error, .field-error")]
+              soup.select(".alert-danger, .alert-error, .error, .validation-error, .field-error") if visible(node)]
     errors = [value for value in errors if value and value.casefold() not in {"error", "errors"}]
     return "；".join(dict.fromkeys(errors))[:320]
 
@@ -1230,7 +1241,7 @@ def _dmit_order_flaresolverr(item: dict, account: dict, product, url: str, fetch
             config.update({"configure": "true", "billingcycle": "monthly", "hostname": hostname,
                            "configoption[29]": "471", "configoption[118]": "0", "customfield[1025]": "",
                            "rootpw": secrets.token_urlsafe(12)})
-            if form.find("input", attrs={"name": "beta_ack"}) is not None and soup.select_one("#modalBetaConfirm") is not None:
+            if form.find("input", attrs={"name": "beta_ack"}) is not None:
                 config["beta_ack"] = "1"
             configured = _dmit_browser_response(flaresolverr_session_request(fetcher, session_id, action, "post",
                 urlencode(config), {"Referer": cart.url, "Origin": "https://www.dmit.io",
@@ -1379,7 +1390,7 @@ def _dmit_order(session, item: dict, account: dict, product, url: str, fetcher: 
     # customer acknowledges the Beta notice. The browser's confirmation sets
     # this hidden field; mirror that affirmative step for this explicitly
     # requested order flow.
-    if form.find("input", attrs={"name": "beta_ack"}) is not None and soup.select_one("#modalBetaConfirm") is not None:
+    if form.find("input", attrs={"name": "beta_ack"}) is not None:
         config["beta_ack"] = "1"
     try:
         configured = session.post(action, data=config, timeout=(5, 25), allow_redirects=True,

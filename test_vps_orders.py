@@ -617,6 +617,12 @@ class DMitOrderTests(unittest.TestCase):
         self.assertFalse(raised.exception.checkout_request_sent)
         self.assertEqual(session.post.call_count, 1)
 
+    def test_dmit_hidden_password_modal_error_does_not_reject_configuration(self):
+        class Resp:
+            content = b'<div class="alert-danger hidden" id="generatePwLengthError">Please enter a number between 8 and 64 for the password length</div><div class="alert-danger">Visible configuration error</div>'
+            text = content.decode()
+        self.assertEqual(admin._dmit_page_errors(Resp()), "Visible configuration error")
+
 
 class AccountVerificationTests(unittest.TestCase):
     def setUp(self):
