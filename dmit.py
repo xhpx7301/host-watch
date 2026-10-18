@@ -13,7 +13,10 @@ STOCK_VERSION = 1
 REGIONS = {"LAX": "美国 · 洛杉矶", "HKG": "中国香港", "TYO": "日本 · 东京", "SJC": "美国 · 圣何塞"}
 PLAN_KEY_PATTERN = r"[A-Z0-9]{2,10}:[A-Z0-9]{2,10}:[A-Z0-9]{2,20}:[A-Z0-9_. -]{1,100}"
 PURCHASE_SOLD_PATTERN = re.compile(
-    r"out\s+of\s+stock|sold\s*out|currently\s+unavailable|\b(?:no|not)\s+available\b|unavailable|缺货|缺貨|售罄|售完|無貨|无货|暂时缺货|暫時缺貨",
+    # Avoid treating generic checkout copy such as "Total Due Today: Unavailable"
+    # as a stock signal. DMIT's cart page can show that while its product
+    # configuration form is available and waiting for choices/calculation.
+    r"out\s+of\s+stock|sold\s*out|currently\s+unavailable|currently\s+(?:no|not)\s+available|缺货|缺貨|售罄|售完|無貨|无货|暂时缺货|暫時缺貨",
     re.I,
 )
 PURCHASE_AVAILABLE_PATTERN = re.compile(

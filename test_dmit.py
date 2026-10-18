@@ -212,6 +212,9 @@ class DMITVerifiedStockTests(unittest.TestCase):
     def test_cart_requires_actual_configuration_and_matching_product(self):
         self.assertEqual(dmit.purchase_status(configuration(), self.purchase_url, "253"), 1)
         self.assertEqual(dmit.purchase_status(configuration(), "https://www.dmit.io/cart.php?a=confproduct&i=0", "253"), 1)
+        # DMIT can display this generic checkout summary while the product
+        # configuration form is available; it does not mean the VPS is sold out.
+        self.assertEqual(dmit.purchase_status(configuration() + "<div>Total Due Today: Unavailable</div>", self.purchase_url, "253"), 1)
         for body, url in [("<nav>Checkout</nav><h1>Login</h1>", self.purchase_url), ("<h1>Available Continue</h1>", self.purchase_url), (configuration(), "https://www.dmit.io/clientarea.php"), (configuration("999"), self.purchase_url), (configuration(), self.purchase_url.replace("253", "999"))]:
             with self.subTest(body=body, url=url), self.assertRaises(monitor.MonitorError):
                 dmit.purchase_status(body, url, "253")
