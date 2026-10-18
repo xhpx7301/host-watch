@@ -740,6 +740,25 @@ class AccountVerificationTests(unittest.TestCase):
         self.assertNotIn('secret', json.dumps(result))
         store.assert_called_once()
 
+    def test_isvoro_cached_session_refreshes_access_cookie(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='isvoro', username='user@example.com', password='pw', login_url=admin.ISVORO_LOGIN_URL)
+        route = {'egress_node_id': 'route-isvoro'}
+        source = requests.Session()
+        source.cookies.set('pmt_refresh', 'refresh-token')
+        source.cookies.set('pmt_csrf', 'csrf-token')
+        admin._store_merchant_session('isvoro', account, route, source)
+        cached = admin._get_merchant_session('isvoro', account, route)
+        expired = response({'code': 401}, status=401)
+        profile = response({'code': 0, 'data': {'email': 'user@example.com', 'id': 42}})
+        cached.get = Mock(side_effect=[expired, profile])
+        cached.post = Mock(return_value=response({'code': 0}))
+        result = admin.check_order_account(requests.Session(), account, route)
+        self.assertTrue(result['ok'])
+        self.assertTrue(result['session_reused'])
+        cached.post.assert_called_once_with(admin.ISVORO_API_BASE_URL + '/auth/refresh', timeout=(5, 20), allow_redirects=False,
+                                            headers={'Accept': 'application/json', 'Content-Type': 'application/json', 'X-CSRF-Token': 'csrf-token'})
+
     def test_known_merchant_url_is_canonical_and_unsupported_auth_stays_unknown(self):
         value = admin.default_config()
         value['vps_seckill']['accounts'] = [{'id': 'v', 'name': 'VMISS', 'provider': 'VMISS', 'username': 'user', 'password': 'pw', 'login_url': 'https://attacker.example/collect'}]

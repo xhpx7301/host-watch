@@ -57,6 +57,7 @@ BWH_VERIFICATION_TTL = 10 * 60
 # each task still receives its own requests.Session clone.
 MERCHANT_AUTH_SESSIONS = {}
 MERCHANT_AUTH_SESSION_TTL = 20 * 60
+ISVORO_AUTH_SESSION_TTL = 24 * 60 * 60
 REFRESH_LOCK = threading.Lock()
 REFRESH_TASKS = {}
 BROWSER_CLEANUP_SECONDS = 8
@@ -512,7 +513,8 @@ def _store_merchant_session(adapter_id: str, account: dict, fetcher: dict | None
     key = _merchant_session_key(adapter_id, account, fetcher)
     with SECKILL_LOCK:
         old = MERCHANT_AUTH_SESSIONS.pop(key, None)
-        MERCHANT_AUTH_SESSIONS[key] = {"session": cached, "expires_at": time.time() + MERCHANT_AUTH_SESSION_TTL}
+        ttl = ISVORO_AUTH_SESSION_TTL if adapter_id == "isvoro" else MERCHANT_AUTH_SESSION_TTL
+        MERCHANT_AUTH_SESSIONS[key] = {"session": cached, "expires_at": time.time() + ttl}
     if old:
         _close_bwh_session(old.get("session"))
 
@@ -538,7 +540,8 @@ def _renew_merchant_session(adapter_id: str, account: dict, fetcher: dict | None
     with SECKILL_LOCK:
         value = MERCHANT_AUTH_SESSIONS.get(key)
         if value and value.get("session") is session:
-            value["expires_at"] = time.time() + MERCHANT_AUTH_SESSION_TTL
+            ttl = ISVORO_AUTH_SESSION_TTL if adapter_id == "isvoro" else MERCHANT_AUTH_SESSION_TTL
+            value["expires_at"] = time.time() + ttl
 
 
 def _remove_merchant_session(adapter_id: str, account: dict, fetcher: dict | None = None) -> None:
@@ -792,8 +795,14 @@ def _isvoro_profile_data(payload: object) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def _isvoro_authenticated(session, account: dict) -> bool:
-    """Validate an Isvoro browser/API session without sending credentials."""
+def _session_cookie(session, name: str) -> str:
+    for cookie in getattr(session, "cookies", ()):
+        if getattr(cookie, "name", "") == name:
+            return str(getattr(cookie, "value", "") or "")
+    return ""
+
+
+def _isvoro_profile_authenticated(session, account: dict) -> bool:
     try:
         response = session.get(ISVORO_PROFILE_URL, timeout=(5, 20), allow_redirects=False,
                                headers={"Accept": "application/json", "Referer": "https://isvoro.com/"})
@@ -807,6 +816,26 @@ def _isvoro_authenticated(session, account: dict) -> bool:
     email = str(profile.get("email") or profile.get("username") or "").strip().casefold()
     expected = str(account.get("username", "")).strip().casefold()
     return bool(email and expected and email == expected)
+
+
+def _isvoro_refresh_session(session) -> bool:
+    """Refresh an expired access cookie with Isvoro's longer-lived refresh cookie."""
+    csrf = _session_cookie(session, "pmt_csrf")
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    if csrf:
+        headers["X-CSRF-Token"] = csrf
+    try:
+        response = session.post(f"{ISVORO_API_BASE_URL}/auth/refresh", timeout=(5, 20), allow_redirects=False, headers=headers)
+    except (requests.RequestException, OSError):
+        return False
+    return 200 <= response.status_code < 300
+
+
+def _isvoro_authenticated(session, account: dict) -> bool:
+    """Validate an Isvoro session and refresh its access cookie when needed."""
+    if _isvoro_profile_authenticated(session, account):
+        return True
+    return _isvoro_refresh_session(session) and _isvoro_profile_authenticated(session, account)
 
 
 def _import_isvoro_session_cookie(session, raw_cookie: object) -> bool:
