@@ -1291,6 +1291,47 @@ def _dmit_order_flaresolverr(item: dict, account: dict, product, url: str, fetch
             flaresolverr_session_destroy(fetcher, session_id)
 
 
+def _dmit_flaresolverr_account_check(account: dict, fetcher: dict) -> dict:
+    """Verify DMIT credentials in a browser session when normal HTTP is blocked."""
+    from bs4 import BeautifulSoup
+    from monitor import (browser_request_slot, flaresolverr_session_create,
+                         flaresolverr_session_destroy, flaresolverr_session_request)
+    session_id = ""
+    try:
+        with browser_request_slot(wait=True):
+            session_id = flaresolverr_session_create(fetcher)
+            login = flaresolverr_session_request(fetcher, session_id, MERCHANT_LOGIN_ADAPTERS["dmit"]["url"])
+            page = _dmit_browser_response(login)
+            soup = BeautifulSoup(page.content, "html.parser")
+            form = next((candidate for candidate in soup.find_all("form")
+                         if candidate.find("input", attrs={"name": "username"})
+                         and candidate.find("input", attrs={"name": "password"})), None)
+            if form is not None:
+                action = urljoin(page.url, form.get("action") or page.url)
+                if not _same_merchant_url(action, MERCHANT_LOGIN_ADAPTERS["dmit"]):
+                    return {"status": "unknown", "message": "DMIT 登录表单跳转地址不符合商家域名，请到官网检查"}
+                payload = _dmit_form_values(form)
+                payload.update({"username": str(account.get("username", "")), "password": str(account.get("password", ""))})
+                for node in form.find_all("input", attrs={"type": "checkbox"}):
+                    name = str(node.get("name", ""))
+                    if name.casefold() in {"rememberme", "remember_me", "remember"}:
+                        payload[name] = str(node.get("value") or "on")
+                posted = _dmit_browser_response(flaresolverr_session_request(fetcher, session_id, action, "post",
+                    urlencode(payload), {"Referer": page.url, "Origin": "https://www.dmit.io",
+                                         "Content-Type": "application/x-www-form-urlencoded"}))
+                if not 200 <= posted.status_code < 300:
+                    return {"status": "unknown", "message": "DMIT 浏览器登录请求失败，请到官网检查"}
+            checked = _dmit_browser_response(flaresolverr_session_request(fetcher, session_id,
+                MERCHANT_LOGIN_ADAPTERS["dmit"]["auth_probe_url"]))
+            text = BeautifulSoup(checked.content, "html.parser").get_text(" ", strip=True).casefold()
+            if 200 <= checked.status_code < 300 and ("logout" in text or "clientarea.php?action=details" in text):
+                return {"status": "valid", "ok": True, "message": "DMIT 已通过 FlareSolverr 浏览器认证（不代表具有购买资格或库存）"}
+            return {"status": "unknown", "message": "DMIT 浏览器会话未通过账户验证，请到官网检查"}
+    finally:
+        if session_id:
+            flaresolverr_session_destroy(fetcher, session_id)
+
+
 def _dmit_order(session, item: dict, account: dict, product, url: str, fetcher: dict | None = None, key: str | None = None) -> dict:
     """Configure one DMIT cart item and create an unpaid Alipay invoice."""
     from bs4 import BeautifulSoup
@@ -2156,6 +2197,9 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
                             "message": "DMIT 已导入并缓存官网登录会话（最长 30 天；不代表具有购买资格或库存）"}
                 cookie_names = ", ".join(_merchant_cookie_names(supplied_cookie)[:20]) or "未识别"
                 return {**result, "message": f"DMIT 会话 Cookie 未通过详情页验证（已读取 {len(_merchant_cookie_names(supplied_cookie))} 个 Cookie：{cookie_names}）；可能是 Cookie 不完整、浏览器 User-Agent 不匹配，或 DMIT/Cloudflare 绑定浏览器与出口 IP。请复制完整 Cookie，并填写浏览器 User-Agent 后重试"}
+            if adapter_id == "dmit" and str((fetcher or {}).get("mode", "")).casefold() == "flaresolverr" and account.get("password"):
+                checked = _dmit_flaresolverr_account_check(account, fetcher)
+                return {**result, **checked}
             cached = _get_merchant_session(adapter_id, account, fetcher)
             if cached and (_merchant_cached_session_reusable(fetcher) or _merchant_authenticated(cached, adapter)):
                 _renew_merchant_session(adapter_id, account, fetcher, cached)
