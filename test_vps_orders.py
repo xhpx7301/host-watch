@@ -932,7 +932,7 @@ class AccountVerificationTests(unittest.TestCase):
             result = admin.check_order_account(session, account)
         self.assertTrue(result['ok'])
         self.assertEqual(session.headers['User-Agent'], 'Mozilla/5.0 CustomBrowser')
-        self.assertEqual(session.get.call_args.args[0], 'https://www.dmit.io/clientarea.php')
+        self.assertEqual(session.get.call_args.args[0], 'https://www.dmit.io/clientarea.php?action=details')
 
     def test_known_merchant_url_is_canonical_and_unsupported_auth_stays_unknown(self):
         value = admin.default_config()

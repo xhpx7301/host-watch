@@ -274,11 +274,11 @@ curl -fsSL https://raw.githubusercontent.com/xhpx7301/host-watch/main/install.sh
 sudo env HOSTWATCH_INSTALL_FLARESOLVERR=0 bash /tmp/host-watch-install.sh
 ```
 
-在管理页“网页请求”统一选择全局默认方式和 VMISS、VPS.SOY、Akile、Isvoro、DMIT、搬瓦工、其他商家（通用网页）的独立网页请求方式，可选择跟随全局、普通 HTTPS、FlareSolverr 或 cloudscraper。这些设置用于后台自动监控、库存大盘、通知和 VPS 补货抢购的商品页面读取。下方另有独立的商家登录 / Cookie 验证请求方式；例如 DMIT 可将登录设置为 cloudscraper、网页和抢购页面设置为 FlareSolverr。保存后生效；单次测试也可使用页面当前未保存的请求设置。新添加的商品跟随商家设置，不再要求逐个选择请求方式。旧配置未指定方式时仍默认普通 HTTPS。大盘刷新不会修改通知或监控历史。
+在管理页“网页请求”统一选择全局默认方式和 VMISS、VPS.SOY、Akile、Isvoro、DMIT、搬瓦工、其他商家（通用网页）的独立方式，可选择跟随全局、普通 HTTPS、FlareSolverr 或 cloudscraper。这些设置用于后台自动监控及单次商品测试，保存后生效；单次测试也可使用页面当前未保存的请求设置。新添加的商品跟随商家设置，不再要求逐个选择请求方式。所有商家的大盘刷新同样使用已保存的商家请求方式；旧配置未指定方式时仍默认普通 HTTPS。大盘刷新不会修改通知或监控历史。
 
 配置字段是 `fetcher.provider_modes`，例如 `{"vmiss": "flaresolverr", "akile": "requests", "isvoro": "inherit", "dmit": "cloudscraper"}`。已明确设置的商家方式优先于旧商品的 `request_mode`；`inherit` 表示使用全局默认。升级时缺少商家设置则保留原有商品行为；同一商家旧商品方式不同，界面显示“保留已有商品的不同请求方式”，选择统一方式并保存后覆盖旧差异。旧版客户端保存全局请求字段时会保留已有商家设置。默认仍使用普通 HTTPS，不会遇到拦截就自动切换或反复重试。
 
-cloudscraper 使用 [VeNoMouS/cloudscraper](https://github.com/VeNoMouS/cloudscraper) 的官方 PyPI 发布版 `1.2.71`，通过 `requirements.txt` 在安装和更新时自动安装。使用内置 `native` Python 解释器，无需 Chromium、Docker、Node.js 或额外 API 服务。网页请求配置值为 `"cloudscraper"`，例如 `"fetcher": {"mode": "requests", "provider_modes": {"dmit": "cloudscraper"}}`；登录请求可单独使用 `provider_login_modes`，例如 `{"dmit": "cloudscraper"}`。网页库存测试使用当前未保存的选择，账户检查使用已保存的登录请求方式，后台监控、限时秒杀和库存大盘使用已保存的网页请求方式。
+cloudscraper 使用 [VeNoMouS/cloudscraper](https://github.com/VeNoMouS/cloudscraper) 的官方 PyPI 发布版 `1.2.71`，通过 `requirements.txt` 在安装和更新时自动安装。使用内置 `native` Python 解释器，无需 Chromium、Docker、Node.js 或额外 API 服务。配置值为 `"cloudscraper"`，例如 `"fetcher": {"mode": "requests", "provider_modes": {"dmit": "cloudscraper"}}`；全局、每商家和旧版每商品配置均支持。网页库存测试使用当前未保存的选择，后台监控、限时秒杀和库存大盘使用已保存设置。
 
 cloudscraper 基于 Requests，能尝试处理其发布版支持的 Cloudflare 校验，不能完整执行网页应用 JavaScript。GitHub 主分支说明可能与 PyPI 发布版功能不同，本项目不依赖主分支未发布的功能；现代托管校验、Turnstile、验证码及站点封禁可能仍无法通过。每次读取使用独立短会话，不复制共享会话中的账号、Cookie 或 Token，也不将验证 Cookie 写回 Telegram 或其他商家的会话。使用内置解释器并限制验证提交次数，不接入付费打码服务；选择此方式不会启动 FlareSolverr，也不使用浏览器渲染等待。单次测试仍可随时停止；失败会给出依赖、网络或校验提示，并保留库存历史，不自动切换其他请求方式。
 
@@ -376,7 +376,7 @@ Isvoro 账户支持官网 API 登录检查和短期会话缓存。由于官网�
 
 ### 商家登录与下单适配
 
-在“网站账户”选择商家，填写官网登录名 / 邮箱和密码，保存后点击商品旁的“检查账户”。VMISS、VPS.SOY、搬瓦工、DMIT 使用各自官网登录表单适配，自动读取隐藏 CSRF token；Akile 使用官网登录 API，并在读取账户信息、确认邮箱匹配后才判定成功；Isvoro 使用官网登录 API，首次 hCaptcha 需管理员手动完成并导入浏览器 Cookie。凭据只发送到商家的固定 HTTPS 域名，不跟随跨域跳转。账户检查使用“登录 / Cookie 验证请求方式”，商品库存和抢购页面使用“网页请求方式”，两者可以分别选择 FlareSolverr 或 cloudscraper。搬瓦工从新出口 IP 登录触发邮箱验证码时，账户卡片会显示验证码输入框，管理员提交最新邮件验证码即可继续原登录会话；验证码和会话只保存在服务进程的短期内存中，不写入配置或备份。其他验证码、二步验证、Passkey 或结构变化会返回未知并提示官网处理。其他商家需要填写实现 `hostwatch-unpaid-v1` 的账户检查 JSON 接口；普通登录 / 结算页面不能直接作为接口。
+在“网站账户”选择商家，填写官网登录名 / 邮箱和密码，保存后点击商品旁的“检查账户”。VMISS、VPS.SOY、搬瓦工、DMIT 使用各自官网登录表单适配，自动读取隐藏 CSRF token；Akile 使用官网登录 API，并在读取账户信息、确认邮箱匹配后才判定成功；Isvoro 使用官网登录 API，首次 hCaptcha 需管理员手动完成并导入浏览器 Cookie。凭据只发送到商家的固定 HTTPS 域名，不跟随跨域跳转。启用 FlareSolverr 或 cloudscraper 时，账户检查会先通过同一商家的请求方式获取临时验证状态，再在隔离的登录会话中提交表单。搬瓦工从新出口 IP 登录触发邮箱验证码时，账户卡片会显示验证码输入框，管理员提交最新邮件验证码即可继续原登录会话；验证码和会话只保存在服务进程的短期内存中，不写入配置或备份。其他验证码、二步验证、Passkey 或结构变化会返回未知并提示官网处理。其他商家需要填写实现 `hostwatch-unpaid-v1` 的账户检查 JSON 接口；普通登录 / 结算页面不能直接作为接口。
 
 账户登录检查只验证认证状态，不代表有购买资格或库存，也不创建订单、不付款。邮箱验证码会话默认保留 10 分钟，服务重启或超时后需重新检查账户。支持校验的商家认证 Cookie / API token 也只在服务进程内保留 10 分钟，并按商家、账户和出口隔离，用于后续账户检查及抢购，不写入配置或备份；缓存失效或官网拒绝时会自动重新登录。当前支持内置待付款下单的商家为 VMISS、Akile 和搬瓦工；其他商家暂时不会自动创建订单，只提供购买链接。
 

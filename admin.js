@@ -12,7 +12,7 @@ let config = {
   merchant_order: ["vmiss", "vps_soy", "akile", "isvoro", "dmit", "bwh"],
   watch_order: [],
   notify_order: [],
-  fetcher: { mode: "requests", flaresolverr_url: "http://127.0.0.1:8191/v1", timeout_seconds: 60, provider_login_modes: { dmit: "cloudscraper" } },
+  fetcher: { mode: "requests", flaresolverr_url: "http://127.0.0.1:8191/v1", timeout_seconds: 60 },
   telegram: {},
   egress: { nodes: [], routes: {} },
   vps_seckill: { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] },
@@ -1495,12 +1495,9 @@ function renderMerchantOrder() {
 
 function renderProviderModeOrder() {
   const target = document.querySelector("#provider-request-modes");
-  const loginTarget = document.querySelector("#provider-login-modes");
-  for (const [node, attribute] of [[target, "data-provider-mode"], [loginTarget, "data-provider-login-mode"]]) {
-    if (!node) continue;
-    const labels = new Map([...node.querySelectorAll("label")].map(label => [label.querySelector(`[${attribute}]`)?.getAttribute(attribute), label]));
-    orderedMerchantEntries().forEach(([key]) => { const label = labels.get(key); if (label) node.append(label); });
-  }
+  if (!target) return;
+  const labels = new Map([...target.querySelectorAll("label")].map(label => [label.querySelector("[data-provider-mode]")?.dataset.providerMode, label]));
+  orderedMerchantEntries().forEach(([key]) => { const label = labels.get(key); if (label) target.append(label); });
 }
 
 function renderAffiliateOrder() {
@@ -2643,7 +2640,7 @@ function renderVpsSeckill() {
             ? "导入步骤：打开登录页 → 完成 hCaptcha 并登录 → F12 打开 Network → 刷新 → 找到 /api/v1/auth/me → Headers → Request Headers → Cookie，复制整行粘贴到上方。验证通过后只保存在服务器内存，最长 30 天；access Cookie 过期时会尝试使用 refresh Cookie 续期。"
             : selected === "bwh"
               ? "导入步骤：打开搬瓦工官网登录页并完成邮箱验证码 → F12 打开 Network → 刷新 → 找到 clientarea.php 请求 → Headers → Request Headers → Cookie，复制整行粘贴到上方。验证通过后只保存在服务器内存，最长 30 天；Cookie 本身过期、被撤销或服务重启后需重新导入。密码登录时 HostWatch 会自动启用官网 Remember Me；它请求商家签发更持久的 Cookie，但不是 refresh Cookie 自动续期。"
-              : "导入步骤：打开 DMIT 官网，用账户邮箱和密码正常登录（如果官网要求安全验证，请先完成）→ 登录后打开 F12 的 Network → 刷新账户页面 → 找到 clientarea.php 请求 → Headers → Request Headers → Cookie，复制整行粘贴到上方。若仍失败，再复制该请求的 User-Agent 填入下方。验证通过后只保存在服务器内存，最长 30 天；过期、被撤销或服务重启后需重新登录并导入。Cookie 可能受浏览器/IP 绑定，服务器出口验证不一定成功。";
+              : "导入步骤：打开 DMIT 官网，用账户邮箱和密码正常登录（如果官网要求安全验证，请先完成）→ 登录后打开 F12 的 Network → 刷新账户页面 → 找到 clientarea.php?action=details 请求 → Headers → Request Headers → Cookie，复制整行粘贴到上方。若仍失败，再复制该请求的 User-Agent 填入下方。验证通过后只保存在服务器内存，最长 30 天；过期、被撤销或服务重启后需重新登录并导入。Cookie 可能受浏览器/IP 绑定，服务器出口验证不一定成功。";
           providerExtra.append(text("p", instructions, "merchant-cookie-help"));
         }
       } else if (selected) {
@@ -2900,7 +2897,7 @@ function collectConfig(enabled = config.enabled) {
     notify_order: config.notify_order || [],
     notify_current_stock_on_start: optionPressed("notify-current"),
     isvoro_seckill: optionPressed("isvoro-seckill"),
-    fetcher: { provider_modes: collectProviderModes(), provider_login_modes: collectProviderLoginModes(), provider_flaresolverr: Object.fromEntries([...providerFlareDraft].map(([provider, options]) => [provider, { ...options }])), mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value), wait_seconds: Number(document.querySelector("#fetcher-wait").value), disable_media: optionPressed("flaresolverr-light"), cloudscraper: { connect_timeout_seconds: Number(document.querySelector("#cloudscraper-connect-timeout").value), read_timeout_seconds: Number(document.querySelector("#cloudscraper-read-timeout").value), challenge_delay_seconds: Number(document.querySelector("#cloudscraper-challenge-delay").value) } },
+    fetcher: { provider_modes: collectProviderModes(), provider_flaresolverr: Object.fromEntries([...providerFlareDraft].map(([provider, options]) => [provider, { ...options }])), mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value), wait_seconds: Number(document.querySelector("#fetcher-wait").value), disable_media: optionPressed("flaresolverr-light"), cloudscraper: { connect_timeout_seconds: Number(document.querySelector("#cloudscraper-connect-timeout").value), read_timeout_seconds: Number(document.querySelector("#cloudscraper-read-timeout").value), challenge_delay_seconds: Number(document.querySelector("#cloudscraper-challenge-delay").value) } },
     telegram: { bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim(), disabled: optionPressed("telegram-disabled"), clear: optionPressed("telegram-clear") },
     egress: collectEgress(),
     vps_seckill: collectVpsSeckill(),
@@ -2964,7 +2961,7 @@ function mergeConfigScope(baseValue, draftValue, scope) {
     const keys = ["mode", "flaresolverr_url", "timeout_seconds", "wait_seconds", "disable_media", "provider_flaresolverr"];
     base.fetcher = { ...base.fetcher, ...Object.fromEntries(keys.map(key => [key, draft.fetcher[key]])) };
   } else if (scope === "cloudscraper") base.fetcher = { ...base.fetcher, cloudscraper: draft.fetcher.cloudscraper };
-  else if (scope === "provider-modes") base.fetcher = { ...base.fetcher, provider_modes: draft.fetcher.provider_modes, provider_login_modes: draft.fetcher.provider_login_modes };
+  else if (scope === "provider-modes") base.fetcher = { ...base.fetcher, provider_modes: draft.fetcher.provider_modes };
   else if (scope === "egress") { base.egress = draft.egress; base.fetcher = { ...base.fetcher, egress: draft.egress }; }
   else if (scope === "telegram") base.telegram = draft.telegram;
   else if (scope === "monitor") {
@@ -3082,9 +3079,6 @@ async function runAutomaticSave(scope) {
 function collectProviderModes() {
   return Object.fromEntries([...document.querySelectorAll("[data-provider-mode]")].filter((input) => input.value !== "legacy").map((input) => [input.dataset.providerMode, input.value]));
 }
-function collectProviderLoginModes() {
-  return Object.fromEntries([...document.querySelectorAll("[data-provider-login-mode]")].map((input) => [input.dataset.providerLoginMode, input.value]));
-}
 function applyProviderModes(fetcher) {
   for (const select of document.querySelectorAll("[data-provider-mode]")) {
     select.querySelector('[value="legacy"]')?.remove();
@@ -3092,9 +3086,6 @@ function applyProviderModes(fetcher) {
     const previous = [...new Set(config.products.filter((item) => item.adapter === key).map((item) => item.request_mode || "inherit"))];
     if (!explicit && previous.length > 1) select.add(new Option("保留已有商品的不同请求方式", "legacy"));
     select.value = explicit || (previous.length > 1 ? "legacy" : previous[0] || "inherit");
-  }
-  for (const select of document.querySelectorAll("[data-provider-login-mode]")) {
-    select.value = fetcher.provider_login_modes?.[select.dataset.providerLoginMode] || "inherit";
   }
 }
 function flareDefaults() {
@@ -3289,7 +3280,6 @@ document.querySelector("#watch-compare-dialog").addEventListener("cancel", event
 });
 for (const input of document.querySelectorAll("[data-affiliate]")) input.addEventListener("input", renderAffiliatePreviews);
 for (const input of document.querySelectorAll("[data-provider-mode]")) input.addEventListener("change", () => { updateFetcherStatus(); scheduleAutoSave("provider-modes"); });
-for (const input of document.querySelectorAll("[data-provider-login-mode]")) input.addEventListener("change", () => { scheduleAutoSave("provider-modes"); });
 document.querySelector("#merchant-order-toggle").addEventListener("click", (event) => {
   if (actionRunning) return;
   merchantOrderEditing = !merchantOrderEditing;

@@ -556,11 +556,10 @@ def product_fetcher(fetcher: dict | None, item: dict) -> dict:
     base_mode = result.get("mode", "requests")
     # An explicit merchant policy also overrides old per-product choices.
     # Missing policies preserve legacy configurations until the user unifies them.
-    provider = item.get("adapter", "html")
-    mode = result.get("provider_modes", {}).get(provider, item.get("request_mode", "inherit"))
+    mode = result.get("provider_modes", {}).get(item.get("adapter", "html"), item.get("request_mode", "inherit"))
     if mode != "inherit":
         result["mode"] = mode
-    override = result.get("provider_flaresolverr", {}).get(provider)
+    override = result.get("provider_flaresolverr", {}).get(item.get("adapter", "html"))
     if result.get("mode") == "flaresolverr" and override is not None:
         result["_flaresolverr_defaults"] = {"mode": base_mode, **{key: result.get(key, default) for key, default in (("timeout_seconds", 60), ("wait_seconds", 0), ("disable_media", True))}}
         result.update(override)
@@ -574,31 +573,6 @@ def product_fetcher(fetcher: dict | None, item: dict) -> dict:
                 result["egress_node_id"] = node["id"]
         except RuntimeError as exc:
             raise MonitorError(str(exc)) from None
-    return result
-
-
-def login_fetcher(fetcher: dict | None, provider: str) -> dict:
-    """Resolve the request policy used for merchant account authentication.
-
-    Login and product-page requests intentionally have separate policies.  An
-    explicit login policy wins; ``inherit`` follows the merchant page policy,
-    preserving behavior for older configurations.
-    """
-    result = dict(fetcher or {"mode": "requests"})
-    defaults = result.pop("_flaresolverr_defaults", None)
-    if defaults is not None:
-        result.update(defaults)
-    base_mode = result.get("mode", "requests")
-    provider = str(provider or "html")
-    mode = result.get("provider_login_modes", {}).get(provider, "inherit")
-    if mode == "inherit":
-        mode = result.get("provider_modes", {}).get(provider, "inherit")
-    if mode != "inherit":
-        result["mode"] = mode
-    override = result.get("provider_flaresolverr", {}).get(provider)
-    if result.get("mode") == "flaresolverr" and override is not None:
-        result["_flaresolverr_defaults"] = {"mode": base_mode, **{key: result.get(key, default) for key, default in (("timeout_seconds", 60), ("wait_seconds", 0), ("disable_media", True))}}
-        result.update(override)
     return result
 
 

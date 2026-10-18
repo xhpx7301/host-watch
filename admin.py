@@ -429,7 +429,7 @@ MERCHANT_LOGIN_ADAPTERS = {
     "vmiss": {"name": "VMISS", "url": "https://app.vmiss.com/login", "host": "app.vmiss.com", "username_field": "username"},
     "vps_soy": {"name": "VPS.SOY", "url": "https://www.vps.soy/login", "host": "www.vps.soy", "username_field": "email"},
     "bwh": {"name": "搬瓦工", "url": "https://bwh81.net/clientarea.php", "host": "bwh81.net", "username_field": "username"},
-    "dmit": {"name": "DMIT", "url": "https://www.dmit.io/clientarea.php", "auth_probe_url": "https://www.dmit.io/clientarea.php", "host": "www.dmit.io", "username_field": "username"},
+    "dmit": {"name": "DMIT", "url": "https://www.dmit.io/clientarea.php", "auth_probe_url": "https://www.dmit.io/clientarea.php?action=details", "host": "www.dmit.io", "username_field": "username"},
 }
 ISVORO_API_BASE_URL = "https://isvoro.com/api/v1"
 ISVORO_LOGIN_URL = f"{ISVORO_API_BASE_URL}/auth/login"
@@ -572,30 +572,13 @@ def _clear_merchant_sessions_for_account(account: dict) -> int:
     return len(removed)
 
 
-def _merchant_authenticated(session, adapter: dict, fetcher: dict | None = None) -> bool:
-    """Confirm a cached HTML login using the merchant's login request policy."""
+def _merchant_authenticated(session, adapter: dict) -> bool:
+    """Confirm a cached HTML login still reaches an authenticated page."""
     try:
         probe_url = adapter.get("auth_probe_url") or adapter["url"]
-        mode = str((fetcher or {}).get("mode", "requests")).casefold()
-        headers = {**MERCHANT_BROWSER_HEADERS, "Referer": adapter["url"], "Sec-Fetch-Site": "none", "Sec-Fetch-User": "?1"}
-        if mode == "flaresolverr":
-            from monitor import fetch_page
-            browser_fetcher = dict(fetcher or {})
-            browser_fetcher["_copy_browser_state"] = True
-            body, final_url = fetch_page(session, probe_url, browser_fetcher, adapter["host"])
-            page = type("MerchantPage", (), {"status_code": 200, "url": final_url, "content": body.encode("utf-8"), "text": body, "headers": {}})()
-        elif mode == "cloudscraper":
-            import cloudscraper
-            options = (fetcher or {}).get("cloudscraper") or {}
-            with cloudscraper.create_scraper(interpreter="native", delay=int(options.get("challenge_delay_seconds", 5)), solveDepth=1, doubleDown=False, debug=False) as scraper:
-                egress.apply_session(scraper, fetcher)
-                scraper.cookies.update(session.cookies)
-                page = scraper.get(probe_url, timeout=(5, 25), allow_redirects=False, headers=headers)
-                session.cookies.update(scraper.cookies)
-                session.headers.update(scraper.headers)
-        else:
-            page = session.get(probe_url, timeout=(5, 20), allow_redirects=False, headers=headers)
-    except (requests.RequestException, OSError, ImportError, RuntimeError, ValueError):
+        page = session.get(probe_url, timeout=(5, 20), allow_redirects=False,
+                           headers={**MERCHANT_BROWSER_HEADERS, "Referer": adapter["url"], "Sec-Fetch-Site": "none", "Sec-Fetch-User": "?1"})
+    except (requests.RequestException, OSError):
         return False
     if not 200 <= page.status_code < 300 or not _same_merchant_url(page.url or probe_url, adapter):
         return False
@@ -603,7 +586,7 @@ def _merchant_authenticated(session, adapter: dict, fetcher: dict | None = None)
     soup = BeautifulSoup(page.content or page.text or "", "html.parser")
     if _merchant_additional_verification_required(page, soup, adapter):
         return False
-    return bool(soup.find("a", href=re.compile(r"logout|clientarea\.php(?:\?action=details)?", re.I)))
+    return bool(soup.find("a", href=re.compile(r"logout|clientarea\.php\?action=details", re.I)))
 
 
 def _merchant_cached_session_reusable(fetcher: dict | None) -> bool:
@@ -1929,11 +1912,9 @@ def bwh_order(session, item: dict, account: dict, product, url: str, key: str | 
 
 
 def check_order_account(session, account: dict, fetcher: dict | None = None) -> dict:
-    from monitor import login_fetcher
     result = {"status": "unknown", "ok": False, "account_id": account.get("id", ""),
         "checked_at": beijing_iso()}
     adapter_id = merchant_login_id(account.get("provider"))
-    login_policy = login_fetcher(fetcher, adapter_id) if adapter_id else (fetcher or {})
     supplied_cookie = str(account.get("_session_cookie", "")).strip()
     supplied_user_agent = str(account.get("_session_user_agent", "")).strip()
     cached_cookie_session = _get_merchant_session(adapter_id, account, fetcher) if adapter_id in {"bwh", "dmit"} else None
@@ -1971,7 +1952,7 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
             if adapter_id == "bwh" and supplied_cookie:
                 if not _import_bwh_session_cookie(session, supplied_cookie):
                     return {**result, "message": "搬瓦工会话 Cookie 格式无效，请复制完整 Cookie 后重试"}
-                if _merchant_authenticated(session, adapter, login_policy):
+                if _merchant_authenticated(session, adapter):
                     _store_merchant_session(adapter_id, account, fetcher, session)
                     return {**result, "ok": True, "status": "valid", "session_reused": True,
                             "message": "搬瓦工已导入并缓存官网登录会话（最长 30 天；不代表具有购买资格或库存）"}
@@ -1979,14 +1960,14 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
             if adapter_id == "dmit" and supplied_cookie:
                 if not _import_dmit_session_cookie(session, supplied_cookie):
                     return {**result, "message": "DMIT 会话 Cookie 格式无效，请复制完整 Cookie 后重试"}
-                if _merchant_authenticated(session, adapter, login_policy):
+                if _merchant_authenticated(session, adapter):
                     _store_merchant_session(adapter_id, account, fetcher, session)
                     return {**result, "ok": True, "status": "valid", "session_reused": True,
                             "message": "DMIT 已导入并缓存官网登录会话（最长 30 天；不代表具有购买资格或库存）"}
                 cookie_names = ", ".join(_merchant_cookie_names(supplied_cookie)[:20]) or "未识别"
-                return {**result, "message": f"DMIT 会话 Cookie 未通过 clientarea.php 验证（已读取 {len(_merchant_cookie_names(supplied_cookie))} 个 Cookie：{cookie_names}）；可能是 Cookie 不完整、浏览器 User-Agent 不匹配，或 DMIT/Cloudflare 绑定浏览器与出口 IP。请复制完整 Cookie，并填写浏览器 User-Agent 后重试"}
+                return {**result, "message": f"DMIT 会话 Cookie 未通过详情页验证（已读取 {len(_merchant_cookie_names(supplied_cookie))} 个 Cookie：{cookie_names}）；可能是 Cookie 不完整、浏览器 User-Agent 不匹配，或 DMIT/Cloudflare 绑定浏览器与出口 IP。请复制完整 Cookie，并填写浏览器 User-Agent 后重试"}
             cached = _get_merchant_session(adapter_id, account, fetcher)
-            if cached and (_merchant_cached_session_reusable(login_policy) or _merchant_authenticated(cached, adapter, login_policy)):
+            if cached and (_merchant_cached_session_reusable(fetcher) or _merchant_authenticated(cached, adapter)):
                 _renew_merchant_session(adapter_id, account, fetcher, cached)
                 _copy_merchant_session(cached, session)
                 return {**result, "ok": True, "status": "valid", "session_reused": True,
@@ -1997,7 +1978,7 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
                 return {**result, "message": "搬瓦工 Cookie 已失效；请重新导入 Cookie，或填写密码后通过邮箱验证码登录"}
             if adapter_id == "dmit" and not account.get("password"):
                 return {**result, "message": "DMIT Cookie 已失效；请重新从官网登录并导入 Cookie，或填写密码登录"}
-            checked = _merchant_form_login(session, account, adapter, login_policy)
+            checked = _merchant_form_login(session, account, adapter, fetcher)
             if checked["status"] == "valid":
                 _store_merchant_session(adapter_id, account, fetcher, session)
                 return {**result, "ok": True, **checked}
@@ -2709,8 +2690,6 @@ def default_config() -> dict:
             "wait_seconds": 0,
             "disable_media": True,
             "provider_flaresolverr": {},
-            "provider_modes": {},
-            "provider_login_modes": {"dmit": "cloudscraper"},
             "cloudscraper": normalize_cloudscraper(None),
         },
         "telegram": {"bot_token": "", "chat_id": "", "disabled": False},
@@ -2837,16 +2816,12 @@ def normalize_fetcher(value: object) -> dict:
     provider_modes = value.get("provider_modes", {})
     if not isinstance(provider_modes, dict) or any(key not in (*PROVIDERS, "html") or not isinstance(mode, str) or mode not in {"inherit", "requests", "flaresolverr", "cloudscraper"} for key, mode in provider_modes.items()):
         raise ValueError("商家请求方式必须是支持商家的 inherit、requests、flaresolverr 或 cloudscraper")
-    provider_login_modes = value.get("provider_login_modes", {"dmit": "cloudscraper"})
-    if not isinstance(provider_login_modes, dict) or any(key not in (*PROVIDERS, "html") or not isinstance(mode, str) or mode not in {"inherit", "requests", "flaresolverr", "cloudscraper"} for key, mode in provider_login_modes.items()):
-        raise ValueError("商家登录请求方式必须是支持商家的 inherit、requests、flaresolverr 或 cloudscraper")
     return {
         "mode": mode,
         "flaresolverr_url": endpoint.rstrip("/"),
         **options,
         "provider_flaresolverr": normalized_overrides,
         "provider_modes": dict(provider_modes),
-        "provider_login_modes": dict(provider_login_modes),
         "cloudscraper": normalize_cloudscraper(value.get("cloudscraper")),
     }
 
@@ -4077,7 +4052,6 @@ class Handler(BaseHTTPRequestHandler):
                 submitted["fetcher"] = current["fetcher"]
             elif isinstance(submitted["fetcher"], dict):
                 submitted["fetcher"].setdefault("provider_modes", current["fetcher"].get("provider_modes", {}))
-                submitted["fetcher"].setdefault("provider_login_modes", current["fetcher"].get("provider_login_modes", {"dmit": "cloudscraper"}))
                 submitted["fetcher"].setdefault("cloudscraper", current["fetcher"]["cloudscraper"])
                 submitted["fetcher"].setdefault("disable_media", current["fetcher"].get("disable_media", True))
                 submitted["fetcher"].setdefault("provider_flaresolverr", current["fetcher"].get("provider_flaresolverr", {}))

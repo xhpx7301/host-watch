@@ -27,9 +27,6 @@
       "html": "inherit",
       "dmit": "inherit",
       "bwh": "inherit"
-    },
-    "provider_login_modes": {
-      "dmit": "cloudscraper"
     }
   },
   "telegram": {
