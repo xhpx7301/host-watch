@@ -905,6 +905,12 @@ def _import_bwh_session_cookie(session, raw_cookie: object) -> bool:
     return _import_merchant_session_cookie(session, raw_cookie, "bwh81.net")
 
 
+def _import_dmit_session_cookie(session, raw_cookie: object) -> bool:
+    # DMIT uses www.dmit.io for its client area; keep imported credentials
+    # scoped to the merchant's own domain and its subdomains.
+    return _import_merchant_session_cookie(session, raw_cookie, ".dmit.io")
+
+
 def _isvoro_login(session, account: dict) -> dict:
     """Log in through Isvoro's API when a captcha token is available."""
     payload = {"email": account["username"], "password": account["password"]}
@@ -1889,9 +1895,9 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
         "checked_at": beijing_iso()}
     adapter_id = merchant_login_id(account.get("provider"))
     supplied_cookie = str(account.get("_session_cookie", "")).strip()
-    cached_bwh_session = _get_merchant_session(adapter_id, account, fetcher) if adapter_id == "bwh" else None
-    if not account.get("username") or (not account.get("password") and not (adapter_id == "bwh" and (supplied_cookie or cached_bwh_session))):
-        return {**result, "message": "请填写用户名和密码；搬瓦工也可填写用户名并导入有效 Cookie 检查"}
+    cached_cookie_session = _get_merchant_session(adapter_id, account, fetcher) if adapter_id in {"bwh", "dmit"} else None
+    if not account.get("username") or (not account.get("password") and not (adapter_id in {"bwh", "dmit"} and (supplied_cookie or cached_cookie_session))):
+        return {**result, "message": "请填写用户名和密码；DMIT、搬瓦工也可填写用户名并导入有效 Cookie 检查"}
     try:
         adapter = MERCHANT_LOGIN_ADAPTERS.get(adapter_id)
         if adapter:
@@ -1927,6 +1933,14 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
                     return {**result, "ok": True, "status": "valid", "session_reused": True,
                             "message": "搬瓦工已导入并缓存官网登录会话（最长 30 天；不代表具有购买资格或库存）"}
                 return {**result, "message": "搬瓦工会话 Cookie 无效或已过期，请重新登录官网并复制最新 Cookie"}
+            if adapter_id == "dmit" and supplied_cookie:
+                if not _import_dmit_session_cookie(session, supplied_cookie):
+                    return {**result, "message": "DMIT 会话 Cookie 格式无效，请复制完整 Cookie 后重试"}
+                if _merchant_authenticated(session, adapter):
+                    _store_merchant_session(adapter_id, account, fetcher, session)
+                    return {**result, "ok": True, "status": "valid", "session_reused": True,
+                            "message": "DMIT 已导入并缓存官网登录会话（最长 24 小时；不代表具有购买资格或库存）"}
+                return {**result, "message": "DMIT 会话 Cookie 无效或官网仍要求安全验证；请确认官网已登录，并检查 DMIT 是否限制服务器出口/IP"}
             cached = _get_merchant_session(adapter_id, account, fetcher)
             if cached and (_merchant_cached_session_reusable(fetcher) or _merchant_authenticated(cached, adapter)):
                 _renew_merchant_session(adapter_id, account, fetcher, cached)
@@ -1937,6 +1951,8 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
                 _remove_merchant_session(adapter_id, account, fetcher)
             if adapter_id == "bwh" and not account.get("password"):
                 return {**result, "message": "搬瓦工 Cookie 已失效；请重新导入 Cookie，或填写密码后通过邮箱验证码登录"}
+            if adapter_id == "dmit" and not account.get("password"):
+                return {**result, "message": "DMIT Cookie 已失效；请重新从官网登录并导入 Cookie，或填写密码登录"}
             checked = _merchant_form_login(session, account, adapter, fetcher)
             if checked["status"] == "valid":
                 _store_merchant_session(adapter_id, account, fetcher, session)

@@ -875,6 +875,37 @@ class AccountVerificationTests(unittest.TestCase):
         self.assertEqual(cached.cookies.get('WHMCSUser'), 'opaque-session')
         admin._remove_merchant_session('bwh', account, route)
 
+    def test_dmit_manual_cookie_is_verified_and_cached_without_password(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='dmit', username='user@example.com', password='', login_url=admin.MERCHANT_LOGIN_ADAPTERS['dmit']['url'],
+                       _session_cookie='WHMCSUser=opaque-session; currency=USD')
+        page = Mock(status_code=200, url=admin.MERCHANT_LOGIN_ADAPTERS['dmit']['url'],
+                    content=b'<a href="/logout.php">Logout</a>', headers={})
+        session = requests.Session()
+        session.get = Mock(return_value=page)
+        with patch('admin._store_merchant_session') as store:
+            result = admin.check_order_account(session, account)
+        self.assertTrue(result['ok'])
+        self.assertTrue(result['session_reused'])
+        self.assertEqual(session.cookies.get('WHMCSUser'), 'opaque-session')
+        self.assertNotIn('opaque-session', json.dumps(result))
+        store.assert_called_once_with('dmit', account, None, session)
+
+    def test_dmit_manual_cookie_is_domain_scoped_and_not_persisted(self):
+        session = requests.Session()
+        self.assertTrue(admin._import_dmit_session_cookie(session, 'WHMCSUser=opaque-session'))
+        cookie = next(cookie for cookie in session.cookies if cookie.name == 'WHMCSUser')
+        self.assertEqual(cookie.domain, '.dmit.io')
+        self.assertTrue(cookie.domain_specified)
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='dmit', username='user@example.com', password='', login_url=admin.MERCHANT_LOGIN_ADAPTERS['dmit']['url'],
+                       session_cookie='WHMCSUser=opaque-session')
+        config = admin.default_config()
+        config['vps_seckill']['accounts'] = [account]
+        normalized = admin.validate_config(config)['vps_seckill']['accounts'][0]
+        self.assertNotIn('session_cookie', normalized)
+        self.assertNotIn('opaque-session', json.dumps(normalized))
+
     def test_known_merchant_url_is_canonical_and_unsupported_auth_stays_unknown(self):
         value = admin.default_config()
         value['vps_seckill']['accounts'] = [{'id': 'v', 'name': 'VMISS', 'provider': 'VMISS', 'username': 'user', 'password': 'pw', 'login_url': 'https://attacker.example/collect'}]
