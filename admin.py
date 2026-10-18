@@ -2320,7 +2320,7 @@ class SeckillTask:
                         auto = bool(auto_requested and (native_akile or native_vmiss or native_bwh or native_isvoro or str(item.get("submit_url", "")).strip()))
                         if auto_requested and not auto:
                             raise ValueError("该商家尚未配置内置或兼容的待付款下单适配")
-                        if auto and not native_akile and not native_vmiss and not native_bwh:
+                        if auto and not native_akile and not native_vmiss and not native_bwh and not native_isvoro:
                             if not account.get("login_url") or urlsplit(account["login_url"]).netloc != urlsplit(item["submit_url"]).netloc:
                                 raise ValueError("账户检查接口与待付款下单接口必须同源，以复用认证会话")
                             capability = order_json(order_session.get(item["submit_url"], timeout=(5, 20), allow_redirects=False))
