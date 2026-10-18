@@ -946,7 +946,7 @@ def inspect_isvoro(session: requests.Session, item: dict, fetcher: dict, cache: 
     return Product(str(selected["id"]), detail["name"], available, purchase_url, vendor="Isvoro", stock_mode=mode,
         region=kind["name"], specs=f"{settings.get('cores', '—')} 核 · {settings.get('memory', '—')} MB · {settings.get('disk', '—')} GB",
         traffic=isvoro_network(settings),
-        price="；".join(f"{p.get('currency_code', '')} {p['price']:g} / {plan.get('name', '')}" for plan in isvoro_list(raw_product.get('plans')) if plan.get('hidden') is not True for p in (plan.get('prices') or []) if isinstance(p, dict) if type(p.get('price')) in {int, float})[:500], match_details={"type_id": str(kind["id"]), "type_name": kind["name"], "category_id": str(line["id"]), "category_name": line["name"], "product_id": str(selected["id"]), "plan_name": detail["name"]})
+        price="；".join(f"{p.get('currency_code', '')} {p['price']:g} / {plan.get('name', '')}" for plan in isvoro_list(raw_product.get('plans')) if plan.get('hidden') is not True for p in (plan.get('prices') or []) if isinstance(p, dict) if type(p.get('price')) in {int, float})[:500], match_details={"type_id": str(kind["id"]), "type_name": kind["name"], "category_id": str(line["id"]), "category_name": line["name"], "product_id": str(selected["id"]), "product_slug": str(selected.get("slug") or ""), "plan_name": detail["name"], "plans": [plan for plan in isvoro_list(raw_product.get("plans")) if plan.get("hidden") is not True], "checkout_fields": raw_product.get("checkout_fields") or []})
 
 
 def inspect_product(session: requests.Session, item: dict, fetcher: dict) -> Product:

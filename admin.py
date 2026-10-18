@@ -433,6 +433,10 @@ MERCHANT_LOGIN_ADAPTERS = {
 ISVORO_API_BASE_URL = "https://isvoro.com/api/v1"
 ISVORO_LOGIN_URL = f"{ISVORO_API_BASE_URL}/auth/login"
 ISVORO_PROFILE_URL = f"{ISVORO_API_BASE_URL}/auth/me"
+ISVORO_CART_URL = f"{ISVORO_API_BASE_URL}/cart/items"
+ISVORO_COUPON_URL = f"{ISVORO_API_BASE_URL}/cart/coupon"
+ISVORO_CHECKOUT_URL = f"{ISVORO_API_BASE_URL}/checkout"
+ISVORO_GATEWAYS_URL = f"{ISVORO_API_BASE_URL}/checkout/gateways"
 MERCHANT_LOGIN_ADAPTERS["isvoro"] = {
     "name": "Isvoro", "url": ISVORO_LOGIN_URL, "host": "isvoro.com",
     "username_field": "email", "kind": "api",
@@ -995,6 +999,84 @@ def order_json(response) -> dict:
     if not isinstance(data, dict):
         raise ValueError("接口响应格式无效")
     return data
+
+
+def _isvoro_payment_gateway(session, payment_method: str) -> int:
+    response = session.get(ISVORO_GATEWAYS_URL, timeout=(5, 20), allow_redirects=False,
+                           headers={"Accept": "application/json"})
+    payload = order_json(response)
+    gateways = payload.get("data")
+    if not isinstance(gateways, list):
+        raise ValueError("Isvoro 支付方式响应无效，未提交订单")
+    wanted = str(payment_method or "alipay").strip().casefold()
+    for gateway in gateways:
+        if not isinstance(gateway, dict) or gateway.get("enabled") is False:
+            continue
+        name = str(gateway.get("name") or "").casefold()
+        extension = str(gateway.get("extension") or "").casefold()
+        if wanted in {"alipay", "支付宝"} and ("支付宝" in name or extension in {"antom", "alipay"}):
+            try:
+                return int(gateway["id"])
+            except (KeyError, TypeError, ValueError):
+                break
+    raise ValueError("Isvoro 未提供可用的支付宝支付方式，未提交订单")
+
+
+def _isvoro_plan(product, item: dict) -> tuple[int, dict]:
+    details = getattr(product, "match_details", None) or {}
+    plans = [plan for plan in details.get("plans", []) if isinstance(plan, dict) and plan.get("hidden") is not True]
+    if not plans:
+        raise ValueError("Isvoro 商品没有可用计费周期，未提交订单")
+    cycle = str(item.get("billing_cycle") or "monthly").strip().casefold()
+    wanted = {"monthly": (1, "month"), "quarterly": (3, "month"), "annually": (1, "year")}.get(cycle)
+    selected = next((plan for plan in plans if wanted and int(plan.get("billing_period", 0) or 0) == wanted[0]
+                     and str(plan.get("billing_unit", "")).casefold() == wanted[1]), None) if wanted else None
+    selected = selected or next((plan for plan in plans if int(plan.get("billing_period", 0) or 0) == 1
+                                 and str(plan.get("billing_unit", "")).casefold() == "month"), plans[0])
+    try:
+        return int(selected["id"]), selected
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("Isvoro 商品计划 ID 无效，未提交订单") from None
+
+
+def isvoro_order(session, item: dict, account: dict, product, url: str, key: str | None = None) -> dict:
+    """Create and verify one Isvoro unpaid invoice without initiating payment."""
+    product_id = str((getattr(product, "match_details", None) or {}).get("product_id") or getattr(product, "id", "")).strip()
+    if not re.fullmatch(r"[1-9][0-9]{0,18}", product_id):
+        raise ValueError("Isvoro 商品 ID 无效，未提交订单")
+    plan_id, plan = _isvoro_plan(product, item)
+    checkout_fields = (getattr(product, "match_details", None) or {}).get("checkout_fields") or []
+    os_field = next((field for field in checkout_fields if isinstance(field, dict) and field.get("name") == "os"), None)
+    os_value = "22"
+    if os_field and os_field.get("required"):
+        options = os_field.get("options") or []
+        if not any(str(option.get("value")) == os_value for option in options if isinstance(option, dict)):
+            raise ValueError("Isvoro 商品不支持 Debian12，未提交订单")
+    cart_payload = {"product_id": int(product_id), "plan_id": plan_id, "quantity": 1,
+                    "checkout_config": {"os": os_value}}
+    added = order_json(session.post(ISVORO_CART_URL, json=cart_payload, timeout=(5, 20), allow_redirects=False,
+                                    headers={"Accept": "application/json", "Content-Type": "application/json"}))
+    if added.get("code") not in {0, "0"}:
+        raise ValueError(str(added.get("message") or "Isvoro 加入购物车失败，未提交订单"))
+    coupon = str(item.get("coupon_code") or "").strip()
+    if coupon:
+        coupon_response = order_json(session.post(ISVORO_COUPON_URL, json={"code": coupon}, timeout=(5, 20), allow_redirects=False,
+                                                  headers={"Accept": "application/json", "Content-Type": "application/json"}))
+        if coupon_response.get("code") not in {0, "0"}:
+            raise ValueError("Isvoro 优惠码应用失败，未提交订单")
+    gateway_id = _isvoro_payment_gateway(session, str(item.get("payment_method") or "alipay"))
+    checked_out = order_json(session.post(ISVORO_CHECKOUT_URL, json={"gateway_id": gateway_id}, timeout=(5, 20), allow_redirects=False,
+                                          headers={"Accept": "application/json", "Content-Type": "application/json"}))
+    if checked_out.get("code") not in {0, "0"}:
+        raise ValueError(str(checked_out.get("message") or "Isvoro 结算失败，未提交订单"))
+    data = checked_out.get("data") if isinstance(checked_out.get("data"), dict) else {}
+    invoice_id = data.get("invoice_id") or data.get("id") or data.get("order_id")
+    if not isinstance(invoice_id, (str, int)) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", str(invoice_id)):
+        raise ValueError("Isvoro 结算响应缺少账单号，未确认订单")
+    invoice_id = str(invoice_id)
+    invoice_url = f"https://isvoro.com/invoices/{invoice_id}"
+    return {"order_id": invoice_id, "invoice_url": invoice_url, "payment_status": "unpaid",
+            "plan_id": plan_id, "os": "Debian12", "payment_method": "alipay"}
 
 
 def _vmiss_url(url: str) -> str:
@@ -1985,7 +2067,7 @@ def seckill_test(submitted: dict) -> dict:
         if required_account:
             if not account:
                 result["order_submission"] = {"ok": False, "required": True, "message": "未绑定账户，本次不会创建订单"}
-            elif (str((product or {}).get("adapter", "")).casefold() not in {"akile", "vmiss", "bwh"}
+            elif (str((product or {}).get("adapter", "")).casefold() not in {"akile", "vmiss", "bwh", "isvoro"}
                   and not str(item.get("submit_url", "")).strip()):
                 result["order_submission"] = {"ok": False, "required": True, "message": "未配置商家待付款下单适配，本次不会创建订单"}
             else:
@@ -1997,6 +2079,8 @@ def seckill_test(submitted: dict) -> dict:
                                                             if adapter_id == "vmiss" else
                                                             "已启用搬瓦工原生官网结算适配，认证会话会短期复用并只创建未付款账单"
                                                             if adapter_id == "bwh" else
+                                                            "已启用 Isvoro 原生待付款适配，固定使用 Debian12 和支付宝"
+                                                            if adapter_id == "isvoro" else
                                                             "已配置统一 hostwatch-unpaid-v1 待付款接口，启动时还会校验接口能力")}
         try:
             with requests.Session() as session:
@@ -2124,6 +2208,18 @@ class SeckillTask:
             notification = self._notify_unpaid_order(item, order["order_id"], quantity, order["invoice_url"])
             return {"status": "submitted", "order_id": order["order_id"], "url": order["invoice_url"],
                     "quantity": quantity, "payment_status": "unpaid", "telegram_status": notification}
+        if product and str(product.get("adapter", "")).casefold() == "isvoro":
+            try:
+                order = isvoro_order(session, item, account, inspected, url, key)
+                self.log(f"Isvoro 已创建待付款订单 {order['order_id']}（Debian12 / 支付宝），正在准备订单通知", "success", item)
+            except (requests.RequestException, ValueError) as exc:
+                detail = _order_exception_detail(exc)
+                self.log(f"已发送一次 Isvoro 下单请求，但无法确认待付款账单；原因：{detail[:240]}。已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
+                return {"status": "uncertain", "url": url, "quantity": quantity}
+            notification = self._notify_unpaid_order(item, order["order_id"], quantity, order["invoice_url"])
+            return {"status": "submitted", "order_id": order["order_id"], "url": order["invoice_url"],
+                    "quantity": quantity, "payment_status": "unpaid", "telegram_status": notification,
+                    "os": order["os"], "payment_method": order["payment_method"]}
         payload = {"protocol": ORDER_PROTOCOL, "action": "create_unpaid_order",
             "product_id": item["product_id"], "purchase_url": url, "quantity": quantity,
             "coupon_code": item.get("coupon_code", ""), "payment_mode": "manual",
@@ -2217,10 +2313,11 @@ class SeckillTask:
                         native_akile = native_adapter == "akile"
                         native_vmiss = native_adapter == "vmiss"
                         native_bwh = native_adapter == "bwh"
+                        native_isvoro = native_adapter == "isvoro"
                         auto_requested = self.mode != "manual"
                         if auto_requested and not account:
                             raise ValueError("自动模式必须绑定网站账户")
-                        auto = bool(auto_requested and (native_akile or native_vmiss or native_bwh or str(item.get("submit_url", "")).strip()))
+                        auto = bool(auto_requested and (native_akile or native_vmiss or native_bwh or native_isvoro or str(item.get("submit_url", "")).strip()))
                         if auto_requested and not auto:
                             raise ValueError("该商家尚未配置内置或兼容的待付款下单适配")
                         if auto and not native_akile and not native_vmiss and not native_bwh:

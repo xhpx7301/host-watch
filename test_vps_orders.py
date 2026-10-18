@@ -550,6 +550,22 @@ class BwhOrderTests(unittest.TestCase):
         self.assertEqual(admin._bwh_invoice_id_from_page(response), '24290771')
 
 
+class IsvoroOrderTests(unittest.TestCase):
+    def test_creates_unpaid_debian12_alipay_order(self):
+        session = Mock()
+        session.post.side_effect = [response({'code': 0, 'data': {}}), response({'code': 0, 'data': {'invoice_id': 'inv-188-361'}})]
+        session.get.return_value = response({'code': 0, 'data': [{'id': 65, 'name': '支付宝', 'extension': 'Antom', 'enabled': True}]})
+        product = Product('188', 'HK PROD MiNi', 1, 'https://isvoro.com/buy/HK-prod?product=188', vendor='Isvoro',
+                          match_details={'product_id': '188', 'plans': [{'id': 361, 'billing_period': 1, 'billing_unit': 'month', 'hidden': False}],
+                                         'checkout_fields': [{'name': 'os', 'required': True, 'options': [{'value': 22, 'label': 'Debian12'}]}]})
+        result = admin.isvoro_order(session, {'quantity': 1, 'billing_cycle': 'monthly', 'payment_method': 'alipay'}, {'username': 'user@example.com'}, product, product.url)
+        self.assertEqual(result['order_id'], 'inv-188-361')
+        self.assertEqual(result['os'], 'Debian12')
+        self.assertEqual(result['payment_method'], 'alipay')
+        self.assertEqual(session.post.call_args_list[0].kwargs['json']['checkout_config'], {'os': '22'})
+        self.assertEqual(session.post.call_args_list[1].kwargs['json'], {'gateway_id': 65})
+
+
 class AccountVerificationTests(unittest.TestCase):
     def setUp(self):
         # Authentication caches are intentionally process-global in production;
