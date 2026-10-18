@@ -2200,12 +2200,14 @@ class SeckillTask:
                         product = products.get(item["product_id"])
                         routed = {**(product or {}), "egress_node_id": item.get("egress_node_id", "")}
                         fetcher = product_fetcher(self.config.get("fetcher"), routed)
+                        self.log(f"准备商品：{item.get('label') or item.get('product_id')} · 商家 {str((product or {}).get('provider') or (product or {}).get('adapter') or '未知')} · 出口 {item.get('egress_node_id') or '直连'}", "info", item)
                         stock_session = stack.enter_context(requests.Session())
                         order_session = stack.enter_context(requests.Session())
                         for session in (stock_session, order_session):
                             session.trust_env = False
                             session.headers["User-Agent"] = "HostWatch/1.0 (VPS seckill; unpaid orders only)"
                             egress.apply_session(session, fetcher)
+                        self.log("已建立库存检查会话和下单会话，开始预检查", "info", item)
                         account = accounts.get(item.get("account_id"))
                         native_adapter = str((product or {}).get("adapter", "")).casefold()
                         native_akile = native_adapter == "akile"
@@ -2224,6 +2226,7 @@ class SeckillTask:
                             if capability.get("protocol") != ORDER_PROTOCOL or capability.get("order_only") is not True or capability.get("automatic_payment") is not False:
                                 raise ValueError("接口未明确支持仅创建待付款订单；普通结算网页不能自动提交")
                         if account:
+                            self.log(f"开始账户认证：{account.get('name') or account.get('username')}（优先复用认证缓存）", "info", item)
                             checked = check_order_account(order_session, account, fetcher)
                             checked_public = public_account_check_result(checked)
                             self.log(f"账户 {account['name']}：{checked_public['message']}", "info" if checked_public["ok"] else "error", item)
@@ -2279,13 +2282,16 @@ class SeckillTask:
                                     continue
                                 url = result.url or url
                             if auto:
+                                self.log("库存满足下单条件，开始提交待付款订单（不会付款）", "info", item)
                                 finished[item["id"]] = self._submit(order_session, item, account, url, product, fetcher, result)
+                                self.log(f"下单流程结束：{finished[item['id']].get('status', 'unknown')}", "info" if finished[item["id"]].get("status") in {"submitted", "ready"} else "error", item)
                             else:
                                 purchase_url = self._affiliate_purchase_url(item, url, product)
                                 finished[item["id"]] = {"status": "ready", "url": purchase_url, "quantity": quantity}
                                 self.log(f"已准备购买链接（数量 {quantity}）：{purchase_url}；请到官网手动下单和付款。", "ready", item)
-                        except Exception:
-                            self.log(f"第 {round_no} 轮库存检查失败，未发送下单请求；请检查商品和出口配置。", "error", item)
+                        except Exception as exc:
+                            detail = _order_exception_detail(exc) if isinstance(exc, (requests.RequestException, ValueError)) else str(exc)
+                            self.log(f"第 {round_no} 轮执行失败：{detail[:300]}；请检查商品、账户和出口配置。", "error", item)
                     with self.lock:
                         self.output["items"] = [{"item_id": key, **value} for key, value in finished.items()]
                         self.output["round"] = round_no
