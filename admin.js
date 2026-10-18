@@ -2560,7 +2560,7 @@ function renderVpsSeckill() {
       }
     }
     const submitHint = text("p", providerKey === "vmiss"
-      ? "VMISS 使用内置官网结算适配：自动登录、预填商品配置并创建待付款发票；不会自动付款。"
+      ? "VMISS 使用内置官网结算适配：密码登录时自动启用官网 Remember Me，请求更持久的登录 Cookie；认证会话在内存中缓存最长 30 天，验证仍有效时会续延本地缓存。自动模式会预填商品配置并创建待付款发票；不会自动付款。"
       : providerKey === "akile"
         ? "Akile 使用内置待付款适配：固定 Debian 12 和 1 个月周期创建订单；不会自动付款。"
         : providerKey === "bwh"
@@ -2577,6 +2577,23 @@ function renderVpsSeckill() {
     card.append(grid, submitHint, flags); itemTarget.append(card);
   });
   const accountTarget = document.querySelector("#vps-seckill-accounts"); accountTarget.replaceChildren();
+  const accountPanel = accountTarget.closest(".seckill-panel");
+  let authDesign = accountPanel?.querySelector(".merchant-auth-design");
+  if (accountPanel && !authDesign) {
+    authDesign = document.createElement("div"); authDesign.className = "merchant-auth-design";
+    const title = text("h4", "商家登录方式设计");
+    const note = text("p", "认证会话按商家、账户和出口节点隔离，最长缓存 30 天。缓存失效后只尝试正常登录或官方 refresh；遇到验证码、Passkey 或 hCaptcha 时需要人工完成。", "hint");
+    const table = document.createElement("table"); table.className = "merchant-auth-table";
+    table.innerHTML = `<thead><tr><th>商家</th><th>主方案</th><th>Cookie 备用</th><th>浏览器增强</th></tr></thead><tbody>
+      <tr><th>Akile</th><td>官方 API + 令牌校验</td><td>不作为常规方案</td><td>API 异常时人工恢复</td></tr>
+      <tr><th>Isvoro</th><td>Cookie 主方案 + refresh Cookie</td><td>主方案</td><td>refresh 失败后人工 hCaptcha 恢复</td></tr>
+      <tr><th>VMISS</th><td>账号密码 + Remember Me</td><td>支持导入后验证</td><td>Cloudflare 或安全验证时使用</td></tr>
+      <tr><th>DMIT</th><td>账号密码 + Remember Me</td><td>支持 Cookie + User-Agent</td><td>浏览器/IP 绑定时人工恢复</td></tr>
+      <tr><th>搬瓦工</th><td>账号密码 + Remember Me</td><td>支持 Cookie，减少邮箱验证</td><td>邮箱验证或会话失效时使用</td></tr>
+      <tr><th>VPS.SOY / 其他</th><td>按官网实际流程</td><td>仅在商家会话可确认时启用</td><td>逐商家适配</td></tr>
+    </tbody>`;
+    authDesign.append(title, note, table); accountPanel.insertBefore(authDesign, accountTarget);
+  }
   if (!seckillAccounts().length) accountTarget.append(text("p", "尚未配置网站账户。手动抢购不需要账户。", "empty"));
   accounts.forEach(account => {
     const card = text("article", "", "seckill-account"), grid = text("div", "", "form-grid"); card.dataset.accountId = account.id;

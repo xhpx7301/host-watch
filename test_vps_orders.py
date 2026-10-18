@@ -634,6 +634,19 @@ class AccountVerificationTests(unittest.TestCase):
         self.assertEqual(session.post.call_args.kwargs['headers']['Referer'], 'https://app.vmiss.com/login')
         self.assertIn('Mozilla/5.0', session.post.call_args.kwargs['headers']['User-Agent'])
 
+    def test_vmiss_form_login_submits_remember_me_when_offered(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='vmiss', login_url='https://app.vmiss.com/login')
+        page = Mock(status_code=200, url='https://app.vmiss.com/login', content=b'<form action="/login" method="post"><input type="hidden" name="token" value="csrf"><input name="username"><input name="password"><input type="checkbox" name="rememberme" value="yes"></form>')
+        redirected = Mock(status_code=302, headers={'Location': '/clientarea.php'})
+        logged_in = Mock(status_code=200, url='https://app.vmiss.com/clientarea.php', content=b'<a href="/logout.php">Logout</a>')
+        session = Mock()
+        session.get.side_effect = [page, logged_in]
+        session.post.return_value = redirected
+        result = admin.check_order_account(session, account)
+        self.assertEqual(result['status'], 'valid')
+        self.assertEqual(session.post.call_args.kwargs['data']['rememberme'], 'yes')
+
     def test_vmiss_login_get_403_is_reported_as_access_block(self):
         account = configuration()['vps_seckill']['accounts'][0]
         account.update(provider='vmiss', login_url='https://app.vmiss.com/login')
@@ -829,8 +842,8 @@ class AccountVerificationTests(unittest.TestCase):
         key = admin._merchant_session_key('vmiss', account, route)
         with patch('admin.time.time', return_value=3000):
             admin._store_merchant_session('vmiss', account, route, source)
-        self.assertEqual(admin.MERCHANT_AUTH_SESSION_TTL, 24 * 60 * 60)
-        self.assertEqual(admin.MERCHANT_AUTH_SESSIONS[key]['expires_at'], 3000 + 24 * 60 * 60)
+        self.assertEqual(admin.MERCHANT_AUTH_SESSION_TTL, 30 * 24 * 60 * 60)
+        self.assertEqual(admin.MERCHANT_AUTH_SESSIONS[key]['expires_at'], 3000 + 30 * 24 * 60 * 60)
         admin._remove_merchant_session('vmiss', account, route)
 
     def test_bwh_manual_cookie_is_verified_and_cached_without_password(self):

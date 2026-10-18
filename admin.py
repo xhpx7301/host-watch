@@ -56,7 +56,7 @@ BWH_VERIFICATION_TTL = 10 * 60
 # without submitting credentials again.  Values stay in process memory only;
 # each task still receives its own requests.Session clone.
 MERCHANT_AUTH_SESSIONS = {}
-MERCHANT_AUTH_SESSION_TTL = 24 * 60 * 60
+MERCHANT_AUTH_SESSION_TTL = 30 * 24 * 60 * 60
 ISVORO_AUTH_SESSION_TTL = 30 * 24 * 60 * 60
 BWH_AUTH_SESSION_TTL = 30 * 24 * 60 * 60
 REFRESH_LOCK = threading.Lock()
@@ -694,12 +694,12 @@ def _merchant_form_login(session, account: dict, adapter: dict, fetcher: dict | 
     if not _same_merchant_url(action, adapter):
         return {"status": "unknown", "message": "官网登录表单跳转地址不符合商家域名，请到官网检查"}
     payload = {key: node.get("value", "") for key, node in fields.items() if key and node.get("type", "").casefold() == "hidden"}
-    # WHMCS exposes a first-party "Remember Me" checkbox on BandwagonHost.
-    # Ask the vendor to issue its persistent login cookie for password-based
-    # authentication; this is distinct from renewing an imported cookie.
-    if adapter.get("name") == "搬瓦工":
+    # These WHMCS-style login pages expose a first-party "Remember Me"
+    # checkbox. Ask the vendor to issue its persistent login cookie for
+    # password-based authentication; this is distinct from renewing a cookie.
+    if adapter.get("name") in {"VMISS", "DMIT", "搬瓦工"}:
         remember_field = next((key for key, node in fields.items()
-                               if key and key.casefold() in {"rememberme", "remember_me"}
+                               if key and key.casefold() in {"rememberme", "remember_me", "remember"}
                                and node.get("type", "").casefold() == "checkbox"), "")
         if remember_field:
             payload[remember_field] = next((node.get("value", "on") for key, node in fields.items()
