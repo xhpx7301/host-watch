@@ -65,6 +65,10 @@ install -o root -g root -m 0644 \
   "$SOURCE_DIR/admin.js" "$SOURCE_DIR/login.html" "$SOURCE_DIR/login.js" "$SOURCE_DIR/catalog.js" "$SOURCE_DIR/requirements.txt" "$SOURCE_DIR/config.example.json" \
   "$SOURCE_DIR/.env.example" "$SOURCE_DIR/vmiss-monitor.service" \
   "$SOURCE_DIR/vmiss-monitor-admin.service" "$SOURCE_DIR/admin.env.example" "$SOURCE_DIR/host-watch-admin.sudoers" "$INSTALL_DIR/"
+# Keep the login assets explicit as well as part of the bulk deployment list;
+# this makes their presence obvious and protects against future list edits.
+install -o root -g root -m 0644 "$SOURCE_DIR/login.html" "$INSTALL_DIR/login.html"
+install -o root -g root -m 0644 "$SOURCE_DIR/login.js" "$INSTALL_DIR/login.js"
 install -d -o root -g root -m 0755 /usr/local/bin
 if [[ -f /usr/local/bin/jk && ! -L /usr/local/bin/jk ]] && \
   cmp -s /usr/local/bin/jk <(sed 's/运行 hw/运行 jk/g' "$SOURCE_DIR/stockwatch.sh"); then
