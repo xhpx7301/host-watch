@@ -1243,12 +1243,19 @@ def _dmit_order_flaresolverr(item: dict, account: dict, product, url: str, fetch
                            "rootpw": secrets.token_urlsafe(12)})
             if form.find("input", attrs={"name": "beta_ack"}) is not None:
                 config["beta_ack"] = "1"
-            configured = _dmit_browser_response(flaresolverr_session_request(fetcher, session_id, action, "post",
-                urlencode(config), {"Referer": cart.url, "Origin": "https://www.dmit.io",
-                                    "Content-Type": "application/x-www-form-urlencoded"}))
+            # DMIT's order form has no HTML action. Its frontend submits an
+            # AJAX request to cart.php with a=confproduct; posting directly to
+            # the rendered page only reloads the form and never adds the item.
+            configured = _dmit_browser_response(flaresolverr_session_request(fetcher, session_id,
+                "https://www.dmit.io/cart.php", "post", "ajax=1&a=confproduct&" + urlencode(config),
+                {"Referer": cart.url, "Origin": "https://www.dmit.io",
+                 "Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "XMLHttpRequest"}))
             if not 200 <= configured.status_code < 300 or not _same_merchant_url(configured.url or action, MERCHANT_LOGIN_ADAPTERS["dmit"]):
                 detail = _dmit_page_errors(configured)
                 raise DmitOrderFailure("DMIT 商品配置请求被拒绝；最终结算请求尚未发送" + (f"：{detail}" if detail else ""))
+            if str(configured.text or "").strip():
+                detail = _dmit_page_errors(configured)
+                raise DmitOrderFailure("DMIT 商品配置未通过校验；最终结算请求尚未发送" + (f"：{detail}" if detail else ""))
             config_errors = _dmit_page_errors(configured)
             if config_errors:
                 raise DmitOrderFailure(f"DMIT 商品配置未通过校验；最终结算请求尚未发送：{config_errors}")
