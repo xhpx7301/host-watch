@@ -880,6 +880,15 @@ class AccountVerificationTests(unittest.TestCase):
         self.assertEqual(admin._clear_merchant_sessions_for_account(account), 2)
         self.assertIsNone(admin._get_merchant_session('vmiss', account, {'egress_node_id': 'route-a'}))
 
+    def test_order_notification_uses_product_name_when_item_label_is_missing(self):
+        value = configuration()
+        value['products'][0]['name'] = 'CN.HK.BGP.Pro'
+        task = admin.SeckillTask('notification-label-test', value, 'rapid')
+        with patch.object(admin, 'effective_telegram', return_value=('token', 'chat')), \
+             patch.object(admin, 'telegram_call') as send:
+            self.assertEqual(task._notify_unpaid_order({'product_id': 'plan'}, 'invoice-1', 1, 'https://app.vmiss.com/viewinvoice.php?id=1'), 'sent')
+        self.assertIn('CN.HK.BGP.Pro', send.call_args.kwargs['text'])
+
     def test_akile_cached_auth_session_skips_api_login(self):
         account = configuration()['vps_seckill']['accounts'][0]
         account.update(provider='akile', login_url=admin.AKILE_LOGIN_URL)

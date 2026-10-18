@@ -2069,6 +2069,10 @@ class SeckillTask:
         provider = product.get("adapter") or product.get("provider") or ""
         return affiliate_purchase_url(url, str(provider).casefold(), self.config, product)
 
+    def _item_label(self, item: dict, product: dict | None = None) -> str:
+        product = product or next((row for row in self.config.get("products", []) if row.get("id") == item.get("product_id")), {})
+        return str(item.get("label") or product.get("name") or item.get("product_id") or "VPS 商品")
+
     def _submit(self, session, item, account, url, product=None, fetcher=None, inspected=None):
         quantity = item.get("quantity", 1)
         # This is an explicit unpaid-order adapter contract, never a generic checkout POST.
@@ -2155,7 +2159,7 @@ class SeckillTask:
         if not token or not chat_id:
             self.log("待付款订单已创建，但未发送 Telegram：机器人未配置或通知已关闭。", "warning", item)
             return "unconfigured"
-        label = item.get("label") or item.get("product_id") or "VPS 商品"
+        label = self._item_label(item)
         message = "\n".join([
             "✅ <b>HostWatch · VPS 补货抢购成功</b>",
             f"商品：{escape(str(label)[:160])}",
@@ -2200,7 +2204,7 @@ class SeckillTask:
                         product = products.get(item["product_id"])
                         routed = {**(product or {}), "egress_node_id": item.get("egress_node_id", "")}
                         fetcher = product_fetcher(self.config.get("fetcher"), routed)
-                        self.log(f"准备商品：{item.get('label') or item.get('product_id')} · 商家 {str((product or {}).get('provider') or (product or {}).get('adapter') or '未知')} · 出口 {item.get('egress_node_id') or '直连'}", "info", item)
+                        self.log(f"准备商品：{self._item_label(item, product)} · 商家 {str((product or {}).get('provider') or (product or {}).get('adapter') or '未知')} · 出口 {item.get('egress_node_id') or '直连'}", "info", item)
                         stock_session = stack.enter_context(requests.Session())
                         order_session = stack.enter_context(requests.Session())
                         for session in (stock_session, order_session):
@@ -2259,7 +2263,7 @@ class SeckillTask:
                             write_inventory_cache(CONFIG_PATH.parent / "inventory-cache.json", routed, fetcher, result)
                             url = result.url or item.get("target_url", "")
                             available = self.enough_stock(result, quantity)
-                            self.log(f"第 {round_no} 轮：{item.get('label') or item['product_id']} · 需求 {quantity} 台 · {'可下单' if available else '缺货/库存不足/未知'}", "info", item)
+                            self.log(f"第 {round_no} 轮：{self._item_label(item, product)} · 需求 {quantity} 台 · {'可下单' if available else '缺货/库存不足/未知'}", "info", item)
                             if not available:
                                 continue
                             if result.stock_mode == "availability":
