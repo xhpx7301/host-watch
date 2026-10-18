@@ -1184,6 +1184,19 @@ def _dmit_generated_root_password() -> str:
     return "".join(parts)
 
 
+def _dmit_checkout_values(form) -> dict:
+    values = _dmit_form_values(form)
+    # WHMCS renders blank billing-profile controls on checkout even for an
+    # authenticated customer. Sending those blanks overwrites the account's
+    # saved defaults and makes DMIT reject the invoice. Omit empty profile
+    # values so the logged-in account remains the source of truth.
+    for name in ("companyname", "address1", "address2", "city", "postcode", "state",
+                 "country", "loginemail", "loginpassword", "phonenumber"):
+        if not str(values.get(name, "")).strip():
+            values.pop(name, None)
+    return values
+
+
 def _dmit_browser_response(solution):
     from types import SimpleNamespace
     body = str(solution.get("response", ""))
@@ -1247,10 +1260,10 @@ def _dmit_order_flaresolverr(item: dict, account: dict, product, url: str, fetch
             if not _same_merchant_url(action, MERCHANT_LOGIN_ADAPTERS["dmit"]):
                 raise DmitOrderFailure("DMIT 配置提交地址不符合商家域名；最终结算请求尚未发送")
             config = _dmit_form_values(form)
-            hostname = "hw-" + re.sub(r"[^a-z0-9-]", "", str(key).casefold())[:12]
-            config.update({"configure": "true", "billingcycle": "monthly", "hostname": hostname,
+            config.update({"configure": "true", "billingcycle": "monthly",
                            "configoption[29]": "471", "configoption[118]": "0", "customfield[1025]": "",
                            "rootpw": _dmit_generated_root_password()})
+            hostname = str(config.get("hostname", "")).strip()
             if form.find("input", attrs={"name": "beta_ack"}) is not None:
                 config["beta_ack"] = "1"
             # DMIT's order form has no HTML action. Its frontend submits an
@@ -1280,7 +1293,7 @@ def _dmit_order_flaresolverr(item: dict, account: dict, product, url: str, fetch
             if checkout_form is None:
                 raise DmitOrderFailure("DMIT 结算页结构已变化；最终结算请求尚未发送")
             checkout_action = urljoin(checkout.url, checkout_form.get("action") or checkout.url)
-            payload = _dmit_form_values(checkout_form)
+            payload = _dmit_checkout_values(checkout_form)
             payload.update({"submit": "true", "custtype": "existing", "paymentmethod": "alipay"})
             for node in checkout_form.select("input[type=radio]"):
                 label = node.parent.get_text(" ", strip=True).casefold()
@@ -1394,16 +1407,9 @@ def _dmit_order(session, item: dict, account: dict, product, url: str, fetcher: 
     if not _same_merchant_url(action, MERCHANT_LOGIN_ADAPTERS["dmit"]):
         raise ValueError("DMIT 配置提交地址不符合商家域名，未提交订单")
     config = _dmit_form_values(form)
-    # DMIT only permits a hostname once per account.  The old hard-coded
-    # ``pz`` value made every later order collide with the first one.  Tie the
-    # hostname to the task/item idempotency key so each task gets a unique,
-    # DNS-safe value while retries of the same request keep the same value.
-    seed = str(key or "").strip()
-    if not seed:
-        seed = hashlib.sha256(json.dumps(item, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
-    hostname = "hw-" + re.sub(r"[^a-z0-9-]", "", seed.casefold())[:12]
-    config.update({"configure": "true", "billingcycle": "monthly", "hostname": hostname, "configoption[29]": "471", "configoption[118]": "0", "customfield[1025]": "",
+    config.update({"configure": "true", "billingcycle": "monthly", "configoption[29]": "471", "configoption[118]": "0", "customfield[1025]": "",
                    "rootpw": _dmit_generated_root_password()})
+    hostname = str(config.get("hostname", "")).strip()
     # DMIT's Beta plan form blocks its first submit in JavaScript until the
     # customer acknowledges the Beta notice. The browser's confirmation sets
     # this hidden field; mirror that affirmative step for this explicitly
@@ -1434,7 +1440,7 @@ def _dmit_order(session, item: dict, account: dict, product, url: str, fetcher: 
     if checkout_form is None:
         raise ValueError("DMIT 结算页结构已变化，未提交订单")
     checkout_action = urljoin(checkout.url, checkout_form.get("action") or checkout.url)
-    payload = _dmit_form_values(checkout_form)
+    payload = _dmit_checkout_values(checkout_form)
     payload.update({"submit": "true", "custtype": "existing", "paymentmethod": "alipay"})
     for node in checkout_form.select("input[type=radio]"):
         label = node.parent.get_text(" ", strip=True).casefold()
