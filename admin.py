@@ -1041,6 +1041,10 @@ def _isvoro_plan(product, item: dict) -> tuple[int, dict]:
 
 def isvoro_order(session, item: dict, account: dict, product, url: str, key: str | None = None) -> dict:
     """Create and verify one Isvoro unpaid invoice without initiating payment."""
+    csrf = _session_cookie(session, "pmt_csrf")
+    request_headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    if csrf:
+        request_headers["X-CSRF-Token"] = csrf
     product_id = str((getattr(product, "match_details", None) or {}).get("product_id") or getattr(product, "id", "")).strip()
     if not re.fullmatch(r"[1-9][0-9]{0,18}", product_id):
         raise ValueError("Isvoro 商品 ID 无效，未提交订单")
@@ -1055,18 +1059,18 @@ def isvoro_order(session, item: dict, account: dict, product, url: str, key: str
     cart_payload = {"product_id": int(product_id), "plan_id": plan_id, "quantity": 1,
                     "checkout_config": {"os": os_value}}
     added = order_json(session.post(ISVORO_CART_URL, json=cart_payload, timeout=(5, 20), allow_redirects=False,
-                                    headers={"Accept": "application/json", "Content-Type": "application/json"}))
+                                    headers=request_headers))
     if added.get("code") not in {0, "0"}:
         raise ValueError(str(added.get("message") or "Isvoro 加入购物车失败，未提交订单"))
     coupon = str(item.get("coupon_code") or "").strip()
     if coupon:
         coupon_response = order_json(session.post(ISVORO_COUPON_URL, json={"code": coupon}, timeout=(5, 20), allow_redirects=False,
-                                                  headers={"Accept": "application/json", "Content-Type": "application/json"}))
+                                                  headers=request_headers))
         if coupon_response.get("code") not in {0, "0"}:
             raise ValueError("Isvoro 优惠码应用失败，未提交订单")
     gateway_id = _isvoro_payment_gateway(session, str(item.get("payment_method") or "alipay"))
     checked_out = order_json(session.post(ISVORO_CHECKOUT_URL, json={"gateway_id": gateway_id}, timeout=(5, 20), allow_redirects=False,
-                                          headers={"Accept": "application/json", "Content-Type": "application/json"}))
+                                          headers=request_headers))
     if checked_out.get("code") not in {0, "0"}:
         raise ValueError(str(checked_out.get("message") or "Isvoro 结算失败，未提交订单"))
     data = checked_out.get("data") if isinstance(checked_out.get("data"), dict) else {}
