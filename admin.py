@@ -45,6 +45,11 @@ STOPPED_TEST_IDS = {}
 SECKILL_LOCK = threading.Lock()
 SECKILL_TASKS = {}
 STOPPED_SECKILL_IDS = {}
+# BandwagonHost keeps the email-code challenge in the login session. Keep only
+# short-lived, in-memory sessions so an administrator can finish that login
+# without persisting the code or merchant cookies in configuration backups.
+BWH_VERIFICATION_CHALLENGES = {}
+BWH_VERIFICATION_TTL = 10 * 60
 REFRESH_LOCK = threading.Lock()
 REFRESH_TASKS = {}
 BROWSER_CLEANUP_SECONDS = 8
@@ -579,7 +584,9 @@ def _merchant_form_login(session, account: dict, adapter: dict, fetcher: dict | 
         return {"status": "unknown", "message": f"官网登录返回 HTTP {submitted.status_code}，请到官网检查"}
     soup, form, _ = _login_form(page, adapter["username_field"])
     if _merchant_additional_verification_required(page, soup, adapter):
-        return {"status": "unknown", "message": "搬瓦工要求邮箱验证码或浏览器验证，暂不自动适配；请先到官网完成验证后再检查"}
+        return {"status": "unknown", "verification_required": True,
+                "message": "搬瓦工要求邮箱验证码，已向账户邮箱发送验证码，请在此处提交最新验证码完成登录",
+                "_verification_session": session, "_verification_url": str(getattr(page, "url", "") or adapter["url"])}
     if form is not None:
         body = soup.get_text(" ", strip=True).casefold()
         if any(marker in body for marker in ("incorrect", "invalid", "incorrect password", "用户名或密码", "密码错误", "账号或密码")):
@@ -591,6 +598,65 @@ def _merchant_form_login(session, account: dict, adapter: dict, fetcher: dict | 
     if authenticated:
         return {"status": "valid", "message": "官网登录成功（不代表具有购买资格或库存）"}
     return {"status": "unknown", "message": "官网未返回可确认的登录状态，请到官网检查"}
+
+
+def _merchant_submit_verification(session, account: dict, adapter: dict, challenge_url: str, code: str) -> dict:
+    """Submit a BandwagonHost browser-auth email code in the original session."""
+    from urllib.parse import urljoin
+
+    page = session.get(challenge_url, timeout=(5, 20), allow_redirects=False,
+                       headers={**MERCHANT_BROWSER_HEADERS, "Referer": adapter["url"], "Sec-Fetch-Site": "same-origin"})
+    if not 200 <= page.status_code < 300 or not _same_merchant_url(page.url or challenge_url, adapter):
+        return {"status": "unknown", "message": "搬瓦工验证码会话已失效，请重新检查账户以获取最新验证码"}
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(page.content or page.text or "", "html.parser")
+    form = next((candidate for candidate in soup.find_all("form")
+                 if candidate.find("input", attrs={"name": re.compile(r"browser_auth_code|verification_code|code", re.I)})), None)
+    if form is None:
+        authenticated = soup.find("a", href=re.compile(r"logout|clientarea\.php\?action=details", re.I))
+        if authenticated:
+            return {"status": "valid", "ok": True, "message": "搬瓦工官网登录成功（不代表具有购买资格或库存）"}
+        return {"status": "unknown", "message": "搬瓦工验证码页面已变化，请重新检查账户"}
+    fields = {str(node.get("name", "")): node for node in form.find_all("input") if node.get("name")}
+    code_field = next((name for name in fields if re.search(r"browser_auth_code|verification_code|code", name, re.I)), "")
+    if not code_field:
+        return {"status": "unknown", "message": "搬瓦工验证码字段无法识别，请重新检查账户"}
+    action = urljoin(page.url or challenge_url, form.get("action") or page.url or challenge_url)
+    if not _same_merchant_url(action, adapter):
+        return {"status": "unknown", "message": "搬瓦工验证码提交地址不符合商家域名，请重新检查账户"}
+    payload = {key: node.get("value", "") for key, node in fields.items()
+               if key != code_field and node.get("type", "").casefold() == "hidden"}
+    payload[code_field] = code
+    origin = f"{urlsplit(action).scheme}://{urlsplit(action).netloc}"
+    submitted = session.post(action, data=payload, timeout=(5, 20), allow_redirects=False,
+                             headers={**MERCHANT_BROWSER_HEADERS, "Content-Type": "application/x-www-form-urlencoded",
+                                      "Origin": origin, "Referer": page.url or challenge_url, "Sec-Fetch-Site": "same-origin"})
+    if submitted.status_code in {401, 403}:
+        return {"status": "invalid", "message": "搬瓦工验证码无效或会话被拒绝，请确认使用最新邮件中的验证码"}
+    if not 200 <= submitted.status_code < 400:
+        return {"status": "unknown", "message": f"搬瓦工验证码提交返回 HTTP {submitted.status_code}，请重新检查账户"}
+    checked = submitted
+    for _ in range(6):
+        location = checked.headers.get("Location", "")
+        if not location:
+            break
+        destination = urljoin(checked.url or action, location)
+        if not _same_merchant_url(destination, adapter):
+            return {"status": "unknown", "message": "搬瓦工验证码后的跳转无法安全确认，请到官网检查"}
+        checked = session.get(destination, timeout=(5, 20), allow_redirects=False)
+        if not 300 <= checked.status_code < 400:
+            break
+    if not 200 <= checked.status_code < 300:
+        return {"status": "unknown", "message": "搬瓦工验证码后的登录结果无法读取，请到官网检查"}
+    checked_soup = BeautifulSoup(checked.content or checked.text or "", "html.parser")
+    if checked_soup.find("a", href=re.compile(r"logout|clientarea\.php\?action=details", re.I)):
+        return {"status": "valid", "ok": True, "message": "搬瓦工账户认证正常（邮箱验证码已提交）"}
+    body = checked_soup.get_text(" ", strip=True).casefold()
+    if any(marker in body for marker in ("invalid", "incorrect", "无效", "错误")):
+        return {"status": "invalid", "message": "搬瓦工验证码无效，请确认使用最新邮件中的验证码"}
+    if _merchant_additional_verification_required(checked, checked_soup, adapter):
+        return {"status": "invalid", "message": "搬瓦工验证码未通过，请确认使用最新邮件中的验证码"}
+    return {"status": "unknown", "message": "搬瓦工未返回可确认的登录状态，请到官网检查"}
 
 
 def _akile_login(session, account: dict) -> dict:
@@ -1082,6 +1148,11 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
         return {**result, "message": "无法验证账户：网络异常、跳转或接口未适配，请到官网检查"}
 
 
+def public_account_check_result(value: dict) -> dict:
+    """Remove transient login-session handles before exposing task results."""
+    return {key: item for key, item in value.items() if not str(key).startswith("_")}
+
+
 def _seckill_action_config(submitted: dict) -> dict:
     """Validate a transient browser draft while retaining server-only secrets."""
     current = current_config()
@@ -1173,13 +1244,68 @@ def seckill_account_check(submitted: dict) -> dict:
         adapter_id = merchant_login_id(account.get("provider")) or "html"
         route_item = {"adapter": adapter_id, "provider": account.get("provider", ""), "egress_node_id": ""}
     fetcher = product_fetcher(current.get("fetcher"), route_item)
-    with requests.Session() as session:
-        session.trust_env = False
-        egress.apply_session(session, fetcher)
+    session = requests.Session()
+    session.trust_env = False
+    egress.apply_session(session, fetcher)
+    try:
         result = {**check_order_account(session, account, fetcher), "account_id": account["id"]}
         if item:
             result["item_id"] = item["id"]
+        pending_session = result.pop("_verification_session", None)
+        pending_url = result.pop("_verification_url", "")
+        if result.get("verification_required") and pending_session is session:
+            challenge_id = secrets.token_urlsafe(24)
+            now = time.time()
+            with SECKILL_LOCK:
+                for key, value in list(BWH_VERIFICATION_CHALLENGES.items()):
+                    if value.get("expires_at", 0) <= now or value.get("account_id") == account["id"]:
+                        old = BWH_VERIFICATION_CHALLENGES.pop(key, None)
+                        if old and old.get("session"):
+                            old["session"].close()
+                BWH_VERIFICATION_CHALLENGES[challenge_id] = {
+                    "account_id": account["id"], "username": account["username"], "provider": merchant_login_id(account.get("provider")),
+                    "session": session, "url": pending_url, "expires_at": now + BWH_VERIFICATION_TTL,
+                }
+            result["challenge_id"] = challenge_id
+            result["verification_expires_at"] = int((now + BWH_VERIFICATION_TTL) * 1000)
+            return result
+        session.close()
         return result
+    except Exception:
+        session.close()
+        raise
+
+
+def seckill_account_verification(submitted: dict) -> dict:
+    challenge_id = str(submitted.get("challenge_id", "")).strip()
+    account_id = str(submitted.get("account_id", "")).strip()
+    code = str(submitted.get("verification_code", "")).strip()
+    if not re.fullmatch(r"[0-9]{4,12}", code):
+        raise ValueError("邮箱验证码应为 4 到 12 位数字")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{20,128}", challenge_id):
+        raise ValueError("邮箱验证码会话无效，请重新检查账户")
+    with SECKILL_LOCK:
+        challenge = BWH_VERIFICATION_CHALLENGES.get(challenge_id)
+        if challenge and challenge.get("expires_at", 0) <= time.time():
+            BWH_VERIFICATION_CHALLENGES.pop(challenge_id, None)
+            challenge["session"].close()
+            challenge = None
+    if not challenge or challenge.get("account_id") != account_id:
+        raise ValueError("邮箱验证码会话已失效，请重新检查账户")
+    current = current_config()
+    supplied_account = submitted.get("account")
+    account = supplied_account if isinstance(supplied_account, dict) and str(supplied_account.get("id", "")) == account_id else next((row for row in current["vps_seckill"].get("accounts", []) if row["id"] == account_id), None)
+    if not account or account.get("username") != challenge.get("username") or merchant_login_id(account.get("provider")) != "bwh":
+        raise ValueError("网站账户已修改，请重新检查搬瓦工账户")
+    adapter = MERCHANT_LOGIN_ADAPTERS["bwh"]
+    try:
+        checked = _merchant_submit_verification(challenge["session"], account, adapter, challenge["url"], code)
+    except (requests.RequestException, ValueError):
+        checked = {"status": "unknown", "message": "无法提交搬瓦工验证码：网络异常或会话已失效，请重新检查账户"}
+    with SECKILL_LOCK:
+        BWH_VERIFICATION_CHALLENGES.pop(challenge_id, None)
+    challenge["session"].close()
+    return {"account_id": account_id, "checked_at": beijing_iso(), "ok": checked.get("status") == "valid", **checked}
 
 
 def seckill_test(submitted: dict) -> dict:
@@ -1246,7 +1372,7 @@ def seckill_test(submitted: dict) -> dict:
                     result["page_recognition"] = {"ok": False, "message": f"页面识别失败：{message}"}
                 if account:
                     checked = check_order_account(session, account, fetcher)
-                    result["account"] = {**checked, "required": required_account, "account_id": account["id"]}
+                    result["account"] = {**public_account_check_result(checked), "required": required_account, "account_id": account["id"]}
         except (OSError, requests.RequestException, ValueError) as exc:
             message = str(exc)[:300] or "检查失败"
             if not result["site_access"]["ok"]:
@@ -1444,10 +1570,11 @@ class SeckillTask:
                                 raise ValueError("接口未明确支持仅创建待付款订单；普通结算网页不能自动提交")
                         if account:
                             checked = check_order_account(order_session, account, fetcher)
-                            self.log(f"账户 {account['name']}：{checked['message']}", "info" if checked["ok"] else "error", item)
+                            checked_public = public_account_check_result(checked)
+                            self.log(f"账户 {account['name']}：{checked_public['message']}", "info" if checked_public["ok"] else "error", item)
                             with self.lock:
-                                self.output.setdefault("accounts", {})[item["id"]] = checked
-                            if auto and not checked["ok"]:
+                                self.output.setdefault("accounts", {})[item["id"]] = checked_public
+                            if auto and not checked_public["ok"]:
                                 raise ValueError("账户未通过验证，已停止该商品自动下单")
                         contexts[item["id"]] = (product, routed, fetcher, stock_session, order_session, account, auto)
                     except (requests.RequestException, ValueError) as exc:
@@ -1481,6 +1608,7 @@ class SeckillTask:
                                 self.log("商家仅提供有货状态，数量由下单接口最终核验；不会自动减少下单数量。", "info", item)
                             if auto and self.mode == "precise":
                                 checked = check_order_account(order_session, account, fetcher)
+                                checked = public_account_check_result(checked)
                                 with self.lock:
                                     self.output.setdefault("accounts", {})[item["id"]] = checked
                                 if not checked["ok"]:
@@ -2614,7 +2742,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(403)
             return
         # Stopping and polling tests must never wait behind config/service locks.
-        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/test", "/api/egress/probe"}:
+        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-verification", "/api/seckill/test", "/api/egress/probe"}:
             self._post_action()
             return
         if not MUTATION_LOCK.acquire(blocking=False):
@@ -2626,7 +2754,7 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/refresh", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/test", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
+        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/refresh", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-verification", "/api/seckill/test", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
             self.send_error(404)
             return
         try:
@@ -2707,6 +2835,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/seckill/account-check":
                 output = seckill_account_check(submitted)
+                self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
+                return
+            if self.path == "/api/seckill/account-verification":
+                output = seckill_account_verification(submitted)
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/seckill/test":

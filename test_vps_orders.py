@@ -589,6 +589,24 @@ class AccountVerificationTests(unittest.TestCase):
         self.assertEqual(result['status'], 'unknown')
         self.assertIn('邮箱验证码', result['message'])
 
+    def test_bandwagon_email_code_finishes_original_login_session(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='bwh', login_url='https://bwh81.net/clientarea.php')
+        login_page = Mock(status_code=200, url='https://bwh81.net/clientarea.php', content=b'<form action="dologin.php"><input name="username"><input name="password"></form>')
+        redirect = Mock(status_code=302, url='https://bwh81.net/dologin.php', headers={'Location': '/browser_auth.php'})
+        code_page = Mock(status_code=200, url='https://bwh81.net/browser_auth.php', content=b'<form action="browser_auth.php"><input type="hidden" name="token" value="csrf"><input name="browser_auth_code"></form>')
+        code_redirect = Mock(status_code=302, url='https://bwh81.net/browser_auth.php', headers={'Location': '/clientarea.php'})
+        logged_in = Mock(status_code=200, url='https://bwh81.net/clientarea.php', content=b'<a href="logout.php">Logout</a>')
+        session = Mock(headers={})
+        session.get.side_effect = [login_page, code_page, code_page, logged_in]
+        session.post.side_effect = [redirect, code_redirect]
+        first = admin.check_order_account(session, account)
+        self.assertTrue(first['verification_required'])
+        self.assertNotIn('private-password', str(first))
+        second = admin._merchant_submit_verification(session, account, admin.MERCHANT_LOGIN_ADAPTERS['bwh'], first['_verification_url'], '123456')
+        self.assertTrue(second['ok'])
+        self.assertEqual(session.post.call_args_list[-1].kwargs['data'], {'token': 'csrf', 'browser_auth_code': '123456'})
+
     def test_dmit_form_login_uses_builtin_adapter(self):
         account = configuration()['vps_seckill']['accounts'][0]
         account.update(provider='dmit', login_url='https://www.dmit.io/login')

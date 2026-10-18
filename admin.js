@@ -2613,13 +2613,30 @@ function renderVpsSeckill() {
     check.addEventListener("click", () => {
       runAction(check, "检查中…", "正在检查账户，不创建订单、不付款…", async () => {
         const result = await requestJSON("/api/seckill/account-check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: collectConfig(), account_id: account.id, account }) });
-        standaloneAccountChecks.set(account.id, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : "error");
+        standaloneAccountChecks.set(account.id, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : result.verification_required ? "pending" : "error");
       });
     });
     const remove = text("button", "删除账户", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.setAttribute("aria-label", `删除补货抢购账户 ${account.name || account.id}`);
     remove.addEventListener("click", () => deleteSeckillAccounts([account.id]));
-    card.append(grid, adapterNote, providerExtra, text("p", standaloneAccountNote(account), "hint seckill-account-status"), text("div", "", "actions")); card.lastChild.append(check, remove);
+    const verification = standaloneAccountChecks.get(account.id);
+    const verificationBox = text("div", "", "form-grid span-2");
+    if (verification?.verification_required && verification.challenge_id) {
+      const code = document.createElement("input"); code.type = "text"; code.inputMode = "numeric"; code.autocomplete = "one-time-code"; code.maxLength = 12; code.placeholder = "输入搬瓦工邮箱中的最新验证码";
+      const codeLabel = document.createElement("label"); codeLabel.append(text("span", "邮箱验证码"), code); verificationBox.append(codeLabel);
+      const submitCode = text("button", "提交验证码", "primary"); submitCode.type = "button"; submitCode.disabled = actionRunning;
+      submitCode.addEventListener("click", () => {
+        runAction(submitCode, "提交中…", "正在提交搬瓦工邮箱验证码…", async () => {
+          const result = await requestJSON("/api/seckill/account-verification", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account_id: account.id, account, challenge_id: verification.challenge_id, verification_code: code.value }) });
+          standaloneAccountChecks.set(account.id, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : result.verification_required ? "pending" : "error");
+        });
+      });
+      const action = text("div", "", "actions"); action.append(submitCode); verificationBox.append(action);
+    }
+    const accountParts = [grid, adapterNote, providerExtra];
+    if (verificationBox.childElementCount) accountParts.push(verificationBox);
+    accountParts.push(text("p", standaloneAccountNote(account), "hint seckill-account-status"), text("div", "", "actions"));
+    card.append(...accountParts); card.lastChild.append(check, remove);
     accountTarget.append(card);
   });
   renderVpsSeckillTask();
