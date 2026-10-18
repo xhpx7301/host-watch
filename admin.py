@@ -1168,7 +1168,15 @@ def _dmit_order(session, item: dict, account: dict, product, url: str, fetcher: 
     if not _same_merchant_url(action, MERCHANT_LOGIN_ADAPTERS["dmit"]):
         raise ValueError("DMIT 配置提交地址不符合商家域名，未提交订单")
     config = _dmit_form_values(form)
-    config.update({"configure": "true", "billingcycle": "monthly", "hostname": "pz", "configoption[29]": "471", "configoption[118]": "0", "customfield[1025]": ""})
+    # DMIT only permits a hostname once per account.  The old hard-coded
+    # ``pz`` value made every later order collide with the first one.  Tie the
+    # hostname to the task/item idempotency key so each task gets a unique,
+    # DNS-safe value while retries of the same request keep the same value.
+    seed = str(key or "").strip()
+    if not seed:
+        seed = hashlib.sha256(json.dumps(item, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    hostname = "hw-" + re.sub(r"[^a-z0-9-]", "", seed.casefold())[:12]
+    config.update({"configure": "true", "billingcycle": "monthly", "hostname": hostname, "configoption[29]": "471", "configoption[118]": "0", "customfield[1025]": ""})
     configured = session.post(action, data=config, timeout=(5, 25), allow_redirects=True,
                               headers={"Referer": final_url, "Content-Type": "application/x-www-form-urlencoded"})
     if not 200 <= configured.status_code < 300 or not _same_merchant_url(configured.url or action, MERCHANT_LOGIN_ADAPTERS["dmit"]):
@@ -1208,7 +1216,7 @@ def _dmit_order(session, item: dict, account: dict, product, url: str, fetcher: 
     if not re.fullmatch(r"[1-9][0-9]{2,20}", str(invoice_id)):
         raise ValueError("DMIT 账单响应缺少账单号，未确认订单")
     return {"order_id": str(invoice_id), "invoice_url": f"https://www.dmit.io/viewinvoice.php?id={invoice_id}", "payment_status": "unpaid",
-            "os": "Debian12", "payment_method": "alipay", "hostname": "pz", "extra_disk_gb": 0}
+            "os": "Debian12", "payment_method": "alipay", "hostname": hostname, "extra_disk_gb": 0}
 
 
 def _vmiss_url(url: str) -> str:

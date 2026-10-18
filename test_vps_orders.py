@@ -582,7 +582,8 @@ class DMitOrderTests(unittest.TestCase):
         self.assertEqual(result['order_id'], '1171903')
         payload = session.post.call_args_list[0].kwargs['data']
         self.assertEqual(payload['billingcycle'], 'monthly')
-        self.assertEqual(payload['hostname'], 'pz')
+        self.assertRegex(payload['hostname'], r'^hw-[a-f0-9]{12}$')
+        self.assertEqual(result['hostname'], payload['hostname'])
         self.assertEqual(payload['configoption[29]'], '471')
         self.assertEqual(payload['configoption[118]'], '0')
         self.assertEqual(payload['customfield[1025]'], '')
