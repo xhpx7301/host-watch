@@ -1540,6 +1540,22 @@ def _bwh_form_values(form) -> dict:
     return values
 
 
+def _bwh_invoice_id_from_page(response) -> str:
+    """Extract a pending BWH invoice number from confirmation-page variants."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(response.content or response.text or "", "html.parser")
+    text = soup.get_text(" ", strip=True)
+    if not re.search(r"\b(?:unpaid|pending)\b|未付款|待付款", text, re.I):
+        return ""
+    for node in soup.find_all("a", href=True):
+        match = re.search(r"/(?:billing|invoice)(?:/|\.php\?[^\s#>]*(?:id|invoiceid)=)([0-9]+)", str(node.get("href", "")), re.I)
+        if match:
+            return match.group(1)
+    match = re.search(r"(?:Invoice|账单)\s*(?:[#№:]|No\.?|编号)?\s*([0-9]{1,20})", text, re.I)
+    return match.group(1) if match else ""
+
+
 def bwh_order(session, item: dict, account: dict, product, url: str, key: str | None = None) -> dict:
     """Create one BandwagonHost invoice and stop at its unpaid billing page."""
     from bs4 import BeautifulSoup
@@ -1612,12 +1628,11 @@ def bwh_order(session, item: dict, account: dict, product, url: str, key: str | 
             break
     if not 200 <= checked.status_code < 300:
         raise ValueError(f"搬瓦工下单返回 HTTP {checked.status_code}，未确认订单")
+    invoice_id = _bwh_invoice_id_from_page(checked)
+    if not invoice_id:
+        raise ValueError("搬瓦工未返回可确认的未付款账单")
     invoice_soup = BeautifulSoup(checked.content or checked.text or "", "html.parser")
     text = invoice_soup.get_text(" ", strip=True)
-    invoice_match = re.search(r"Invoice\s+(\d+)\s*:\s*Unpaid", text, re.I)
-    if not invoice_match or not re.search(r"\b(?:unpaid|pending)\b|未付款|待付款", text, re.I):
-        raise ValueError("搬瓦工未返回可确认的未付款账单")
-    invoice_id = invoice_match.group(1)
     if product:
         product_name = str(getattr(product, "name", "") or "").split(" · ", 1)[0]
         if product_name and product_name.casefold() not in text.casefold():

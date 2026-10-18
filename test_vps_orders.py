@@ -545,6 +545,10 @@ class BwhOrderTests(unittest.TestCase):
         self.assertNotIn('ccnumber', payload)
         self.assertNotIn('payment', session.get.call_args_list[-1].args[0])
 
+    def test_accepts_invoice_link_and_pending_status_variant(self):
+        response = VmissResponse('<a href="/billing/24290771">View invoice</a><span>Pending</span>')
+        self.assertEqual(admin._bwh_invoice_id_from_page(response), '24290771')
+
 
 class AccountVerificationTests(unittest.TestCase):
     def setUp(self):
