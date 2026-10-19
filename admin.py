@@ -2544,7 +2544,11 @@ def _normalize_market_config(value: object, accounts: list[dict], provider: str,
     enabled = value.get("enabled", False)
     if type(enabled) is not bool:
         raise ValueError(f"{label}市场启用状态必须是布尔值")
-    interval = value.get("interval_seconds", 60)
+    interval = value.get("interval_seconds", 600 if provider == "isvoro" else 60)
+    # Isvoro's previous default was 60 seconds; move that legacy default to
+    # the safer 10-minute cadence while preserving other explicit intervals.
+    if provider == "isvoro" and interval == 60:
+        interval = 600
     if type(interval) is not int or not 30 <= interval <= 3600:
         raise ValueError(f"{label}市场刷新间隔必须是 30 到 3600 秒")
     account_id = str(value.get("account_id", ""))
