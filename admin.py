@@ -2537,16 +2537,16 @@ def akile_market_valuation(row: dict, now: float | None = None) -> dict:
     price, renewal = price / 100, renewal / 100
     monthly_price = renewal / cycle_months if cycle_months else None
     remaining_days = max(0, (due_time - (time.time() if now is None else now)) / 86400)
-    fair_value = monthly_price
+    fair_value = renewal * remaining_days / cycle_days if cycle_days else None
     delta = fair_value - price if fair_value is not None else None
-    rate = delta / fair_value * 100 if fair_value and fair_value > 0 else None
+    rate = delta / monthly_price * 100 if delta is not None and monthly_price and monthly_price > 0 else None
     return {"id": product_id, "name": str(row.get("name") or row.get("plan_name") or "")[:160],
         "plan_name": str(row.get("plan_name") or "")[:160],
         "region": str(row.get("area_name") or "")[:80], "node": str(row.get("node_name") or "")[:120],
         **{key: row.get(key) for key in ("cpu", "memory", "disk", "bandwidth", "flow", "flow_used", "ipv4_num", "ipv6_num", "status")},
         "is_bid": row.get("is_bid") is not False, "detail": str(row.get("detail") or "")[:240],
         "price": price, "renewal": renewal, "cycle": row.get("server_cycle"), "cycle_months": cycle_months, "cycle_days": cycle_days,
-        "due_time": due_time, "remaining_days": remaining_days, "fair_value": fair_value,
+        "due_time": due_time, "remaining_days": remaining_days, "fair_value": fair_value, "monthly_price": monthly_price,
         "delta": delta, "rate": rate, "updated_at": beijing_iso(),
         "valuation_error": "未知续费周期" if monthly_price is None else "已到期或月付价格为零，无法估值" if rate is None else ""}
 
@@ -2824,9 +2824,9 @@ def isvoro_market_valuation(row: dict, now: float | None = None) -> dict:
     except (TypeError, ValueError, OverflowError):
         raise ValueError("Isvoro 商品价格或到期时间无效") from None
     remaining_days = max(0, (expires_at - (time.time() if now is None else now)) / 86400)
-    fair_value = monthly_price
+    fair_value = renewal * remaining_days / cycle_days if cycle_days else None
     delta = fair_value - price if fair_value is not None else None
-    rate = delta / fair_value * 100 if fair_value and fair_value > 0 else None
+    rate = delta / monthly_price * 100 if delta is not None and monthly_price and monthly_price > 0 else None
     config = server.get("config_summary") or server.get("network_summary") or ""
     return {"id": product_id, "name": str(server.get("hostname") or product.get("name") or server.get("plan_name") or "")[:160],
         "plan_name": str(server.get("plan_name") or product.get("name") or "")[:160],
@@ -2840,7 +2840,7 @@ def isvoro_market_valuation(row: dict, now: float | None = None) -> dict:
         "status": 0 if str(row.get("status", "active")).casefold() in {"active", "available", ""} else 1,
         "is_bid": False, "detail": config[:240], "price": price, "renewal": renewal,
         "cycle": period, "cycle_unit": unit, "cycle_months": cycle_months, "cycle_days": cycle_days, "due_time": expires_at,
-        "remaining_days": remaining_days, "fair_value": fair_value, "delta": delta, "rate": rate,
+        "remaining_days": remaining_days, "fair_value": fair_value, "monthly_price": monthly_price, "delta": delta, "rate": rate,
         "currency_code": currency[:12], "updated_at": beijing_iso(),
         "valuation_error": "未知续费周期" if monthly_price is None else "月付价格为零，无法估值" if rate is None else ""}
 
@@ -4840,7 +4840,7 @@ def _akile_market_alert(config: dict, rule: dict, item: dict, reason: str) -> bo
         f"商品：{escape(item['name'])} · {escape(item['region'])} · {escape(item['node'])}",
         f"挂单 ID：<code>{item['id']}</code>",
         f"售价：¥{item['price']:.2f} · 续费：¥{item['renewal']:.2f}/{item['cycle']}个月",
-        f"剩余：{item['remaining_days']:.2f} 天 · 续费月付基准：¥{item['fair_value']:.2f}",
+        f"剩余：{item['remaining_days']:.2f} 天 · 剩余价值：¥{item['fair_value']:.2f} · 月付：¥{item['monthly_price']:.2f}",
         f"{kind}：{abs(item['rate']):.2f}% · ¥{abs(item['delta']):.2f}",
         f"触发规则：{escape(rule.get('name') or rule['id'])}",
         escape(reason[:400]), f"检查时间：{format_beijing(item['updated_at'])}",
@@ -4932,7 +4932,7 @@ def _isvoro_market_alert(config: dict, rule: dict, item: dict) -> bool:
         f"商品：{escape(item['name'])} · {escape(item['region'])} · {escape(item['node'])}",
         f"挂单 ID：<code>{item['id']}</code>",
         f"售价：{escape(item['currency_code'])} {item['price']:.2f} · 续费：{escape(item['currency_code'])} {item['renewal']:.2f}/{cycle}",
-        f"剩余：{item['remaining_days']:.2f} 天 · 续费月付基准：{escape(item['currency_code'])} {item['fair_value']:.2f}",
+        f"剩余：{item['remaining_days']:.2f} 天 · 剩余价值：{escape(item['currency_code'])} {item['fair_value']:.2f} · 月付：{escape(item['currency_code'])} {item['monthly_price']:.2f}",
         f"{kind}：{abs(item['rate']):.2f}% · {escape(item['currency_code'])} {abs(item['delta']):.2f}",
         f"触发规则：{escape(rule.get('name') or rule['id'])}",
         f"检查时间：{format_beijing(item['updated_at'])}",

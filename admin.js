@@ -245,7 +245,7 @@ function renderMarketRules() {
       input.addEventListener("input", () => { rule[key] = input.value === "" ? null : Number(input.value); updateDraftState(); });
       field.append(input); grid.append(field);
     }
-    card.append(grid, text("p", activeMarketProvider() === "isvoro" ? `套餐匹配：${rule.plan_name || "—"}；同套餐规则按续费月付基准比较，不使用剩余天数折算。这里只发送提醒，不会购买或付款。` : `套餐匹配：${rule.plan_name || "—"}；同套餐规则按续费月付基准比较，不使用剩余天数折算。待付款模式受 Akile Passkey 购买验证限制，当前只通知需要手动操作，未创建订单。`, "hint"));
+    card.append(grid, text("p", activeMarketProvider() === "isvoro" ? `套餐匹配：${rule.plan_name || "—"}；金额按剩余价值差额计算，比例以续费月付价为基准。这里只发送提醒，不会购买或付款。` : `套餐匹配：${rule.plan_name || "—"}；金额按剩余价值差额计算，比例以续费月付价为基准。待付款模式受 Akile Passkey 购买验证限制，当前只通知需要手动操作，未创建订单。`, "hint"));
     target.append(card);
   }
   document.querySelector("#market-rule-empty").hidden = marketConfig().items.length > 0;
@@ -327,7 +327,7 @@ function renderMarket() {
   const headRow = document.querySelector(".market-table thead tr");
   if (headRow) {
     headRow.replaceChildren();
-    [["商品 / 配置"], ["地区 / 节点"], ["续费价格", "renewal"], ["到期 / 剩余时间", "due_time"], ["售价", "price"], ["剩余价值", "fair_value"], ["折价 / 溢价率", "rate"], ["折价 / 溢价金额", "delta"], ["操作"]].forEach(([label, key]) => {
+    [["商品 / 配置"], ["地区 / 节点"], ["续费价格", "renewal"], ["到期 / 剩余时间", "due_time"], ["售价", "price"], ["剩余价值", "fair_value"], ["折价 / 溢价率（月付基准）", "rate"], ["折价 / 溢价金额", "delta"], ["操作"]].forEach(([label, key]) => {
       const th = document.createElement("th"); th.scope = "col";
       th.append(key ? createMarketSortButton(label, key) : text("span", label));
       headRow.append(th);

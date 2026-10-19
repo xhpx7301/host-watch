@@ -952,22 +952,22 @@
       <div class="section-head"><div><h2>交易市场监控</h2><p>从下方市场商品添加规则，保存后在服务器持续检查；关闭网页不影响后台监控。</p></div><button type="button" class="card-save" data-save-card="market">保存交易市场设置</button></div>
       <div class="form-grid"><label><span id="market-account-label">网站账户</span><select id="market-account"><option value="">请选择已保存的账户</option></select></label><label>后台监控<select id="market-enabled"><option value="off">已暂停</option><option value="on">开启监控与 Telegram 通知</option></select></label><label>检查间隔（秒）<input id="market-interval" type="number" min="30" max="3600" step="1" value="60"></label></div>
       <p class="hint">账户沿用“VPS 补货抢购 → 网站账户”中保存的对应商家账户与出口。刷新市场仅获取商品；“检查已保存规则”会按规则发送 Telegram。</p>
-      <div class="market-formula"><strong>月付基准 = 续费金额 ÷ 续费周期月数</strong><span>折价金额 = 月付基准 − 售价；折价率 = 折价金额 ÷ 月付基准。溢价取相反数。到期时间只用于展示和过滤已到期挂单，不参与阈值计算。</span></div>
+      <div class="market-formula"><strong>剩余价值 = 周期续费金额 × 剩余天数 ÷ 周期天数</strong><span>折价/溢价金额 = 剩余价值 − 售价；比例 = 折价/溢价金额 ÷ 续费月付价。续费月付价 = 周期续费金额 ÷ 周期月数；到期时间用于计算剩余价值并过滤已到期挂单。</span></div>
       <p class="hint" id="market-order-note">Akile 交易市场购买要求用户在官网完成 Passkey 验证；Isvoro 仅提供市场提醒。HostWatch 不会自动购买或付款。</p>
     </div>
     <div class="market-stats" aria-label="交易市场摘要"><div><span>市场商品</span><strong id="market-count">0</strong></div><div><span>折价商品</span><strong id="market-discount-count">0</strong></div><div><span>临近到期（7 天）</span><strong id="market-expiring-count">0</strong></div><div><span>最近成功读取</span><strong id="market-updated">—</strong></div></div>
     <div class="market-filters"><label>搜索商品<input id="market-search" type="search" placeholder="套餐、地区、节点或挂单 ID"></label><label>地区<select id="market-region"><option value="all">全部地区</option></select></label><label>商品<select id="market-product"><option value="all">全部商品</option></select></label></div>
-    <div class="market-table-wrap" role="region" aria-label="二手交易市场商品" tabindex="0"><table class="market-table"><thead><tr><th>商品 / 配置</th><th>地区 / 节点</th><th>续费价格</th><th>到期 / 剩余时间</th><th>售价</th><th>月付基准</th><th>折价 / 溢价率</th><th>折价 / 溢价金额</th><th>操作</th></tr></thead><tbody id="market-rows"></tbody></table></div><p id="market-empty" class="empty">选择已保存账户，点击“刷新市场商品”读取真实挂单。</p>
+    <div class="market-table-wrap" role="region" aria-label="二手交易市场商品" tabindex="0"><table class="market-table"><thead><tr><th>商品 / 配置</th><th>地区 / 节点</th><th>续费价格</th><th>到期 / 剩余时间</th><th>售价</th><th>剩余价值</th><th>折价 / 溢价率（月付基准）</th><th>折价 / 溢价金额</th><th>操作</th></tr></thead><tbody id="market-rows"></tbody></table></div><p id="market-empty" class="empty">选择已保存账户，点击“刷新市场商品”读取真实挂单。</p>
     <div class="catalog-pagination"><span id="market-page-label" class="subtle"></span><div class="actions"><button id="market-prev" type="button">上一页</button><button id="market-next" type="button">下一页</button></div></div>
     <div class="panel-card market-settings"><div class="section-head"><div><h2>指定商品规则</h2><p>折价设最低节省值（≥），溢价设最高额外成本（≤，折价也满足）。比例或金额留空表示不使用。</p></div><div class="actions"><button type="button" id="market-test-notification">测试通知</button><button type="button" id="market-check">检查已保存规则</button><button type="button" class="card-save" data-save-card="market">保存商品规则</button></div></div>
     <!-- market-threshold-help:start -->
     <details class="market-rule-meta" open>
       <summary><strong>比例与金额阈值说明</strong></summary>
-      <p><strong>计算基准：</strong>比例和金额都按续费月付基准计算。月付基准 = 实际续费金额 ÷ 续费周期月数；年付按 12 个月折算。到期时间只用于展示和过滤，不参与阈值计算。</p>
-      <p><strong>折价达到最低值（≥）：</strong>折价金额 = 月付基准 − 售价；折价率 = 折价金额 ÷ 月付基准 × 100%。达到你设置的最低节省金额或比例时满足条件。</p>
-      <p><strong>溢价低于最高值（≤）：</strong>溢价金额 = 售价 − 月付基准；溢价率 = 溢价金额 ÷ 月付基准 × 100%。低于或等于你设置的最高额外成本时满足条件，原价和折价商品也包含在内。</p>
-      <p><strong>金额示例：</strong>续费 ¥30/月时，最低折价设为 ¥3，售价 ≤ ¥27 满足；最高溢价设为 ¥3，售价 ≤ ¥33 满足。金额阈值表示与月付基准的差额。</p>
-      <p><strong>比例示例：</strong>月付基准 ¥30，最低折价设为 20%，售价 ≤ ¥24 满足；最高溢价设为 10%，售价 ≤ ¥33 满足。</p>
+      <p><strong>计算基准：</strong>剩余价值 = 周期续费金额 × 剩余天数 ÷ 周期天数；折价/溢价金额以剩余价值为基准。比例阈值以续费月付价为基准，续费月付价 = 周期续费金额 ÷ 周期月数（年付按 12 个月折算）。</p>
+      <p><strong>折价达到最低值（≥）：</strong>折价金额 = 剩余价值 − 售价；折价率 = 折价金额 ÷ 续费月付价 × 100%。金额和比例分别按各自基准判断。</p>
+      <p><strong>溢价低于最高值（≤）：</strong>溢价金额 = 售价 − 剩余价值；溢价率 = 溢价金额 ÷ 续费月付价 × 100%。低于或等于你设置的最高额外成本时满足条件，原价和折价商品也包含在内。</p>
+      <p><strong>金额示例：</strong>月付 ¥30、剩余 15 天时，剩余价值约 ¥15。最低折价设为 ¥3，售价 ≤ ¥12 满足；最高溢价设为 ¥3，售价 ≤ ¥18 满足。</p>
+      <p><strong>比例示例：</strong>月付 ¥30、剩余价值 ¥15，最低折价设为 20%，售价 ≤ ¥9 满足；最高溢价设为 10%，售价 ≤ ¥18 满足。</p>
       <p><strong>条件关系：</strong>同时填写比例和金额时，“任一满足”表示其中一项达标即可，“全部满足”表示两项都要达标。留空的阈值不参与判断，至少填写一项。有效挂单满足规则后通知；同一挂单持续满足时不会每轮重复通知。</p>
     </details>
     <!-- market-threshold-help:end -->
