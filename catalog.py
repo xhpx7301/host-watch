@@ -128,7 +128,7 @@ def narwhal_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[l
         except MonitorError as exc:
             error = str(exc)
         specs = f"{plan.get('cpu', '—')} 核 · {plan.get('ram_mb', '—')} MB · {plan.get('disk_gb', '—')} GB · {plan.get('bandwidth_mbps', '—')} Mbps"
-        rows.append(make_row(f"narwhal:{machine_id}:{plan_id}", watch, plan.get("machine_region", ""), plan.get("machine_name", ""), specs, f"¥{plan.get('price_monthly', '—')}/月", product, error, traffic=f"{plan.get('monthly_traffic_gb', '—')} GB/月"))
+        rows.append(make_row(f"narwhal:{machine_id}:{plan_id}", watch, plan.get("machine_region", ""), plan.get("machine_name", ""), specs, f"${plan.get('price_monthly', '—')}/月", product, error, traffic=f"{plan.get('monthly_traffic_gb', '—')} GB/月"))
     return scopes, selected["id"], rows
 
 

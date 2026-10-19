@@ -47,6 +47,7 @@ class NarwhalTests(unittest.TestCase):
         result = parse_narwhal([plan()], item())
         self.assertEqual(result.available, 2)
         self.assertEqual(result.vendor, "独角鲸云")
+        self.assertEqual(result.price, "$1/月")
         self.assertIn("plan_id=" + PLAN_ID, result.url)
         self.assertEqual(result.match_details["machine_id"], MACHINE_ID)
 
@@ -108,6 +109,7 @@ class NarwhalTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["watch"]["machine_id"], MACHINE_ID)
         self.assertEqual(rows[0]["watch"]["plan_id"], PLAN_ID)
+        self.assertEqual(rows[0]["price"], "$1/月")
 
     def test_restock_from_selected_catalog_plan_sends_instance_and_purchase_link(self):
         payload = [plan(remaining=0, sold_out=True)]

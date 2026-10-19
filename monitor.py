@@ -112,7 +112,7 @@ def parse_narwhal(plans: object, item: dict) -> Product:
     if type(price) not in {int, float} or not math.isfinite(price) or price < 0:
         raise MonitorError("独角鲸云套餐价格异常，未更新库存")
     return Product(plan_id, plan_name.strip(), stock, purchase_url, vendor="独角鲸云", stock_mode=stock_mode, region=str(plan.get("machine_region") or ""),
-        node_name=machine_name.strip(), specs=specs, traffic=f"{plan.get('monthly_traffic_gb', '—')} GB/月", price=f"USD {price:g}/月",
+        node_name=machine_name.strip(), specs=specs, traffic=f"{plan.get('monthly_traffic_gb', '—')} GB/月", price=f"${price:g}/月",
         match_details={"machine_id": machine_id, "machine_name": machine_name.strip(), "plan_id": plan_id, "plan_name": plan_name.strip()})
 
 
