@@ -4,7 +4,7 @@ from __future__ import annotations
 from html import escape
 import math
 import re
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 from time_utils import format_beijing
 
 
@@ -130,11 +130,65 @@ def purchase_button(url: str, label: str = "🛒 立即购买") -> dict:
     return {}
 
 
+REGION_FLAG_ALIASES = {
+    "中国香港": ("🇭🇰", "中国香港"), "香港": ("🇭🇰", "中国香港"), "hong kong": ("🇭🇰", "中国香港"), "hk": ("🇭🇰", "中国香港"),
+    "中国澳门": ("🇲🇴", "中国澳门"), "澳门": ("🇲🇴", "中国澳门"), "macao": ("🇲🇴", "中国澳门"), "macau": ("🇲🇴", "中国澳门"), "mo": ("🇲🇴", "中国澳门"),
+    "中国台湾": ("🇹🇼", "中国台湾"), "台湾": ("🇹🇼", "中国台湾"), "taiwan": ("🇹🇼", "中国台湾"), "tw": ("🇹🇼", "中国台湾"),
+    "日本": ("🇯🇵", "日本"), "japan": ("🇯🇵", "日本"), "jp": ("🇯🇵", "日本"),
+    "韩国": ("🇰🇷", "韩国"), "south korea": ("🇰🇷", "韩国"), "korea": ("🇰🇷", "韩国"), "kr": ("🇰🇷", "韩国"),
+    "新加坡": ("🇸🇬", "新加坡"), "singapore": ("🇸🇬", "新加坡"), "sg": ("🇸🇬", "新加坡"),
+    "美国": ("🇺🇸", "美国"), "united states": ("🇺🇸", "美国"), "usa": ("🇺🇸", "美国"), "us": ("🇺🇸", "美国"),
+    "加拿大": ("🇨🇦", "加拿大"), "canada": ("🇨🇦", "加拿大"), "ca": ("🇨🇦", "加拿大"),
+    "英国": ("🇬🇧", "英国"), "united kingdom": ("🇬🇧", "英国"), "uk": ("🇬🇧", "英国"), "gb": ("🇬🇧", "英国"),
+    "德国": ("🇩🇪", "德国"), "germany": ("🇩🇪", "德国"), "de": ("🇩🇪", "德国"),
+    "法国": ("🇫🇷", "法国"), "france": ("🇫🇷", "法国"), "fr": ("🇫🇷", "法国"),
+    "荷兰": ("🇳🇱", "荷兰"), "netherlands": ("🇳🇱", "荷兰"), "nl": ("🇳🇱", "荷兰"),
+    "澳大利亚": ("🇦🇺", "澳大利亚"), "australia": ("🇦🇺", "澳大利亚"), "au": ("🇦🇺", "澳大利亚"),
+    "中国": ("🇨🇳", "中国"), "china": ("🇨🇳", "中国"), "cn": ("🇨🇳", "中国"),
+    "越南": ("🇻🇳", "越南"), "vietnam": ("🇻🇳", "越南"), "vn": ("🇻🇳", "越南"),
+    "泰国": ("🇹🇭", "泰国"), "thailand": ("🇹🇭", "泰国"), "th": ("🇹🇭", "泰国"),
+    "印度": ("🇮🇳", "印度"), "india": ("🇮🇳", "印度"), "in": ("🇮🇳", "印度"),
+    "马来西亚": ("🇲🇾", "马来西亚"), "malaysia": ("🇲🇾", "马来西亚"), "my": ("🇲🇾", "马来西亚"),
+    "印度尼西亚": ("🇮🇩", "印度尼西亚"), "indonesia": ("🇮🇩", "印度尼西亚"), "id": ("🇮🇩", "印度尼西亚"),
+    "巴西": ("🇧🇷", "巴西"), "brazil": ("🇧🇷", "巴西"), "br": ("🇧🇷", "巴西"),
+    "爱尔兰": ("🇮🇪", "爱尔兰"), "ireland": ("🇮🇪", "爱尔兰"), "ie": ("🇮🇪", "爱尔兰"),
+    "瑞士": ("🇨🇭", "瑞士"), "switzerland": ("🇨🇭", "瑞士"), "ch": ("🇨🇭", "瑞士"),
+    "西班牙": ("🇪🇸", "西班牙"), "spain": ("🇪🇸", "西班牙"), "es": ("🇪🇸", "西班牙"),
+    "意大利": ("🇮🇹", "意大利"), "italy": ("🇮🇹", "意大利"), "it": ("🇮🇹", "意大利"),
+    "波兰": ("🇵🇱", "波兰"), "poland": ("🇵🇱", "波兰"), "pl": ("🇵🇱", "波兰"),
+    "瑞典": ("🇸🇪", "瑞典"), "sweden": ("🇸🇪", "瑞典"), "se": ("🇸🇪", "瑞典"),
+    "芬兰": ("🇫🇮", "芬兰"), "finland": ("🇫🇮", "芬兰"), "fi": ("🇫🇮", "芬兰"),
+    "挪威": ("🇳🇴", "挪威"), "norway": ("🇳🇴", "挪威"), "no": ("🇳🇴", "挪威"),
+    "俄罗斯": ("🇷🇺", "俄罗斯"), "russia": ("🇷🇺", "俄罗斯"), "ru": ("🇷🇺", "俄罗斯"),
+    "阿联酋": ("🇦🇪", "阿联酋"), "united arab emirates": ("🇦🇪", "阿联酋"), "uae": ("🇦🇪", "阿联酋"), "ae": ("🇦🇪", "阿联酋"),
+}
+
+
+def telegram_region(value: str) -> str:
+    """Add a country flag to Telegram region labels without changing app data."""
+    region = " ".join(str(value or "").split())
+    if not region or any(ord(char) in range(0x1F1E6, 0x1F200) for char in region):
+        return region
+    lowered = region.casefold()
+    for alias in sorted(REGION_FLAG_ALIASES, key=len, reverse=True):
+        prefix = lowered == alias or lowered.startswith(alias) and len(lowered) > len(alias) and lowered[len(alias)] in " ·-/,:："
+        suffix = lowered.endswith(" " + alias) or lowered.endswith(" · " + alias) or lowered.endswith(", " + alias)
+        if prefix or suffix:
+            flag, localized = REGION_FLAG_ALIASES[alias]
+            if suffix and not prefix:
+                remainder = re.sub(r"[\s·,/\-]+$", "", region[:len(region) - len(alias)])
+                return f"{flag} {localized}" + (f" · {remainder}" if remainder else "")
+            remainder = region[len(alias):] if prefix and lowered != alias else ""
+            return f"{flag} {localized}{remainder}"
+    return region
+
+
 def stock_message(*, vendor: str, name: str, available: int, stock_mode: str, region: str = "", specs: str = "",
                   traffic: str = "", price: str = "", line: str = "", item: dict | None = None,
                   old_count: int | None = None, checked_at: str = "", test: bool = False,
                   duration: object = None, warning: str = "", purchase_url: str = "",
-                  live: bool = False, uncertain: bool = False, coupon_code: str = "") -> str:
+                  live: bool = False, uncertain: bool = False, coupon_code: str = "", mother_name: str = "",
+                  expires_at: str = "", configurations: list | None = None, machine_id: str = "") -> str:
     # Leave room for labels, links and manual-test diagnostics within Telegram's limit.
     remaining_units = 2400
     def safe(value, limit=200):
@@ -160,9 +214,32 @@ def stock_message(*, vendor: str, name: str, available: int, stock_mode: str, re
             status = "暂未确认（上次成功检查：" + status + "）"
         title = "⚠️ HostWatch · 库存暂未确认" if uncertain else "✅ HostWatch · 补货提醒" if available > 0 else "❌ HostWatch · 已售罄"
     lines = [f"<b>{title}</b>", f"<b>{safe(vendor, 80)} · {safe(name, 200)}</b>", "",
-             f"🌏 <b>地区：</b>{safe(region or '—', 120)}"]
+             f"🌏 <b>地区：</b>{safe(telegram_region(region) or '—', 120)}"]
     if line:
         lines.append(f"🛣 <b>地区/线路：</b>{safe(line, 160)}")
+    if mother_name:
+        lines.append(f"🖥 <b>母鸡名称：</b>{safe(mother_name, 120)}")
+    if expires_at:
+        lines.append(f"📅 <b>母鸡到期时间：</b>{safe(expires_at, 40)}")
+    if configurations:
+        lines += ["", "📦 <b>可选配置：</b>"]
+        affiliate = parse_qs(urlsplit(purchase_url).query).get("aff", [""])[0]
+        for option in configurations[:5]:
+            if not isinstance(option, dict):
+                continue
+            stock = option.get("stock")
+            label = "已售罄" if stock == 0 else f"剩 {stock} 台" if type(stock) is int else "库存未知"
+            link = ""
+            if stock != 0 and option.get("id") and machine_id:
+                params = {"plan_id": str(option["id"]), "machine_id": machine_id}
+                if affiliate:
+                    params["aff"] = affiliate
+                url = "https://dash.fuckip.me/deploy?" + urlencode(params)
+                link = f' · <a href="{escape(url, quote=True)}">点击抢购</a>'
+            lines.append(f"🔸 {safe(option.get('name', '配置'), 60)} · {safe(option.get('price', '价格未知'), 40)} [{label}]{link}")
+            lines.append(f"⚙️ {safe(option.get('specs', ''), 100)} · 🌐 {safe(option.get('traffic', ''), 100)}")
+        if len(configurations) > 5:
+            lines.append(f"另有 {len(configurations) - 5} 个配置，请查看购买页面。")
     if item.get("remarks"):
         lines.append(f"📝 <b>备注：</b>{safe(item['remarks'])}")
     if coupon_code:

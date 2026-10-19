@@ -26,7 +26,7 @@ from auth import DEFAULT_USERS_PATH, authentication_required, authorized, creden
 from catalog import CatalogBusy, CatalogService
 from affiliates import DEFAULT_AFFILIATES, PROVIDERS, affiliate_purchase_url, effective_coupon, normalize_affiliate_accounts, normalize_affiliate_coupons, normalize_affiliate_notes, normalize_affiliate_rates, normalize_affiliates, normalize_merchant_order
 from time_utils import beijing_iso, format_beijing
-from notifications import purchase_button, stock_message
+from notifications import purchase_button, stock_message, telegram_region
 import egress
 
 
@@ -220,6 +220,8 @@ def stock_test_worker() -> None:
                 return
             result = inspect_product(session, value["product"], value["fetcher"])
         output = {"ok": True, "available": result.available, "stock_mode": result.stock_mode, "purchase_url": result.url, "name": result.name, **{field: getattr(result, field) for field in ("region", "specs", "traffic", "price")}}
+        if result.vendor == "独角鲸云":
+            output["matched_product"] = result.match_details or {}
         if result.vendor == "Akile":
             output["matched_product"] = {"area_id": result.area_id, "area_name": result.area_name, "node_name": result.node_name, "plan_name": result.name}
         if result.vendor in {"VPS.SOY", "DMIT"}:
@@ -3212,6 +3214,29 @@ def read_merchant_account_checks() -> dict:
             return {}
 
 
+def clear_merchant_account_check(account_id: str) -> None:
+    path = account_status_path()
+    with ACCOUNT_STATUS_LOCK:
+        try:
+            checks = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(checks, dict):
+                return
+        except (OSError, ValueError, json.JSONDecodeError):
+            return
+        if account_id not in checks:
+            return
+        checks.pop(account_id, None)
+        fd, temp_name = tempfile.mkstemp(prefix="account-status-", suffix=".tmp", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(checks, stream, ensure_ascii=False, indent=2)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp_name, path)
+        finally:
+            Path(temp_name).unlink(missing_ok=True)
+
+
 def public_account_check_result(value: dict) -> dict:
     """Remove transient login-session handles before exposing task results."""
     return {key: item for key, item in value.items() if not str(key).startswith("_")}
@@ -3401,6 +3426,10 @@ def seckill_test(submitted: dict) -> dict:
     mode = str(submitted.get("mode", current["vps_seckill"]["mode"])).strip().casefold()
     if mode not in {"rapid", "precise", "manual"}:
         raise ValueError("秒杀测试模式无效")
+    provider_modes = current.get("provider_schedules", {}).get("seckill", {})
+    if mode != current["vps_seckill"]["mode"] and all(schedule.get("mode") == current["vps_seckill"]["mode"] for schedule in provider_modes.values()):
+        for schedule in provider_modes.values():
+            schedule["mode"] = mode
     products = {str(item.get("id")): item for item in current.get("products", [])}
     accounts = {str(item.get("id")): item for item in current["vps_seckill"].get("accounts", [])}
     items = [item for item in current["vps_seckill"].get("items", []) if item.get("enabled", True)]
@@ -3409,9 +3438,11 @@ def seckill_test(submitted: dict) -> dict:
     results = []
     for item in items:
         product = products.get(item.get("product_id"))
-        required_account = mode != "manual"
+        provider = str((product or {}).get("adapter", "html")).casefold()
+        item_mode = provider_modes.get(provider, {}).get("mode", mode)
+        required_account = item_mode != "manual"
         label = item.get("label") or (product.get("name") if product else item.get("product_id", "已下架商品"))
-        result = {"item_id": item["id"], "label": label, "required_account": required_account,
+        result = {"item_id": item["id"], "label": label, "mode": item_mode, "required_account": required_account,
                   "site_access": {"ok": False, "message": "尚未检查"},
                   "page_recognition": {"ok": False, "message": "尚未检查"},
                   "order_submission": {"ok": not required_account, "required": required_account,
@@ -3577,7 +3608,15 @@ class SeckillTask:
         self.output = {"task_id": task_id, "pending": True, "mode": mode, "logs": self.logs, "items": []}
 
     def log(self, message: str, level: str = "info", item: dict | None = None) -> None:
-        entry = {"at": beijing_iso(), "level": level, "message": message, "trigger": self.mode}
+        trigger = self.mode
+        if item:
+            product = next((row for row in self.config.get("products", []) if row.get("id") == item.get("product_id")), {})
+            provider = str(product.get("adapter", "html"))
+            schedules = self.config.get("provider_schedules", {}).get("seckill", {}) or {}
+            legacy_mode = self.config.get("vps_seckill", {}).get("mode", "manual")
+            inherited = all(row.get("mode") == legacy_mode for row in schedules.values())
+            trigger = self.mode if inherited else schedules.get(provider, {}).get("mode", self.mode)
+        entry = {"at": beijing_iso(), "level": level, "message": message, "trigger": trigger}
         if item:
             entry["item_id"] = item.get("id", "")
         with self.lock:
@@ -3763,6 +3802,7 @@ class SeckillTask:
         accounts = {str(item.get("id")): item for item in seckill.get("accounts", [])}
         items = [item for item in seckill.get("items", []) if item.get("enabled", True)]
         finished, contexts = {}, {}
+        next_check_at = {}
         self.publish_module_status("pending", "正在执行抢购任务")
         self.log(f"秒杀任务已启动：{self.mode_label()}，共 {len(items)} 个商品；仅创建待付款订单，需手动到官网支付")
         try:
@@ -3785,12 +3825,18 @@ class SeckillTask:
                         self.log("已建立库存检查会话和下单会话，开始预检查", "info", item)
                         account = accounts.get(item.get("account_id"))
                         native_adapter = str((product or {}).get("adapter", "")).casefold()
+                        item_schedule = (self.config.get("provider_schedules", {}).get("seckill", {}) or {}).get(native_adapter, {})
+                        all_schedules = self.config.get("provider_schedules", {}).get("seckill", {}) or {}
+                        legacy_mode = seckill.get("mode", "manual")
+                        inherited = all(schedule.get("mode") == legacy_mode for schedule in all_schedules.values())
+                        item_mode = self.mode if inherited else item_schedule.get("mode", self.mode)
+                        item_interval = item_schedule.get("interval_seconds", seckill.get("interval_seconds", 5))
                         native_akile = native_adapter == "akile"
                         native_vmiss = native_adapter == "vmiss"
                         native_bwh = native_adapter == "bwh"
                         native_isvoro = native_adapter == "isvoro"
                         native_dmit = native_adapter == "dmit"
-                        auto_requested = self.mode != "manual"
+                        auto_requested = item_mode != "manual"
                         if auto_requested and not account:
                             raise ValueError("自动模式必须绑定网站账户")
                         auto = bool(auto_requested and (native_akile or native_vmiss or native_bwh or native_isvoro or native_dmit or str(item.get("submit_url", "")).strip()))
@@ -3809,9 +3855,10 @@ class SeckillTask:
                             self.log(f"账户 {account['name']}：{checked_public['message']}", "info" if checked_public["ok"] else "error", item)
                             with self.lock:
                                 self.output.setdefault("accounts", {})[item["id"]] = checked_public
+                            save_merchant_account_check({**checked_public, "account_id": account["id"], "checked_at": beijing_iso(), "status": "valid" if checked_public.get("ok") else checked_public.get("status", "unknown")})
                             if auto and not checked_public["ok"]:
                                 raise ValueError("账户未通过验证，已停止该商品自动下单")
-                        contexts[item["id"]] = (product, routed, fetcher, stock_session, order_session, account, auto)
+                        contexts[item["id"]] = (product, routed, fetcher, stock_session, order_session, account, auto, item_mode, item_interval)
                     except (requests.RequestException, ValueError) as exc:
                         detail = str(exc) if isinstance(exc, ValueError) else "接口网络异常，请检查出口或接口连通性"
                         self.log(f"预检查未通过：{detail}；未提交订单。", "error", item)
@@ -3824,7 +3871,13 @@ class SeckillTask:
                             break
                         if item["id"] in finished:
                             continue
-                        product, routed, fetcher, stock_session, order_session, account, auto = contexts[item["id"]]
+                        product, routed, fetcher, stock_session, order_session, account, auto, item_mode, item_interval = contexts[item["id"]]
+                        if item_mode == "manual" and round_no > 1:
+                            continue
+                        if item_mode != "manual" and time.monotonic() < next_check_at.get(item["id"], 0):
+                            continue
+                        if item_mode != "manual":
+                            next_check_at[item["id"]] = time.monotonic() + item_interval
                         quantity = item.get("quantity", 1)
                         try:
                             if not product:
@@ -3841,9 +3894,10 @@ class SeckillTask:
                                 continue
                             if result.stock_mode == "availability":
                                 self.log("商家仅提供有货状态，数量由下单接口最终核验；不会自动减少下单数量。", "info", item)
-                            if auto and self.mode == "precise":
+                            if auto and item_mode == "precise":
                                 checked = check_order_account(order_session, account, fetcher)
                                 checked = public_account_check_result(checked)
+                                save_merchant_account_check({**checked, "account_id": account["id"], "checked_at": beijing_iso()})
                                 with self.lock:
                                     self.output.setdefault("accounts", {})[item["id"]] = checked
                                 if not checked["ok"]:
@@ -3872,9 +3926,12 @@ class SeckillTask:
                     with self.lock:
                         self.output["items"] = [{"item_id": key, **value} for key, value in finished.items()]
                         self.output["round"] = round_no
-                    if self.mode == "manual" or len(finished) == len(items):
+                    remaining_modes = [context[7] for item_id, context in contexts.items() if item_id not in finished]
+                    if not any(mode != "manual" for mode in remaining_modes):
                         break
-                    self.cancelled.wait(seckill.get("interval_seconds", 5))
+                    wait_seconds = min(max(0.05, next_check_at.get(item_id, 0) - time.monotonic())
+                        for item_id, context in contexts.items() if item_id not in finished and context[7] != "manual")
+                    self.cancelled.wait(wait_seconds)
         finally:
             with self.lock:
                 self.output.update(items=[{"item_id": key, **value} for key, value in finished.items()], pending=False,
@@ -3895,7 +3952,7 @@ class SeckillTask:
             self.publish_module_status("error" if failed else "success", final_message)
 
     def mode_label(self):
-        return {"rapid": "极速秒杀（自动）", "precise": "精准秒杀（自动）", "manual": "手动秒杀"}.get(self.mode, self.mode)
+        return "按商家执行模式" if self.config.get("provider_schedules", {}).get("seckill") else {"rapid": "极速秒杀（自动）", "precise": "精准秒杀（自动）", "manual": "手动秒杀"}.get(self.mode, self.mode)
 
 
 def start_seckill(submitted: dict) -> dict:
@@ -3906,6 +3963,11 @@ def start_seckill(submitted: dict) -> dict:
     requested_mode = str(submitted.get("mode", current["vps_seckill"]["mode"])).strip().casefold()
     if requested_mode not in {"rapid", "precise", "manual"}:
         raise ValueError("秒杀模式无效")
+    configured_mode = current["vps_seckill"]["mode"]
+    schedules = current.get("provider_schedules", {}).get("seckill", {})
+    if requested_mode != configured_mode and all(schedule.get("mode") == configured_mode for schedule in schedules.values()):
+        for schedule in schedules.values():
+            schedule["mode"] = requested_mode
     if not any(item["enabled"] for item in current["vps_seckill"]["items"]):
         raise ValueError("请先从库存监控或库存通知选择至少一个秒杀商品")
     with SECKILL_LOCK:
@@ -4322,6 +4384,39 @@ def normalize_schedule(value: object, default_mode: str, default_interval: int, 
     return {"mode": mode, "interval_seconds": interval}
 
 
+def normalize_provider_schedules(value: object, defaults: dict) -> dict:
+    """Normalize per-provider module schedules while inheriting legacy defaults."""
+    if value is None:
+        value = {}
+    if not isinstance(value, dict) or any(key not in {"catalog", "monitor", "notify", "seckill"} for key in value):
+        raise ValueError("商家独立刷新设置无效")
+    from affiliates import PROVIDERS
+    providers = (*PROVIDERS, "html")
+    result = {}
+    for module in ("catalog", "monitor", "notify", "seckill"):
+        supplied = value.get(module, {})
+        if not isinstance(supplied, dict) or any(provider not in providers for provider in supplied):
+            raise ValueError(f"{module} 的商家刷新设置无效")
+        result[module] = {}
+        fallback = defaults[module]
+        for provider in providers:
+            raw = supplied.get(provider, fallback)
+            label = f"{provider} {module}"
+            if module == "seckill":
+                if not isinstance(raw, dict):
+                    raise ValueError(f"{label}配置必须是对象")
+                mode = str(raw.get("mode", fallback["mode"])).strip().casefold()
+                if mode not in {"rapid", "precise", "manual"}:
+                    raise ValueError(f"{label}模式必须是 rapid、precise 或 manual")
+                interval = raw.get("interval_seconds", fallback["interval_seconds"])
+                if type(interval) is not int or not 1 <= interval <= 3600:
+                    raise ValueError(f"{label}间隔必须是 1 到 3600 秒的整数")
+                result[module][provider] = {"mode": mode, "interval_seconds": interval}
+            else:
+                result[module][provider] = normalize_schedule(raw, fallback["mode"], fallback["interval_seconds"], label)
+    return result
+
+
 def validate_config(value: object) -> dict:
     if not isinstance(value, dict):
         raise ValueError("配置必须是 JSON 对象")
@@ -4557,6 +4652,10 @@ def validate_config(value: object) -> dict:
     telegram = normalize_telegram(value.get("telegram", {}))
     egress_config = egress.normalize(value.get("egress", {}))
     vps_seckill = normalize_seckill(value.get("vps_seckill", {}), seen_ids)
+    provider_schedules = normalize_provider_schedules(value.get("provider_schedules"), {
+        "catalog": catalog_schedule, "monitor": monitor_schedule, "notify": notify_schedule,
+        "seckill": {"mode": vps_seckill["mode"], "interval_seconds": vps_seckill["interval_seconds"]},
+    })
     akile_market = normalize_akile_market(value.get("akile_market", {}), vps_seckill.get("accounts", []))
     isvoro_market = normalize_isvoro_market(value.get("isvoro_market", {}), vps_seckill.get("accounts", []))
     product_orders = {}
@@ -4572,6 +4671,7 @@ def validate_config(value: object) -> dict:
         "notify_schedule": notify_schedule,
         "catalog_schedule": catalog_schedule,
         "seckill_schedule": seckill_schedule,
+        "provider_schedules": provider_schedules,
         "notify_current_stock_on_start": value.get("notify_current_stock_on_start", False),
         "isvoro_seckill": value.get("isvoro_seckill", False),
         "affiliate_id": affiliates["vmiss"],
@@ -4734,7 +4834,15 @@ def send_stock_test_result(product: dict, result: dict) -> dict:
                 instance_name = matched.get("machine_name") or product.get("node_name") or product.get("machine_name")
                 if instance_name and str(instance_name).casefold() != str(display_name).casefold():
                     display_name = f"{instance_name} · {display_name}"
-            message = stock_message(vendor=product.get("provider") or product.get("adapter", ""),
+            if product.get("adapter") == "narwhal":
+                from monitor import Product, notification_text
+                test_product = Product(str(product.get("plan_id", "")), display_name, result["available"], result.get("purchase_url", ""),
+                    vendor="独角鲸云", stock_mode=result.get("stock_mode", "quantity"), node_name=matched.get("machine_name", ""),
+                    region=result.get("region", ""), specs=result.get("specs", ""), traffic=result.get("traffic", ""), price=result.get("price", ""),
+                    match_details=matched)
+                message = notification_text(test_product, None, link, product, checked_at=result["checked_at"], test=True, duration=result["duration_seconds"])
+            else:
+                message = stock_message(vendor=product.get("provider") or product.get("adapter", ""),
                 name=display_name, available=result["available"], stock_mode=result.get("stock_mode", "quantity"),
                 region=result.get("region") or matched.get("area_name") or matched.get("type_name", ""),
                 specs=result.get("specs", ""), traffic=result.get("traffic", ""), price=result.get("price", ""),
@@ -4892,7 +5000,7 @@ def _akile_market_alert(config: dict, rule: dict, item: dict, reason: str) -> bo
     kind = "折价" if item["delta"] >= 0 else "溢价"
     message = "\n".join([
         "🔔 <b>HostWatch · Akile 交易市场</b>",
-        f"实例名：{escape(item['name'])} · 套餐：{escape(item['plan_name'])} · 地区/节点：{escape(item['region'])} / {escape(item['node'])}",
+        f"实例名：{escape(item['name'])} · 套餐：{escape(item['plan_name'])} · 地区/节点：{escape(telegram_region(item['region']))} / {escape(item['node'])}",
         f"挂单 ID：<code>{item['id']}</code>",
         f"售价：¥{item['price']:.2f} · 续费：¥{item['renewal']:.2f}/{item['cycle']}个月",
         f"剩余：{item['remaining_days']:.2f} 天 · 剩余价值：¥{item['fair_value']:.2f} · 月付：¥{item['monthly_price']:.2f}",
@@ -4984,7 +5092,7 @@ def _isvoro_market_alert(config: dict, rule: dict, item: dict) -> bool:
     cycle = f"{item['cycle']}{'个月' if item['cycle_unit'] == 'month' else '年'}"
     message = "\\n".join([
         "🔔 <b>HostWatch · Isvoro 二手市场</b>",
-        f"实例名：{escape(item['name'])} · 套餐：{escape(item['plan_name'])} · 地区/节点：{escape(item['region'])} / {escape(item['node'])}",
+        f"实例名：{escape(item['name'])} · 套餐：{escape(item['plan_name'])} · 地区/节点：{escape(telegram_region(item['region']))} / {escape(item['node'])}",
         f"挂单 ID：<code>{item['id']}</code>",
         f"售价：{escape(item['currency_code'])} {item['price']:.2f} · 续费：{escape(item['currency_code'])} {item['renewal']:.2f}/{cycle}",
         f"剩余：{item['remaining_days']:.2f} 天 · 剩余价值：{escape(item['currency_code'])} {item['fair_value']:.2f} · 月付：{escape(item['currency_code'])} {item['monthly_price']:.2f}",
@@ -5703,7 +5811,7 @@ class Handler(BaseHTTPRequestHandler):
                         output = CATALOG.refresh(submitted.get("provider"), submitted.get("scope", ""), "auto")
                     if self.path.endswith("/refresh"):
                         from monitor import module_schedule, update_module_status
-                        update_module_status(STATUS_PATH, "catalog", module_schedule(current_config(), "catalog"), "pending", "正在刷新库存大盘", trigger=output.get("trigger", "manual"))
+                        update_module_status(STATUS_PATH, "catalog", module_schedule(current_config(), "catalog", output.get("provider", "")), "pending", "正在刷新库存大盘", trigger=output.get("trigger", "manual"))
                 except CatalogBusy as exc:
                     self._send(409, "application/json; charset=utf-8", json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"))
                     return
@@ -5757,16 +5865,19 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/seckill/account-check":
                 output = seckill_account_check(submitted)
+                output["checked_at"] = beijing_iso()
                 save_merchant_account_check(output)
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/seckill/account-status":
                 output = merchant_account_status(str(submitted.get("account_id", "")).strip())
+                output["checked_at"] = beijing_iso()
                 save_merchant_account_check(output)
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/seckill/account-verification":
                 output = seckill_account_verification(submitted)
+                output["checked_at"] = beijing_iso()
                 save_merchant_account_check(output)
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
@@ -5776,6 +5887,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not account:
                     raise ValueError("网站账户不存在")
                 removed = _clear_merchant_sessions_for_account(account)
+                clear_merchant_account_check(account_id)
                 self._send(200, "application/json; charset=utf-8", json.dumps({"ok": True, "removed": removed, "message": "登录缓存已清除，请下次检查时重新认证"}, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/seckill/test":
@@ -5939,11 +6051,19 @@ class Handler(BaseHTTPRequestHandler):
             # separately below; manual schedules no longer stop the service.
             monitor_schedule = submitted.get("monitor_schedule", {})
             notify_schedule = submitted.get("notify_schedule", {})
-            automatic_refresh = (
-                isinstance(monitor_schedule, dict) and str(monitor_schedule.get("mode", "")).casefold() == "auto"
-            ) or (
-                isinstance(notify_schedule, dict) and str(notify_schedule.get("mode", "")).casefold() == "auto"
-            )
+            provider_schedules = submitted.get("provider_schedules", {})
+            if isinstance(provider_schedules, dict) and any(provider_schedules.get(module) for module in ("monitor", "notify")):
+                automatic_refresh = any(
+                    schedule.get("mode") == "auto"
+                    for module in ("monitor", "notify")
+                    for schedule in (provider_schedules.get(module, {}) or {}).values()
+                    if isinstance(schedule, dict)
+                )
+            else:
+                automatic_refresh = any(
+                    isinstance(submitted.get(key), dict) and submitted[key].get("mode") == "auto"
+                    for key in ("monitor_schedule", "notify_schedule")
+                )
             has_refreshable_products = any(isinstance(item, dict) and (item.get("watch_enabled") or item.get("notify_enabled") or item.get("enabled")) for item in submitted.get("products", [])) or bool(submitted.get("isvoro_seckill"))
             submitted["enabled"] = bool(automatic_refresh and has_refreshable_products)
             value = validate_config(submitted)
@@ -5955,6 +6075,7 @@ class Handler(BaseHTTPRequestHandler):
                 identity_fields = ("provider", "username", "password", "egress_node_id")
                 if new_account is None or any(old_account.get(field) != new_account.get(field) for field in identity_fields):
                     _clear_merchant_sessions_for_account(old_account)
+                    clear_merchant_account_check(account_id)
             if value["akile_market"] != current["akile_market"]:
                 AKILE_MARKET_WAKE.set()
             if (value["isvoro_market"] != current["isvoro_market"]

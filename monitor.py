@@ -24,7 +24,7 @@ from admin import default_config, effective_telegram, normalize_cloudscraper, no
 from affiliates import affiliate_purchase_url
 from notifications import purchase_button, stock_message
 import egress
-from time_utils import beijing_iso, beijing_logging_converter, now_beijing
+from time_utils import BEIJING_TZ, beijing_iso, beijing_logging_converter, now_beijing
 
 
 ROOT = Path(__file__).resolve().parent
@@ -114,8 +114,7 @@ def parse_narwhal(plans: object, item: dict) -> Product:
         raise MonitorError("独角鲸云套餐价格异常，未更新库存")
     region_code = str(plan.get("machine_region") or "").strip().upper()
     region_names = {"HK": "中国香港", "MO": "中国澳门", "TW": "中国台湾", "JP": "日本", "KR": "韩国", "SG": "新加坡", "US": "美国", "CN": "中国", "GB": "英国", "DE": "德国", "CA": "加拿大"}
-    country_flags = {"HK": "🇭🇰", "MO": "🇲🇴", "TW": "🇹🇼", "JP": "🇯🇵", "KR": "🇰🇷", "SG": "🇸🇬", "US": "🇺🇸", "CN": "🇨🇳", "GB": "🇬🇧", "DE": "🇩🇪", "CA": "🇨🇦"}
-    region = f"{country_flags.get(region_code, '🌐')} {region_names.get(region_code, region_code or '未知地区')}"
+    region = region_names.get(region_code, region_code or "未知地区")
     expires = plan.get("machine_expires_at")
     if type(expires) is int and expires > 0:
         expiry_date = datetime.fromtimestamp(expires, timezone.utc).astimezone(BEIJING_TZ).strftime("%Y-%m-%d")
@@ -1191,7 +1190,11 @@ def write_status(path: Path, status: dict) -> None:
     temporary.replace(path)
 
 
-def module_schedule(config: dict, module: str) -> dict:
+def module_schedule(config: dict, module: str, provider: str = "") -> dict:
+    if provider:
+        schedule = (config.get("provider_schedules", {}).get(module, {}) or {}).get(provider)
+        if isinstance(schedule, dict):
+            return {**schedule, "provider": provider}
     defaults = {
         "monitor": ("monitor_schedule", "auto", int(config.get("interval_seconds", 600)), 0),
         "notify": ("notify_schedule", "auto", int(config.get("interval_seconds", 600)), 0),
@@ -1218,13 +1221,15 @@ def update_module_status(path: Path, module: str, schedule: dict, result: str,
     modules = current.get("modules") if isinstance(current.get("modules"), dict) else {}
     previous = modules.get(module) if isinstance(modules.get(module), dict) else {}
     at = checked_at or beijing_iso()
-    log = {"at": at, "result": result, "trigger": trigger or schedule.get("mode", "manual"), "message": message or ("完成" if result == "success" else "等待执行")}
+    log = {"at": at, "result": result, "trigger": trigger or schedule.get("mode", "manual"),
+           "provider": schedule.get("provider", ""), "message": message or ("完成" if result == "success" else "等待执行")}
     logs = [item for item in previous.get("logs", []) if isinstance(item, dict)][-19:]
     if result != "pending" or not logs:
         logs.append(log)
     modules[module] = {
         "mode": schedule.get("mode", "manual"),
         "interval_seconds": schedule.get("interval_seconds", 0),
+        "provider": schedule.get("provider", ""),
         "running": result == "pending",
         "last_result": result,
         "last_checked": at,
@@ -1433,44 +1438,48 @@ def show_chat_ids(session: requests.Session, token: str) -> None:
         print(f"chat_id={chat_id}  type={chat_type}  name={label}")
 
 
-def notification_text(product: Product, old_count: int | None, purchase_url: str, item: dict | None = None) -> str:
+def notification_text(product: Product, old_count: int | None, purchase_url: str, item: dict | None = None,
+                      *, checked_at: str = "", test: bool = False, duration: object = None) -> str:
     display_name = product.name
     if product.vendor == "独角鲸云" and product.node_name and product.node_name.casefold() != product.name.casefold():
         display_name = f"{product.node_name} · {product.name}"
-    message = stock_message(vendor=product.vendor, name=display_name, available=product.available, stock_mode=product.stock_mode,
-        region=product.region or product.area_name, specs=product.specs, traffic=product.traffic, price=product.price,
-        line="" if product.vendor == "独角鲸云" else (product.match_details or {}).get("category_name", "") or product.node_name or (item or {}).get("category_name", ""), item=item, old_count=old_count, purchase_url=purchase_url,
-        checked_at=now_beijing().strftime("%Y-%m-%d %H:%M:%S 北京时间"))
     details = product.match_details or {}
-    if product.vendor == "独角鲸云":
-        from html import escape
-        lines = []
-        if product.node_name:
-            lines.append(f"🖥 <b>母鸡名称：</b>{escape(product.node_name)}")
-        if details.get("machine_expires_at"):
-            lines.append(f"📅 <b>母鸡到期时间：</b>{escape(details['machine_expires_at'])}")
-        options = details.get("machine_plans") or []
-        if options:
-            lines += ["", "📦 <b>可选配置：</b>"]
-            affiliate = parse_qs(urlsplit(purchase_url).query).get("aff", [""])[0]
-            for option in options[:5]:
-                label = "已售罄" if option.get("stock") == 0 else f"剩 {option['stock']} 台" if isinstance(option.get("stock"), int) else "库存未知"
-                link = ""
-                if option.get("stock") != 0 and option.get("id") and details.get("machine_id"):
-                    params = {"plan_id": option["id"], "machine_id": details["machine_id"]}
-                    if affiliate:
-                        params["aff"] = affiliate
-                    url = "https://dash.fuckip.me/deploy?" + urlencode(params)
-                    link = f' · <a href="{escape(url, quote=True)}">点击抢购</a>'
-                lines.append(f"🔸 {escape(option['name'])} · {escape(option['price'])} [{label}]{link}")
-                lines.append(f"⚙️ {escape(option['specs'])} · 🌐 {escape(option['traffic'])}")
-            if len(options) > 5:
-                lines.append(f"另有 {len(options) - 5} 个配置，请查看购买页面。")
-        if lines:
-            marker = "\n\n🛒 <b>购买链接：</b>"
-            split_at = message.rfind(marker)
-            message = message[:split_at] + "\n" + "\n".join(lines) + message[split_at:] if split_at >= 0 else message + "\n" + "\n".join(lines)
-    return message
+    is_narwhal = product.vendor == "独角鲸云"
+    return stock_message(vendor=product.vendor, name=display_name, available=product.available, stock_mode=product.stock_mode,
+        region=product.region or product.area_name, specs=product.specs, traffic=product.traffic, price=product.price,
+        line="" if is_narwhal else details.get("category_name", "") or product.node_name or (item or {}).get("category_name", ""),
+        item=item, old_count=old_count, purchase_url=purchase_url,
+        checked_at=checked_at or now_beijing().strftime("%Y-%m-%d %H:%M:%S 北京时间"), test=test, duration=duration,
+        mother_name=product.node_name if is_narwhal else "", expires_at=details.get("machine_expires_at", "") if is_narwhal else "",
+        configurations=details.get("machine_plans") if is_narwhal else None, machine_id=str(details.get("machine_id", "")) if is_narwhal else "")
+
+
+def seckill_notification_authorized(config: dict, item: dict, status_path: Path | None) -> bool:
+    """Require a recent successful login before notifying auto-seckill targets."""
+    seckill = config.get("vps_seckill", {})
+    task = next((row for row in seckill.get("items", [])
+                 if row.get("enabled", True) and row.get("product_id") == item.get("id")), None)
+    if task is None:
+        return True
+    provider = str(item.get("adapter", "html"))
+    mode = (config.get("provider_schedules", {}).get("seckill", {}).get(provider, {}) or {}).get("mode", seckill.get("mode", "manual"))
+    if mode == "manual":
+        return True
+    account_id = str(task.get("account_id", ""))
+    if not account_id or status_path is None:
+        return False
+    try:
+        checks = json.loads((Path(status_path).parent / "account-status.json").read_text(encoding="utf-8"))
+        result = checks.get(account_id) if isinstance(checks, dict) else None
+        checked_at = datetime.fromisoformat(str(result.get("checked_at", "")).replace("Z", "+00:00")) if isinstance(result, dict) else None
+        if checked_at is None:
+            return False
+        if checked_at.tzinfo is None:
+            checked_at = checked_at.replace(tzinfo=BEIJING_TZ)
+        age = (now_beijing() - checked_at.astimezone(BEIJING_TZ)).total_seconds()
+        return result.get("ok") is True and result.get("status") == "valid" and 0 <= age <= 30 * 24 * 60 * 60
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return False
 
 
 def collect_inventory(session, config, selected, found, unavailable, cache_path: Path | None = None):
@@ -1561,11 +1570,14 @@ def check_once(
     chat_id: str,
     role: str = "both",
     trigger: str | None = None,
+    provider: str = "",
 ) -> None:
     if role not in {"both", "watch", "notify"}:
         raise MonitorError("检查模块无效")
     selected = selected_products(config, None if role == "both" else role)
-    schedule = module_schedule(config, "monitor" if role == "watch" else "notify" if role == "notify" else "monitor")
+    if provider:
+        selected = [item for item in selected if item.get("adapter") == provider]
+    schedule = module_schedule(config, "monitor" if role == "watch" else "notify" if role == "notify" else "monitor", provider)
     module = "monitor" if role == "watch" else "notify" if role == "notify" else "monitor"
     if not selected and not (role in {"both", "notify"} and config.get("isvoro_seckill", False)):
         update_module_status(status_path, module, schedule, "skipped", "没有启用的商品")
@@ -1644,7 +1656,8 @@ def check_once(
         }
         if role in {"both", "notify"} and subscribed:
             try:
-                alerts.sync(item, product, old_count, old is None and config.get("notify_current_stock_on_start", False))
+                authorized = seckill_notification_authorized(config, item, status_path)
+                alerts.sync(item, product, old_count, old is None and config.get("notify_current_stock_on_start", False), authorized)
             except MonitorError as error:
                 # Delivery state is saved per product. Retrying one failed message
                 # must not duplicate messages already sent for other products.
@@ -1724,7 +1737,7 @@ def main() -> int:
             logging.error("%s", exc)
             return 1
 
-    last_run = {"watch": 0.0, "notify": 0.0}
+    last_run = {}
     active_due = []
     while True:
         try:
@@ -1758,28 +1771,40 @@ def main() -> int:
             now = time.monotonic()
             due = []
             for role in ("watch", "notify"):
-                schedule = module_schedule(config, "monitor" if role == "watch" else "notify")
-                has_products = bool(selected_products(config, role)) or (role == "notify" and config.get("isvoro_seckill", False))
-                if schedule["mode"] == "auto" and has_products and (not last_run[role] or now - last_run[role] >= schedule["interval_seconds"]):
-                    due.append(role)
+                module = "monitor" if role == "watch" else "notify"
+                providers = {item.get("adapter", "html") for item in selected_products(config, role)}
+                if role == "notify" and config.get("isvoro_seckill", False):
+                    providers.add("isvoro")
+                for provider in sorted(providers):
+                    schedule = module_schedule(config, module, provider)
+                    run_key = (role, provider)
+                    if schedule["mode"] == "auto" and (not last_run.get(run_key) or now - last_run[run_key] >= schedule["interval_seconds"]):
+                        due.append((role, provider))
             active_due = due
             if not due:
                 waits = []
                 for role in ("watch", "notify"):
-                    schedule = module_schedule(config, "monitor" if role == "watch" else "notify")
-                    if schedule["mode"] == "auto" and (selected_products(config, role) or (role == "notify" and config.get("isvoro_seckill", False))):
-                        waits.append(max(0.25, schedule["interval_seconds"] - (now - last_run[role])) if last_run[role] else 0.25)
+                    module = "monitor" if role == "watch" else "notify"
+                    providers = {item.get("adapter", "html") for item in selected_products(config, role)}
+                    if role == "notify" and config.get("isvoro_seckill", False):
+                        providers.add("isvoro")
+                    for provider in providers:
+                        schedule = module_schedule(config, module, provider)
+                        run_key = (role, provider)
+                        if schedule["mode"] == "auto":
+                            waits.append(max(0.25, schedule["interval_seconds"] - (now - last_run[run_key])) if last_run.get(run_key) else 0.25)
                 time.sleep(min(waits) if waits else 1.0)
                 continue
-            for role in due:
-                check_once(session, config, state_path, status_path, bot_token, chat_id, role)
-                last_run[role] = time.monotonic()
+            for role, provider in due:
+                check_once(session, config, state_path, status_path, bot_token, chat_id, role, provider=provider)
+                last_run[(role, provider)] = time.monotonic()
         except (SiteBlocked, RequestServiceError) as exc:
             logging.error("%s", exc)
             state = "blocked" if isinstance(exc, SiteBlocked) else "error"
             write_status(status_path, {"last_checked": beijing_iso(), "state": state, "message": str(exc), "products": []})
-            for role in active_due:
-                update_module_status(status_path, "monitor" if role == "watch" else "notify", module_schedule(config, "monitor" if role == "watch" else "notify"), "error", str(exc))
+            for role, provider in active_due:
+                module = "monitor" if role == "watch" else "notify"
+                update_module_status(status_path, module, module_schedule(config, module, provider), "error", str(exc))
             if bot_token and chat_id:
                 try:
                     telegram_request(session, bot_token, "sendMessage", chat_id=chat_id, text=f"🔴 库存监控已停止\n原因：{exc}\n请确认目标网站允许当前的自动检查方式后再恢复。")
@@ -1789,8 +1814,9 @@ def main() -> int:
         except (MonitorError, requests.RequestException) as exc:
             logging.error("监控失败：%s", exc)
             write_status(status_path, {"last_checked": beijing_iso(), "state": "error", "message": str(exc), "products": []})
-            for role in active_due:
-                update_module_status(status_path, "monitor" if role == "watch" else "notify", module_schedule(config, "monitor" if role == "watch" else "notify"), "error", str(exc))
+            for role, provider in active_due:
+                module = "monitor" if role == "watch" else "notify"
+                update_module_status(status_path, module, module_schedule(config, module, provider), "error", str(exc))
             return 1
 
         if args.once:

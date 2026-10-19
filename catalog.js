@@ -77,10 +77,15 @@
   const selected = new Set();
   const knownScopes = new Map();
   const pageSize = 30;
-  const catalogAutoKey = "hostwatch-catalog-auto-v2";
-  const savedCatalogSchedule = config.catalog_schedule || {};
-  const autoValue = savedCatalogSchedule.mode === "auto" ? String(savedCatalogSchedule.interval_seconds || 300) : "0";
-  get("catalog-auto").value = ["0", "60", "300", "600"].includes(autoValue) ? autoValue : "0";
+  function currentCatalogSchedule() {
+    return config.provider_schedules?.catalog?.[provider] || config.catalog_schedule || { mode: "manual", interval_seconds: 300 };
+  }
+  function renderCatalogSchedule() {
+    const schedule = currentCatalogSchedule();
+    get("catalog-schedule-mode").value = schedule.mode;
+    get("catalog-interval").value = schedule.interval_seconds;
+  }
+  renderCatalogSchedule();
   const priceSortKey = "hostwatch-catalog-price-sort";
   const defaultCatalogHelp = get("catalog-help").textContent;
 
@@ -365,14 +370,16 @@
 
   function render() {
     renderDirectoryFilters();
+    renderCatalogSchedule();
     document.querySelectorAll("[data-catalog-provider]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.catalogProvider === provider)));
     const scopes = data?.scopes || knownScopes.get(provider) || [];
     get("catalog-scope").replaceChildren(...(scopes.length ? scopes.map((row) => new Option(row.id === "all" ? "全部公开套餐（手动）" : row.name, row.id)) : [new Option("等待目录", "")]));
     get("catalog-scope").value = scope;
     get("catalog-scope").disabled = actionRunning || loading || !scopes.length;
     const fullCatalog = scope === "all" && !fullDirectory();
-    get("catalog-auto").disabled = actionRunning || fullCatalog;
-    get("catalog-auto").title = fullCatalog ? "全部公开套餐只支持手动刷新，避免重复读取多个分类" : fullDirectory() ? "全目录可按设定间隔自动刷新，筛选共用一次读取" : "分类目录可按设定间隔自动刷新";
+    get("catalog-schedule-mode").disabled = actionRunning || fullCatalog;
+    get("catalog-interval").disabled = actionRunning || fullCatalog;
+    get("catalog-schedule-mode").title = fullCatalog ? "全部公开套餐只支持手动刷新，避免重复读取多个分类" : fullDirectory() ? "全目录自动刷新时，筛选共用一次读取" : "当前分类可按设定间隔自动刷新";
     const busy = Boolean(task?.pending);
     get("catalog-refresh").disabled = actionRunning || busy || loading;
     get("catalog-stop").hidden = !busy;
@@ -437,7 +444,7 @@
     clearTimeout(pollTimer); clearTimeout(autoTimer);
     if (!catalogPage() || document.hidden) return;
     if (task?.pending) pollTimer = setTimeout(() => loadSnapshot(false), 1200);
-    else if ((scope !== "all" || fullDirectory()) && !task?.error && !task?.cancelled && Number(get("catalog-auto").value)) autoTimer = setTimeout(() => refresh(true), Number(get("catalog-auto").value) * 1000);
+    else if ((scope !== "all" || fullDirectory()) && !task?.error && !task?.cancelled && currentCatalogSchedule().mode === "auto") autoTimer = setTimeout(() => refresh(true), currentCatalogSchedule().interval_seconds * 1000);
   }
 
   async function loadSnapshot(refreshMissing = true) {
@@ -525,17 +532,24 @@
     page = 0; selected.clear(); renderDirectoryFilters(); renderTable(true);
   });
   get("narwhal-reset").addEventListener("click", () => { resetNarwhalFilters(); render(); });
-  get("catalog-auto").addEventListener("change", () => {
-    const value = Number(get("catalog-auto").value || 0);
-    config.catalog_schedule = { mode: value ? "auto" : "manual", interval_seconds: value || 300 };
-    sessionStorage.setItem(catalogAutoKey, get("catalog-auto").value);
+  const saveCatalogSchedule = () => {
+    const value = Number(get("catalog-interval").value || 0);
+    const providerSchedule = { mode: get("catalog-schedule-mode").value, interval_seconds: value };
+    config.provider_schedules ||= {};
+    config.provider_schedules.catalog ||= {};
+    config.provider_schedules.catalog[provider] = providerSchedule;
+    config.catalog_schedule = providerSchedule;
     schedule();
     if (typeof updateDraftState === "function") updateDraftState();
     if (typeof scheduleAutoSave === "function") scheduleAutoSave("catalog");
-  });
+  };
+  get("catalog-schedule-mode").addEventListener("change", saveCatalogSchedule);
+  get("catalog-interval").addEventListener("input", saveCatalogSchedule);
   get("catalog-refresh").addEventListener("click", () => { task = task?.pending ? task : null; void refresh(); });
   get("catalog-stop").addEventListener("click", async () => {
-    get("catalog-auto").value = "0"; sessionStorage.setItem(catalogAutoKey, "0"); clearTimeout(autoTimer);
+    config.provider_schedules.catalog[provider] = { ...currentCatalogSchedule(), mode: "manual" };
+    config.catalog_schedule = config.provider_schedules.catalog[provider];
+    get("catalog-schedule-mode").value = "manual"; clearTimeout(autoTimer);
     if (typeof updateDraftState === "function") updateDraftState();
     if (typeof scheduleAutoSave === "function") scheduleAutoSave("catalog");
     try { task = await requestJSON("/api/catalog/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", timeoutMs: 10000 }); }

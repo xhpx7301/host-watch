@@ -152,7 +152,7 @@
     .form-grid > label:has(#telegram-chat-id) { justify-self:start; width:min(100%,380px); }
     .form-grid > label:has(#flaresolverr-url) { width:min(100%,560px); }
     .form-grid > label:has(#flaresolverr-timeout),.form-grid > label:has(#fetcher-wait) { justify-self:start; width:min(100%,240px); }
-    .form-grid > label:has(#interval),.form-grid > label:has(#interval-preset) { width:min(100%,240px); }
+    .form-grid > label:has(#interval) { width:min(100%,240px); }
     .form-grid > label:has(#fetcher-mode) { justify-self:start; width:min(100%,280px); }
     #provider-request-modes > label { justify-self:start; width:min(100%,280px); }
     input:focus,select:focus,textarea:focus { border-color:#4b8790; box-shadow:0 0 0 2px #d9ebeb; }
@@ -828,7 +828,8 @@
         <label>全部套餐 / 地区 / 线路<select id="catalog-scope" disabled><option value="">等待目录</option></select></label>
         <label>搜索套餐<input id="catalog-search" type="search" placeholder="名称、地区、线路或配置"></label>
         <label>库存状态<select id="catalog-stock"><option value="all">全部库存</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">状态未知</option><option value="watched">已加入监控</option><option value="notified">已加入通知</option></select></label>
-        <label>大盘自动刷新<select id="catalog-auto"><option value="0" selected>仅手动</option><option value="60">1 分钟</option><option value="300">5 分钟</option><option value="600">10 分钟</option></select></label>
+        <label>大盘刷新模式<select id="catalog-schedule-mode"><option value="manual">仅手动刷新</option><option value="auto">自动刷新</option></select></label>
+        <label>检查间隔（秒）<input id="catalog-interval" type="number" min="0" max="86400" step="1" value="300"></label>
       </div>
       <div class="catalog-sync"><div><strong id="catalog-summary">尚未载入目录</strong><span id="catalog-updated" class="subtle"></span></div><div class="actions"><button id="catalog-refresh" type="button">刷新目录库存</button><button id="catalog-stop" type="button" class="danger" hidden>停止刷新</button></div></div>
       <p id="catalog-route" class="hint" role="status" aria-live="polite"></p>
@@ -849,15 +850,15 @@
     <div class="section-head"><div><h2>VPS 补货抢购</h2><p>从 VPS 库存监控或 VPS 库存通知逐个加入商品。下架商品仍可保留目标链接，恢复上架后继续检查。</p></div><div class="actions"><span id="seckill-task-state" class="state">未运行</span></div></div>
       <div class="seckill-control-grid">
       <div class="seckill-panel vps-seckill-panel">
-        <div class="section-head"><div><h3>执行模式</h3><p>所有模式均不自动付款。自动模式仅创建待付款订单，付款需要你手动前往商家官网完成。</p></div><div class="actions"><button id="vps-seckill-test" type="button">测试抢购配置</button><button id="vps-seckill-test-stop" type="button" class="danger" hidden>停止测试</button><button id="vps-seckill-start" type="button" class="primary">启动补货抢购</button><button id="vps-seckill-stop" type="button" class="danger" hidden>暂停补货抢购</button></div></div>
-        <div class="form-grid"><label>模式<select id="vps-seckill-mode"><option value="rapid">极速抢购（自动）</option><option value="precise">精准抢购（自动）</option><option value="manual">手动抢购</option></select></label><label>检查间隔（秒）<input id="vps-seckill-interval" type="number" min="1" max="3600" step="1" value="5"></label></div>
+        <div class="section-head"><div><h3>执行模式</h3><p>每个商家独立设置策略和检查间隔。自动模式只创建待付款订单，付款由你到官网完成。</p></div><div class="actions"><button id="vps-seckill-test" type="button">测试抢购配置</button><button id="vps-seckill-test-stop" type="button" class="danger" hidden>停止测试</button><button id="vps-seckill-start" type="button" class="primary">启动补货抢购</button><button id="vps-seckill-stop" type="button" class="danger" hidden>暂停补货抢购</button></div></div>
+        <div class="form-grid"><label>商家<select id="vps-seckill-schedule-provider"></select></label><label>模式<select id="vps-seckill-mode"><option value="rapid">极速抢购（自动）</option><option value="precise">精准抢购（自动）</option><option value="manual">手动抢购</option></select></label><label>检查间隔（秒）<input id="vps-seckill-interval" type="number" min="1" max="3600" step="1" value="5"></label></div>
         <p id="vps-seckill-test-status" class="hint" role="status" aria-live="polite">测试会访问网站、识别页面并检查账户，不创建订单、不付款。</p><div id="vps-seckill-test-results" class="seckill-results" aria-live="polite"></div>
         <div class="seckill-mode-guide">
           <article><strong>极速抢购（自动）</strong><p>启动时检查账户；发现一次库存满足数量后立即提交。减少重复检查，抢单更快，但提交时库存或登录状态可能已变化。</p></article>
           <article><strong>精准抢购（自动）</strong><p>启动时检查账户；发现有货后再次验证账户、重新读取库存，数量仍满足才提交。核验更多、请求更多，可能错过短暂库存；不保证抢单成功。</p></article>
           <article><strong>手动抢购</strong><p>只检查一轮，准备购买链接和数量提示；由你到官网完成下单与付款。</p></article>
         </div>
-        <p class="hint">两种自动模式均使用上方检查间隔（每轮结束后的等待时间），每个商品每次任务最多发送一次下单请求。数量库存不足时继续等待；商家只提供有货状态时，由下单接口最终核验数量，不自动减少数量。</p>
+        <p class="hint">自动模式按商家使用各自检查间隔（每轮结束后的等待时间），每个商品每次任务最多发送一次下单请求。数量库存不足时继续等待；商家只提供有货状态时，由下单接口最终核验数量，不自动减少数量。</p>
         <p class="hint">自动模式会在库存满足、账户检查通过且商家有内置待付款下单适配时提交订单；付款仍需你到商家官网手动完成。未适配的商家只提供购买链接。商品和网站账号分别保存后长期生效。</p>
       </div>
       <div class="seckill-panel seckill-log-panel"><div class="section-head"><div><h3>执行日志</h3><p id="vps-seckill-log-note">尚未启动补货抢购任务。</p></div><div class="actions"><button id="vps-seckill-clear-log" type="button">清空显示</button><button id="vps-seckill-log-detail" type="button">详细日志</button></div></div><div id="vps-seckill-results" aria-live="polite"></div><pre id="vps-seckill-logs" class="seckill-logs" aria-live="polite">暂无日志</pre></div>
@@ -879,12 +880,12 @@
       <div class="watchlist-filter-tools" aria-labelledby="monitor-settings-title">
         <div class="watchlist-refresh-heading"><h3 id="monitor-settings-title">库存监控刷新</h3><strong id="monitor-runtime" class="state">正在读取服务状态</strong></div>
         <div class="watchlist-refresh-controls">
+          <label>商家<select id="monitor-schedule-provider"></select></label>
           <label>刷新模式<select id="monitor-schedule-mode"><option value="manual">仅手动刷新</option><option value="auto">自动刷新</option></select></label>
-        <label>监控间隔（秒）<input id="interval" type="number" min="0" max="86400" step="1" value="600"></label>
-          <label>常用间隔<select id="interval-preset"><option value="">自定义</option><option value="0">0 秒</option><option value="1">1 秒</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option><option value="60">1 分钟</option><option value="300">5 分钟</option><option value="600">10 分钟</option><option value="1800">30 分钟</option><option value="3600">1 小时</option></select></label>
+          <label>监控间隔（秒）<input id="interval" type="number" min="0" max="86400" step="1" value="600"></label>
           <button id="monitor-refresh-manual" type="button">手动刷新</button>
         </div>
-        <div class="watchlist-refresh-meta"><span id="monitor-runtime-note" class="subtle">以服务器实际运行状态为准。</span><span id="monitor-draft" class="hint" aria-live="polite">配置读取中。</span></div>
+        <div class="watchlist-refresh-meta"><span id="monitor-runtime-note" class="subtle">模式和间隔按商家分别保存；以服务器实际运行状态为准。</span><span id="monitor-draft" class="hint" aria-live="polite">配置读取中。</span></div>
         <p id="interval-description" class="hint"></p>
       </div>
     </div>
@@ -899,8 +900,9 @@
     <div class="section-head"><div><h2>我的 VPS 库存通知 <span id="notification-count" class="subtle"></span></h2><p>每轮补货通知一次，库存变化更新原 Telegram 消息，支持单次测试。</p></div><div class="actions"><button id="notification-browse" type="button">从大盘添加</button></div></div>
     <details class="help-note"><summary>库存通知说明</summary><p id="notification-note" class="hint"></p></details>
     <div class="module-settings" aria-labelledby="notify-settings-title">
-      <div class="module-settings-head"><div><h3 id="notify-settings-title">库存通知刷新设置</h3><p>只控制库存通知商品的检查，不影响库存监控。通知仍需配置 Telegram 才会发送。</p></div><span class="subtle">独立于库存监控</span></div>
+      <div class="module-settings-head"><div><h3 id="notify-settings-title">库存通知刷新设置</h3><p>模式和间隔按商家分别保存，只控制库存通知商品，不影响库存监控。</p></div><span class="subtle">独立于库存监控</span></div>
       <div class="form-grid">
+        <label>商家<select id="notify-schedule-provider"></select></label>
         <label>刷新模式<select id="notify-schedule-mode"><option value="manual">仅手动刷新</option><option value="auto">自动刷新</option></select></label>
         <label>通知检查间隔（秒）<input id="notify-interval" type="number" min="0" max="86400" step="1" value="600"></label>
         <button id="notify-current" class="option-button span-2" type="button" data-config-option data-on="已开启" data-off="未开启" aria-pressed="false" aria-label="首次启用该商品通知时，有货也发送提醒"><span>首次启用该商品通知时，有货也发送提醒</span><span data-option-state>未开启</span></button>
@@ -919,7 +921,7 @@
       <div id="seckill-activities" class="campaign-list"></div>
     </div>
     <div class="module-log-panel"><strong>库存监控 / 通知刷新日志</strong><pre id="watch-notify-logs" class="overview-log">暂无日志</pre></div>
-    <p class="hint">两个模块分别保存刷新模式和检查间隔，模式和间隔修改会自动保存。仅手动刷新时后台不会自动访问网站；每轮缺货变有货时发送一条 Telegram 通知，库存增减更新原消息。</p>
+    <p class="hint">库存监控和库存通知分别按商家保存刷新模式和检查间隔；抢购策略和间隔也按商家保存。修改后自动保存，手动模式不会自动访问该商家。</p>
     <div id="blocked-help" class="blocked-help" hidden><strong>上次库存检查被网站拦截（历史记录）</strong><span id="blocked-message">检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。</span><p class="hint">该记录保留至下一次检查；当前服务状态请看上方。请先确认访问方式，避免反复重启。</p></div>
     <p id="request-error" class="blocked-help" hidden></p>
     <p class="table-footnote">监控设置、通知模式、检查间隔和通知选项均会自动保存 · 仅手动模式下也可测试通知</p>

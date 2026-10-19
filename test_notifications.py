@@ -23,6 +23,7 @@ class NotificationTests(unittest.TestCase):
                       "2C/2G/30GB", "300GB@100Mbps", "¥25 / 月；¥249 / 年", "3 台", "由缺货变为有货"]:
             self.assertIn(value, text)
         self.assertIn("2026-10-15 23:00:00 北京时间", text)
+        self.assertIn("🇭🇰 中国香港", text)
         self.assertIsNone(soup.code)
         self.assertIn("🛒 购买链接：点击直达购买", soup.get_text())
         self.assertEqual(soup.a["href"], "https://isvoro.com/buy/HKCN2?product=149&aff=example")

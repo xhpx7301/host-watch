@@ -10,6 +10,7 @@ state-akile-market.json
 state-akile-market.json.tmp
 config.json
 status.json
+account-status.json
 catalog.json
 .browser-request.lock
 exchange-rates.json

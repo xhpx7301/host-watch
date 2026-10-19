@@ -139,6 +139,22 @@ class RestockMessageTests(unittest.TestCase):
         self.assertIn("库存：有货", text)
         self.assertNotIn("台", text)
 
+    def test_auto_seckill_target_waits_for_recent_account_auth_then_notifies(self):
+        self.config["vps_seckill"] = {"mode": "rapid", "items": [{
+            "id": "one", "product_id": "vps-2g", "account_id": "account", "enabled": True,
+        }]}
+        self.config["provider_schedules"]["seckill"]["html"]["mode"] = "rapid"
+        product = monitor.Product("p", "Live plan", 2, "https://shop.example.com/order", vendor="ExampleHost")
+        self.fetcher.return_value = product
+        monitor.check_once(self.session, self.config, self.state, self.status, "123:secret", "456")
+        self.assertEqual(self.methods(), [])
+        checks = self.status.parent / "account-status.json"
+        checks.write_text(json.dumps({"account": {"account_id": "account", "status": "valid", "ok": True,
+            "checked_at": monitor.now_beijing().isoformat(), "message": "OK"}}), encoding="utf-8")
+        self.clock += 1
+        monitor.check_once(self.session, self.config, self.state, self.status, "123:secret", "456")
+        self.assertEqual(self.methods(), ["sendMessage"])
+
     def test_fetch_failure_marks_original_uncertain_and_recovery_edits_it(self):
         self.tick(2)
         success_time = self.entry()["telegram"]["snapshot"]["checked_at"]
