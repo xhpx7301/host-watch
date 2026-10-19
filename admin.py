@@ -2954,6 +2954,40 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
         return {**result, "message": "无法验证账户：网络异常、跳转或接口未适配，请到官网检查"}
 
 
+def merchant_account_status(account_id: str) -> dict:
+    """Probe only an existing in-memory auth session; never submit credentials."""
+    config = current_config()
+    account = next((row for row in config["vps_seckill"].get("accounts", []) if row.get("id") == account_id), None)
+    result = {"account_id": account_id, "status": "unknown", "ok": False, "checked_at": beijing_iso()}
+    if not account:
+        return {**result, "message": "网站账户不存在"}
+    adapter_id = merchant_login_id(account.get("provider"))
+    if not adapter_id:
+        return {**result, "message": "该商家没有可复用的内置认证会话"}
+    from monitor import product_fetcher
+    fetcher = product_fetcher(config["fetcher"], {"adapter": adapter_id, "egress_node_id": account.get("egress_node_id", "")})
+    session = _get_merchant_session(adapter_id, account, fetcher)
+    if not session:
+        return {**result, "message": "尚未建立认证缓存，请点击“检查账户”"}
+    try:
+        if adapter_id == "isvoro":
+            valid = _isvoro_authenticated(session, account)
+        elif adapter_id == "akile":
+            valid = _akile_authenticated(session, account)
+        elif adapter_id == "narwhal":
+            valid = _narwhal_authenticated(session, account)
+        else:
+            valid = _merchant_authenticated(session, MERCHANT_LOGIN_ADAPTERS[adapter_id])
+        if valid:
+            _renew_merchant_session(adapter_id, account, fetcher, session)
+            return {**result, "status": "valid", "ok": True, "session_reused": True,
+                    "message": f"{MERCHANT_LOGIN_ADAPTERS[adapter_id]['name']} 登录缓存正常"}
+        _remove_merchant_session(adapter_id, account, fetcher)
+        return {**result, "status": "expired", "message": "登录缓存已失效，请点击“检查账户”重新认证"}
+    except (OSError, ValueError, requests.RequestException):
+        return {**result, "status": "unknown", "message": "认证状态暂时无法确认，请稍后重试"}
+
+
 def public_account_check_result(value: dict) -> dict:
     """Remove transient login-session handles before exposing task results."""
     return {key: item for key, item in value.items() if not str(key).startswith("_")}
@@ -5346,7 +5380,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(403)
             return
         # Stopping and polling tests must never wait behind config/service locks.
-        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-verification", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/egress/probe"}:
+        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-status", "/api/seckill/account-verification", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/egress/probe"}:
             self._post_action()
             return
         if not MUTATION_LOCK.acquire(blocking=False):
@@ -5358,7 +5392,7 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/refresh", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-verification", "/api/seckill/account-cache-clear", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
+        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/refresh", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-status", "/api/seckill/account-verification", "/api/seckill/account-cache-clear", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
             self.send_error(404)
             return
         try:
@@ -5472,6 +5506,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/seckill/account-check":
                 output = seckill_account_check(submitted)
+                self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
+                return
+            if self.path == "/api/seckill/account-status":
+                output = merchant_account_status(str(submitted.get("account_id", "")).strip())
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/seckill/account-verification":

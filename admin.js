@@ -391,6 +391,7 @@ for (const id of ["market-search", "market-region", "market-kind", "market-sort"
 document.querySelector("#market-prev").addEventListener("click", () => { marketPage--; renderMarket(); });
 document.querySelector("#market-next").addEventListener("click", () => { marketPage++; renderMarket(); });
 window.addEventListener("hostwatch-page-change", event => { if (event.detail === "market") void loadMarketSnapshot(); });
+window.addEventListener("hostwatch-page-change", event => { if (event.detail === "seckill") scheduleAccountHealthCheck(500); else clearTimeout(accountHealthTimer); });
 setInterval(() => { if (!document.hidden && currentPage === "market" && savedConfig) void loadMarketSnapshot(); }, 10000);
 
 function setMessage(message, kind = "", notify = true, inline = true) {
@@ -2696,6 +2697,9 @@ let vpsSeckillTestTask = null;
 let vpsSeckillTestPoll = null;
 const seckillAccountChecks = new Map();
 const standaloneAccountChecks = new Map();
+const accountHealthChecks = new Map();
+let accountHealthTimer;
+const ACCOUNT_HEALTH_INTERVAL_MS = 60_000;
 function seckillAccountNote(item) {
   if (!item.account_id) return "未绑定账户：发现有货后提供链接，由你到官网下单和付款。";
   const checks = [seckillAccountChecks.get(item.id), vpsSeckillTask?.accounts?.[item.id]]
@@ -2707,6 +2711,38 @@ function standaloneAccountNote(account) {
   if (!result) return "账户待检查：此检查只验证登录，不创建订单、不付款。";
   const cache = result.session_reused ? " · 已复用认证缓存" : result.ok ? " · 已建立认证缓存" : "";
   return `上次检查：${result.message}${cache} · ${formatBeijingDate(result.checked_at)}`;
+}
+function accountHealth(account) {
+  const result = accountHealthChecks.get(account.id);
+  if (!result) return { label: "待检查", tone: "unknown", detail: "尚未检查认证缓存" };
+  if (result.ok) return { label: "账号正常", tone: "ok", detail: `最近检查：${formatBeijingDate(result.checked_at)}` };
+  if (result.status === "expired") return { label: "登录已失效", tone: "error", detail: result.message || "请重新检查账户" };
+  return { label: "待认证", tone: "pending", detail: result.message || "请点击检查账户" };
+}
+async function refreshAccountHealth() {
+  if (actionRunning || document.hidden || currentPage !== "seckill") {
+    accountHealthTimer = setTimeout(refreshAccountHealth, ACCOUNT_HEALTH_INTERVAL_MS);
+    return;
+  }
+  const accounts = seckillAccounts();
+  if (!accounts.length) {
+    accountHealthTimer = setTimeout(refreshAccountHealth, ACCOUNT_HEALTH_INTERVAL_MS);
+    return;
+  }
+  await Promise.allSettled(accounts.map(async account => {
+    try {
+      const result = await requestJSON("/api/seckill/account-status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account_id: account.id }), timeoutMs: 30_000 });
+      accountHealthChecks.set(account.id, result);
+    } catch (error) {
+      accountHealthChecks.set(account.id, { account_id: account.id, ok: false, status: "unknown", message: error.message, checked_at: new Date().toISOString() });
+    }
+  }));
+  renderVpsSeckill();
+  accountHealthTimer = setTimeout(refreshAccountHealth, ACCOUNT_HEALTH_INTERVAL_MS);
+}
+function scheduleAccountHealthCheck(delay = 1_000) {
+  clearTimeout(accountHealthTimer);
+  accountHealthTimer = setTimeout(refreshAccountHealth, delay);
 }
 let vpsSeckillPoll = null;
 function seckillItemId() { return `seckill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; }
@@ -2859,7 +2895,7 @@ function renderVpsSeckill() {
     const providerValue = () => account.provider ? (merchantIds[String(account.provider).trim().toLowerCase()] || "custom") : (account.login_url ? "custom" : "");
     const field = (label, key, placeholder, type = "text") => {
       const input = document.createElement("input"); input.type = type; input.value = account[key] || ""; input.placeholder = placeholder;
-      input.addEventListener("input", () => { account[key] = input.value; updateDraftState(); scheduleAutoSave("seckill"); });
+      input.addEventListener("input", () => { account[key] = input.value; updateDraftState(); updateSeckillAccountControls(account.id); });
       const node = document.createElement("label"); node.append(text("span", label), input); grid.append(node);
     };
     field("账户名称", "name", "账户名称");
@@ -2875,9 +2911,9 @@ function renderVpsSeckill() {
       const ids = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", narwhal: "独角鲸云", isvoro: "Isvoro", dmit: "DMIT", bwh: "搬瓦工" };
       if (selected === "custom") {
         adapterNote.textContent = "其他商家需要自行提供实现 hostwatch-unpaid-v1 的账户检查 JSON 接口；普通登录页不能直接使用。";
-        const name = document.createElement("input"); name.value = account.provider && !merchantIds[String(account.provider).trim().toLowerCase()] ? account.provider : ""; name.placeholder = "商家名称"; name.addEventListener("input", () => { account.provider = name.value; updateDraftState(); scheduleAutoSave("seckill"); });
+        const name = document.createElement("input"); name.value = account.provider && !merchantIds[String(account.provider).trim().toLowerCase()] ? account.provider : ""; name.placeholder = "商家名称"; name.addEventListener("input", () => { account.provider = name.value; updateDraftState(); });
         const nameLabel = document.createElement("label"); nameLabel.append(text("span", "商家名称"), name); providerExtra.append(nameLabel);
-        const login = document.createElement("input"); login.type = "url"; login.value = account.login_url || ""; login.placeholder = "https://…（HostWatch JSON 接口）"; login.addEventListener("input", () => { account.login_url = login.value; updateDraftState(); scheduleAutoSave("seckill"); });
+        const login = document.createElement("input"); login.type = "url"; login.value = account.login_url || ""; login.placeholder = "https://…（HostWatch JSON 接口）"; login.addEventListener("input", () => { account.login_url = login.value; updateDraftState(); });
         const loginLabel = document.createElement("label"); loginLabel.append(text("span", "账户检查接口"), login); providerExtra.append(loginLabel);
       } else if (selected === "vmiss" || selected === "vps_soy" || selected === "bwh" || selected === "akile" || selected === "narwhal" || selected === "isvoro" || selected === "dmit") {
         const urls = { vmiss: "https://app.vmiss.com/login", vps_soy: "https://www.vps.soy/login", bwh: "https://bwh81.net/clientarea.php", akile: "https://api.akile.ai/api/v1/user/login", narwhal: "https://api.fuckip.me/api/v1/auth/login", isvoro: "https://isvoro.com/api/v1/auth/login", dmit: "https://www.dmit.io/clientarea.php" };
@@ -2909,13 +2945,13 @@ function renderVpsSeckill() {
       } else {
         account.provider = ""; account.login_url = ""; adapterNote.textContent = "先选择账户所属商家。";
       }
-      updateDraftState(); scheduleAutoSave("seckill");
+      updateDraftState();
     };
     provider.addEventListener("change", () => {
       if (provider.value === "custom" && account.provider && merchantIds[String(account.provider).trim().toLowerCase()]) {
         account.provider = ""; account.login_url = "";
       }
-      setProviderExtra();
+      setProviderExtra(); updateSeckillAccountControls(account.id);
     });
     setProviderExtra();
     field("用户名 / 邮箱", "username", "官网登录名或邮箱");
@@ -2923,10 +2959,10 @@ function renderVpsSeckill() {
     accountEgress.add(new Option("跟随商家出口（未分配则直连）", ""));
     egressNodes().forEach(node => accountEgress.add(new Option(node.name || node.id, node.id)));
     accountEgress.value = account.egress_node_id || "";
-    accountEgress.addEventListener("change", () => { account.egress_node_id = accountEgress.value; standaloneAccountChecks.delete(account.id); updateDraftState(); scheduleAutoSave("seckill"); });
+    accountEgress.addEventListener("change", () => { account.egress_node_id = accountEgress.value; standaloneAccountChecks.delete(account.id); accountHealthChecks.delete(account.id); updateDraftState(); updateSeckillAccountControls(account.id); });
     const accountEgressLabel = document.createElement("label"); accountEgressLabel.append(text("span", "Cookie / 账户检查出口"), accountEgress); grid.append(accountEgressLabel);
-    const password = document.createElement("input"); password.type = "password"; password.autocomplete = "new-password"; password.placeholder = account.password_configured ? "已保存，留空保持不变" : "登录密码"; password.addEventListener("input", () => { account.password = password.value; account.password_configured = Boolean(password.value) || account.password_configured; updateDraftState(); scheduleAutoSave("seckill"); }); const passwordLabel = document.createElement("label"); passwordLabel.append(text("span", "密码"), password); grid.append(passwordLabel);
-    const check = text("button", "检查账户", "seckill-check-account"); check.type = "button"; check.dataset.accountId = account.id; check.disabled = actionRunning;
+    const password = document.createElement("input"); password.type = "password"; password.autocomplete = "new-password"; password.placeholder = account.password_configured ? "已保存，留空保持不变" : "登录密码"; password.addEventListener("input", () => { account.password = password.value; account.password_configured = Boolean(password.value) || account.password_configured; updateDraftState(); updateSeckillAccountControls(account.id); }); const passwordLabel = document.createElement("label"); passwordLabel.append(text("span", "密码"), password); grid.append(passwordLabel);
+    const check = text("button", "检查账户", "seckill-check-account"); check.type = "button"; check.dataset.accountId = account.id; check.disabled = actionRunning || hasUnsavedSeckillAccount(account.id);
     check.setAttribute("aria-label", `检查网站账户 ${account.name || account.username || account.id}`);
     check.addEventListener("click", () => {
       runAction(check, "检查中…", "正在检查账户，不创建订单、不付款…", async () => {
@@ -2941,18 +2977,18 @@ function renderVpsSeckill() {
           delete account.captcha_token;
           delete account.captcha_provider;
         }
-        standaloneAccountChecks.set(account.id, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : result.verification_required ? "pending" : "error");
+        standaloneAccountChecks.set(account.id, result); accountHealthChecks.set(account.id, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : result.verification_required ? "pending" : "error");
       });
     });
     const remove = text("button", "删除账户", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.setAttribute("aria-label", `删除补货抢购账户 ${account.name || account.id}`);
     remove.addEventListener("click", () => deleteSeckillAccounts([account.id]));
-    const clearCache = text("button", "清除登录缓存"); clearCache.type = "button"; clearCache.disabled = actionRunning;
+    const clearCache = text("button", "清除登录缓存"); clearCache.type = "button"; clearCache.disabled = actionRunning || hasUnsavedSeckillAccount(account.id);
     clearCache.setAttribute("aria-label", `清除网站账户 ${account.name || account.id} 的登录缓存`);
     clearCache.addEventListener("click", () => {
       runAction(clearCache, "清除中…", "正在清除该账户的认证缓存…", async () => {
         const result = await requestJSON("/api/seckill/account-cache-clear", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account_id: account.id }) });
-        standaloneAccountChecks.delete(account.id); renderVpsSeckill(); setMessage(result.message, "success");
+        standaloneAccountChecks.delete(account.id); accountHealthChecks.delete(account.id); renderVpsSeckill(); setMessage(result.message, "success");
       });
     });
     const verification = standaloneAccountChecks.get(account.id);
@@ -2969,13 +3005,27 @@ function renderVpsSeckill() {
       });
       const action = text("div", "", "actions"); action.append(submitCode); verificationBox.append(action);
     }
+    const accountHealthState = accountHealth(account);
+    const healthLabel = text("span", accountHealthState.label, `egress-health ${accountHealthState.tone}`); healthLabel.title = accountHealthState.detail;
     const accountParts = [grid, adapterNote, providerExtra];
     if (verificationBox.childElementCount) accountParts.push(verificationBox);
     accountParts.push(text("p", standaloneAccountNote(account), "hint seckill-account-status"), text("div", "", "actions"));
-    card.append(...accountParts); card.lastChild.append(check, clearCache, remove);
+    card.append(...accountParts);
+    const actions = card.lastChild;
+    const save = text("button", hasUnsavedSeckillAccount(account.id) ? "保存账户" : "已保存"); save.type = "button"; save.className = "primary"; save.dataset.accountSave = account.id; save.disabled = actionRunning || !hasUnsavedSeckillAccount(account.id);
+    save.addEventListener("click", () => saveSeckillAccount(account, save));
+    actions.append(healthLabel, save, check, clearCache, remove);
     accountTarget.append(card);
   });
   renderVpsSeckillTask();
+}
+
+async function saveSeckillAccount(account, button) {
+  if (!account || !hasUnsavedSeckillAccount(account.id)) return;
+  await runAction(button, "保存中…", "正在保存当前网站账户…", async () => {
+    await saveConfig(`seckill-account:${account.id}`);
+    setMessage(`${account.name || account.username || account.id} 已保存。`, "success");
+  });
 }
 
 function deleteSeckillAccounts(ids) {
@@ -3018,6 +3068,16 @@ function hasUnsavedSeckillAccount(accountId) {
   if (!saved || !current || !previous) return true;
   return JSON.stringify(comparableSeckillAccount(current)) !== JSON.stringify(comparableSeckillAccount(previous));
 }
+function updateSeckillAccountControls(accountId) {
+  const card = document.querySelector(`.seckill-account[data-account-id="${CSS.escape(accountId)}"]`);
+  if (!card) return;
+  const dirty = hasUnsavedSeckillAccount(accountId);
+  const save = [...card.querySelectorAll("button")].find(button => button.dataset.accountSave === accountId);
+  if (save) { save.disabled = actionRunning || !dirty; save.textContent = dirty ? "保存账户" : "已保存"; }
+  const check = card.querySelector(".seckill-check-account"), clear = [...card.querySelectorAll("button")].find(button => button.textContent === "清除登录缓存");
+  if (check) check.disabled = actionRunning || dirty;
+  if (clear) clear.disabled = actionRunning || dirty;
+}
 function comparableSeckillItem(item) {
   if (!item) return null;
   return {
@@ -3043,7 +3103,7 @@ function hasUnsavedSeckillItem(itemId) {
   return JSON.stringify(comparableSeckillItem(current)) !== JSON.stringify(comparableSeckillItem(previous));
 }
 function renderVpsSeckillTask() {
-  document.querySelectorAll("#page-seckill .option-button, .seckill-item .danger, .seckill-account .danger, #egress-nodes .egress-node-head button, #egress-nodes .egress-install-copy, #egress-nodes .egress-uninstall-copy").forEach(button => { button.disabled = actionRunning; });
+  document.querySelectorAll("#page-seckill .option-button, .seckill-item .danger, .seckill-account .danger, .seckill-account [data-account-save], #egress-nodes .egress-node-head button, #egress-nodes .egress-install-copy, #egress-nodes .egress-uninstall-copy").forEach(button => { button.disabled = actionRunning; });
   document.querySelectorAll(".seckill-check-account").forEach(button => { const itemCard = button.closest(".seckill-item"); const item = itemCard ? seckillItems().find(row => row.id === itemCard.dataset.id) : null; button.disabled = actionRunning || (itemCard ? !item?.account_id : !button.dataset.accountId); });
   document.querySelectorAll(".seckill-account-status").forEach(node => { const itemCard = node.closest(".seckill-item"); if (itemCard) { const item = seckillItems().find(row => row.id === itemCard.dataset.id); if (item) node.textContent = seckillAccountNote(item); } else { const account = seckillAccounts().find(row => row.id === node.closest(".seckill-account")?.dataset.accountId); if (account) node.textContent = standaloneAccountNote(account); } });
   document.querySelector("#vps-seckill-delete-all").disabled = actionRunning || !seckillItems().length;
@@ -3133,7 +3193,7 @@ document.querySelector("#vps-seckill-open-notifications").addEventListener("clic
 document.querySelector("#seckill-picker-close").addEventListener("click", () => document.querySelector("#seckill-picker-dialog").close());
 document.querySelector("#vps-seckill-delete-all").addEventListener("click", () => { seckillItems().splice(0); renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); setMessage("已删除全部补货抢购商品，正在自动保存。", "pending"); });
 document.querySelector("#vps-seckill-delete-all-accounts").addEventListener("click", () => deleteSeckillAccounts(seckillAccounts().map(account => account.id)));
-document.querySelector("#vps-seckill-add-account").addEventListener("click", () => { seckillAccounts().push({ id: `account-${Date.now()}`, name: "", provider: "", username: "", password: "", login_url: "" }); renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); });
+document.querySelector("#vps-seckill-add-account").addEventListener("click", () => { seckillAccounts().push({ id: `account-${Date.now()}`, name: "", provider: "", username: "", password: "", login_url: "" }); renderVpsSeckill(); updateDraftState(); setMessage("已添加账户草稿，请填写后点击该账户的“保存账户”。", "pending"); });
 document.querySelector("#vps-seckill-clear-log").addEventListener("click", () => { if (vpsSeckillTask) { vpsSeckillTask.logs = []; renderVpsSeckillTask(); } });
 document.querySelector("#vps-seckill-mode").addEventListener("change", event => { config.vps_seckill.mode = event.target.value; updateDraftState(); scheduleAutoSave("seckill-settings"); });
 document.querySelector("#vps-seckill-interval").addEventListener("input", event => { config.vps_seckill.interval_seconds = Number(event.target.value); updateDraftState(); scheduleAutoSave("seckill-settings"); });
@@ -3260,7 +3320,14 @@ function mergeConfigScope(baseValue, draftValue, scope) {
   } else if (scope === "cloudscraper") base.fetcher = { ...base.fetcher, cloudscraper: draft.fetcher.cloudscraper };
   else if (scope === "provider-modes") base.fetcher = { ...base.fetcher, provider_modes: draft.fetcher.provider_modes };
   else if (scope === "egress") { base.egress = draft.egress; base.fetcher = { ...base.fetcher, egress: draft.egress }; }
-  else if (scope === "market") { base.akile_market = draft.akile_market; base.isvoro_market = draft.isvoro_market; }
+  else if (scope.startsWith("seckill-account:")) {
+    const accountId = scope.slice("seckill-account:".length);
+    const draftAccount = draft.vps_seckill?.accounts?.find(account => account.id === accountId);
+    if (draftAccount) {
+      const accounts = base.vps_seckill?.accounts || [];
+      base.vps_seckill = { ...base.vps_seckill, accounts: [...accounts.filter(account => account.id !== accountId), cloneConfig(draftAccount)] };
+    }
+  } else if (scope === "market") { base.akile_market = draft.akile_market; base.isvoro_market = draft.isvoro_market; }
   else if (scope === "telegram") base.telegram = draft.telegram;
   else if (scope === "monitor") {
     for (const key of ["interval_seconds", "monitor_schedule", "watch_order", "merchant_order"]) base[key] = draft[key];
@@ -3493,6 +3560,7 @@ function applyConfig(value) {
   renderEgress();
   scheduleEgressHealthCheck(1_000);
   renderVpsSeckill();
+  if (currentPage === "seckill") scheduleAccountHealthCheck(1_000);
   renderMarketSettings();
   if (currentPage === "market") void loadMarketSnapshot();
   savedConfig = JSON.stringify(collectConfig());

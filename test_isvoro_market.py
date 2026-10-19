@@ -88,6 +88,17 @@ class IsvoroMarketTests(unittest.TestCase):
             admin._evaluate_isvoro_market(config, [item])
             self.assertEqual(send.call_count, 1)
 
+    def test_account_status_only_probes_cached_session(self):
+        value = admin.default_config()
+        value["vps_seckill"]["accounts"] = [{"id": "iv", "name": "Isvoro", "provider": "isvoro",
+            "username": "user@example.com", "password": "secret", "login_url": admin.ISVORO_LOGIN_URL}]
+        with patch.object(admin, "current_config", return_value=admin.validate_config(value)), \
+                patch("monitor.product_fetcher", return_value={}), patch.object(admin, "_get_merchant_session", return_value=None) as cached:
+            result = admin.merchant_account_status("iv")
+        self.assertFalse(result["ok"])
+        self.assertIn("尚未建立", result["message"])
+        cached.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
