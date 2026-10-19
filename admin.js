@@ -245,7 +245,7 @@ function renderMarketRules() {
       input.addEventListener("input", () => { rule[key] = input.value === "" ? null : Number(input.value); updateDraftState(); });
       field.append(input); grid.append(field);
     }
-    card.append(grid, text("p", activeMarketProvider() === "isvoro" ? `套餐匹配：${rule.plan_name || "—"}；同套餐规则会覆盖该套餐的其他挂单，按剩余有效期和续费价格估值。这里只发送提醒，不会购买或付款。` : `套餐匹配：${rule.plan_name || "—"}；同套餐规则会覆盖不同续费周期的挂单，按各自实际续费价估值。待付款模式受 Akile Passkey 购买验证限制，当前只通知需要手动操作，未创建订单。`, "hint"));
+    card.append(grid, text("p", activeMarketProvider() === "isvoro" ? `套餐匹配：${rule.plan_name || "—"}；同套餐规则按续费月付基准比较，不使用剩余天数折算。这里只发送提醒，不会购买或付款。` : `套餐匹配：${rule.plan_name || "—"}；同套餐规则按续费月付基准比较，不使用剩余天数折算。待付款模式受 Akile Passkey 购买验证限制，当前只通知需要手动操作，未创建订单。`, "hint"));
     target.append(card);
   }
   document.querySelector("#market-rule-empty").hidden = marketConfig().items.length > 0;
@@ -309,9 +309,27 @@ function renderMarket() {
     if (kind === "premium" && !(row.delta < 0)) return false;
     return kind !== "near" || row.remaining_days <= 7;
   });
-  visible.sort((a,b) => sort === "price" ? (a.price ?? Infinity) - (b.price ?? Infinity) : sort === "expiry" ? (a.due_time ?? Infinity) - (b.due_time ?? Infinity) : (b.rate ?? -Infinity) - (a.rate ?? -Infinity));
+  const columnSort = readMarketColumnSort();
+  const compareNumeric = (a, b, key) => {
+    const left = Number(a[key]), right = Number(b[key]);
+    if (!Number.isFinite(left) && !Number.isFinite(right)) return 0;
+    if (!Number.isFinite(left)) return 1;
+    if (!Number.isFinite(right)) return -1;
+    return (left - right) * (columnSort.direction === "desc" ? -1 : 1);
+  };
+  if (columnSort.key) visible.sort((a, b) => compareNumeric(a, b, columnSort.key));
+  else visible.sort((a,b) => sort === "price" ? (a.price ?? Infinity) - (b.price ?? Infinity) : sort === "expiry" ? (a.due_time ?? Infinity) - (b.due_time ?? Infinity) : (b.rate ?? -Infinity) - (a.rate ?? -Infinity));
   const pageSize = 15, pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
   marketPage = Math.min(marketPage, pageCount - 1);
+  const headRow = document.querySelector(".market-table thead tr");
+  if (headRow) {
+    headRow.replaceChildren();
+    [["商品 / 配置"], ["地区 / 节点"], ["续费价格", "renewal"], ["到期 / 剩余时间", "due_time"], ["售价", "price"], ["剩余价值", "fair_value"], ["折价 / 溢价率", "rate"], ["折价 / 溢价金额", "delta"], ["操作"]].forEach(([label, key]) => {
+      const th = document.createElement("th"); th.scope = "col";
+      th.append(key ? createMarketSortButton(label, key) : text("span", label));
+      headRow.append(th);
+    });
+  }
   rowsNode.replaceChildren();
   for (const row of visible.slice(marketPage * pageSize, (marketPage + 1) * pageSize)) {
     const tr = document.createElement("tr");
@@ -2048,6 +2066,35 @@ function createPriceSortButton(label, key, onChange) {
     sessionStorage.setItem(key, mode);
     update(mode);
     onChange(mode);
+  });
+  return button;
+}
+function readMarketColumnSort() {
+  const provider = activeMarketProvider();
+  const key = sessionStorage.getItem(`hostwatch-${provider}-market-sort-key`) || "";
+  const direction = sessionStorage.getItem(`hostwatch-${provider}-market-sort-direction`) || "asc";
+  return { key, direction: direction === "desc" ? "desc" : "asc" };
+}
+function createMarketSortButton(label, key) {
+  const button = text("button", "", "price-sort-button");
+  button.type = "button";
+  const update = () => {
+    const state = readMarketColumnSort(), active = state.key === key;
+    button.dataset.sort = active ? state.direction : "default";
+    const icon = text("span", "", "price-sort-icon");
+    icon.append(text("span", "", "price-sort-arrow price-sort-up"), text("span", "", "price-sort-arrow price-sort-down"));
+    button.replaceChildren(text("span", label, "price-sort-label"), icon);
+    button.setAttribute("aria-label", `${label}：${active ? state.direction === "asc" ? "升序" : "降序" : "默认排序"}`);
+    button.title = button.getAttribute("aria-label");
+  };
+  update();
+  button.addEventListener("click", () => {
+    const state = readMarketColumnSort();
+    const same = state.key === key;
+    const direction = same && state.direction === "asc" ? "desc" : "asc";
+    sessionStorage.setItem(`hostwatch-${activeMarketProvider()}-market-sort-key`, same && state.direction === "desc" ? "" : key);
+    sessionStorage.setItem(`hostwatch-${activeMarketProvider()}-market-sort-direction`, direction);
+    marketPage = 0; renderMarket();
   });
   return button;
 }

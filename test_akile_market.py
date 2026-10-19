@@ -40,10 +40,13 @@ class ValuationTests(unittest.TestCase):
         self.assertEqual(item["fair_value"], 30)
         self.assertEqual(item["delta"], 10)
         self.assertAlmostEqual(item["rate"], 100 / 3)
+        short_remaining = admin.akile_market_valuation(listing(due_time=NOW + 5 * 86400), NOW)
+        self.assertEqual(short_remaining["fair_value"], 30)
+        self.assertEqual(short_remaining["delta"], 10)
         year = admin.akile_market_valuation(listing(server_cycle=12, server_price=12000, due_time=NOW + 365 * 86400), NOW)
-        self.assertEqual(year["fair_value"], 120)
+        self.assertEqual(year["fair_value"], 10)
         quarter = admin.akile_market_valuation(listing(server_cycle=3, due_time=NOW + 90 * 86400), NOW)
-        self.assertEqual(quarter["fair_value"], 30)
+        self.assertEqual(quarter["fair_value"], 10)
 
     def test_unsupported_zero_expired_and_nonfinite_never_trigger(self):
         for changes in [dict(server_cycle=2), dict(server_price=0), dict(due_time=NOW), dict(is_bid=True), dict(status=1), dict(status="0")]:

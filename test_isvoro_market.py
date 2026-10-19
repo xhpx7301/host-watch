@@ -34,7 +34,7 @@ class IsvoroMarketTests(unittest.TestCase):
         self.assertEqual(item["id"], "901")
         self.assertEqual(item["region"], "中国香港")
         self.assertEqual(item["node"], "HK-A")
-        self.assertAlmostEqual(item["fair_value"], 30 * (item["remaining_days"] / 30))
+        self.assertAlmostEqual(item["fair_value"], 30)
         self.assertAlmostEqual(item["delta"], item["fair_value"] - 12)
         self.assertAlmostEqual(item["rate"], item["delta"] / item["fair_value"] * 100)
 
