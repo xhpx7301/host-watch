@@ -92,6 +92,13 @@ class NarwhalTests(unittest.TestCase):
             with self.assertRaisesRegex(MonitorError, "目录不完整"):
                 monitor.fetch_narwhal_plans(Mock(), MACHINE_ID, {"mode": "requests"})
 
+    def test_catalog_request_allows_slow_response_and_retries_one_timeout(self):
+        payload = json.dumps({"code": 0, "data": {"total": 1, "plans": [plan()]}})
+        with patch.object(monitor, "fetch_page", side_effect=[MonitorError("访问 api.fuckip.me 商品页超时"), (payload, monitor.NARWHAL_PLANS_URL)]) as fetch:
+            self.assertEqual(monitor.fetch_narwhal_plans(Mock(), fetcher={"mode": "requests"}), [plan()])
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual(fetch.call_args.args[2]["_read_timeout_seconds"], 60)
+
     def test_catalog_scopes_plans_by_instance(self):
         other = plan(id=OTHER_PLAN_ID, machine_id=OTHER_MACHINE_ID, machine_name="洛杉矶实例")
         with patch.object(monitor, "fetch_narwhal_plans", return_value=[plan(), other]):

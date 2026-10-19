@@ -16,6 +16,7 @@ let config = {
   telegram: {},
   egress: { nodes: [], routes: {} },
   akile_market: { enabled: false, interval_seconds: 60, account_id: "", items: [] },
+  isvoro_market: { enabled: false, interval_seconds: 60, account_id: "", items: [] },
   vps_seckill: { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] },
   products: [],
 };
@@ -75,7 +76,6 @@ function beijingISOString(value = new Date()) {
 const pages = {
   overview: { title: "运行概览", description: "每分钟查看大盘、监控、通知、抢购的状态与最近刷新记录。" },
   catalog: { title: "VPS 库存大盘", description: "浏览商家全部公开套餐或地区分类，选择你关心的 VPS 加入补货提醒。" },
-  narwhal: { title: "独角鲸云", description: "浏览全部套餐，按地区、实例逐级筛选，指定套餐加入库存监控或 Telegram 补货通知。" },
   seckill: { title: "VPS 补货抢购", description: "从库存监控或库存通知选择商品，配置优惠码和账户后执行补货抢购。" },
   market: { title: "Akile 交易市场", description: "查看 Akile 交易市场快照，按续费价格和到期时间计算折价/溢价金额与比例，设置指定商品的 Telegram 提醒。" },
   monitor: { title: "VPS 库存监控", description: "集中查看你关注的 VPS，查看库存与配置、编辑备注和线路，直接购买，不发送通知。" },
@@ -112,6 +112,7 @@ window.addEventListener("resize", () => {
 
 function navigatePage(name, { history = true, focus = true } = {}) {
   if (name === "products") { navigatePage("notifications", { history, focus }); openAdvancedProducts(); return; }
+  if (name === "narwhal") name = "catalog";
   if (name === "telegram" || name === "management") name = "settings";
   if (!Object.hasOwn(pages, name)) name = "overview";
   if (history && location.hash !== `#${name}`) window.history.pushState(null, "", `#${name}`);
@@ -119,11 +120,11 @@ function navigatePage(name, { history = true, focus = true } = {}) {
   if (currentPage === name) return;
   currentPage = name;
   document.querySelectorAll("[data-page]").forEach((panel) => {
-    panel.hidden = panel.dataset.page !== (name === "narwhal" ? "catalog" : name);
+    panel.hidden = panel.dataset.page !== name;
     panel.classList.toggle("page-enter", !panel.hidden);
   });
   document.querySelectorAll("[data-page-link]").forEach((link) => {
-    if (link.dataset.pageLink === name || name === "narwhal" && link.dataset.pageLink === "narwhal") link.setAttribute("aria-current", "page");
+    if (link.dataset.pageLink === name) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
   const heading = document.querySelector("#page-title");
@@ -154,9 +155,10 @@ let marketSnapshot = { items: [], results: [], updated_at: "", error: "" };
 let marketBusy = false;
 let marketNotificationTestBusy = false;
 let marketPage = 0;
-function marketConfig() { return config.akile_market ||= { enabled: false, interval_seconds: 60, account_id: "", items: [] }; }
-function marketCurrency(value) { return Number.isFinite(value) ? `¥${value.toFixed(2)}` : "—"; }
-function marketLink(id) { return `https://akile.ai/console/pushshop?highlight=${encodeURIComponent(id)}`; }
+function activeMarketProvider() { return document.querySelector("#market-provider")?.value || "akile"; }
+function marketConfig() { const key = activeMarketProvider() === "isvoro" ? "isvoro_market" : "akile_market"; return config[key] ||= { enabled: false, interval_seconds: 60, account_id: "", items: [] }; }
+function marketCurrency(value, currency = "CNY") { return Number.isFinite(value) ? `${currency === "CNY" ? "¥" : `${currency} `}${value.toFixed(2)}` : "—"; }
+function marketLink(id) { return activeMarketProvider() === "isvoro" ? "https://isvoro.com/marketplace" : `https://akile.ai/console/pushshop?highlight=${encodeURIComponent(id)}`; }
 function marketUnit(value, unit) {
   if (value === null || value === undefined || String(value).trim() === "") return "";
   const display = typeof value === "number" && Number.isFinite(value) ? String(value) : String(value).trim();
@@ -183,8 +185,13 @@ function marketRuleInfo(item) {
 }
 function renderMarketSettings() {
   const value = marketConfig(), account = document.querySelector("#market-account");
-  account.replaceChildren(new Option("请选择已保存的 Akile 账户", ""));
-  (config.vps_seckill?.accounts || []).filter(row => row.provider === "akile").forEach(row => account.append(new Option(row.name || row.username || row.id, row.id)));
+  const provider = activeMarketProvider(), providerName = provider === "isvoro" ? "Isvoro" : "Akile";
+  document.querySelector("#market-account-label").textContent = `${providerName} 网站账户`;
+  const source = document.querySelector("#market-source-link");
+  source.href = provider === "isvoro" ? "https://isvoro.com/marketplace" : "https://akile.ai/console/pushshop";
+  source.textContent = `打开 ${providerName} 市场 ↗`;
+  account.replaceChildren(new Option(`请选择已保存的 ${providerName} 账户`, ""));
+  (config.vps_seckill?.accounts || []).filter(row => row.provider === provider).forEach(row => account.append(new Option(row.name || row.username || row.id, row.id)));
   if (value.account_id && ![...account.options].some(option => option.value === value.account_id)) account.append(new Option("已绑定账户已删除，请重新选择", value.account_id));
   account.value = value.account_id || "";
   document.querySelector("#market-enabled").value = value.enabled ? "on" : "off";
@@ -222,7 +229,7 @@ function renderMarketRules() {
       ["target", "监控范围", [["listing", `此挂单 #${rule.product_id}`], ["plan", "同地区、同节点、同套餐新挂单"]]],
       ["direction", "阈值方向", [["discount", "折价达到最低值（≥）"], ["premium", "溢价低于最高值（≤）"]]],
       ["match", "条件关系", [["any", "比例或金额任一满足"], ["all", "比例与金额全部满足"]]],
-      ["action", "达到条件后", [["notify", "Telegram 提醒手动购买"], ["unpaid_order", "待付款下单（官网验证受限）"]]],
+      ["action", "达到条件后", activeMarketProvider() === "isvoro" ? [["notify", "Telegram 提醒手动购买"]] : [["notify", "Telegram 提醒手动购买"], ["unpaid_order", "待付款下单（官网验证受限）"]]],
       ["enabled", "本条规则", [["on", "启用"], ["off", "暂停"]]],
     ]) {
       const field = text("label", label), select = document.createElement("select");
@@ -238,7 +245,7 @@ function renderMarketRules() {
       input.addEventListener("input", () => { rule[key] = input.value === "" ? null : Number(input.value); updateDraftState(); });
       field.append(input); grid.append(field);
     }
-    card.append(grid, text("p", `套餐匹配：${rule.plan_name || "—"}；同套餐规则会覆盖不同续费周期的挂单，按各自实际续费价估值。待付款模式受 Akile Passkey 购买验证限制，当前只通知需要手动操作，未创建订单。`, "hint"));
+    card.append(grid, text("p", activeMarketProvider() === "isvoro" ? `套餐匹配：${rule.plan_name || "—"}；同套餐规则会覆盖该套餐的其他挂单，按剩余有效期和续费价格估值。这里只发送提醒，不会购买或付款。` : `套餐匹配：${rule.plan_name || "—"}；同套餐规则会覆盖不同续费周期的挂单，按各自实际续费价估值。待付款模式受 Akile Passkey 购买验证限制，当前只通知需要手动操作，未创建订单。`, "hint"));
     target.append(card);
   }
   document.querySelector("#market-rule-empty").hidden = marketConfig().items.length > 0;
@@ -316,15 +323,15 @@ function renderMarket() {
     actions.append(add,buy);
     tr.append(cell(text("strong", row.name), text("small", `#${row.id} · ${row.cpu ?? "—"}C/${row.memory ?? "—"}MB/${row.disk ?? "—"}GB`), text("small", row.is_bid ? "拍卖 · 不触发规则" : row.detail || "")),
       cell(text("strong", row.region || "—"), text("small", row.node || "—")),
-      cell(text("span", `${marketCurrency(row.renewal)}/${row.cycle ?? "?"}个月`, "market-number")),
+      cell(text("span", `${marketCurrency(row.renewal, row.currency_code)}/${row.cycle ?? "?"}${row.cycle_unit === "year" ? "年" : "个月"}`, "market-number")),
       cell(text("span", row.due_time ? formatBeijingDate(new Date(row.due_time * 1000)) : "—"), text("small", row.remaining_days > 0 ? `剩余 ${row.remaining_days.toFixed(2)} 天` : "已到期")),
-      cell(text("strong", marketCurrency(row.price))), cell(text("span", marketCurrency(row.fair_value))),
+      cell(text("strong", marketCurrency(row.price, row.currency_code))), cell(text("span", marketCurrency(row.fair_value, row.currency_code))),
       cell(text("span", Number.isFinite(row.rate) ? `${priceKind} ${Math.abs(row.rate).toFixed(2)}%` : row.valuation_error || "无法估值", `market-deal ${Number.isFinite(row.rate) ? tone : "neutral"}`)),
-      cell(text("span", Number.isFinite(row.delta) ? `${priceKind} ${marketCurrency(Math.abs(row.delta))}` : "—")),cell(actions));
+      cell(text("span", Number.isFinite(row.delta) ? `${priceKind} ${marketCurrency(Math.abs(row.delta), row.currency_code)}` : "—")),cell(actions));
     rowsNode.append(tr);
   }
   document.querySelector("#market-empty").hidden = visible.length > 0;
-  document.querySelector("#market-empty").textContent = all.length ? "没有符合条件的商品。" : "选择已保存的 Akile 账户，点击刷新获取市场商品。";
+  document.querySelector("#market-empty").textContent = all.length ? "没有符合条件的商品。" : `选择已保存的 ${activeMarketProvider() === "isvoro" ? "Isvoro" : "Akile"} 账户，点击刷新获取市场商品。`;
   document.querySelector("#market-page-label").textContent = `共 ${visible.length} 条 · 第 ${marketPage + 1}/${pageCount} 页`;
   document.querySelector("#market-prev").disabled = marketPage === 0;
   document.querySelector("#market-next").disabled = marketPage + 1 >= pageCount;
@@ -333,7 +340,7 @@ function renderMarket() {
   document.querySelector("#market-expiring-count").textContent = all.filter(row=>row.remaining_days > 0 && row.remaining_days <= 7).length;
   document.querySelector("#market-updated").textContent = marketSnapshot.updated_at && all.length ? formatBeijingDate(marketSnapshot.updated_at) : "—";
   const state = document.querySelector("#market-snapshot-state"), enabled = marketConfig().enabled;
-  state.textContent = marketBusy ? "正在读取 Akile 市场…" : marketSnapshot.error || marketSnapshot.warning || `${enabled ? "后台监控已启用" : "后台监控已暂停"} · ${all.length ? "真实市场快照" : "尚无快照"}`;
+  state.textContent = marketBusy ? `正在读取 ${activeMarketProvider() === "isvoro" ? "Isvoro" : "Akile"} 市场…` : marketSnapshot.error || marketSnapshot.warning || `${enabled ? "后台监控已启用" : "后台监控已暂停"} · ${all.length ? "真实市场快照" : "尚无快照"}`;
   state.className = `state ${marketSnapshot.error ? "error" : marketBusy ? "pending" : all.length ? "ok" : ""}`;
   document.querySelector("#market-refresh").disabled = marketBusy || !accountId;
   document.querySelector("#market-check").disabled = marketBusy || !marketConfig().items.some(row=>row.enabled);
@@ -346,7 +353,7 @@ function renderMarket() {
 }
 async function loadMarketSnapshot() {
   if (marketBusy) return;
-  try { marketSnapshot = await requestJSON("/api/market"); renderMarketRuleDetails(); renderMarket(); }
+  try { marketSnapshot = await requestJSON(`/api/market?provider=${activeMarketProvider()}`); renderMarketRuleDetails(); renderMarket(); }
   catch (error) { document.querySelector("#market-snapshot-state").textContent = error.message; }
 }
 async function refreshMarket(evaluate) {
@@ -356,9 +363,9 @@ async function refreshMarket(evaluate) {
   try {
     marketSnapshot = await requestJSON(evaluate ? "/api/market/check" : "/api/market/refresh", {
       method:"POST", headers:{"Content-Type":"application/json"}, timeoutMs:120000,
-      body: JSON.stringify({ account_id:document.querySelector("#market-account").value }),
+      body: JSON.stringify({ provider: activeMarketProvider(), account_id:document.querySelector("#market-account").value }),
     });
-    setMessage(evaluate ? "已检查保存的规则，触发结果见下方。" : "Akile 市场商品已刷新。", "success", true, false);
+    setMessage(evaluate ? "已检查保存的规则，触发结果见下方。" : `${activeMarketProvider() === "isvoro" ? "Isvoro" : "Akile"} 市场商品已刷新。`, "success", true, false);
   } catch(error) { marketSnapshot.error = error.message; setMessage(error.message, "error"); }
   finally { marketBusy = false; renderMarketRuleDetails(); renderMarket(); }
 }
@@ -368,8 +375,8 @@ document.querySelector("#market-test-notification").addEventListener("click", as
   if (marketNotificationTestBusy) return;
   marketNotificationTestBusy = true; renderMarket();
   try {
-    await runAction(event.currentTarget, "发送中…", "正在发送 Akile 市场测试通知…", async () => {
-      const result = await requestJSON("/api/market/test-notification", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    await runAction(event.currentTarget, "发送中…", `正在发送 ${activeMarketProvider() === "isvoro" ? "Isvoro" : "Akile"} 市场测试通知…`, async () => {
+      const result = await requestJSON("/api/market/test-notification", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: activeMarketProvider() }) });
       setMessage(result.message, "success");
     });
   } finally { marketNotificationTestBusy = false; renderMarket(); }
@@ -379,6 +386,7 @@ for (const id of ["market-account", "market-enabled", "market-interval"]) docume
   if (id === "market-account") renderMarketRuleDetails();
   renderMarket();
 });
+document.querySelector("#market-provider").addEventListener("change", () => { marketPage = 0; renderMarketSettings(); void loadMarketSnapshot(); });
 for (const id of ["market-search", "market-region", "market-kind", "market-sort"]) document.getElementById(id).addEventListener("input", () => { marketPage = 0; renderMarket(); });
 document.querySelector("#market-prev").addEventListener("click", () => { marketPage--; renderMarket(); });
 document.querySelector("#market-next").addEventListener("click", () => { marketPage++; renderMarket(); });
@@ -3188,7 +3196,8 @@ function collectConfig(enabled = config.enabled) {
     telegram: { bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim(), disabled: optionPressed("telegram-disabled"), clear: optionPressed("telegram-clear") },
     egress: collectEgress(),
     vps_seckill: collectVpsSeckill(),
-    akile_market: collectMarket(),
+    akile_market: activeMarketProvider() === "akile" ? collectMarket() : config.akile_market,
+    isvoro_market: activeMarketProvider() === "isvoro" ? collectMarket() : config.isvoro_market,
     products: config.products.map((item) => ({ ...item })),
   };
 }
@@ -3251,7 +3260,7 @@ function mergeConfigScope(baseValue, draftValue, scope) {
   } else if (scope === "cloudscraper") base.fetcher = { ...base.fetcher, cloudscraper: draft.fetcher.cloudscraper };
   else if (scope === "provider-modes") base.fetcher = { ...base.fetcher, provider_modes: draft.fetcher.provider_modes };
   else if (scope === "egress") { base.egress = draft.egress; base.fetcher = { ...base.fetcher, egress: draft.egress }; }
-  else if (scope === "market") base.akile_market = draft.akile_market;
+  else if (scope === "market") { base.akile_market = draft.akile_market; base.isvoro_market = draft.isvoro_market; }
   else if (scope === "telegram") base.telegram = draft.telegram;
   else if (scope === "monitor") {
     for (const key of ["interval_seconds", "monitor_schedule", "watch_order", "merchant_order"]) base[key] = draft[key];
@@ -3732,7 +3741,7 @@ async function saveConfig(scope = "all", automatic = false) {
     if (scope === "affiliates") Object.assign(visibleDraft, { affiliate_id: result.config.affiliate_id, affiliates: result.config.affiliates, affiliate_notes: result.config.affiliate_notes, affiliate_accounts: result.config.affiliate_accounts, affiliate_rates: result.config.affiliate_rates, affiliate_coupons: result.config.affiliate_coupons, merchant_order: result.config.merchant_order });
     else if (scope === "fetcher" || scope === "provider-modes" || scope === "egress") visibleDraft.fetcher = draft.fetcher;
     else if (scope === "cloudscraper") visibleDraft.fetcher = { ...visibleDraft.fetcher, cloudscraper: draft.fetcher.cloudscraper };
-    else if (scope === "market") visibleDraft.akile_market = draft.akile_market;
+    else if (scope === "market") { visibleDraft.akile_market = draft.akile_market; visibleDraft.isvoro_market = draft.isvoro_market; }
     else if (scope === "telegram") visibleDraft.telegram = draft.telegram;
     else if (scope === "catalog") visibleDraft.catalog_schedule = draft.catalog_schedule;
     else if (scope === "monitor" || scope === "notifications") visibleDraft.products = draft.products;

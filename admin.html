@@ -277,7 +277,7 @@
     .directory-filters { display:none; }
     .directory-filters label { min-width:0; }
     .catalog-filters select,.catalog-filters input { width:100%; min-width:0; text-overflow:ellipsis; }
-    .directory-instance-control { display:grid; gap:4px; }
+    .directory-instance-control { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); align-items:center; gap:8px; }
     .catalog-directory > .hint { margin:12px 0 0; }
     .catalog-table.narwhal-table td:nth-child(2) { min-width:230px; max-width:330px; }
     @media(max-width:1250px) { .catalog-filters,.catalog-filters.provider-standard,.catalog-filters.provider-bwh,.catalog-filters.provider-dmit,.catalog-filters.provider-akile,.catalog-filters.provider-narwhal { grid-template-columns:repeat(3,minmax(0,1fr)); } .catalog-filters > label:has(#catalog-search) { grid-column:span 2; } }
@@ -762,8 +762,7 @@
       <a href="#monitor" data-page-link="monitor"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4M6 11h3l2-4 3 7 2-3h2"/></svg>VPS 库存监控</a>
       <a href="#notifications" data-page-link="notifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>VPS 库存通知</a>
       <a href="#seckill" data-page-link="seckill"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 9-12h-7l1-8Z"/></svg>VPS 补货抢购</a>
-      <a href="#market" data-page-link="market"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h18l-2-5H5L3 9Zm2 0v11h14V9M9 20v-6h6v6M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0"/></svg>Akile 交易市场</a>
-      <a href="#narwhal" data-page-link="narwhal"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 14c2.5 0 2.5-4 5-4s2.5 4 5 4 2.5-4 5-4 2.5 4 3 4M4 18h16M7 6l2 2m6-2-2 2"/></svg>独角鲸云</a>
+      <a href="#market" data-page-link="market"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h18l-2-5H5L3 9Zm2 0v11h14V9M9 20v-6h6v6M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0"/></svg>二手交易市场</a>
       <a href="#requests" data-page-link="requests"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></svg>网页请求</a>
       <a href="#affiliates" data-page-link="affiliates"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 13 4-4m-6 7-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 1 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0"/></svg>AFF 管理</a>
       <a href="#settings" data-page-link="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 14 5.2l3-.1.8 2.9 2.5 1.7-1.4 2.7 1.4 2.7-2.5 1.7-.8 2.9-3-.1L12 21l-2-2.2-3 .1-.8-2.9-2.5-1.7 1.4-2.7-1.4-2.7 2.5-1.7.8-2.9 3 .1L12 3Z"/><circle cx="12" cy="12" r="3"/></svg>设置</a>
@@ -948,17 +947,17 @@
   </section>
 
   <section class="page-panel" id="page-market" data-page="market" aria-labelledby="page-title" hidden>
-    <div class="market-toolbar"><div><span class="eyebrow">AKILE PUSH SHOP</span><p id="market-snapshot-state" class="state">等待读取市场</p></div><div class="actions"><button type="button" id="market-refresh" class="primary">刷新市场商品</button><a class="market-source-link" href="https://akile.ai/console/pushshop" target="_blank" rel="noopener noreferrer">打开 Akile 市场 ↗</a></div></div>
+    <div class="market-toolbar"><div><span class="eyebrow">VPS SECOND-HAND MARKET</span><p id="market-snapshot-state" class="state">等待读取市场</p></div><div class="actions"><label>市场<select id="market-provider"><option value="akile">Akile 交易市场</option><option value="isvoro">Isvoro 二手市场</option></select></label><button type="button" id="market-refresh" class="primary">刷新市场商品</button><a class="market-source-link" id="market-source-link" href="https://akile.ai/console/pushshop" target="_blank" rel="noopener noreferrer">打开官网 ↗</a></div></div>
     <div class="panel-card market-settings">
       <div class="section-head"><div><h2>交易市场监控</h2><p>从下方市场商品添加规则，保存后在服务器持续检查；关闭网页不影响后台监控。</p></div><button type="button" class="card-save" data-save-card="market">保存交易市场设置</button></div>
-      <div class="form-grid"><label>Akile 网站账户<select id="market-account"><option value="">请选择已保存的账户</option></select></label><label>后台监控<select id="market-enabled"><option value="off">已暂停</option><option value="on">开启监控与 Telegram 通知</option></select></label><label>检查间隔（秒）<input id="market-interval" type="number" min="30" max="3600" step="1" value="60"></label></div>
-      <p class="hint">账户沿用“VPS 补货抢购 → 网站账户”中保存的 Akile 账户与出口。刷新市场仅获取商品；“检查已保存规则”会按规则发送 Telegram。</p>
+      <div class="form-grid"><label><span id="market-account-label">网站账户</span><select id="market-account"><option value="">请选择已保存的账户</option></select></label><label>后台监控<select id="market-enabled"><option value="off">已暂停</option><option value="on">开启监控与 Telegram 通知</option></select></label><label>检查间隔（秒）<input id="market-interval" type="number" min="30" max="3600" step="1" value="60"></label></div>
+      <p class="hint">账户沿用“VPS 补货抢购 → 网站账户”中保存的对应商家账户与出口。刷新市场仅获取商品；“检查已保存规则”会按规则发送 Telegram。</p>
       <div class="market-formula"><strong>基准剩余价值 = 续费价 × 剩余天数 ÷ 周期天数</strong><span>折价金额 = 基准价值 − 售价；折价率 = 折价金额 ÷ 基准价值。溢价取相反数。月/季/半年/年按 30/90/180/365 天估算，不包含手续费和长期续费优惠价值。</span></div>
-      <p class="hint" id="market-order-note">Akile 交易市场购买要求用户在官网完成 Passkey 验证。选择待付款下单模式后，达到阈值将通知“需要官网验证”；当前不会提交订单，也不会付款。</p>
+      <p class="hint" id="market-order-note">Akile 交易市场购买要求用户在官网完成 Passkey 验证；Isvoro 仅提供市场提醒。HostWatch 不会自动购买或付款。</p>
     </div>
     <div class="market-stats" aria-label="交易市场摘要"><div><span>市场商品</span><strong id="market-count">0</strong></div><div><span>折价商品</span><strong id="market-discount-count">0</strong></div><div><span>临近到期（7 天）</span><strong id="market-expiring-count">0</strong></div><div><span>最近成功读取</span><strong id="market-updated">—</strong></div></div>
     <div class="market-filters"><label>搜索商品<input id="market-search" type="search" placeholder="套餐、地区、节点或挂单 ID"></label><label>地区<select id="market-region"><option value="all">全部地区</option></select></label><label>估值结果<select id="market-kind"><option value="all">全部结果</option><option value="discount">折价</option><option value="premium">溢价</option><option value="near">7 天内到期</option></select></label><label>排序<select id="market-sort"><option value="deal">折价优先</option><option value="price">售价从低到高</option><option value="expiry">到期时间优先</option></select></label></div>
-    <div class="market-table-wrap" role="region" aria-label="Akile 交易市场商品" tabindex="0"><table class="market-table"><thead><tr><th>商品 / 配置</th><th>地区 / 节点</th><th>续费价格</th><th>到期 / 剩余时间</th><th>售价</th><th>基准价值</th><th>折价 / 溢价率</th><th>折价 / 溢价金额</th><th>操作</th></tr></thead><tbody id="market-rows"></tbody></table></div><p id="market-empty" class="empty">选择 Akile 账户，点击“刷新市场商品”读取真实挂单。</p>
+    <div class="market-table-wrap" role="region" aria-label="二手交易市场商品" tabindex="0"><table class="market-table"><thead><tr><th>商品 / 配置</th><th>地区 / 节点</th><th>续费价格</th><th>到期 / 剩余时间</th><th>售价</th><th>基准价值</th><th>折价 / 溢价率</th><th>折价 / 溢价金额</th><th>操作</th></tr></thead><tbody id="market-rows"></tbody></table></div><p id="market-empty" class="empty">选择已保存账户，点击“刷新市场商品”读取真实挂单。</p>
     <div class="catalog-pagination"><span id="market-page-label" class="subtle"></span><div class="actions"><button id="market-prev" type="button">上一页</button><button id="market-next" type="button">下一页</button></div></div>
     <div class="panel-card market-settings"><div class="section-head"><div><h2>指定商品规则</h2><p>折价设最低节省值（≥），溢价设最高额外成本（≤，折价也满足）。比例或金额留空表示不使用。</p></div><div class="actions"><button type="button" id="market-test-notification">测试通知</button><button type="button" id="market-check">检查已保存规则</button><button type="button" class="card-save" data-save-card="market">保存商品规则</button></div></div>
     <!-- market-threshold-help:start -->
@@ -1114,7 +1113,7 @@
   <dialog id="watch-compare-dialog" class="watch-compare-dialog" aria-labelledby="watch-compare-title"><div class="watch-compare-dialog-head"><div><span class="eyebrow">PRODUCT COMPARE</span><h2 id="watch-compare-title">产品参数对比</h2><p>对比当前库存监控中的商品，直接购买入口会保留 AFF。</p></div><button id="watch-compare-close" type="button" class="icon-button" aria-label="关闭产品参数对比">×</button></div><div id="watch-compare-content"></div></dialog>
   <dialog id="overview-log-dialog" class="watch-compare-dialog" aria-labelledby="overview-log-title"><div class="watch-compare-dialog-head"><div><span class="eyebrow">MODULE LOG</span><h2 id="overview-log-title">模块详细日志</h2><p>显示该模块保存的完整近期日志。</p></div><button id="overview-log-close" type="button" class="icon-button" aria-label="关闭模块详细日志">×</button></div><pre id="overview-log-detail-content" class="manage-logs">暂无日志</pre></dialog>
   <dialog id="seckill-picker-dialog" class="watch-compare-dialog" aria-labelledby="seckill-picker-title"><div class="watch-compare-dialog-head"><div><span class="eyebrow">SECKILL PICKER</span><h2 id="seckill-picker-title">选择补货抢购商品</h2><p>选择后加入 VPS 补货抢购，已加入的商品不会重复添加。</p></div><button id="seckill-picker-close" type="button" class="icon-button" aria-label="关闭商品选择">×</button></div><div id="seckill-picker-content"></div></dialog>
-<script src="/admin.js?v=narwhal-account-auth-20261019"></script>
-<script src="/catalog.js?v=provider-hierarchy-filters-20261019"></script>
+<script src="/admin.js?v=isvoro-marketplace-20261020"></script>
+<script src="/catalog.js?v=merchant-region-search-20261020"></script>
 </body>
 </html>

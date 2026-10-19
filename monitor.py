@@ -48,7 +48,17 @@ NARWHAL_PLANS_URL = "https://api.fuckip.me/api/v1/plans"
 
 def fetch_narwhal_plans(session: requests.Session, machine_id: str = "", fetcher: dict | None = None) -> list[dict]:
     url = NARWHAL_PLANS_URL + ("?" + urlencode({"machine_id": machine_id}) if machine_id else "")
-    body, _ = fetch_page(session, url, fetcher or {"mode": "requests"}, "api.fuckip.me")
+    fetcher = dict(fetcher or {"mode": "requests"})
+    # Narwhal's public endpoint returns the entire catalogue (currently over
+    # 1 MB), so allow a slower response without changing other providers.
+    fetcher["_read_timeout_seconds"] = max(60, int(fetcher.get("_read_timeout_seconds", 0) or 0))
+    try:
+        body, _ = fetch_page(session, url, fetcher, "api.fuckip.me")
+    except MonitorError as exc:
+        if "超时" not in str(exc):
+            raise
+        # The request is a read-only GET; retry once when the vendor stalls.
+        body, _ = fetch_page(session, url, fetcher, "api.fuckip.me")
     nodes = BeautifulSoup(body, "html.parser").select("pre") if body.lstrip().startswith("<") else []
     if len(nodes) == 1:
         body = nodes[0].get_text()
@@ -368,11 +378,13 @@ def _validate_page_response(status_code: int, body: str, final_url: str, expecte
     return body, final_url
 
 
-def fetch_with_requests(session: requests.Session, url: str, expected_host: str = "app.vmiss.com") -> tuple[str, str]:
+def fetch_with_requests(session: requests.Session, url: str, expected_host: str = "app.vmiss.com", read_timeout: int = 25) -> tuple[str, str]:
     try:
-        response = session.get(url, timeout=(10, 25), allow_redirects=True)
+        response = session.get(url, timeout=(10, read_timeout), allow_redirects=True)
     except requests.exceptions.ProxyError as exc:
         raise MonitorError(f"通过出口节点访问 {expected_host} 失败：{egress.proxy_error(exc)}") from None
+    except requests.Timeout:
+        raise MonitorError(f"访问 {expected_host} 商品页超时；请检查服务器网络或目标站点响应") from None
     except requests.RequestException:
         raise MonitorError(f"访问 {expected_host} 商品页失败；请检查 DNS、TLS 和服务器网络") from None
     return _validate_page_response(response.status_code, response.text, response.url, expected_host, getattr(response, "headers", {}))
@@ -730,7 +742,7 @@ def fetch_page(session: requests.Session, url: str, fetcher: dict | None, expect
         return fetch_with_cloudscraper(url, expected_host, fetcher)
     if (fetcher or {}).get("mode") == "flaresolverr":
         return fetch_with_flaresolverr(session, url, fetcher, expected_host)
-    return fetch_with_requests(session, url, expected_host)
+    return fetch_with_requests(session, url, expected_host, int((fetcher or {}).get("_read_timeout_seconds", 25)))
 
 
 def fetch_products(session: requests.Session, url: str, selectors: list[str], fetcher: dict | None = None) -> list[Product]:

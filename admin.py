@@ -52,9 +52,12 @@ SECKILL_TEST_TASKS = {}
 STOPPED_SECKILL_TEST_IDS = {}
 AKILE_MARKET_LOCK = threading.RLock()
 AKILE_MARKET_RUN_LOCK = threading.Lock()
+ISVORO_MARKET_RUN_LOCK = threading.Lock()
 AKILE_MARKET_WAKE = threading.Event()
 AKILE_MARKET_CACHE = {"updated_at": "", "items": [], "error": "", "running": False}
 AKILE_MARKET_THREAD = None
+ISVORO_MARKET_LOCK = threading.RLock()
+ISVORO_MARKET_CACHE = {"updated_at": "", "items": [], "error": "", "running": False}
 # BandwagonHost keeps the email-code challenge in the login session. Keep only
 # short-lived, in-memory sessions so an administrator can finish that login
 # without persisting the code or merchant cookies in configuration backups.
@@ -448,6 +451,7 @@ ISVORO_CART_URL = f"{ISVORO_API_BASE_URL}/cart/items"
 ISVORO_COUPON_URL = f"{ISVORO_API_BASE_URL}/cart/coupon"
 ISVORO_CHECKOUT_URL = f"{ISVORO_API_BASE_URL}/checkout"
 ISVORO_GATEWAYS_URL = f"{ISVORO_API_BASE_URL}/checkout/gateways"
+ISVORO_MARKET_LIST_URL = f"{ISVORO_API_BASE_URL}/marketplace"
 MERCHANT_LOGIN_ADAPTERS["isvoro"] = {
     "name": "Isvoro", "url": ISVORO_LOGIN_URL, "host": "isvoro.com",
     "username_field": "email", "kind": "api",
@@ -2532,6 +2536,168 @@ def akile_market_rule_matches(rule: dict, item: dict) -> bool:
     return bool(results) and (all(results) if rule.get("match") == "all" else any(results))
 
 
+def _normalize_market_config(value: object, accounts: list[dict], provider: str, label: str) -> dict:
+    """Normalize the shared read-only marketplace rule format for a provider."""
+    value = {} if value is None else value
+    if not isinstance(value, dict):
+        raise ValueError(f"{label}交易市场配置必须是对象")
+    enabled = value.get("enabled", False)
+    if type(enabled) is not bool:
+        raise ValueError(f"{label}市场启用状态必须是布尔值")
+    interval = value.get("interval_seconds", 60)
+    if type(interval) is not int or not 30 <= interval <= 3600:
+        raise ValueError(f"{label}市场刷新间隔必须是 30 到 3600 秒")
+    account_id = str(value.get("account_id", ""))
+    account_ids = {row["id"] for row in accounts if row.get("provider") == provider}
+    if account_id and account_id not in account_ids:
+        raise ValueError(f"请为交易市场选择已保存的 {label} 网站账户")
+    rows = value.get("items", [])
+    if not isinstance(rows, list) or len(rows) > 100:
+        raise ValueError(f"{label}市场规则最多 100 项")
+    normalized, seen = [], set()
+    for raw in rows:
+        if not isinstance(raw, dict):
+            raise ValueError(f"{label}市场规则无效")
+        identifier = str(raw.get("id", ""))
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", identifier) or identifier in seen:
+            raise ValueError(f"{label}市场规则 ID 必须唯一")
+        seen.add(identifier)
+        rule = {"id": identifier}
+        for key, allowed, default in (("target", {"listing", "plan"}, "listing"),
+                ("direction", {"discount", "premium"}, "discount"),
+                ("action", {"notify"}, "notify"), ("match", {"any", "all"}, "any")):
+            rule[key] = str(raw.get(key, default))
+            if rule[key] not in allowed:
+                raise ValueError(f"{label}市场规则类型无效")
+        rule["enabled"] = raw.get("enabled", True)
+        if type(rule["enabled"]) is not bool:
+            raise ValueError(f"{label}市场规则启用状态必须是布尔值")
+        for key, limit in (("product_id", 40), ("name", 160), ("plan_name", 160), ("region", 80), ("node", 120)):
+            rule[key] = str(raw.get(key, "")).strip()
+            if len(rule[key]) > limit:
+                raise ValueError(f"{label}市场规则字段过长")
+        if rule["target"] == "listing" and not re.fullmatch(r"[1-9][0-9]{0,38}", rule["product_id"]):
+            raise ValueError(f"监控单条挂单必须填写有效的 {label} 市场商品 ID")
+        if rule["target"] == "plan" and not all(rule[key] for key in ("plan_name", "region", "node")):
+            raise ValueError("监控同套餐需指定完整套餐名、地区和节点")
+        for key in ("rate_threshold", "amount_threshold"):
+            number = raw.get(key)
+            if number is not None and (isinstance(number, bool) or not isinstance(number, (int, float))
+                    or not math.isfinite(number) or not 0 <= number <= 1000000):
+                raise ValueError("折价/溢价阈值必须是非负有限数字，留空不使用")
+            rule[key] = float(number) if number is not None else None
+        if rule["rate_threshold"] is None and rule["amount_threshold"] is None:
+            raise ValueError("每条市场规则至少设置一个比例或金额阈值")
+        normalized.append(rule)
+    if enabled and (not account_id or not any(row["enabled"] for row in normalized)):
+        raise ValueError(f"启用交易市场前请选择 {label} 账户并添加启用的规则")
+    return {"enabled": enabled, "interval_seconds": interval, "account_id": account_id, "items": normalized}
+
+
+def normalize_isvoro_market(value: object, accounts: list[dict]) -> dict:
+    return _normalize_market_config(value, accounts, "isvoro", "Isvoro")
+
+
+def _isvoro_market_cycle_days(period: object, unit: object) -> int:
+    if isinstance(period, bool):
+        return 0
+    try:
+        period = int(period)
+    except (TypeError, ValueError):
+        return 0
+    unit = str(unit or "month").casefold()
+    if unit == "month":
+        return {1: 30, 3: 90, 6: 180, 12: 365, 24: 730, 36: 1095}.get(period, 0)
+    if unit == "year":
+        return period * 365 if 1 <= period <= 10 else 0
+    return 0
+
+
+def _isvoro_market_timestamp(value: object) -> float:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    text = str(value or "").strip()
+    if not text:
+        return 0.0
+    try:
+        from datetime import datetime, timezone
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc).timestamp()
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+
+
+def isvoro_market_valuation(row: dict, now: float | None = None) -> dict:
+    product_id = str(row.get("id", ""))
+    if not re.fullmatch(r"[1-9][0-9]{0,38}", product_id):
+        raise ValueError("Isvoro 交易市场商品 ID 无效")
+    server = row.get("server_info") if isinstance(row.get("server_info"), dict) else {}
+    service = row.get("service") if isinstance(row.get("service"), dict) else {}
+    product = service.get("product") if isinstance(service.get("product"), dict) else {}
+    try:
+        price = float(row.get("price"))
+        renewal = float(server.get("renewal_price"))
+        expires_at = _isvoro_market_timestamp(server.get("expires_at") or row.get("expires_at"))
+        period = server.get("billing_period", service.get("billing_period", 1))
+        unit = server.get("billing_unit", service.get("billing_unit", "month"))
+        cycle_days = _isvoro_market_cycle_days(period, unit)
+        renewal_currency = str(server.get("renewal_currency") or row.get("currency_code") or "CNY").strip().upper()
+        currency = str(row.get("currency_code") or "CNY").strip().upper()
+        if (not all(math.isfinite(value) and value >= 0 for value in (price, renewal, expires_at))
+                or expires_at <= 0 or renewal_currency != currency):
+            raise ValueError()
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("Isvoro 商品价格或到期时间无效") from None
+    remaining_days = max(0, (expires_at - (time.time() if now is None else now)) / 86400)
+    fair_value = renewal * remaining_days / cycle_days if cycle_days else None
+    delta = fair_value - price if fair_value is not None else None
+    rate = delta / fair_value * 100 if fair_value and fair_value > 0 else None
+    config = server.get("config_summary") or server.get("network_summary") or ""
+    return {"id": product_id, "name": str(server.get("hostname") or product.get("name") or server.get("plan_name") or "")[:160],
+        "plan_name": str(server.get("plan_name") or product.get("name") or "")[:160],
+        "region": str(server.get("location_name") or server.get("region") or "")[:80],
+        "node": str(server.get("node") or server.get("location_name") or "")[:120],
+        "cpu": (server.get("spec") or {}).get("cores") if isinstance(server.get("spec"), dict) else "",
+        "memory": (server.get("spec") or {}).get("memory_mb") if isinstance(server.get("spec"), dict) else "",
+        "disk": (server.get("spec") or {}).get("disk_gb") if isinstance(server.get("spec"), dict) else "",
+        "bandwidth": (server.get("spec") or {}).get("bandwidth_mbps") if isinstance(server.get("spec"), dict) else "",
+        "flow": (server.get("spec") or {}).get("traffic_gb") if isinstance(server.get("spec"), dict) else "",
+        "status": 0 if str(row.get("status", "active")).casefold() in {"active", "available", ""} else 1,
+        "is_bid": False, "detail": config[:240], "price": price, "renewal": renewal,
+        "cycle": period, "cycle_unit": unit, "cycle_days": cycle_days, "due_time": expires_at,
+        "remaining_days": remaining_days, "fair_value": fair_value, "delta": delta, "rate": rate,
+        "currency_code": currency[:12], "updated_at": beijing_iso(),
+        "valuation_error": "未知续费周期" if not cycle_days else "已到期或续费价格为零，无法估值" if rate is None else ""}
+
+
+def isvoro_market_list(session: requests.Session, *, query: str = "", location_id: object = "", page_size: int = 200,
+                       max_items: int = 1000) -> list[dict]:
+    rows, page, expected = [], 1, None
+    while len(rows) < max_items:
+        params = {"page": page, "per_page": page_size}
+        if query:
+            params["q"] = str(query)[:120]
+        if str(location_id).strip():
+            params["location_id"] = str(location_id).strip()
+        payload = order_json(session.get(ISVORO_MARKET_LIST_URL, params=params, timeout=(5, 20), allow_redirects=False,
+                                         headers={"Accept": "application/json"}))
+        if payload.get("code") not in {0, "0"}:
+            raise ValueError("Isvoro 市场读取失败，请检查登录或访问限制")
+        batch, meta = payload.get("data"), payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+        total = meta.get("total", len(batch) if isinstance(batch, list) else None)
+        if not isinstance(batch, list) or not isinstance(total, int) or total < 0 or total > max_items:
+            raise ValueError("Isvoro 市场分页数据异常或超过读取上限")
+        if expected is not None and total != expected:
+            raise ValueError("Isvoro 市场分页期间上架数量变化，本轮不触发")
+        expected = total
+        rows.extend(row for row in batch if isinstance(row, dict))
+        if not batch or len(rows) >= total:
+            if len(rows) != total:
+                raise ValueError("Isvoro 市场分页数据不完整，本轮不触发")
+            return rows
+        page += 1
+    raise ValueError("Isvoro 市场读取超出上限")
+
+
 def _bwh_canonical_url(url: str) -> str:
     parsed = urlsplit(str(url or "").strip())
     if parsed.scheme != "https" or (parsed.hostname or "").casefold() not in {"bwh81.net", "www.bwh81.net", "bandwagonhost.com", "www.bandwagonhost.com"}:
@@ -3570,6 +3736,7 @@ def default_config() -> dict:
         "egress": {"nodes": [], "routes": {}},
         "vps_seckill": {"enabled": False, "mode": "manual", "interval_seconds": 5, "items": [], "accounts": []},
         "akile_market": {"enabled": False, "interval_seconds": 60, "account_id": "", "items": []},
+        "isvoro_market": {"enabled": False, "interval_seconds": 60, "account_id": "", "items": []},
         "products": [],
     }
 
@@ -4131,6 +4298,7 @@ def validate_config(value: object) -> dict:
     egress_config = egress.normalize(value.get("egress", {}))
     vps_seckill = normalize_seckill(value.get("vps_seckill", {}), seen_ids)
     akile_market = normalize_akile_market(value.get("akile_market", {}), vps_seckill.get("accounts", []))
+    isvoro_market = normalize_isvoro_market(value.get("isvoro_market", {}), vps_seckill.get("accounts", []))
     product_orders = {}
     for key in ("watch_order", "notify_order"):
         order = value.get(key, [])
@@ -4159,6 +4327,7 @@ def validate_config(value: object) -> dict:
         "egress": egress_config,
         "vps_seckill": vps_seckill,
         "akile_market": akile_market,
+        "isvoro_market": isvoro_market,
         "products": normalized,
     }
 
@@ -4381,6 +4550,27 @@ def _akile_market_session(config: dict, account_id: str):
         raise
 
 
+def _isvoro_market_session(config: dict, account_id: str):
+    from monitor import product_fetcher
+    account = next((row for row in config["vps_seckill"]["accounts"]
+                    if row["id"] == account_id and row["provider"] == "isvoro"), None)
+    if not account:
+        raise ValueError("请选择已保存的 Isvoro 网站账户")
+    fetcher = product_fetcher(config["fetcher"], {"adapter": "isvoro", "egress_node_id": account.get("egress_node_id", "")})
+    session = requests.Session()
+    session.trust_env = False
+    session.headers.update({"User-Agent": "HostWatch/1.0 (Isvoro marketplace)", "Accept": "application/json"})
+    egress.apply_session(session, fetcher)
+    try:
+        checked = public_account_check_result(check_order_account(session, account, fetcher))
+        if not checked.get("ok"):
+            raise ValueError("Isvoro 账户认证失败：" + str(checked.get("message", "无法验证"))[:180])
+        return session
+    except Exception:
+        session.close()
+        raise
+
+
 def _akile_market_snapshot(account_id: str = "") -> dict:
     with AKILE_MARKET_LOCK:
         result = json.loads(json.dumps(AKILE_MARKET_CACHE))
@@ -4388,6 +4578,46 @@ def _akile_market_snapshot(account_id: str = "") -> dict:
     if account_id and account_id != result.get("account_id"):
         return {"items": [], "updated_at": "", "error": "", "results": [], "account_id": account_id}
     return result
+
+
+def _isvoro_market_snapshot(account_id: str = "") -> dict:
+    with ISVORO_MARKET_LOCK:
+        result = json.loads(json.dumps(ISVORO_MARKET_CACHE))
+    if account_id and account_id != result.get("account_id"):
+        return {"items": [], "updated_at": "", "error": "", "results": [], "account_id": account_id}
+    return result
+
+
+def _isvoro_market_alert_state() -> dict:
+    path = CONFIG_PATH.parent / "state-isvoro-market.json"
+    if not path.exists():
+        return {"records": {}}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if (not isinstance(data, dict) or not isinstance(data.get("records"), dict)
+                or any(not isinstance(row, dict) or not isinstance(row.get("matched"), bool)
+                       or not isinstance(row.get("sent"), bool) or not isinstance(row.get("reason"), str)
+                       for row in data["records"].values())):
+            raise ValueError()
+        return data
+    except (OSError, ValueError, TypeError):
+        raise ValueError("Isvoro 交易市场去重状态损坏，已停止触发，请先检查状态文件") from None
+
+
+def _save_isvoro_market_alert_state(value: dict) -> None:
+    path = CONFIG_PATH.parent / "state-isvoro-market.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix="isvoro-market-state-", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(value, stream, ensure_ascii=False, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(name, 0o600)
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
 
 
 def _akile_market_alert(config: dict, rule: dict, item: dict, reason: str) -> bool:
@@ -4464,6 +4694,161 @@ def _evaluate_akile_market(config: dict, items: list[dict], session) -> list[dic
                         and val.get("last_seen", time.time()) >= time.time() - 30 * 86400}
     _save_akile_market_alert_state(state)
     return results
+
+
+def _isvoro_market_rule_matches(rule: dict, item: dict) -> bool:
+    if item.get("valuation_error") or item.get("remaining_days", 0) <= 0 or item.get("status") != 0:
+        return False
+    if rule["target"] == "listing":
+        if rule["product_id"] != item["id"]:
+            return False
+    elif any(rule[key] != item.get(key) for key in ("plan_name", "region", "node")):
+        return False
+    checks = []
+    for key, actual in (("rate_threshold", item["rate"]), ("amount_threshold", item["delta"])):
+        if rule.get(key) is not None:
+            checks.append(actual >= rule[key] if rule["direction"] == "discount" else -actual <= rule[key])
+    return bool(checks) and (all(checks) if rule.get("match") == "all" else any(checks))
+
+
+def _isvoro_market_alert(config: dict, rule: dict, item: dict) -> bool:
+    token, chat_id = effective_telegram(config)
+    if not token or not chat_id:
+        return False
+    kind = "折价" if item["delta"] >= 0 else "溢价"
+    cycle = f"{item['cycle']}{'个月' if item['cycle_unit'] == 'month' else '年'}"
+    message = "\\n".join([
+        "🔔 <b>HostWatch · Isvoro 二手市场</b>",
+        f"商品：{escape(item['name'])} · {escape(item['region'])} · {escape(item['node'])}",
+        f"挂单 ID：<code>{item['id']}</code>",
+        f"售价：{escape(item['currency_code'])} {item['price']:.2f} · 续费：{escape(item['currency_code'])} {item['renewal']:.2f}/{cycle}",
+        f"剩余：{item['remaining_days']:.2f} 天 · 基准价值：{escape(item['currency_code'])} {item['fair_value']:.2f}",
+        f"{kind}：{abs(item['rate']):.2f}% · {escape(item['currency_code'])} {abs(item['delta']):.2f}",
+        f"触发规则：{escape(rule.get('name') or rule['id'])}",
+        f"检查时间：{format_beijing(item['updated_at'])}",
+    ])
+    telegram_call(token, "sendMessage", chat_id=chat_id, text=message, parse_mode="HTML",
+        disable_web_page_preview=True, reply_markup={"inline_keyboard": [[{"text": "查看 Isvoro 商品", "url": "https://isvoro.com/marketplace"}]]})
+    return True
+
+
+def _evaluate_isvoro_market(config: dict, items: list[dict]) -> list[dict]:
+    market = config["isvoro_market"]
+    rules = [row for row in market["items"] if row["enabled"]]
+    state = _isvoro_market_alert_state()
+    records, results = state["records"], []
+    telegram = config.get("telegram", {})
+    token = telegram.get("bot_token") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = telegram.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID", "")
+    target = hashlib.sha256((token + ":" + chat_id).encode()).hexdigest()
+    valid_prefixes = set()
+    for rule in rules:
+        signature = hashlib.sha256(json.dumps([rule, market["account_id"], target], sort_keys=True).encode()).hexdigest()
+        valid_prefixes.add(signature)
+        hits = [item for item in items if _isvoro_market_rule_matches(rule, item)]
+        if not hits:
+            results.append({"rule_id": rule["id"], "status": "waiting", "message": "等待满足阈值的有效挂单"})
+        for item in hits:
+            key = signature + ":" + item["id"]
+            record = records.get(key, {})
+            if not record.get("matched"):
+                record = {"matched": True, "sent": False, "at": beijing_iso(), "reason": "已达到设定阈值，请到 Isvoro 官网手动购买。"}
+                records[key] = record
+                _save_isvoro_market_alert_state(state)
+            record["last_seen"] = time.time()
+            if not record.get("sent"):
+                try:
+                    record["sent"] = _isvoro_market_alert(config, rule, item)
+                    record["notification"] = "已发送 Telegram" if record["sent"] else "Telegram 未配置或已停用，等待恢复后发送"
+                except (ValueError, requests.RequestException):
+                    record["notification"] = "Telegram 发送失败，下一轮重试通知"
+                _save_isvoro_market_alert_state(state)
+            results.append({"rule_id": rule["id"], "product_id": item["id"], "status": "matched",
+                            "message": record["reason"], "notification": record.get("notification", "")})
+        hit_ids = {item["id"] for item in hits}
+        readable = {item["id"] for item in items if not item.get("valuation_error")}
+        for key, record in records.items():
+            if key.startswith(signature + ":") and key.split(":", 1)[1] in readable - hit_ids:
+                record["matched"] = False
+    state["records"] = {key: val for key, val in records.items()
+                        if key.split(":", 1)[0] in valid_prefixes
+                        and val.get("last_seen", time.time()) >= time.time() - 30 * 86400}
+    _save_isvoro_market_alert_state(state)
+    return results
+
+
+def refresh_isvoro_market(*, account_id: str = "", evaluate: bool = False, automatic: bool = False) -> dict:
+    if not ISVORO_MARKET_RUN_LOCK.acquire(blocking=False):
+        raise ValueError("Isvoro 交易市场正在刷新，请稍后重试")
+    try:
+        config = current_config()
+        market = config["isvoro_market"]
+        account_id = account_id or market["account_id"]
+        if not account_id:
+            raise ValueError("请选择已保存的 Isvoro 网站账户")
+        with _isvoro_market_session(config, account_id) as session:
+            raw = isvoro_market_list(session)
+            items = []
+            for row in raw:
+                try:
+                    items.append(isvoro_market_valuation(row))
+                except ValueError:
+                    service = row.get("service") if isinstance(row.get("service"), dict) else {}
+                    product = service.get("product") if isinstance(service.get("product"), dict) else {}
+                    items.append({"id": str(row.get("id", "")), "name": str(product.get("name", ""))[:160],
+                                  "valuation_error": "商品数据异常，无法估值"})
+            results = _isvoro_market_snapshot(account_id).get("results", [])
+            if evaluate:
+                latest = current_config()
+                if latest["isvoro_market"] != market or latest["vps_seckill"]["accounts"] != config["vps_seckill"]["accounts"]:
+                    raise ValueError("配置在刷新期间发生变化，本轮未触发规则")
+                if automatic and not latest["isvoro_market"]["enabled"]:
+                    raise ValueError("Isvoro 交易市场已暂停")
+                if account_id != market["account_id"]:
+                    raise ValueError("规则检查必须使用已保存的市场账户")
+                results = _evaluate_isvoro_market(latest, items)
+        result = {"account_id": account_id, "updated_at": beijing_iso(), "items": items, "results": results,
+                  "error": "", "warning": "", "running": current_config()["isvoro_market"]["enabled"]}
+        with ISVORO_MARKET_LOCK:
+            ISVORO_MARKET_CACHE.update(result)
+        return result
+    except (OSError, ValueError, requests.RequestException) as exc:
+        with ISVORO_MARKET_LOCK:
+            ISVORO_MARKET_CACHE["error"] = str(exc)[:300] if isinstance(exc, ValueError) else "Isvoro 市场网络请求失败，请检查商家出口与官网状态"
+        raise ValueError(ISVORO_MARKET_CACHE["error"]) from None
+    finally:
+        ISVORO_MARKET_RUN_LOCK.release()
+
+
+def _isvoro_market_loop() -> None:
+    deadline = 0.0
+    while True:
+        try:
+            market = current_config()["isvoro_market"]
+            with ISVORO_MARKET_LOCK:
+                ISVORO_MARKET_CACHE["running"] = market["enabled"]
+            if market["enabled"] and time.monotonic() >= deadline:
+                try:
+                    refresh_isvoro_market(evaluate=True, automatic=True)
+                finally:
+                    deadline = time.monotonic() + market["interval_seconds"]
+        except (OSError, ValueError, requests.RequestException) as exc:
+            with ISVORO_MARKET_LOCK:
+                ISVORO_MARKET_CACHE["error"] = str(exc)[:300]
+            deadline = time.monotonic() + 30
+        ISVORO_MARKET_WAKE.wait(2)
+        ISVORO_MARKET_WAKE.clear()
+
+
+ISVORO_MARKET_WAKE = threading.Event()
+ISVORO_MARKET_THREAD = None
+
+
+def start_isvoro_market_loop() -> None:
+    global ISVORO_MARKET_THREAD
+    if not ISVORO_MARKET_THREAD or not ISVORO_MARKET_THREAD.is_alive():
+        ISVORO_MARKET_THREAD = threading.Thread(target=_isvoro_market_loop, name="isvoro-market-monitor", daemon=True)
+        ISVORO_MARKET_THREAD.start()
 
 
 def refresh_akile_market(*, account_id: str = "", evaluate: bool = False, automatic: bool = False) -> dict:
@@ -4807,8 +5192,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send(200, "application/json; charset=utf-8", data)
         elif path == "/api/market":
-            output = _akile_market_snapshot()
-            output["running"] = current_config()["akile_market"]["enabled"]
+            provider = dict(parse_qsl(urlsplit(self.path).query)).get("provider", "akile")
+            if provider == "isvoro":
+                output = _isvoro_market_snapshot()
+                output["running"] = current_config()["isvoro_market"]["enabled"]
+            else:
+                output = _akile_market_snapshot()
+                output["running"] = current_config()["akile_market"]["enabled"]
             self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
         elif path == "/api/egress":
             try:
@@ -4982,7 +5372,7 @@ class Handler(BaseHTTPRequestHandler):
                     if (any(task.snapshot().get("pending") for task in TEST_TASKS.values())
                             or any(task.snapshot().get("pending") for task in SECKILL_TASKS.values())
                             or (CATALOG.task and CATALOG.task.get("pending"))
-                            or AKILE_MARKET_RUN_LOCK.locked()):
+                            or AKILE_MARKET_RUN_LOCK.locked() or ISVORO_MARKET_RUN_LOCK.locked()):
                         raise ValueError("请先停止或等待商品测试、秒杀任务和大盘刷新完成，再导入备份")
                     raw = self.rfile.read(length)
                     if len(raw) != length or not raw.startswith(b"\x1f\x8b"):
@@ -5035,16 +5425,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path in {"/api/market/refresh", "/api/market/check"}:
-                output = refresh_akile_market(account_id=str(submitted.get("account_id", "")),
-                                              evaluate=self.path.endswith("/check"))
+                provider = str(submitted.get("provider", "akile")).strip().casefold()
+                if provider not in {"akile", "isvoro"}:
+                    raise ValueError("交易市场商家无效")
+                refresh = refresh_isvoro_market if provider == "isvoro" else refresh_akile_market
+                output = refresh(account_id=str(submitted.get("account_id", "")), evaluate=self.path.endswith("/check"))
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/market/test-notification":
+                provider = str(submitted.get("provider", "akile")).strip().casefold()
+                if provider not in {"akile", "isvoro"}:
+                    raise ValueError("交易市场商家无效")
+                label = "Isvoro 二手市场" if provider == "isvoro" else "Akile 交易市场"
                 token, chat_id = effective_telegram(current_config())
                 if not token or not chat_id:
                     raise ValueError("请先启用并保存 Telegram 机器人和接收 Chat ID")
                 message = "\n".join([
-                    "🧪 <b>测试通知 · HostWatch Akile 交易市场</b>",
+                    f"🧪 <b>测试通知 · HostWatch {label}</b>",
                     "这是一条示例市场提醒，用于确认 Telegram 通知通道正常。",
                     "商品：测试套餐 · 示例地区 · 示例节点",
                     "配置：2 核 · 2048 MB · 40 GB · 带宽 500 Mbps · 流量 1 TB/月",
@@ -5057,7 +5454,7 @@ class Handler(BaseHTTPRequestHandler):
                 telegram_call(token, "sendMessage", chat_id=chat_id, text=message,
                               parse_mode="HTML", disable_web_page_preview=True)
                 self._send(200, "application/json; charset=utf-8",
-                    json.dumps({"ok": True, "message": "Akile 市场测试通知已发送至 Telegram。"}, ensure_ascii=False).encode("utf-8"))
+                    json.dumps({"ok": True, "message": f"{label}测试通知已发送至 Telegram。"}, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/refresh":
                 output = start_manual_refresh(str(submitted.get("role", "")))
@@ -5183,6 +5580,8 @@ class Handler(BaseHTTPRequestHandler):
             submitted["egress"] = {**submitted_egress, "nodes": merged_nodes}
             if "akile_market" not in submitted:
                 submitted["akile_market"] = current["akile_market"]
+            if "isvoro_market" not in submitted:
+                submitted["isvoro_market"] = current["isvoro_market"]
             submitted_seckill = submitted.get("vps_seckill", current["vps_seckill"])
             if not isinstance(submitted_seckill, dict):
                 raise ValueError("VPS 秒杀配置必须是对象")
@@ -5259,6 +5658,8 @@ class Handler(BaseHTTPRequestHandler):
             save_config(value)
             if value["akile_market"] != current["akile_market"]:
                 AKILE_MARKET_WAKE.set()
+            if value["isvoro_market"] != current["isvoro_market"]:
+                ISVORO_MARKET_WAKE.set()
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             status = 502 if isinstance(exc, TelegramAPIError) else (413 if "请求体大小" in str(exc) else 400)
             self._send(status, "application/json; charset=utf-8", json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"))
@@ -5286,6 +5687,7 @@ def main() -> None:
     port = int(os.getenv("ADMIN_PORT", "8765"))
     print(f"HostWatch admin listening on http://{host}:{port}")
     start_akile_market_loop()
+    start_isvoro_market_loop()
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 

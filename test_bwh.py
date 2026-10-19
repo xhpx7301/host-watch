@@ -63,6 +63,14 @@ class BandwagonHostTests(unittest.TestCase):
         self.assertIn({"id": "ecommerce:USCA_9", "name": "美国 · 洛杉矶 · Coresite LA2 · 电商 VPS（USCA_9）"}, scopes)
         self.assertIn({"id": "basic:JPOS_1", "name": "日本 · 东京 · Equinix OS1 · 基础 VPS（JPOS_1）"}, scopes)
 
+    def test_catalog_read_uses_long_timeout_and_retries_transient_timeout(self):
+        body = json.dumps(PAYLOAD)
+        with patch("monitor.fetch_page", side_effect=[monitor.MonitorError("访问 bwh81.net 商品页超时"), (body, bwh.CATALOG_URL)]) as fetch:
+            payload = bwh.read_payload(Mock(), {"mode": "cloudscraper", "cloudscraper": {"read_timeout_seconds": 25}})
+        self.assertEqual(payload, PAYLOAD)
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual(fetch.call_args.args[2]["cloudscraper"]["read_timeout_seconds"], 60)
+
     def test_directory_parses_period_and_inventory_as_distinct_rows(self):
         with patch("monitor.fetch_page", side_effect=self.fetch_page):
             data = catalog.load_catalog("bwh", "ecommerce:USCA_9", {"mode": "requests"})

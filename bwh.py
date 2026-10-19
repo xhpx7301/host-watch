@@ -75,7 +75,19 @@ def location_url(tier_id: str, location: dict, datacenter_id: str) -> str:
 
 def read_payload(session, fetcher: dict | None = None) -> dict:
     from monitor import MonitorError, fetch_page
-    body, _ = fetch_page(session, CATALOG_URL, fetcher or {"mode": "requests"}, CATALOG_HOST)
+    fetcher = dict(fetcher or {"mode": "requests"})
+    fetcher["_read_timeout_seconds"] = max(60, int(fetcher.get("_read_timeout_seconds", 0) or 0))
+    if fetcher.get("mode") == "cloudscraper":
+        options = dict(fetcher.get("cloudscraper") or {})
+        options["read_timeout_seconds"] = max(60, int(options.get("read_timeout_seconds", 25)))
+        fetcher["cloudscraper"] = options
+    try:
+        body, _ = fetch_page(session, CATALOG_URL, fetcher, CATALOG_HOST)
+    except MonitorError as exc:
+        if "超时" not in str(exc):
+            raise
+        # This is a read-only catalogue request; retry once after transient stalls.
+        body, _ = fetch_page(session, CATALOG_URL, fetcher, CATALOG_HOST)
     try:
         value = json.loads(body)
     except ValueError:
