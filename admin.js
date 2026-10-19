@@ -3012,7 +3012,7 @@ function renderVpsSeckill() {
     accountParts.push(text("p", standaloneAccountNote(account), "hint seckill-account-status"), text("div", "", "actions"));
     card.append(...accountParts);
     const actions = card.lastChild;
-    const save = text("button", hasUnsavedSeckillAccount(account.id) ? "保存账户" : "已保存"); save.type = "button"; save.className = "primary"; save.dataset.accountSave = account.id; save.disabled = actionRunning || !hasUnsavedSeckillAccount(account.id);
+    const save = text("button", "保存账户"); save.type = "button"; save.className = "primary account-save-button"; save.dataset.accountSave = account.id; save.disabled = actionRunning || !hasUnsavedSeckillAccount(account.id); save.title = save.disabled ? "当前账户没有未保存修改" : "保存当前账户修改";
     save.addEventListener("click", () => saveSeckillAccount(account, save));
     actions.append(healthLabel, save, check, clearCache, remove);
     accountTarget.append(card);
@@ -3073,7 +3073,7 @@ function updateSeckillAccountControls(accountId) {
   if (!card) return;
   const dirty = hasUnsavedSeckillAccount(accountId);
   const save = [...card.querySelectorAll("button")].find(button => button.dataset.accountSave === accountId);
-  if (save) { save.disabled = actionRunning || !dirty; save.textContent = dirty ? "保存账户" : "已保存"; }
+  if (save) { save.disabled = actionRunning || !dirty; save.textContent = "保存账户"; save.title = dirty ? "保存当前账户修改" : "当前账户没有未保存修改"; }
   const check = card.querySelector(".seckill-check-account"), clear = [...card.querySelectorAll("button")].find(button => button.textContent === "清除登录缓存");
   if (check) check.disabled = actionRunning || dirty;
   if (clear) clear.disabled = actionRunning || dirty;
