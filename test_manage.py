@@ -160,6 +160,21 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(result["content"]), b"backup bytes")
         self.assertFalse(archive.exists())
 
+    def test_prune_backups_keeps_newest_thirty_archives(self):
+        backup_dir = self.directory / "backups"
+        backup_dir.mkdir()
+        for index in range(35):
+            path = backup_dir / f"host-watch-20261020-{index:06d}-test.tar.gz"
+            path.write_bytes(b"backup")
+            import os
+            os.utime(path, (index, index))
+        with patch.object(self.manage, "BACKUP_DIR", backup_dir):
+            self.manage.prune_backups()
+        remaining = sorted(path.name for path in backup_dir.iterdir())
+        self.assertEqual(len(remaining), 30)
+        self.assertNotIn("host-watch-20261020-000000-test.tar.gz", remaining)
+        self.assertIn("host-watch-20261020-000034-test.tar.gz", remaining)
+
     def test_backup_schedule_rejects_invalid_time_or_enabled_value(self):
         with patch.object(self.manage, "run") as run:
             for value in ({"enabled": "true", "time": "03:00"}, {"enabled": True, "time": "24:00"},

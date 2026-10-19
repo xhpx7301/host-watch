@@ -13,6 +13,7 @@ import time
 from contextlib import contextmanager
 import tempfile
 from dataclasses import asdict, dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 
@@ -111,9 +112,33 @@ def parse_narwhal(plans: object, item: dict) -> Product:
     price = plan.get("price_monthly")
     if type(price) not in {int, float} or not math.isfinite(price) or price < 0:
         raise MonitorError("独角鲸云套餐价格异常，未更新库存")
-    return Product(plan_id, plan_name.strip(), stock, purchase_url, vendor="独角鲸云", stock_mode=stock_mode, region=str(plan.get("machine_region") or ""),
+    region_code = str(plan.get("machine_region") or "").strip().upper()
+    region_names = {"HK": "中国香港", "MO": "中国澳门", "TW": "中国台湾", "JP": "日本", "KR": "韩国", "SG": "新加坡", "US": "美国", "CN": "中国", "GB": "英国", "DE": "德国", "CA": "加拿大"}
+    country_flags = {"HK": "🇭🇰", "MO": "🇲🇴", "TW": "🇹🇼", "JP": "🇯🇵", "KR": "🇰🇷", "SG": "🇸🇬", "US": "🇺🇸", "CN": "🇨🇳", "GB": "🇬🇧", "DE": "🇩🇪", "CA": "🇨🇦"}
+    region = f"{country_flags.get(region_code, '🌐')} {region_names.get(region_code, region_code or '未知地区')}"
+    expires = plan.get("machine_expires_at")
+    if type(expires) is int and expires > 0:
+        expiry_date = datetime.fromtimestamp(expires, timezone.utc).astimezone(BEIJING_TZ).strftime("%Y-%m-%d")
+    else:
+        expiry_date = ""
+    machine_plans = []
+    for option in plans:
+        if str(option.get("machine_id", "")) != machine_id or not isinstance(option.get("name"), str):
+            continue
+        option_price = option.get("price_monthly")
+        option_price = f"${option_price:g}/月" if type(option_price) in {int, float} and math.isfinite(option_price) and option_price >= 0 else "价格未知"
+        option_stock = option.get("remaining") if type(option.get("remaining")) is int and option.get("remaining") >= 0 else None
+        if option.get("sold_out") is True or option.get("ram_insufficient") is True:
+            option_stock = 0
+        elif option_stock == 0:
+            option_stock = 1
+        machine_plans.append({"id": str(option.get("id", "")), "name": option["name"].strip()[:60], "price": option_price,
+            "stock": option_stock, "specs": f"{option.get('cpu', '—')} 核 · {option.get('ram_mb', '—')} MB · {option.get('disk_gb', '—')} GB",
+            "traffic": f"{option.get('monthly_traffic_gb', '—')} GB/月 · {option.get('bandwidth_mbps', '—')} Mbps"})
+    return Product(plan_id, plan_name.strip(), stock, purchase_url, vendor="独角鲸云", stock_mode=stock_mode, region=region,
         node_name=machine_name.strip(), specs=specs, traffic=f"{plan.get('monthly_traffic_gb', '—')} GB/月", price=f"${price:g}/月",
-        match_details={"machine_id": machine_id, "machine_name": machine_name.strip(), "plan_id": plan_id, "plan_name": plan_name.strip()})
+        match_details={"machine_id": machine_id, "machine_name": machine_name.strip(), "plan_id": plan_id, "plan_name": plan_name.strip(),
+            "machine_expires_at": expiry_date, "machine_plans": machine_plans})
 
 
 class SiteBlocked(MonitorError):
@@ -1412,10 +1437,40 @@ def notification_text(product: Product, old_count: int | None, purchase_url: str
     display_name = product.name
     if product.vendor == "独角鲸云" and product.node_name and product.node_name.casefold() != product.name.casefold():
         display_name = f"{product.node_name} · {product.name}"
-    return stock_message(vendor=product.vendor, name=display_name, available=product.available, stock_mode=product.stock_mode,
+    message = stock_message(vendor=product.vendor, name=display_name, available=product.available, stock_mode=product.stock_mode,
         region=product.region or product.area_name, specs=product.specs, traffic=product.traffic, price=product.price,
-        line=(product.match_details or {}).get("category_name", "") or product.node_name or (item or {}).get("category_name", ""), item=item, old_count=old_count, purchase_url=purchase_url,
+        line="" if product.vendor == "独角鲸云" else (product.match_details or {}).get("category_name", "") or product.node_name or (item or {}).get("category_name", ""), item=item, old_count=old_count, purchase_url=purchase_url,
         checked_at=now_beijing().strftime("%Y-%m-%d %H:%M:%S 北京时间"))
+    details = product.match_details or {}
+    if product.vendor == "独角鲸云":
+        from html import escape
+        lines = []
+        if product.node_name:
+            lines.append(f"🖥 <b>母鸡名称：</b>{escape(product.node_name)}")
+        if details.get("machine_expires_at"):
+            lines.append(f"📅 <b>母鸡到期时间：</b>{escape(details['machine_expires_at'])}")
+        options = details.get("machine_plans") or []
+        if options:
+            lines += ["", "📦 <b>可选配置：</b>"]
+            affiliate = parse_qs(urlsplit(purchase_url).query).get("aff", [""])[0]
+            for option in options[:5]:
+                label = "已售罄" if option.get("stock") == 0 else f"剩 {option['stock']} 台" if isinstance(option.get("stock"), int) else "库存未知"
+                link = ""
+                if option.get("stock") != 0 and option.get("id") and details.get("machine_id"):
+                    params = {"plan_id": option["id"], "machine_id": details["machine_id"]}
+                    if affiliate:
+                        params["aff"] = affiliate
+                    url = "https://dash.fuckip.me/deploy?" + urlencode(params)
+                    link = f' · <a href="{escape(url, quote=True)}">点击抢购</a>'
+                lines.append(f"🔸 {escape(option['name'])} · {escape(option['price'])} [{label}]{link}")
+                lines.append(f"⚙️ {escape(option['specs'])} · 🌐 {escape(option['traffic'])}")
+            if len(options) > 5:
+                lines.append(f"另有 {len(options) - 5} 个配置，请查看购买页面。")
+        if lines:
+            marker = "\n\n🛒 <b>购买链接：</b>"
+            split_at = message.rfind(marker)
+            message = message[:split_at] + "\n" + "\n".join(lines) + message[split_at:] if split_at >= 0 else message + "\n" + "\n".join(lines)
+    return message
 
 
 def collect_inventory(session, config, selected, found, unavailable, cache_path: Path | None = None):

@@ -52,6 +52,7 @@ INSTALLER_FALLBACK_URL = "https://github.com/xhpx7301/host-watch/raw/refs/heads/
 MAX_BACKUP_UPLOAD = 20 * 1024 * 1024
 MAX_BACKUP_EXPANDED = 64 * 1024 * 1024
 MAX_BACKUP_REQUEST = (MAX_BACKUP_UPLOAD + 2) // 3 * 4 + 4096
+MAX_BACKUPS = 30
 RESTORE_DATA_FILES = ("config.json", "state.json", "state-seckill.json", "state-akile-market.json", "status.json", "catalog.json", "exchange-rates.json")
 
 
@@ -238,7 +239,27 @@ def backup() -> Path:
         target.unlink(missing_ok=True)
         raise
     print(f"备份已保存：{target}（仅 root 可访问，包含凭据，请妥善保管）")
+    prune_backups()
     return target
+
+
+def prune_backups() -> None:
+    """Keep only the newest server-side backup archives."""
+    if BACKUP_DIR.is_symlink() or not BACKUP_DIR.is_dir():
+        return
+    backups = []
+    for path in BACKUP_DIR.glob("host-watch-*.tar.gz"):
+        try:
+            if path.is_file() and not path.is_symlink():
+                backups.append((path.stat().st_mtime_ns, path.name, path))
+        except OSError:
+            continue
+    backups.sort(reverse=True)
+    for _, _, path in backups[MAX_BACKUPS:]:
+        try:
+            path.unlink()
+        except OSError:
+            pass
 
 
 def backup_for_download() -> dict:
@@ -771,7 +792,7 @@ def web_action(payload: dict) -> dict:
             users = {"(当前使用旧版单账号认证；添加管理员后启用账号管理)": {}}
         backups = []
         if BACKUP_DIR.is_dir() and not BACKUP_DIR.is_symlink():
-            for path in sorted(BACKUP_DIR.glob("host-watch-*.tar.gz"), key=lambda item: item.stat().st_mtime, reverse=True)[:20]:
+            for path in sorted(BACKUP_DIR.glob("host-watch-*.tar.gz"), key=lambda item: item.stat().st_mtime, reverse=True)[:MAX_BACKUPS]:
                 if path.is_file() and not path.is_symlink():
                     backups.append({"name": path.name, "size": path.stat().st_size, "modified": int(path.stat().st_mtime)})
         return {"monitor": unit_state(MONITOR), "admin": unit_state(ADMIN), "users": sorted(users),

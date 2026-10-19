@@ -46,6 +46,7 @@ TEST_LOCK = threading.Lock()
 TEST_TASKS = {}
 STOPPED_TEST_IDS = {}
 SECKILL_LOCK = threading.Lock()
+ACCOUNT_STATUS_LOCK = threading.Lock()
 SECKILL_TASKS = {}
 STOPPED_SECKILL_IDS = {}
 SECKILL_TEST_TASKS = {}
@@ -3164,6 +3165,53 @@ def merchant_account_status(account_id: str) -> dict:
         return {**result, "status": "unknown", "message": "认证状态暂时无法确认，请稍后重试"}
 
 
+def account_status_path() -> Path:
+    return CONFIG_PATH.parent / "account-status.json"
+
+
+def save_merchant_account_check(result: dict) -> None:
+    """Persist public account-health results without transient challenge data."""
+    account_id = str(result.get("account_id", ""))
+    if not account_id:
+        return
+    path = account_status_path()
+    with ACCOUNT_STATUS_LOCK:
+        try:
+            checks = json.loads(path.read_text(encoding="utf-8"))
+            checks = checks if isinstance(checks, dict) else {}
+        except (OSError, ValueError, json.JSONDecodeError):
+            checks = {}
+        checks[account_id] = {
+            "account_id": account_id,
+            "status": str(result.get("status", "unknown")),
+            "ok": result.get("ok") is True,
+            "checked_at": str(result.get("checked_at", beijing_iso())),
+            "message": str(result.get("message", "认证状态暂时无法确认"))[:300],
+            "session_reused": result.get("session_reused") is True,
+        }
+        configured_ids = {row["id"] for row in current_config()["vps_seckill"].get("accounts", [])}
+        checks = {key: value for key, value in checks.items() if key in configured_ids}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp_name = tempfile.mkstemp(prefix="account-status-", suffix=".tmp", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(checks, stream, ensure_ascii=False, indent=2)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp_name, path)
+        finally:
+            Path(temp_name).unlink(missing_ok=True)
+
+
+def read_merchant_account_checks() -> dict:
+    with ACCOUNT_STATUS_LOCK:
+        try:
+            value = json.loads(account_status_path().read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {}
+        except (OSError, ValueError, json.JSONDecodeError):
+            return {}
+
+
 def public_account_check_result(value: dict) -> dict:
     """Remove transient login-session handles before exposing task results."""
     return {key: item for key, item in value.items() if not str(key).startswith("_")}
@@ -3529,7 +3577,7 @@ class SeckillTask:
         self.output = {"task_id": task_id, "pending": True, "mode": mode, "logs": self.logs, "items": []}
 
     def log(self, message: str, level: str = "info", item: dict | None = None) -> None:
-        entry = {"at": beijing_iso(), "level": level, "message": message}
+        entry = {"at": beijing_iso(), "level": level, "message": message, "trigger": self.mode}
         if item:
             entry["item_id"] = item.get("id", "")
         with self.lock:
@@ -3539,8 +3587,10 @@ class SeckillTask:
 
     def publish_module_status(self, result: str, message: str = "") -> None:
         try:
-            from monitor import module_schedule, update_module_status
-            update_module_status(STATUS_PATH, "seckill", module_schedule(self.config, "seckill"), result, message, trigger="manual")
+            from monitor import update_module_status
+            interval = self.config.get("vps_seckill", {}).get("interval_seconds", 5)
+            schedule = {"mode": self.mode, "interval_seconds": interval}
+            update_module_status(STATUS_PATH, "seckill", schedule, result, message, trigger=self.mode)
         except (OSError, ValueError, TypeError):
             pass
 
@@ -5442,7 +5492,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/rates":
             self._send(200, "application/json; charset=utf-8", json.dumps(exchange_rates(), ensure_ascii=False).encode("utf-8"))
         elif path == "/api/status":
-            data = json.dumps(read_json(STATUS_PATH, {"state": "unknown", "products": []}), ensure_ascii=False).encode("utf-8")
+            status = read_json(STATUS_PATH, {"state": "unknown", "products": []})
+            status["account_checks"] = read_merchant_account_checks()
+            data = json.dumps(status, ensure_ascii=False).encode("utf-8")
             self._send(200, "application/json; charset=utf-8", data)
         elif urlsplit(self.path).path == "/api/catalog":
             try:
@@ -5705,14 +5757,17 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/seckill/account-check":
                 output = seckill_account_check(submitted)
+                save_merchant_account_check(output)
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/seckill/account-status":
                 output = merchant_account_status(str(submitted.get("account_id", "")).strip())
+                save_merchant_account_check(output)
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/seckill/account-verification":
                 output = seckill_account_verification(submitted)
+                save_merchant_account_check(output)
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/seckill/account-cache-clear":

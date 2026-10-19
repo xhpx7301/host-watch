@@ -2526,20 +2526,30 @@ function renderOverview() {
     node.className = `overview-value state ${tone}`;
     const card = node.closest(".module-overview");
     if (card) card.dataset.state = tone || "unknown";
-    const schedule = config[`${key === "notify" ? "notify" : key}_schedule`] || (key === "monitor" ? config.monitor_schedule : key === "catalog" ? config.catalog_schedule : config.seckill_schedule) || {};
-    const mode = schedule.mode === "auto" ? "自动" : "手动";
+    const schedule = key === "seckill"
+      ? { mode: vpsSeckillTask?.pending ? vpsSeckillTask.mode : config.vps_seckill?.mode, interval_seconds: config.vps_seckill?.interval_seconds ?? 5 }
+      : config[`${key === "notify" ? "notify" : key}_schedule`] || (key === "monitor" ? config.monitor_schedule : key === "catalog" ? config.catalog_schedule : config.seckill_schedule) || {};
+    const mode = key === "seckill"
+      ? ({ rapid: "极速抢购（自动）", precise: "精准抢购（自动）", manual: "手动抢购" }[schedule.mode] || "手动抢购")
+      : schedule.mode === "auto" ? "自动" : "手动";
     const at = state.last_checked ? formatBeijingDate(state.last_checked) : "暂无";
     const manualAt = state.last_manual_refresh ? formatBeijingDate(state.last_manual_refresh) : "暂无";
     const autoAt = state.last_auto_refresh ? formatBeijingDate(state.last_auto_refresh) : "暂无";
     const serviceState = key === "monitor" || key === "notify" ? ({ active: "运行中", inactive: "已停止", failed: "运行失败", activating: "启动中", deactivating: "停止中" }[monitorService?.active] || "状态未知") : "";
-    note.replaceChildren(
-      text("span", `${mode} · 间隔 ${intervalLabel(Number(schedule.interval_seconds ?? 0))}${serviceState ? ` · 服务${serviceState}` : ""} · 最近 ${at}`, "overview-note-main"),
-      text("span", `自动 ${autoAt}`, "overview-note-line"),
-      text("span", `手动 ${manualAt}`, "overview-note-line"),
-    );
+    note.replaceChildren(...(key === "seckill"
+      ? [text("span", `${mode} · 检查间隔 ${intervalLabel(Number(schedule.interval_seconds ?? 0))} · 最近执行 ${at}`, "overview-note-main")]
+      : [
+          text("span", `${mode} · 间隔 ${intervalLabel(Number(schedule.interval_seconds ?? 0))}${serviceState ? ` · 服务${serviceState}` : ""} · 最近 ${at}`, "overview-note-main"),
+          text("span", `自动 ${autoAt}`, "overview-note-line"),
+          text("span", `手动 ${manualAt}`, "overview-note-line"),
+        ]));
     if (log) {
       const sourceLogs = key === "seckill" && vpsSeckillTask?.logs?.length ? vpsSeckillTask.logs : state.logs || [];
-      const lines = sourceLogs.slice(-5).map(item => `[${formatBeijingDate(item.at)}] ${(item.trigger || "manual") === "manual" ? "手动" : "自动"} · ${item.message || item.result || ""}`);
+      const lines = sourceLogs.slice(-5).map(item => {
+        const trigger = item.trigger || "manual";
+        const label = key === "seckill" ? ({ rapid: "极速抢购", precise: "精准抢购", manual: "手动抢购" }[trigger] || "抢购") : trigger === "manual" ? "手动" : "自动";
+        return `[${formatBeijingDate(item.at)}] ${label} · ${item.message || item.result || ""}`;
+      });
       log.textContent = lines.length ? lines.join("\n") : "暂无日志";
     }
   }
@@ -3012,13 +3022,16 @@ function renderVpsSeckill() {
     accountEgress.addEventListener("change", () => { account.egress_node_id = accountEgress.value; standaloneAccountChecks.delete(account.id); accountHealthChecks.delete(account.id); updateDraftState(); updateSeckillAccountControls(account.id); });
     const accountEgressLabel = document.createElement("label"); accountEgressLabel.append(text("span", "Cookie / 账户检查出口"), accountEgress); grid.append(accountEgressLabel);
     const password = document.createElement("input"); password.type = "password"; password.autocomplete = "new-password"; password.placeholder = account.password_configured ? "已保存，留空保持不变" : "登录密码"; password.addEventListener("input", () => { account.password = password.value; account.password_configured = Boolean(password.value) || account.password_configured; updateDraftState(); updateSeckillAccountControls(account.id); }); const passwordLabel = document.createElement("label"); passwordLabel.append(text("span", "密码"), password); grid.append(passwordLabel);
-    const check = text("button", "检查账户", "seckill-check-account"); check.type = "button"; check.dataset.accountId = account.id; check.disabled = actionRunning || hasUnsavedSeckillAccount(account.id);
+    const check = text("button", "检查账户", "seckill-check-account"); check.type = "button"; check.dataset.accountId = account.id; check.disabled = actionRunning;
     check.setAttribute("aria-label", `检查网站账户 ${account.name || account.username || account.id}`);
     check.addEventListener("click", () => {
       runAction(check, "检查中…", "正在检查账户，不创建订单、不付款…", async () => {
         let result;
+        const transientCredentials = Object.fromEntries(["session_cookie", "session_user_agent", "captcha_token", "captcha_provider"].filter(key => account[key]).map(key => [key, account[key]]));
         try {
-          result = await requestJSON("/api/seckill/account-check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: collectConfig(), account_id: account.id, account: { ...account } }) });
+          await saveConfig(`seckill-account:${account.id}`);
+          const savedAccount = seckillAccounts().find(row => row.id === account.id) || account;
+          result = await requestJSON("/api/seckill/account-check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: collectConfig(), account_id: savedAccount.id, account: { ...savedAccount, ...transientCredentials } }) });
         } finally {
           // Manually imported merchant cookies are transient credentials; never
           // leave them in the browser draft after the check request completes.
@@ -3072,12 +3085,10 @@ function renderVpsSeckill() {
 
 async function saveSeckillAccount(account, button) {
   if (!account || !hasUnsavedSeckillAccount(account.id)) return;
-  let saved = false;
   await runAction(button, "保存中…", "正在保存当前网站账户…", async () => {
     await saveConfig(`seckill-account:${account.id}`);
-    saved = true;
+    setMessage(`${account.name || account.username || account.id} 已保存。`, "success");
   });
-  if (saved) setMessage(`${account.name || account.username || account.id} 已保存。`, "success");
 }
 
 function deleteSeckillAccounts(ids) {
@@ -3629,6 +3640,10 @@ function applyConfig(value) {
 
 async function loadStatus() {
   lastStatus = await requestJSON("/api/status");
+  for (const [accountId, result] of Object.entries(lastStatus.account_checks || {})) {
+    accountHealthChecks.set(accountId, result);
+    standaloneAccountChecks.set(accountId, result);
+  }
   const state = document.querySelector("#state");
   state.textContent = ({ partial: "部分库存待核对", ok: "最近库存检查成功", blocked: "最近库存检查被拦截", error: "最近库存检查失败", unknown: "尚无库存检查记录" })[lastStatus.state] || lastStatus.state || "尚无库存检查记录";
   state.className = `state ${lastStatus.state || ""}`;

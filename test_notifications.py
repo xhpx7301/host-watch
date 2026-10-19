@@ -101,6 +101,25 @@ class NotificationTests(unittest.TestCase):
         text = BeautifulSoup(message, "html.parser").get_text()
         self.assertIn("独角鲸云 · HKT商宽 · Mini", text)
 
+    def test_narwhal_notification_includes_region_host_expiry_and_all_configs(self):
+        machine_id = "17141ff1-5623-4455-a7a5-91a0146f090e"
+        selected_id = "fe7edd6f-a84c-43fc-a41a-6221b33410ff"
+        plans = [
+            {"id": selected_id, "machine_id": machine_id, "name": "中杯", "machine_name": "东京实例", "machine_region": "JP",
+             "cpu": 1, "ram_mb": 128, "disk_gb": 1, "bandwidth_mbps": 100, "monthly_traffic_gb": 400,
+             "price_monthly": 1, "status": "active", "machine_status": "online", "remaining": 2, "sold_out": False,
+             "machine_expires_at": 1794960000},
+            {"id": "ce7edd6f-a84c-43fc-a41a-6221b33410ff", "machine_id": machine_id, "name": "Mini", "machine_name": "东京实例", "machine_region": "JP",
+             "cpu": 1, "ram_mb": 128, "disk_gb": 1, "bandwidth_mbps": 100, "monthly_traffic_gb": 400,
+             "price_monthly": 0.5, "status": "active", "machine_status": "online", "remaining": 0, "sold_out": False,
+             "machine_expires_at": 1794960000},
+        ]
+        product = monitor.parse_narwhal(plans, {"machine_id": machine_id, "plan_id": selected_id})
+        message = monitor.notification_text(product, 0, product.url)
+        text = BeautifulSoup(message, "html.parser").get_text()
+        for value in ("🇯🇵 日本", "母鸡名称：东京实例", "母鸡到期时间：2026-11-18", "中杯 · $1/月 [剩 2 台]", "Mini · $0.5/月 [剩 1 台]"):
+            self.assertIn(value, text)
+
 
 if __name__ == "__main__":
     unittest.main()

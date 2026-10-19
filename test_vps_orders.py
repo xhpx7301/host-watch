@@ -1334,6 +1334,16 @@ class AccountCheckAPITests(unittest.TestCase):
     setUp = _AdminAPIBase.setUp
     request = _AdminAPIBase.request
 
+    def test_account_check_result_is_persisted_without_transient_challenge_fields(self):
+        self.config.write_text(json.dumps(configuration()), encoding="utf-8")
+        admin.save_merchant_account_check({"account_id": "account", "status": "valid", "ok": True,
+            "checked_at": "2026-10-20T12:00:00+08:00", "message": "账户认证正常", "session_reused": True,
+            "challenge_id": "must-not-be-saved", "session_cookie": "private-cookie"})
+        saved = admin.read_merchant_account_checks()
+        self.assertEqual(saved["account"]["status"], "valid")
+        self.assertNotIn("challenge_id", saved["account"])
+        self.assertNotIn("session_cookie", saved["account"])
+
     def test_saved_password_used_and_result_redacted_with_item_route(self):
         config = configuration()
         self.config.write_text(json.dumps(config), encoding='utf-8')
