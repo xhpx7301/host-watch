@@ -3072,10 +3072,12 @@ function renderVpsSeckill() {
 
 async function saveSeckillAccount(account, button) {
   if (!account || !hasUnsavedSeckillAccount(account.id)) return;
+  let saved = false;
   await runAction(button, "保存中…", "正在保存当前网站账户…", async () => {
     await saveConfig(`seckill-account:${account.id}`);
-    setMessage(`${account.name || account.username || account.id} 已保存。`, "success");
+    saved = true;
   });
+  if (saved) setMessage(`${account.name || account.username || account.id} 已保存。`, "success");
 }
 
 function deleteSeckillAccounts(ids) {
