@@ -3335,7 +3335,13 @@ function mergeConfigScope(baseValue, draftValue, scope) {
   } else if (scope === "notifications") {
     for (const key of ["notify_schedule", "notify_current_stock_on_start", "isvoro_seckill", "notify_order"]) base[key] = draft[key];
     base.products = mergeProductMemberships(base.products, draft.products, "notify");
-  } else if (scope === "seckill") base.vps_seckill = draft.vps_seckill;
+  } else if (scope === "seckill") {
+    const savedAccounts = base.vps_seckill?.accounts || [];
+    const draftAccountIds = new Set((draft.vps_seckill?.accounts || []).map(account => account.id));
+    // Product auto-save may not persist account field drafts. Deletions remain
+    // effective; account edits and new accounts require their own save button.
+    base.vps_seckill = { ...draft.vps_seckill, accounts: savedAccounts.filter(account => draftAccountIds.has(account.id)) };
+  }
   else if (scope === "seckill-settings") base.vps_seckill = { ...base.vps_seckill, mode: draft.vps_seckill.mode, interval_seconds: draft.vps_seckill.interval_seconds };
   else if (scope.startsWith("product:")) {
     const id = scope.slice("product:".length), item = draft.products.find(row => row.id === id);
