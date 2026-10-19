@@ -643,6 +643,12 @@ class DMitOrderTests(unittest.TestCase):
         self.assertIn('phonenumber', values)
         self.assertEqual(values['phonenumber'], '')
 
+    def test_dmit_checkout_preserves_repeated_nostore_controls(self):
+        from bs4 import BeautifulSoup
+        form = BeautifulSoup('<form><input type="hidden" name="nostore" value="csrf-flag"><input type="checkbox" name="nostore" value="0" checked><input name="firstname" value="DD"></form>', 'html.parser').form
+        values = admin._dmit_checkout_values(form)
+        self.assertEqual(values['nostore'], ['csrf-flag', '0'])
+
     def test_dmit_order_uses_checkout_default_gateway_and_accepts_terms(self):
         class Resp:
             def __init__(self, body, url): self.content = body.encode(); self.text = body; self.status_code = 200; self.url = url
@@ -700,7 +706,7 @@ class DMitOrderTests(unittest.TestCase):
         login = result('<form action="/login"><input name="username"><input name="password"></form>', 'https://www.dmit.io/clientarea.php')
         logged_in = result('<a href="/logout.php">Logout</a>', 'https://www.dmit.io/clientarea.php?action=details')
         config = result('<form id="frmConfigureProduct" action="/cart.php?a=confproduct&i=0"><input name="hostname"><select name="billingcycle"><option value="monthly" selected>Monthly</option></select><input name="configoption[29]" value="472" checked><input name="configoption[118]" value="0"></form>', 'https://www.dmit.io/cart.php?a=confproduct&i=0')
-        checkout = result('<form id="promo" action="/cart.php?a=checkout"><input name="submit" value="promo"></form><form id="frmCheckout" action="/cart.php?a=checkout"><input name="token" value="csrf"><input type="radio" name="paymentmethod" value="stripe_next" checked><input type="radio" name="paymentmethod" value="alipay_global"><input type="checkbox" name="accepttos" value="1"><input name="phonenumber" value=""></form>', 'https://www.dmit.io/cart.php?a=checkout')
+        checkout = result('<form id="promo" action="/cart.php?a=checkout"><input name="submit" value="promo"></form><form id="frmCheckout" action="/cart.php?a=checkout"><input name="token" value="csrf"><input name="nostore" value="csrf-flag"><input type="radio" name="paymentmethod" value="stripe_next" checked><input type="radio" name="paymentmethod" value="alipay_global"><input type="checkbox" name="accepttos" value="1"><input name="phonenumber" value=""><input type="checkbox" name="nostore" value="0" checked></form>', 'https://www.dmit.io/cart.php?a=checkout')
         invoice = result('<h1>Invoice 1171906: Unpaid</h1><p>HKG.AS3.Pro.TINY</p>', 'https://www.dmit.io/viewinvoice.php?id=1171906')
         replies = [login, result('', login['url']), logged_in, config, result('', 'https://www.dmit.io/cart.php'),
                    result('<div>HKG.AS3.Pro.TINY</div>', 'https://www.dmit.io/cart.php?a=view'),
@@ -727,6 +733,7 @@ class DMitOrderTests(unittest.TestCase):
         self.assertEqual(submitted['paymentmethod'], ['stripe_next'])
         self.assertEqual(submitted['accepttos'], ['1'])
         self.assertEqual(submitted['phonenumber'], [''])
+        self.assertEqual(submitted['nostore'], ['csrf-flag', '0'])
         self.assertEqual(order['order_id'], '1171906')
 
     def test_dmit_order_honors_requested_debian_version(self):

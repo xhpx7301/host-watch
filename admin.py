@@ -1346,6 +1346,28 @@ def _dmit_checkout_values(form) -> dict:
                  "country", "loginemail", "loginpassword"):
         if not str(values.get(name, "")).strip():
             values.pop(name, None)
+    # Preserve repeated successful controls exactly as browser form encoding
+    # does. DMIT currently renders a hidden `nostore` field plus a checked
+    # `nostore` checkbox; collapsing them changes the checkout request.
+    repeated = {}
+    for node in controls:
+        name = str(node.get("name", "")).strip()
+        if not name or node.has_attr("disabled"):
+            continue
+        typ = str(node.get("type", "text")).casefold()
+        if typ in {"submit", "button", "image", "file"}:
+            continue
+        if typ in {"radio", "checkbox"} and not node.has_attr("checked"):
+            continue
+        if node.name == "select":
+            selected = node.find_all("option", selected=True) or node.find_all("option")[:1]
+            entries = [str(option.get("value", "")) for option in selected]
+        else:
+            entries = [str(node.get("value", ""))]
+        repeated.setdefault(name, []).extend(entries)
+    for name, entries in repeated.items():
+        if len(entries) > 1:
+            values[name] = entries
     return values
 
 
@@ -1506,7 +1528,7 @@ def _dmit_order_flaresolverr(item: dict, account: dict, product, url: str, fetch
                 raise DmitOrderFailure("DMIT 结算页未显示默认付款方式；最终结算请求尚未发送")
             _dmit_accept_terms(checkout_form, payload)
             submitted = _dmit_browser_response(flaresolverr_session_request(fetcher, session_id, checkout_action, "post",
-                urlencode(payload), {"Referer": checkout.url, "Origin": "https://www.dmit.io",
+                urlencode(payload, doseq=True), {"Referer": checkout.url, "Origin": "https://www.dmit.io",
                                      "Content-Type": "application/x-www-form-urlencoded"}))
             if not 200 <= submitted.status_code < 300 or not _same_merchant_url(submitted.url or checkout_action, MERCHANT_LOGIN_ADAPTERS["dmit"]):
                 raise DmitOrderFailure("DMIT 最终结算请求返回异常；结果待核对", True)
