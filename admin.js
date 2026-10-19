@@ -16,7 +16,7 @@ let config = {
   telegram: {},
   egress: { nodes: [], routes: {} },
   akile_market: { enabled: false, interval_seconds: 60, account_id: "", items: [] },
-  isvoro_market: { enabled: false, interval_seconds: 60, account_id: "", items: [] },
+  isvoro_market: { enabled: false, interval_seconds: 600, account_id: "", items: [] },
   vps_seckill: { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] },
   products: [],
 };
@@ -156,7 +156,7 @@ let marketBusy = false;
 let marketNotificationTestBusy = false;
 let marketPage = 0;
 function activeMarketProvider() { return document.querySelector("#market-provider")?.value || "akile"; }
-function marketConfig() { const key = activeMarketProvider() === "isvoro" ? "isvoro_market" : "akile_market"; return config[key] ||= { enabled: false, interval_seconds: 60, account_id: "", items: [] }; }
+function marketConfig() { const isvoro = activeMarketProvider() === "isvoro", key = isvoro ? "isvoro_market" : "akile_market"; return config[key] ||= { enabled: false, interval_seconds: isvoro ? 600 : 60, account_id: "", items: [] }; }
 function marketCurrency(value, currency = "CNY") { return Number.isFinite(value) ? `${currency === "CNY" ? "¥" : `${currency} `}${value.toFixed(2)}` : "—"; }
 function marketLink(id) { return activeMarketProvider() === "isvoro" ? "https://isvoro.com/marketplace" : `https://akile.ai/console/pushshop?highlight=${encodeURIComponent(id)}`; }
 function marketUnit(value, unit) {
@@ -2699,7 +2699,7 @@ const seckillAccountChecks = new Map();
 const standaloneAccountChecks = new Map();
 const accountHealthChecks = new Map();
 let accountHealthTimer;
-const ACCOUNT_HEALTH_INTERVAL_MS = 60_000;
+const ACCOUNT_HEALTH_INTERVAL_MS = 300_000;
 function seckillAccountNote(item) {
   if (!item.account_id) return "未绑定账户：发现有货后提供链接，由你到官网下单和付款。";
   const checks = [seckillAccountChecks.get(item.id), vpsSeckillTask?.accounts?.[item.id]]

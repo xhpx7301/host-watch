@@ -3770,7 +3770,7 @@ def default_config() -> dict:
         "egress": {"nodes": [], "routes": {}},
         "vps_seckill": {"enabled": False, "mode": "manual", "interval_seconds": 5, "items": [], "accounts": []},
         "akile_market": {"enabled": False, "interval_seconds": 60, "account_id": "", "items": []},
-        "isvoro_market": {"enabled": False, "interval_seconds": 60, "account_id": "", "items": []},
+        "isvoro_market": {"enabled": False, "interval_seconds": 600, "account_id": "", "items": []},
         "products": [],
     }
 
@@ -4869,7 +4869,7 @@ def _isvoro_market_loop() -> None:
         except (OSError, ValueError, requests.RequestException) as exc:
             with ISVORO_MARKET_LOCK:
                 ISVORO_MARKET_CACHE["error"] = str(exc)[:300]
-            deadline = time.monotonic() + 30
+            deadline = time.monotonic() + max(300, market.get("interval_seconds", 600))
         ISVORO_MARKET_WAKE.wait(2)
         ISVORO_MARKET_WAKE.clear()
 
