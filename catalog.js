@@ -5,7 +5,14 @@
   let provider = sessionStorage.getItem("hostwatch-catalog-provider") || "akile";
   if (!Object.hasOwn(providers, provider)) provider = "akile";
   if (currentPage === "narwhal") provider = "narwhal";
-  let scope = "", data = null, task = null, route = null, page = 0, generation = 0, loading = false, metadataOutdated = false;
+  let scope = provider === "narwhal" ? "all" : "", data = null, task = null, route = null, page = 0, generation = 0, loading = false, metadataOutdated = false;
+  let narwhalRegion = "", narwhalMachine = "", narwhalPlan = "";
+  const regionNames = new Intl.DisplayNames(["zh-CN"], { type: "region" });
+  const regionLabel = (code) => {
+    if (!code) return "未标注地区";
+    try { return /^[A-Z]{2}$/.test(code) ? `${regionNames.of(code)} · ${code}` : code; }
+    catch { return code; }
+  };
   let pollTimer, autoTimer;
   let routeConfig = null;
   let tableSignature = "";
@@ -18,6 +25,7 @@
   const autoValue = savedCatalogSchedule.mode === "auto" ? String(savedCatalogSchedule.interval_seconds || 300) : "0";
   get("catalog-auto").value = ["0", "60", "300", "600"].includes(autoValue) ? autoValue : "0";
   const priceSortKey = "hostwatch-catalog-price-sort";
+  const defaultCatalogHelp = get("catalog-help").textContent;
 
   function matches(row, item) {
     const watch = row.watch;
@@ -42,9 +50,64 @@
   }
 
   function existing(row) { return config.products.find((item) => matches(row, item)); }
+  function narwhalRows() {
+    const query = get("narwhal-machine-search").value.trim().toLowerCase();
+    return (data?.rows || []).filter(row => (!narwhalRegion || (row.region || "unknown") === narwhalRegion) &&
+      (!query || `${row.line} ${row.watch.machine_id}`.toLowerCase().includes(query)) &&
+      (!narwhalMachine || row.watch.machine_id === narwhalMachine) && (!narwhalPlan || row.watch.plan_id === narwhalPlan));
+  }
+
+  function renderNarwhalFilters() {
+    const active = provider === "narwhal";
+    get("narwhal-directory").hidden = !active;
+    get("catalog-scope").closest("label").hidden = active;
+    get("catalog-scope").closest(".catalog-filters").classList.toggle("narwhal-common", active);
+    document.querySelector(".catalog-table").classList.toggle("narwhal-table", active);
+    document.querySelector(".catalog-table th:nth-child(2)").textContent = active ? "实例 / 套餐" : "套餐";
+    document.querySelector(".catalog-table th:nth-child(3)").textContent = active ? "地区" : "地区 / 线路";
+    document.querySelector(".catalog-merchants").parentElement.hidden = currentPage === "narwhal";
+    document.querySelector(".catalog-intro h2").textContent = active ? "发现 NAT 实例，关注套餐补货" : "发现套餐，关注补货";
+    document.querySelector(".catalog-intro p").textContent = active ? "全部地区、实例与套餐统一检索，按指定实例和套餐加入监控或 Telegram 通知。" : "商家公开目录直接同步，分别选择库存监控或 Telegram 通知。无需先配置每一款商品。";
+    get("catalog-search").placeholder = active ? "实例、套餐、地区或配置，例如 HK、香港、SoftBank" : "名称、地区、线路或配置";
+    get("catalog-help").textContent = active ? "独角鲸云一次读取全部公开套餐，地区、实例和套餐筛选使用同一份库存快照；支持全目录自动刷新。大盘自动刷新仅在此栏目打开且页面可见时运行。加入库存通知并开启通知自动刷新后，服务器会在关闭网页后继续检查指定套餐，通过 Telegram 提醒补货；大盘刷新本身不发送通知。" : defaultCatalogHelp;
+    if (!active) return;
+    const rows = data?.rows || [], regions = new Map(), machines = new Map();
+    for (const row of rows) {
+      const code = row.region || "unknown";
+      const region = regions.get(code) || { plans: 0, machines: new Set() };
+      region.plans++; region.machines.add(row.watch.machine_id); regions.set(code, region);
+      if (narwhalRegion && code !== narwhalRegion) continue;
+      const machine = machines.get(row.watch.machine_id) || { name: row.line, count: 0 };
+      machine.count++; machines.set(row.watch.machine_id, machine);
+    }
+    if (narwhalRegion && !regions.has(narwhalRegion)) { narwhalRegion = ""; narwhalMachine = ""; narwhalPlan = ""; return renderNarwhalFilters(); }
+    get("narwhal-region").replaceChildren(new Option(`全部地区（${regions.size}）`, ""), ...[...regions].sort((a, b) => b[1].plans - a[1].plans).map(([code, stats]) => new Option(`${regionLabel(code === "unknown" ? "" : code)} · ${stats.machines.size} 实例 / ${stats.plans} 套餐`, code)));
+    get("narwhal-region").value = narwhalRegion;
+    const query = get("narwhal-machine-search").value.trim().toLowerCase();
+    const choices = [...machines].filter(([id, machine]) => !query || `${machine.name} ${id}`.toLowerCase().includes(query)).sort((a, b) => a[1].name.localeCompare(b[1].name, "zh-CN"));
+    if (narwhalMachine && !choices.some(([id]) => id === narwhalMachine)) { narwhalMachine = ""; narwhalPlan = ""; }
+    get("narwhal-machine").replaceChildren(new Option(`全部实例（${choices.length}）`, ""), ...choices.map(([id, machine]) => new Option(`${machine.name} · ${machine.count} 套餐（${id.slice(0, 8)}）`, id)));
+    get("narwhal-machine").value = narwhalMachine;
+    const plans = narwhalMachine ? rows.filter(row => row.watch.machine_id === narwhalMachine) : [];
+    if (narwhalPlan && !plans.some(row => row.watch.plan_id === narwhalPlan)) narwhalPlan = "";
+    get("narwhal-plan").replaceChildren(new Option(narwhalMachine ? `全部套餐（${plans.length}）` : "全部套餐（可先选择实例）", ""), ...plans.map(row => new Option(`${row.name} · ${row.price}`, row.watch.plan_id)));
+    get("narwhal-plan").value = narwhalPlan;
+    get("narwhal-plan").disabled = actionRunning || !narwhalMachine;
+    get("narwhal-region").disabled = actionRunning || !rows.length;
+    get("narwhal-machine").disabled = actionRunning || !rows.length;
+    get("narwhal-machine-search").disabled = actionRunning;
+  }
+
+  function resetNarwhalFilters() {
+    narwhalRegion = ""; narwhalMachine = ""; narwhalPlan = "";
+    get("narwhal-machine-search").value = "";
+    get("catalog-search").value = ""; get("catalog-stock").value = "all";
+    page = 0; selected.clear();
+  }
+
   function filtered() {
     const search = get("catalog-search").value.trim().toLowerCase(), stock = get("catalog-stock").value;
-    const rows = (data?.rows || []).filter((row) => (!search || [row.name, row.region, row.line, row.specs, row.traffic, row.price].join(" ").toLowerCase().includes(search)) &&
+    const rows = (provider === "narwhal" ? narwhalRows() : data?.rows || []).filter((row) => (!search || [row.name, row.region, row.line, row.specs, row.traffic, row.price, ...(provider === "narwhal" ? [regionLabel(row.region), row.watch.machine_id, row.watch.plan_id] : [])].join(" ").toLowerCase().includes(search)) &&
       (stock === "all" || stock === "in" && row.available > 0 || stock === "out" && row.available === 0 || stock === "unknown" && row.available === null || stock === "watched" && existing(row) && membership(existing(row), "watch") || stock === "notified" && existing(row) && membership(existing(row), "notify")));
     return sortByMonthlyPrice(rows, readPriceSort(priceSortKey), row => row.price);
   }
@@ -80,6 +143,7 @@
     if (animate) animateFilterResult(get("catalog-results"));
     renderPriceHeading();
     const rows = filtered();
+    if (provider === "narwhal") get("narwhal-filter-note").textContent = `全目录 ${new Set((data?.rows || []).map(row => row.watch.machine_id)).size} 个实例 / ${data?.rows.length || 0} 个套餐 · 当前筛选 ${new Set(rows.map(row => row.watch.machine_id)).size} 个实例 / ${rows.length} 个套餐。筛选在已读取的全目录中完成。`;
     page = Math.max(0, Math.min(page, Math.ceil(rows.length / pageSize) - 1));
     const visible = rows.slice(page * pageSize, (page + 1) * pageSize);
     const hasSnapshot = Boolean(data?.fetched_at);
@@ -100,9 +164,10 @@
       choice.disabled = actionRunning;
       choice.addEventListener("click", () => { selected.has(row.key) ? selected.delete(row.key) : selected.add(row.key); renderSelection(visible); });
       cell().append(choice);
-      const identity = cell(); identity.append(text("strong", row.name), text("small", row.provider));
-      const region = cell(); region.append(text("span", row.region || "—"));
-      if (row.line && row.line !== row.region) region.append(text("small", row.line));
+      const identity = cell();
+      identity.append(text("strong", provider === "narwhal" ? row.line : row.name), text("small", provider === "narwhal" ? `套餐：${row.name}` : row.provider));
+      const region = cell(); region.append(text("span", provider === "narwhal" ? regionLabel(row.region) : row.region || "—"));
+      if (provider !== "narwhal" && row.line && row.line !== row.region) region.append(text("small", row.line));
       const hardware = cell();
       const metadata = productSnapshot({ adapter: row.watch.adapter, snapshot: row });
       if (metadata.specs) renderSpecs(hardware, metadata.specs);
@@ -160,12 +225,13 @@
   }
 
   function render() {
+    renderNarwhalFilters();
     document.querySelectorAll("[data-catalog-provider]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.catalogProvider === provider)));
     const scopes = data?.scopes || knownScopes.get(provider) || [];
     get("catalog-scope").replaceChildren(...(scopes.length ? scopes.map((row) => new Option(row.id === "all" ? "全部公开套餐（手动）" : row.name, row.id)) : [new Option("等待目录", "")]));
     get("catalog-scope").value = scope;
     get("catalog-scope").disabled = actionRunning || loading || !scopes.length;
-    const fullCatalog = scope === "all";
+    const fullCatalog = scope === "all" && provider !== "narwhal";
     get("catalog-auto").disabled = actionRunning || fullCatalog;
     get("catalog-auto").title = fullCatalog ? "全部公开套餐只支持手动刷新，避免重复读取多个分类" : "分类目录可按设定间隔自动刷新";
     const busy = Boolean(task?.pending);
@@ -194,12 +260,12 @@
     routeHint.className = `hint${effectiveRoute.error ? " error" : changed ? " stale" : ""}`;
     const stale = data && Date.now() - Date.parse(data.fetched_at) > 300000;
     status.className = "hint";
-    if (busy) { status.classList.add("pending"); status.textContent = task.cancelled ? "正在终止目录刷新，保留上次快照…" : `正在刷新 ${providers[task.provider] || "商家"}${task.scope === "all" ? "全部公开套餐（会读取多个分类）" : "目录"}，页面仍可操作；可点击“停止刷新”。`; }
+    if (busy) { status.classList.add("pending"); status.textContent = task.cancelled ? "正在终止目录刷新，保留上次快照…" : `正在刷新 ${providers[task.provider] || "商家"}${task.provider === "narwhal" ? "全部实例与套餐" : task.scope === "all" ? "全部公开套餐（会读取多个分类）" : "目录"}，页面仍可操作；可点击“停止刷新”。`; }
     else if (task?.provider === provider && task.error) { status.classList.add("error"); status.textContent = task.error; }
     else if (task?.provider === provider && task.cancelled) status.textContent = "刷新已停止，保留上次快照。";
     else if (loading) status.textContent = "正在读取目录缓存…";
-    else if (metadataOutdated) { status.classList.add("stale"); status.textContent = provider === "dmit" ? "此分类为旧版快照，有货记录尚未校验购买页，请刷新目录库存。" : "此分类为旧版快照，带宽信息尚未更新，请刷新分类库存。"; }
-    else { status.textContent = data ? `已读取${scope === "all" ? "全部公开套餐（仅手动刷新）" : "此分类"}。${data.unknown ? `${data.unknown} 个套餐库存未知，未当作缺货或现货。` : ""}${stale ? "当前为历史快照，请刷新后核对。" : "库存以此快照的检查时间为准。"}` : "选择商家后刷新公开套餐目录，无需先开启自动监控。"; if (stale) status.classList.add("stale"); }
+    else if (metadataOutdated) { status.classList.add("stale"); status.textContent = provider === "narwhal" ? "此目录为旧版快照，请刷新以读取全部地区、实例与套餐。" : provider === "dmit" ? "此分类为旧版快照，有货记录尚未校验购买页，请刷新目录库存。" : "此分类为旧版快照，带宽信息尚未更新，请刷新分类库存。"; }
+    else { status.textContent = data ? `已读取${provider === "narwhal" ? "全部实例与套餐" : scope === "all" ? "全部公开套餐（仅手动刷新）" : "此分类"}。${data.unknown ? `${data.unknown} 个套餐库存未知，未当作缺货或现货。` : ""}${stale ? "当前为历史快照，请刷新后核对。" : "库存以此快照的检查时间为准。"}` : "选择商家后刷新公开套餐目录，无需先开启自动监控。"; if (stale) status.classList.add("stale"); }
     const filterArrived = filterGeneration === generation && !loading && (data?.fetched_at || !task?.pending);
     renderTable(Boolean(filterArrived));
     if (filterArrived) filterGeneration = null;
@@ -232,7 +298,7 @@
     clearTimeout(pollTimer); clearTimeout(autoTimer);
     if (!catalogPage() || document.hidden) return;
     if (task?.pending) pollTimer = setTimeout(() => loadSnapshot(false), 1200);
-    else if (scope !== "all" && !task?.error && !task?.cancelled && Number(get("catalog-auto").value)) autoTimer = setTimeout(() => refresh(true), Number(get("catalog-auto").value) * 1000);
+    else if ((scope !== "all" || provider === "narwhal") && !task?.error && !task?.cancelled && Number(get("catalog-auto").value)) autoTimer = setTimeout(() => refresh(true), Number(get("catalog-auto").value) * 1000);
   }
 
   async function loadSnapshot(refreshMissing = true) {
@@ -272,7 +338,8 @@
 
   document.querySelectorAll("[data-catalog-provider]").forEach((button) => button.addEventListener("click", () => {
     if (provider === button.dataset.catalogProvider) return;
-    generation++; provider = button.dataset.catalogProvider; scope = ""; data = null; route = null; metadataOutdated = false; page = 0; selected.clear();
+    generation++; provider = button.dataset.catalogProvider; scope = provider === "narwhal" ? "all" : ""; data = null; route = null; metadataOutdated = false; page = 0; selected.clear();
+    resetNarwhalFilters();
     filterGeneration = generation;
     sessionStorage.setItem("hostwatch-catalog-provider", provider);
     get("catalog-search").value = ""; get("catalog-stock").value = "all";
@@ -287,7 +354,14 @@
     void loadSnapshot();
     animateFilterResult(get("catalog-results"));
   });
-  for (const id of ["catalog-search", "catalog-stock"]) get(id).addEventListener(id === "catalog-search" ? "input" : "change", () => { page = 0; renderTable(true); });
+  for (const id of ["catalog-search", "catalog-stock"]) get(id).addEventListener(id === "catalog-search" ? "input" : "change", () => { page = 0; if (provider === "narwhal") selected.clear(); renderTable(true); });
+  for (const id of ["narwhal-region", "narwhal-machine", "narwhal-plan", "narwhal-machine-search"]) get(id).addEventListener(id.endsWith("search") ? "input" : "change", () => {
+    if (id === "narwhal-region") { narwhalRegion = get(id).value; narwhalMachine = ""; narwhalPlan = ""; get("narwhal-machine-search").value = ""; }
+    if (id === "narwhal-machine") { narwhalMachine = get(id).value; narwhalPlan = ""; }
+    if (id === "narwhal-plan") narwhalPlan = get(id).value;
+    page = 0; selected.clear(); renderNarwhalFilters(); renderTable(true);
+  });
+  get("narwhal-reset").addEventListener("click", () => { resetNarwhalFilters(); render(); });
   get("catalog-auto").addEventListener("change", () => {
     const value = Number(get("catalog-auto").value || 0);
     config.catalog_schedule = { mode: value ? "auto" : "manual", interval_seconds: value || 300 };
@@ -318,7 +392,8 @@
   window.addEventListener("hostwatch-page-change", (event) => {
     generation++; filterGeneration = null; clearTimeout(autoTimer); clearTimeout(pollTimer); loading = false;
     if (event.detail === "narwhal") {
-      provider = "narwhal"; scope = ""; data = null; route = null; metadataOutdated = false; page = 0; selected.clear();
+      provider = "narwhal"; scope = "all"; data = null; route = null; metadataOutdated = false; page = 0; selected.clear();
+      resetNarwhalFilters();
       sessionStorage.setItem("hostwatch-catalog-provider", provider);
       document.querySelectorAll("[data-catalog-provider]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.catalogProvider === provider)));
       void loadSnapshot();

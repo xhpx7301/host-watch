@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import uuid
 from unittest.mock import Mock, patch
 
 import admin
@@ -96,7 +97,7 @@ class NarwhalTests(unittest.TestCase):
         with patch.object(monitor, "fetch_narwhal_plans", return_value=[plan(), other]):
             scopes, selected, rows = catalog.narwhal_catalog(Mock(), MACHINE_ID)
         self.assertEqual(selected, MACHINE_ID)
-        self.assertEqual({scope["id"] for scope in scopes}, {MACHINE_ID, OTHER_MACHINE_ID})
+        self.assertEqual({scope["id"] for scope in scopes}, {"all", MACHINE_ID, OTHER_MACHINE_ID})
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["watch"]["machine_id"], MACHINE_ID)
         self.assertEqual(rows[0]["watch"]["plan_id"], PLAN_ID)
@@ -124,3 +125,43 @@ class NarwhalTests(unittest.TestCase):
         key = monitor.inventory_cache_key(item(), {})
         self.assertNotEqual(key, monitor.inventory_cache_key(item(plan_id=OTHER_PLAN_ID), {}))
         self.assertNotEqual(key, monitor.inventory_cache_key(item(machine_id=OTHER_MACHINE_ID), {}))
+
+    def test_default_catalog_includes_all_instances_and_their_plans(self):
+        payload = [plan(), plan(id=OTHER_PLAN_ID, name="大杯"), plan(id=str(uuid.uuid4()), machine_id=OTHER_MACHINE_ID, machine_name="香港实例", machine_region="HK", remaining="unknown")]
+        with patch.object(monitor, "fetch_narwhal_plans", return_value=payload) as fetch:
+            result = catalog.load_catalog("narwhal")
+        fetch.assert_called_once()
+        self.assertEqual(result["scope"], "all")
+        self.assertEqual(len(result["rows"]), 3)
+        self.assertEqual(result["unknown"], 1)
+        self.assertEqual(result["narwhal_directory_version"], catalog.NARWHAL_DIRECTORY_VERSION)
+        machine = next(scope for scope in result["scopes"] if scope["id"] == MACHINE_ID)
+        self.assertEqual((machine["region"], machine["plan_count"]), ("JP", 2))
+        self.assertEqual({row["watch"]["machine_id"] for row in result["rows"]}, {MACHINE_ID, OTHER_MACHINE_ID})
+
+    def test_full_catalog_supports_more_than_generic_600_row_limit(self):
+        payload = [plan(id=str(uuid.uuid4())) for _ in range(650)]
+        with patch.object(monitor, "fetch_narwhal_plans", return_value=payload):
+            result = catalog.load_catalog("narwhal", "all")
+        self.assertEqual(len(result["rows"]), 650)
+        self.assertEqual(len({row["key"] for row in result["rows"]}), 650)
+
+    def test_full_snapshot_serves_instance_views_and_marks_old_snapshots_for_refresh(self):
+        payload = [plan(), plan(id=OTHER_PLAN_ID, machine_id=OTHER_MACHINE_ID, machine_name="香港实例", machine_region="HK")]
+        with patch.object(monitor, "fetch_narwhal_plans", return_value=payload):
+            full = catalog.load_catalog("narwhal")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "catalog.json"
+            legacy = {**full, "scope": MACHINE_ID, "fetched_at": "2099-01-01T00:00:00+08:00", "rows": full["rows"][:1]}
+            del legacy["narwhal_directory_version"]
+            service = catalog.CatalogService(lambda: path)
+            path.write_text(json.dumps({"narwhal:all": full, "legacy": legacy}), encoding="utf-8")
+            self.assertEqual(service.snapshot("narwhal")["data"], full)
+            scoped = service.snapshot("narwhal", OTHER_MACHINE_ID)
+            self.assertEqual(scoped["data"]["rows"][0]["watch"]["machine_id"], OTHER_MACHINE_ID)
+            self.assertEqual(len(scoped["data"]["rows"]), 1)
+            self.assertFalse(scoped["needs_refresh"])
+            path.write_text(json.dumps({"legacy": legacy}), encoding="utf-8")
+            self.assertTrue(service.snapshot("narwhal")["needs_refresh"])
+            with patch("catalog.threading.Thread"):
+                self.assertEqual(service.refresh("narwhal", MACHINE_ID)["fetch_scope"], "all")

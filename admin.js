@@ -75,7 +75,7 @@ function beijingISOString(value = new Date()) {
 const pages = {
   overview: { title: "运行概览", description: "每分钟查看大盘、监控、通知、抢购的状态与最近刷新记录。" },
   catalog: { title: "VPS 库存大盘", description: "浏览商家全部公开套餐或地区分类，选择你关心的 VPS 加入补货提醒。" },
-  narwhal: { title: "独角鲸云", description: "按实例浏览独角鲸云套餐，指定套餐加入库存监控或 Telegram 补货通知。" },
+  narwhal: { title: "独角鲸云", description: "浏览全部套餐，按地区、实例逐级筛选，指定套餐加入库存监控或 Telegram 补货通知。" },
   seckill: { title: "VPS 补货抢购", description: "从库存监控或库存通知选择商品，配置优惠码和账户后执行补货抢购。" },
   market: { title: "Akile 交易市场", description: "查看 Akile 交易市场快照，按续费价格和到期时间计算折价/溢价金额与比例，设置指定商品的 Telegram 提醒。" },
   monitor: { title: "VPS 库存监控", description: "集中查看你关注的 VPS，查看库存与配置、编辑备注和线路，直接购买，不发送通知。" },
