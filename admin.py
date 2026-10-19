@@ -70,6 +70,9 @@ MERCHANT_AUTH_SESSIONS = {}
 MERCHANT_AUTH_SESSION_TTL = 30 * 24 * 60 * 60
 ISVORO_AUTH_SESSION_TTL = 30 * 24 * 60 * 60
 BWH_AUTH_SESSION_TTL = 30 * 24 * 60 * 60
+MERCHANT_AUTH_CACHE_NAME = "merchant-auth-cache.json"
+MERCHANT_AUTH_KEY_NAME = "merchant-auth-cache.key"
+MERCHANT_AUTH_CACHE_MAX_BYTES = 4 * 1024 * 1024
 REFRESH_LOCK = threading.Lock()
 REFRESH_TASKS = {}
 BROWSER_CLEANUP_SECONDS = 8
@@ -523,9 +526,156 @@ def _copy_bwh_session(source, target) -> None:
 
 def _copy_merchant_session(source, target) -> None:
     """Copy reusable authentication state, never share a mutable Session."""
+    proxies = dict(getattr(target, "proxies", {}) or {})
     _copy_bwh_session(source, target)
+    target.proxies = proxies
     if hasattr(source, "_hostwatch_akile_user_id"):
         target._hostwatch_akile_user_id = source._hostwatch_akile_user_id
+
+
+def _merchant_auth_cache_paths() -> tuple[Path, Path]:
+    return CONFIG_PATH.parent / MERCHANT_AUTH_CACHE_NAME, CONFIG_PATH.parent / MERCHANT_AUTH_KEY_NAME
+
+
+def _merchant_auth_fernet(create: bool = False):
+    from cryptography.fernet import Fernet
+
+    cache_path, key_path = _merchant_auth_cache_paths()
+    if key_path.is_symlink():
+        raise ValueError("认证缓存密钥文件不能是符号链接")
+    if not key_path.exists():
+        if not create:
+            return None
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix="merchant-auth-key-", suffix=".tmp", dir=key_path.parent)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(Fernet.generate_key())
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.chmod(temporary, 0o600)
+            try:
+                os.link(temporary, key_path)
+            except FileExistsError:
+                pass
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+    try:
+        key = key_path.read_bytes()
+    except OSError:
+        return None
+    try:
+        return Fernet(key)
+    except (TypeError, ValueError):
+        if not create:
+            return None
+        key_path.unlink(missing_ok=True)
+        return _merchant_auth_fernet(create=True)
+
+
+def _persistent_session_record(key: tuple[str, ...], record: dict) -> dict:
+    session = record.get("session")
+    cookies = []
+    for cookie in getattr(session, "cookies", []) or []:
+        cookies.append({"name": cookie.name, "value": cookie.value, "domain": cookie.domain,
+            "path": cookie.path, "expires": cookie.expires, "secure": cookie.secure,
+            "rest": dict(cookie._rest or {})})
+    return {"key": list(key), "expires_at": record.get("expires_at", 0),
+            "headers": dict(getattr(session, "headers", {}) or {}), "cookies": cookies,
+            "akile_user_id": getattr(session, "_hostwatch_akile_user_id", None)}
+
+
+def _persist_merchant_sessions() -> None:
+    cache_path, _ = _merchant_auth_cache_paths()
+    if cache_path.is_symlink():
+        raise ValueError("认证缓存文件不能是符号链接")
+    fernet = _merchant_auth_fernet(create=bool(MERCHANT_AUTH_SESSIONS))
+    if fernet is None:
+        return
+    now = time.time()
+    records = [_persistent_session_record(key, record) for key, record in MERCHANT_AUTH_SESSIONS.items()
+               if record.get("expires_at", 0) > now]
+    if not records:
+        cache_path.unlink(missing_ok=True)
+        return
+    encrypted = fernet.encrypt(json.dumps({"version": 1, "sessions": records}, ensure_ascii=False,
+                                           allow_nan=False, separators=(",", ":")).encode("utf-8"))
+    if len(encrypted) > MERCHANT_AUTH_CACHE_MAX_BYTES:
+        raise ValueError("认证缓存超过大小限制，未写入磁盘")
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix="merchant-auth-cache-", suffix=".tmp", dir=cache_path.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(encrypted)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, cache_path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def load_merchant_auth_cache() -> int:
+    """Restore encrypted sessions after restart; each caller still revalidates them."""
+    cache_path, _ = _merchant_auth_cache_paths()
+    if cache_path.is_symlink() or not cache_path.exists():
+        return 0
+    try:
+        raw = cache_path.read_bytes()
+    except OSError:
+        return 0
+    try:
+        if not raw or len(raw) > MERCHANT_AUTH_CACHE_MAX_BYTES:
+            raise ValueError()
+        fernet = _merchant_auth_fernet()
+        if fernet is None:
+            return 0
+        payload = json.loads(fernet.decrypt(raw).decode("utf-8"))
+        if not isinstance(payload, dict) or payload.get("version") != 1 or not isinstance(payload.get("sessions"), list):
+            raise ValueError()
+        restored = {}
+        for record in payload["sessions"]:
+            if not isinstance(record, dict):
+                continue
+            key = record.get("key")
+            expires_at = record.get("expires_at")
+            headers, cookies = record.get("headers"), record.get("cookies")
+            if (not isinstance(key, list) or len(key) != 5 or any(not isinstance(part, str) for part in key)
+                    or not isinstance(expires_at, (int, float)) or expires_at <= time.time()
+                    or not isinstance(headers, dict) or not isinstance(cookies, list)):
+                continue
+            session = requests.Session()
+            session.trust_env = False
+            session.headers.update({str(name): str(value) for name, value in headers.items()
+                                    if isinstance(name, str) and isinstance(value, (str, int, float))})
+            for cookie in cookies:
+                if not isinstance(cookie, dict) or not isinstance(cookie.get("name"), str) or not isinstance(cookie.get("value"), str):
+                    continue
+                session.cookies.set(cookie["name"], cookie["value"], domain=str(cookie.get("domain") or ""),
+                    path=str(cookie.get("path") or "/"), secure=bool(cookie.get("secure", False)),
+                    expires=cookie.get("expires") if isinstance(cookie.get("expires"), int) else None,
+                    rest=cookie.get("rest") if isinstance(cookie.get("rest"), dict) else {})
+            user_id = record.get("akile_user_id")
+            if isinstance(user_id, int) and user_id > 0:
+                session._hostwatch_akile_user_id = user_id
+            restored[tuple(key)] = {"session": session, "expires_at": float(expires_at)}
+        with SECKILL_LOCK:
+            old = list(MERCHANT_AUTH_SESSIONS.values())
+            MERCHANT_AUTH_SESSIONS.clear()
+            MERCHANT_AUTH_SESSIONS.update(restored)
+        for record in old:
+            _close_bwh_session(record.get("session"))
+        return len(restored)
+    except Exception:
+        # Corrupt, undecryptable, or incompatible caches are discarded without
+        # logging their encrypted contents; normal login/import remains usable.
+        try:
+            cache_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return 0
 
 
 def _store_merchant_session(adapter_id: str, account: dict, fetcher: dict | None, session) -> None:
@@ -539,6 +689,7 @@ def _store_merchant_session(adapter_id: str, account: dict, fetcher: dict | None
         old = MERCHANT_AUTH_SESSIONS.pop(key, None)
         ttl = ISVORO_AUTH_SESSION_TTL if adapter_id == "isvoro" else BWH_AUTH_SESSION_TTL if adapter_id == "bwh" else MERCHANT_AUTH_SESSION_TTL
         MERCHANT_AUTH_SESSIONS[key] = {"session": cached, "expires_at": time.time() + ttl}
+        _persist_merchant_sessions()
     if old:
         _close_bwh_session(old.get("session"))
 
@@ -555,6 +706,8 @@ def _get_merchant_session(adapter_id: str, account: dict, fetcher: dict | None =
         else:
             return value.get("session")
     _close_bwh_session(session)
+    with SECKILL_LOCK:
+        _persist_merchant_sessions()
     return None
 
 
@@ -566,12 +719,14 @@ def _renew_merchant_session(adapter_id: str, account: dict, fetcher: dict | None
         if value and value.get("session") is session:
             ttl = ISVORO_AUTH_SESSION_TTL if adapter_id == "isvoro" else BWH_AUTH_SESSION_TTL if adapter_id == "bwh" else MERCHANT_AUTH_SESSION_TTL
             value["expires_at"] = time.time() + ttl
+            _persist_merchant_sessions()
 
 
 def _remove_merchant_session(adapter_id: str, account: dict, fetcher: dict | None = None) -> None:
     key = _merchant_session_key(adapter_id, account, fetcher)
     with SECKILL_LOCK:
         value = MERCHANT_AUTH_SESSIONS.pop(key, None)
+        _persist_merchant_sessions()
     if value:
         _close_bwh_session(value.get("session"))
 
@@ -586,6 +741,7 @@ def _clear_merchant_sessions_for_account(account: dict) -> int:
         for key in list(MERCHANT_AUTH_SESSIONS):
             if key[0] == adapter_id and key[1] == account_id and key[2] == username:
                 removed.append(MERCHANT_AUTH_SESSIONS.pop(key))
+        _persist_merchant_sessions()
     for value in removed:
         _close_bwh_session(value.get("session"))
     return len(removed)
@@ -5732,6 +5888,13 @@ class Handler(BaseHTTPRequestHandler):
             submitted["enabled"] = bool(automatic_refresh and has_refreshable_products)
             value = validate_config(submitted)
             save_config(value)
+            old_accounts = {account["id"]: account for account in current["vps_seckill"]["accounts"]}
+            new_accounts = {account["id"]: account for account in value["vps_seckill"]["accounts"]}
+            for account_id, old_account in old_accounts.items():
+                new_account = new_accounts.get(account_id)
+                identity_fields = ("provider", "username", "password", "egress_node_id")
+                if new_account is None or any(old_account.get(field) != new_account.get(field) for field in identity_fields):
+                    _clear_merchant_sessions_for_account(old_account)
             if value["akile_market"] != current["akile_market"]:
                 AKILE_MARKET_WAKE.set()
             if (value["isvoro_market"] != current["isvoro_market"]
@@ -5763,6 +5926,9 @@ def main() -> None:
         raise SystemExit("管理页只允许监听 localhost")
     port = int(os.getenv("ADMIN_PORT", "8765"))
     print(f"HostWatch admin listening on http://{host}:{port}")
+    restored_sessions = load_merchant_auth_cache()
+    if restored_sessions:
+        print(f"Restored {restored_sessions} encrypted merchant authentication sessions; each will be revalidated before reuse.")
     start_akile_market_loop()
     start_isvoro_market_loop()
     ThreadingHTTPServer((host, port), Handler).serve_forever()

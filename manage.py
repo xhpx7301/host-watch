@@ -233,7 +233,7 @@ def backup() -> Path:
         with tarfile.open(target, "w:gz", dereference=False) as archive:
             for path in paths:
                 if path.exists():
-                    archive.add(path, arcname=str(path).lstrip("/"))
+                    archive.add(path, arcname=str(path).lstrip("/"), filter=lambda member: None if Path(member.name).name in {"merchant-auth-cache.json", "merchant-auth-cache.key"} else member)
     except Exception:
         target.unlink(missing_ok=True)
         raise

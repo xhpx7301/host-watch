@@ -321,7 +321,7 @@ function renderMarket() {
     return (left - right) * (columnSort.direction === "desc" ? -1 : 1);
   };
   if (columnSort.key) visible.sort((a, b) => compareNumeric(a, b, columnSort.key));
-  else visible.sort((a,b) => sort === "price" ? (a.price ?? Infinity) - (b.price ?? Infinity) : sort === "expiry" ? (a.due_time ?? Infinity) - (b.due_time ?? Infinity) : (b.rate ?? -Infinity) - (a.rate ?? -Infinity));
+  else visible.sort((a, b) => (b.rate ?? -Infinity) - (a.rate ?? -Infinity));
   const pageSize = 15, pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
   marketPage = Math.min(marketPage, pageCount - 1);
   const headRow = document.querySelector(".market-table thead tr");

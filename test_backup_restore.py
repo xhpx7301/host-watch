@@ -91,8 +91,13 @@ class BackupRestoreTests(unittest.TestCase):
         install = self.root / "app"
         install.mkdir()
         (install / "admin.py").write_text("original program")
+        (self.data / "merchant-auth-cache.json").write_bytes(b"encrypted session payload")
+        (self.data / "merchant-auth-cache.key").write_bytes(b"private encryption key")
         with patch.object(self.manage, "INSTALL_DIR", install), patch.object(self.manage, "BACKUP_DIR", self.root / "backups"), patch.object(self.manage, "ADMIN_ENV", self.root / "no-env"), patch.object(self.manage, "DEFAULT_USERS_PATH", self.root / "no-users"):
             archive = self.backup_impl()
+        with tarfile.open(archive, "r:gz") as bundle:
+            names = bundle.getnames()
+        self.assertFalse(any(name.endswith("merchant-auth-cache.json") or name.endswith("merchant-auth-cache.key") for name in names))
         content = base64.b64encode(archive.read_bytes()).decode()
         self.config.write_text('{"products":[]}')
         self.state.write_text("{}")

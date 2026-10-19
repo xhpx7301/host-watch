@@ -1045,6 +1045,30 @@ class AccountVerificationTests(unittest.TestCase):
         self.assertEqual(admin.MERCHANT_AUTH_SESSIONS[key]['expires_at'], 1000 + 30 * 24 * 60 * 60)
         admin._remove_merchant_session('isvoro', account, route)
 
+    def test_encrypted_merchant_session_cache_survives_reload(self):
+        import tempfile
+        from pathlib import Path
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='isvoro', username='user@example.com', password='pw', login_url=admin.ISVORO_LOGIN_URL)
+        source = requests.Session()
+        source.cookies.set('access', 'secret-cookie', domain='isvoro.com', path='/')
+        with tempfile.TemporaryDirectory() as folder, patch.object(admin, 'CONFIG_PATH', Path(folder) / 'config.json'):
+            admin.MERCHANT_AUTH_SESSIONS.clear()
+            admin._store_merchant_session('isvoro', account, {'egress_node_id': 'route-a'}, source)
+            admin.MERCHANT_AUTH_SESSIONS.clear()
+            self.assertEqual(admin.load_merchant_auth_cache(), 1)
+            cached = admin._get_merchant_session('isvoro', account, {'egress_node_id': 'route-a'})
+            self.assertIsNotNone(cached)
+            self.assertEqual(cached.cookies.get('access', domain='isvoro.com', path='/'), 'secret-cookie')
+            task_session = requests.Session()
+            task_session.proxies = {'https': 'http://route-proxy'}
+            admin._copy_merchant_session(cached, task_session)
+            self.assertEqual(task_session.proxies, {'https': 'http://route-proxy'})
+            self.assertTrue((Path(folder) / admin.MERCHANT_AUTH_CACHE_NAME).exists())
+            self.assertTrue((Path(folder) / admin.MERCHANT_AUTH_KEY_NAME).exists())
+            encrypted = (Path(folder) / admin.MERCHANT_AUTH_CACHE_NAME).read_bytes()
+            self.assertNotIn(b'secret-cookie', encrypted)
+
     def test_bwh_auth_session_cache_ttl_is_thirty_days(self):
         account = configuration()['vps_seckill']['accounts'][0]
         account.update(provider='bwh', username='user@example.com', password='pw', login_url=admin.MERCHANT_LOGIN_ADAPTERS['bwh']['url'])

@@ -15,4 +15,6 @@ catalog.json
 exchange-rates.json
 inventory-cache.json
 auto-sync.log
+merchant-auth-cache.json
+merchant-auth-cache.key
 *.log
