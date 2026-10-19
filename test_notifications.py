@@ -94,6 +94,13 @@ class NotificationTests(unittest.TestCase):
         message = monitor.notification_text(monitor.Product("x", "Legacy", 1, "https://example.com"), 0, "https://example.com")
         self.assertIn("Legacy", message)
 
+    def test_narwhal_notification_includes_instance_and_plan(self):
+        product = monitor.Product("plan", "Mini", 1, "https://example.com", vendor="独角鲸云",
+                                  node_name="HKT商宽", region="香港")
+        message = monitor.notification_text(product, 0, product.url)
+        text = BeautifulSoup(message, "html.parser").get_text()
+        self.assertIn("独角鲸云 · HKT商宽 · Mini", text)
+
 
 if __name__ == "__main__":
     unittest.main()

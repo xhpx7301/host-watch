@@ -4679,8 +4679,13 @@ def send_stock_test_result(product: dict, result: dict) -> dict:
         if result.get("ok"):
             if result.get("purchase_url"):
                 link = affiliate_purchase_url(result.get("url") or result["purchase_url"], product.get("adapter", ""), current_config(), product)
+            display_name = result.get("name") or matched.get("plan_name") or product["name"]
+            if product.get("adapter") == "narwhal":
+                instance_name = matched.get("machine_name") or product.get("node_name") or product.get("machine_name")
+                if instance_name and str(instance_name).casefold() != str(display_name).casefold():
+                    display_name = f"{instance_name} · {display_name}"
             message = stock_message(vendor=product.get("provider") or product.get("adapter", ""),
-                name=result.get("name") or matched.get("plan_name") or product["name"], available=result["available"], stock_mode=result.get("stock_mode", "quantity"),
+                name=display_name, available=result["available"], stock_mode=result.get("stock_mode", "quantity"),
                 region=result.get("region") or matched.get("area_name") or matched.get("type_name", ""),
                 specs=result.get("specs", ""), traffic=result.get("traffic", ""), price=result.get("price", ""),
                 line=matched.get("category_name") or matched.get("node_name") or product.get("category_name") or product.get("node_name", ""),
@@ -4837,7 +4842,7 @@ def _akile_market_alert(config: dict, rule: dict, item: dict, reason: str) -> bo
     kind = "折价" if item["delta"] >= 0 else "溢价"
     message = "\n".join([
         "🔔 <b>HostWatch · Akile 交易市场</b>",
-        f"商品：{escape(item['name'])} · {escape(item['region'])} · {escape(item['node'])}",
+        f"实例名：{escape(item['name'])} · 套餐：{escape(item['plan_name'])} · 地区/节点：{escape(item['region'])} / {escape(item['node'])}",
         f"挂单 ID：<code>{item['id']}</code>",
         f"售价：¥{item['price']:.2f} · 续费：¥{item['renewal']:.2f}/{item['cycle']}个月",
         f"剩余：{item['remaining_days']:.2f} 天 · 剩余价值：¥{item['fair_value']:.2f} · 月付：¥{item['monthly_price']:.2f}",
@@ -4929,7 +4934,7 @@ def _isvoro_market_alert(config: dict, rule: dict, item: dict) -> bool:
     cycle = f"{item['cycle']}{'个月' if item['cycle_unit'] == 'month' else '年'}"
     message = "\\n".join([
         "🔔 <b>HostWatch · Isvoro 二手市场</b>",
-        f"商品：{escape(item['name'])} · {escape(item['region'])} · {escape(item['node'])}",
+        f"实例名：{escape(item['name'])} · 套餐：{escape(item['plan_name'])} · 地区/节点：{escape(item['region'])} / {escape(item['node'])}",
         f"挂单 ID：<code>{item['id']}</code>",
         f"售价：{escape(item['currency_code'])} {item['price']:.2f} · 续费：{escape(item['currency_code'])} {item['renewal']:.2f}/{cycle}",
         f"剩余：{item['remaining_days']:.2f} 天 · 剩余价值：{escape(item['currency_code'])} {item['fair_value']:.2f} · 月付：{escape(item['currency_code'])} {item['monthly_price']:.2f}",
@@ -5671,7 +5676,7 @@ class Handler(BaseHTTPRequestHandler):
                 message = "\n".join([
                     f"🧪 <b>测试通知 · HostWatch {label}</b>",
                     "这是一条示例市场提醒，用于确认 Telegram 通知通道正常。",
-                    "商品：测试套餐 · 示例地区 · 示例节点",
+                    "实例名：示例实例 · 套餐：测试套餐 · 地区/节点：示例地区 / 示例节点",
                     "配置：2 核 · 2048 MB · 40 GB · 带宽 500 Mbps · 流量 1 TB/月",
                     "售价：¥10.00 · 续费：¥20.00/1个月（折合 ¥20.00/月）",
                     "折价：50.00% · ¥10.00",

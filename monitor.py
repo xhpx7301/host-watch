@@ -112,7 +112,7 @@ def parse_narwhal(plans: object, item: dict) -> Product:
     if type(price) not in {int, float} or not math.isfinite(price) or price < 0:
         raise MonitorError("独角鲸云套餐价格异常，未更新库存")
     return Product(plan_id, plan_name.strip(), stock, purchase_url, vendor="独角鲸云", stock_mode=stock_mode, region=str(plan.get("machine_region") or ""),
-        node_name=machine_name.strip(), specs=specs, traffic=f"{plan.get('monthly_traffic_gb', '—')} GB/月", price=f"¥{price:g}/月",
+        node_name=machine_name.strip(), specs=specs, traffic=f"{plan.get('monthly_traffic_gb', '—')} GB/月", price=f"USD {price:g}/月",
         match_details={"machine_id": machine_id, "machine_name": machine_name.strip(), "plan_id": plan_id, "plan_name": plan_name.strip()})
 
 
@@ -1409,7 +1409,10 @@ def show_chat_ids(session: requests.Session, token: str) -> None:
 
 
 def notification_text(product: Product, old_count: int | None, purchase_url: str, item: dict | None = None) -> str:
-    return stock_message(vendor=product.vendor, name=product.name, available=product.available, stock_mode=product.stock_mode,
+    display_name = product.name
+    if product.vendor == "独角鲸云" and product.node_name and product.node_name.casefold() != product.name.casefold():
+        display_name = f"{product.node_name} · {product.name}"
+    return stock_message(vendor=product.vendor, name=display_name, available=product.available, stock_mode=product.stock_mode,
         region=product.region or product.area_name, specs=product.specs, traffic=product.traffic, price=product.price,
         line=(product.match_details or {}).get("category_name", "") or product.node_name or (item or {}).get("category_name", ""), item=item, old_count=old_count, purchase_url=purchase_url,
         checked_at=now_beijing().strftime("%Y-%m-%d %H:%M:%S 北京时间"))
