@@ -87,6 +87,19 @@ class BandwagonHostTests(unittest.TestCase):
         self.assertEqual(len(data["rows"]), 2)
         self.assertEqual({row["watch"]["catalog_scope"] for row in data["rows"]}, {"ecommerce:USCA_9"})
 
+    def test_full_directory_keeps_more_than_600_distinct_offers(self):
+        payload = json.loads(self.body)
+        offers = []
+        for pid in range(1, 736):
+            offer = json.loads(json.dumps(payload["offers"][0]))
+            offer.update(product_id=pid, cart_url=f"https://bandwagonhost.com/cart.php?a=add&pid={pid}")
+            offers.append(offer)
+        payload["offers"] = offers
+        with patch("bwh.read_payload", return_value=payload):
+            data = catalog.load_catalog("bwh", "all")
+        self.assertEqual(len(data["rows"]), 735)
+        self.assertEqual(len({row["watch"]["bwh_offer_key"] for row in data["rows"]}), 735)
+
     def test_inspect_requires_exact_offer_key(self):
         item = {"bwh_offer_key": "87:USCA_9:quarterly:4999"}
         with patch("monitor.fetch_page", side_effect=self.fetch_page):

@@ -22,6 +22,7 @@ from time_utils import beijing_iso
 PROVIDERS = {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "narwhal": "独角鲸云", "isvoro": "Isvoro", "dmit": "DMIT", "bwh": "搬瓦工"}
 MAX_ROWS = 600
 NARWHAL_MAX_ROWS = 5000
+BWH_MAX_ROWS = 5000
 NARWHAL_DIRECTORY_VERSION = 2
 METADATA_VERSION = 1
 
@@ -71,7 +72,7 @@ def akile_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[lis
     if not isinstance(payload, dict) or str(payload.get("status_code")) not in {"0", "200"} or not isinstance(payload.get("data"), dict) or not isinstance(payload["data"].get("areas"), list):
         raise MonitorError("Akile 目录结构异常")
     areas = payload["data"]["areas"]
-    scopes = [{"id": "all", "name": "全部公开套餐（手动）"}] + [{"id": str(a["id"]), "name": f"{clean(a.get('area_name'))}（{a['id']}）"} for a in areas]
+    scopes = [{"id": "all", "name": "全部套餐"}] + [{"id": str(a["id"]), "name": f"{clean(a.get('area_name'))}（{a['id']}）"} for a in areas]
     selected = scoped(scopes, scope, "all")
     rows = []
     for area in areas:
@@ -272,7 +273,8 @@ def load_catalog(provider: str, scope: str = "", fetcher: dict | None = None) ->
             scopes, actual, rows = directory(session, scope, fetcher)
         else:
             scopes, actual, rows = {"vmiss": vmiss_catalog, "vps_soy": soy_catalog, "akile": akile_catalog, "narwhal": narwhal_catalog, "isvoro": isvoro_catalog}[provider](session, scope, fetcher)
-    if len(rows) > (NARWHAL_MAX_ROWS if provider == "narwhal" else MAX_ROWS) or len({row["key"] for row in rows}) != len(rows):
+    row_limit = {"narwhal": NARWHAL_MAX_ROWS, "bwh": BWH_MAX_ROWS}.get(provider, MAX_ROWS)
+    if len(rows) > row_limit or len({row["key"] for row in rows}) != len(rows):
         raise ValueError("商品目录超过容量或存在重复标识，未更新缓存")
     data = {"provider": provider, "scope": actual, "scopes": scopes, "rows": rows, "fetched_at": now(), "route": route, "metadata_version": METADATA_VERSION, "unknown": sum(row["available"] is None for row in rows)}
     if provider == "dmit":
@@ -332,7 +334,7 @@ class CatalogService:
         elif scope and scope != "all":
             full = [v for v in cache.values() if v.get("provider") == provider and v.get("scope") == "all"]
             full = max(full, key=lambda v: v["fetched_at"]) if full else None
-            if full is not None:
+            if full is not None and (data is None or full["fetched_at"] > data["fetched_at"]):
                 known = {str(row.get("id")) for row in full.get("scopes", [])}
                 if scope in known:
                     scoped_data = self._catalog_scope_snapshot(full, scope)
@@ -373,6 +375,11 @@ class CatalogService:
     @staticmethod
     def _catalog_scope_snapshot(data: dict, scope: str) -> dict:
         rows = data.get("rows", [])
+        if data.get("provider") == "dmit":
+            from dmit import REGIONS
+            if scope in REGIONS:
+                rows = [row for row in rows if row.get("region") == REGIONS[scope]]
+                return {**data, "scope": scope, "rows": rows, "unknown": sum(row.get("available") is None for row in rows)}
         mapped_scopes = {str((row.get("watch") or {}).get("catalog_scope", "")) for row in rows}
         mapped = [row for row in rows if str((row.get("watch") or {}).get("catalog_scope", "")) == scope]
         # A provider may expose a full scope without assigning category metadata

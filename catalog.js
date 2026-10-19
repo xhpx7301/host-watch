@@ -5,8 +5,68 @@
   let provider = sessionStorage.getItem("hostwatch-catalog-provider") || "akile";
   if (!Object.hasOwn(providers, provider)) provider = "akile";
   if (currentPage === "narwhal") provider = "narwhal";
-  let scope = provider === "narwhal" ? "all" : "", data = null, task = null, route = null, page = 0, generation = 0, loading = false, metadataOutdated = false;
+  const fullDirectory = () => ["akile", "narwhal", "bwh"].includes(provider);
+  const hierarchicalDirectory = () => fullDirectory() || provider === "dmit";
+  let scope = fullDirectory() ? "all" : "", data = null, task = null, route = null, page = 0, generation = 0, loading = false, metadataOutdated = false;
   let narwhalRegion = "", narwhalMachine = "", narwhalPlan = "";
+  let akileArea = "", akileNode = "", akilePlan = "";
+  const facetState = { bwh: { region: "", datacenter: "", plan: "" }, dmit: { network: "", hardware: "", plan: "" } };
+  const networkNames = { PREMIUM: "Premium（Pro）", EYEBALL: "Eyeball（EB）", TIER1: "Tier 1（T1）" };
+  function facetValue(row, key) {
+    if (key === "region") return row.region || "未标注地区";
+    if (key === "datacenter") return row.watch.bwh_datacenter_id || "未标注机房";
+    if (key === "plan") return row.key;
+    const parts = (row.watch.plan_key || "").split(":");
+    if (key === "hardware") return parts[1] || /\b(?:AS|AN)\d+\b/i.exec(`${row.name} ${row.line}`)?.[0].toUpperCase() || "未标注处理器";
+    const line = parts[2] || row.line.split("/").at(-1).trim().toUpperCase();
+    return ({ PRO: "PREMIUM", PREMIUM: "PREMIUM", EB: "EYEBALL", EYEBALL: "EYEBALL", T1: "TIER1", "TIER 1": "TIER1", TIER1: "TIER1" })[line] || line || "未标注网络";
+  }
+  function facetLabel(row, key) {
+    const value = facetValue(row, key);
+    if (key === "datacenter") return `${row.line || "机房名称未提供"} · ${value} · ${row.region}`;
+    if (key === "network") return networkNames[value] || value;
+    if (key === "plan") return `${row.name} · ${row.specs || "配置未提供"} · ${row.price || "价格未提供"}`;
+    return value;
+  }
+  function facetRows(kind) {
+    return (data?.rows || []).filter(row => Object.entries(facetState[kind]).every(([key, value]) => !value || facetValue(row, key) === value));
+  }
+  function renderFacetSelect(kind, key, rows, title, disabled = false) {
+    const choices = new Map();
+    for (const row of rows) {
+      const value = facetValue(row, key), choice = choices.get(value) || { label: facetLabel(row, key), count: 0 };
+      choice.count++; choices.set(value, choice);
+    }
+    const state = facetState[kind], control = get(`${kind}-${key}`);
+    if (state[key] && !choices.has(state[key])) state[key] = "";
+    control.replaceChildren(new Option(`${title}（${choices.size}）`, ""), ...[...choices].sort((a, b) => a[1].label.localeCompare(b[1].label, "zh-CN")).map(([value, choice]) => new Option(key === "plan" ? choice.label : `${choice.label} · ${choice.count} 套餐`, value)));
+    control.value = state[key]; control.disabled = actionRunning || !rows.length || disabled;
+    return state[key] ? rows.filter(row => facetValue(row, key) === state[key]) : rows;
+  }
+  function resetFacetFilters(kind) {
+    for (const key of Object.keys(facetState[kind])) facetState[kind][key] = "";
+    get("catalog-search").value = ""; get("catalog-stock").value = "all";
+    page = 0; selected.clear();
+  }
+  function renderBwhFilters() {
+    let rows = data?.rows || [];
+    rows = renderFacetSelect("bwh", "region", rows, "全部地区");
+    rows = renderFacetSelect("bwh", "datacenter", rows, "全部机房");
+    renderFacetSelect("bwh", "plan", rows, facetState.bwh.datacenter ? "全部配置套餐" : "全部配置套餐，可先选择机房", !facetState.bwh.datacenter);
+    get("bwh-reset").disabled = actionRunning;
+  }
+  function renderDmitFilters() {
+    const regions = data?.scopes || knownScopes.get("dmit") || [];
+    get("dmit-region").replaceChildren(...(regions.length ? regions.map(row => new Option(row.id === "all" ? "全部地区 / 全部套餐" : row.name, row.id)) : [new Option("等待读取地区", "")]));
+    get("dmit-region").value = scope;
+    get("dmit-region").disabled = actionRunning || loading || !regions.length;
+    let rows = data?.rows || [];
+    rows = renderFacetSelect("dmit", "network", rows, "全部网络类型");
+    rows = renderFacetSelect("dmit", "hardware", rows, "全部处理器平台");
+    renderFacetSelect("dmit", "plan", rows, facetState.dmit.hardware ? "全部配置套餐" : "全部配置套餐，可先选择处理器", !facetState.dmit.hardware);
+    get("dmit-reset").disabled = actionRunning;
+  }
+  const akileNodeKey = (row) => row.key.split(":").slice(0, 3).join(":");
   const regionNames = new Intl.DisplayNames(["zh-CN"], { type: "region" });
   const regionLabel = (code) => {
     if (!code) return "未标注地区";
@@ -57,19 +117,79 @@
       (!narwhalMachine || row.watch.machine_id === narwhalMachine) && (!narwhalPlan || row.watch.plan_id === narwhalPlan));
   }
 
-  function renderNarwhalFilters() {
+  function akileRows() {
+    const query = get("akile-node-search").value.trim().toLowerCase();
+    return (data?.rows || []).filter(row => (!akileArea || row.watch.area_id === akileArea) &&
+      (!query || row.line.toLowerCase().includes(query)) && (!akileNode || akileNodeKey(row) === akileNode) &&
+      (!akilePlan || row.key === akilePlan));
+  }
+
+  function renderAkileFilters() {
+    const rows = data?.rows || [], areas = new Map(), nodes = new Map();
+    for (const row of rows) {
+      const id = row.watch.area_id, key = akileNodeKey(row);
+      const area = areas.get(id) || { name: row.region || `地区 ${id}`, plans: 0, nodes: new Set() };
+      area.plans++; area.nodes.add(key); areas.set(id, area);
+      if (akileArea && id !== akileArea) continue;
+      const node = nodes.get(key) || { name: row.line, area: area.name, count: 0 };
+      node.count++; nodes.set(key, node);
+    }
+    if (akileArea && !areas.has(akileArea)) { akileArea = ""; akileNode = ""; akilePlan = ""; return renderAkileFilters(); }
+    get("akile-region").replaceChildren(new Option(`全部地区（${areas.size}）`, ""), ...[...areas].map(([id, area]) => new Option(`${area.name} · ${area.nodes.size} 节点 / ${area.plans} 套餐`, id)));
+    get("akile-region").value = akileArea;
+    const query = get("akile-node-search").value.trim().toLowerCase();
+    const choices = [...nodes].filter(([, node]) => !query || node.name.toLowerCase().includes(query)).sort((a, b) => a[1].name.localeCompare(b[1].name, "zh-CN"));
+    if (akileNode && !choices.some(([key]) => key === akileNode)) { akileNode = ""; akilePlan = ""; }
+    get("akile-node").replaceChildren(new Option(`全部节点（${choices.length}）`, ""), ...choices.map(([key, node]) => new Option(`${node.name} · ${node.area} · ${node.count} 套餐（节点 ${key.split(":")[2]}）`, key)));
+    get("akile-node").value = akileNode;
+    const plans = akileNode ? rows.filter(row => akileNodeKey(row) === akileNode) : [];
+    if (akilePlan && !plans.some(row => row.key === akilePlan)) akilePlan = "";
+    get("akile-plan").replaceChildren(new Option(akileNode ? `全部套餐（${plans.length}）` : "全部套餐（可先选择节点）", ""), ...plans.map(row => new Option(`${row.name} · ${row.price || "价格未提供"}`, row.key)));
+    get("akile-plan").value = akilePlan;
+    get("akile-plan").disabled = actionRunning || !akileNode;
+    get("akile-region").disabled = actionRunning || !rows.length;
+    get("akile-node").disabled = actionRunning || !rows.length;
+    get("akile-node-search").disabled = actionRunning;
+    get("akile-reset").disabled = actionRunning;
+  }
+
+  function resetAkileFilters() {
+    akileArea = ""; akileNode = ""; akilePlan = "";
+    get("akile-node-search").value = "";
+    get("catalog-search").value = ""; get("catalog-stock").value = "all";
+    page = 0; selected.clear();
+  }
+
+  function renderDirectoryFilters() {
     const active = provider === "narwhal";
     get("narwhal-directory").hidden = !active;
-    get("catalog-scope").closest("label").hidden = active;
-    get("catalog-scope").closest(".catalog-filters").classList.toggle("narwhal-common", active);
+    get("akile-directory").hidden = provider !== "akile";
+    get("bwh-directory").hidden = provider !== "bwh";
+    get("dmit-directory").hidden = provider !== "dmit";
+    get("catalog-scope").closest("label").hidden = hierarchicalDirectory();
+    get("catalog-scope").closest(".catalog-filters").classList.toggle("hierarchical-common", hierarchicalDirectory());
     document.querySelector(".catalog-table").classList.toggle("narwhal-table", active);
     document.querySelector(".catalog-table th:nth-child(2)").textContent = active ? "实例 / 套餐" : "套餐";
-    document.querySelector(".catalog-table th:nth-child(3)").textContent = active ? "地区" : "地区 / 线路";
+    document.querySelector(".catalog-table th:nth-child(3)").textContent = active ? "地区" : provider === "akile" ? "地区 / 节点" : provider === "bwh" ? "地区 / 机房" : provider === "dmit" ? "地区 / 网络 / 处理器" : "地区 / 线路";
     document.querySelector(".catalog-merchants").parentElement.hidden = currentPage === "narwhal";
     document.querySelector(".catalog-intro h2").textContent = active ? "发现 NAT 实例，关注套餐补货" : "发现套餐，关注补货";
     document.querySelector(".catalog-intro p").textContent = active ? "全部地区、实例与套餐统一检索，按指定实例和套餐加入监控或 Telegram 通知。" : "商家公开目录直接同步，分别选择库存监控或 Telegram 通知。无需先配置每一款商品。";
-    get("catalog-search").placeholder = active ? "实例、套餐、地区或配置，例如 HK、香港、SoftBank" : "名称、地区、线路或配置";
+    get("catalog-search").placeholder = active ? "实例、套餐、地区或配置，例如 HK、香港、SoftBank" : provider === "akile" ? "套餐、节点、地区或配置，例如 HKL、香港" : "名称、地区、线路或配置";
     get("catalog-help").textContent = active ? "独角鲸云一次读取全部公开套餐，地区、实例和套餐筛选使用同一份库存快照；支持全目录自动刷新。大盘自动刷新仅在此栏目打开且页面可见时运行。加入库存通知并开启通知自动刷新后，服务器会在关闭网页后继续检查指定套餐，通过 Telegram 提醒补货；大盘刷新本身不发送通知。" : defaultCatalogHelp;
+    if (provider === "akile") {
+      get("catalog-help").textContent = "Akile 一次读取全部地区、节点和套餐，逐级筛选与搜索使用同一份库存快照；支持全目录自动刷新。大盘自动刷新仅在此栏目打开且页面可见时运行。将指定节点的套餐加入库存通知并开启通知自动刷新后，服务器会在关闭网页后继续检查，通过 Telegram 提醒补货；大盘刷新本身不发送通知。外币价格折算仅供参考。";
+      renderAkileFilters();
+    }
+    if (provider === "bwh") {
+      get("catalog-search").placeholder = "机房名称、机房 ID、地区或配置，例如 USCA_9、洛杉矶";
+      get("catalog-help").textContent = "搬瓦工一次读取全部公开报价，按地区、机房和配置套餐筛选；同名机房使用机房 ID 区分，不同计费周期分别列出。支持全目录自动刷新，筛选不重复请求商家。大盘刷新仅在页面可见时运行；已保存的库存通知按服务器的通知刷新设置检查补货。";
+      renderBwhFilters();
+    }
+    if (provider === "dmit") {
+      get("catalog-search").placeholder = "地区、网络、处理器平台或配置，例如 Eyeball、AN5、TINY";
+      get("catalog-help").textContent = "DMIT 按地区、网络类型、处理器平台和配置套餐筛选；AS3、AN4、AN5 等标识沿用官网命名，未提供的平台单独标注。网络、处理器与套餐筛选使用当前地区快照。全地区仅手动刷新，选择单地区后可自动刷新；有货仍须校验购买页，校验失败显示未知。已保存的库存通知按服务器的通知刷新设置检查补货。";
+      renderDmitFilters();
+    }
     if (!active) return;
     const rows = data?.rows || [], regions = new Map(), machines = new Map();
     for (const row of rows) {
@@ -80,7 +200,7 @@
       const machine = machines.get(row.watch.machine_id) || { name: row.line, count: 0 };
       machine.count++; machines.set(row.watch.machine_id, machine);
     }
-    if (narwhalRegion && !regions.has(narwhalRegion)) { narwhalRegion = ""; narwhalMachine = ""; narwhalPlan = ""; return renderNarwhalFilters(); }
+    if (narwhalRegion && !regions.has(narwhalRegion)) { narwhalRegion = ""; narwhalMachine = ""; narwhalPlan = ""; return renderDirectoryFilters(); }
     get("narwhal-region").replaceChildren(new Option(`全部地区（${regions.size}）`, ""), ...[...regions].sort((a, b) => b[1].plans - a[1].plans).map(([code, stats]) => new Option(`${regionLabel(code === "unknown" ? "" : code)} · ${stats.machines.size} 实例 / ${stats.plans} 套餐`, code)));
     get("narwhal-region").value = narwhalRegion;
     const query = get("narwhal-machine-search").value.trim().toLowerCase();
@@ -107,7 +227,7 @@
 
   function filtered() {
     const search = get("catalog-search").value.trim().toLowerCase(), stock = get("catalog-stock").value;
-    const rows = (provider === "narwhal" ? narwhalRows() : data?.rows || []).filter((row) => (!search || [row.name, row.region, row.line, row.specs, row.traffic, row.price, ...(provider === "narwhal" ? [regionLabel(row.region), row.watch.machine_id, row.watch.plan_id] : [])].join(" ").toLowerCase().includes(search)) &&
+    const rows = (provider === "narwhal" ? narwhalRows() : provider === "akile" ? akileRows() : ["bwh", "dmit"].includes(provider) ? facetRows(provider) : data?.rows || []).filter((row) => (!search || [row.name, row.region, row.line, row.specs, row.traffic, row.price, ...(provider === "narwhal" ? [regionLabel(row.region), row.watch.machine_id, row.watch.plan_id] : provider === "bwh" ? [row.watch.bwh_datacenter_id] : provider === "dmit" ? [facetLabel(row, "network"), facetValue(row, "hardware")] : [])].join(" ").toLowerCase().includes(search)) &&
       (stock === "all" || stock === "in" && row.available > 0 || stock === "out" && row.available === 0 || stock === "unknown" && row.available === null || stock === "watched" && existing(row) && membership(existing(row), "watch") || stock === "notified" && existing(row) && membership(existing(row), "notify")));
     return sortByMonthlyPrice(rows, readPriceSort(priceSortKey), row => row.price);
   }
@@ -143,6 +263,9 @@
     if (animate) animateFilterResult(get("catalog-results"));
     renderPriceHeading();
     const rows = filtered();
+    if (provider === "bwh") get("bwh-filter-note").textContent = `全目录 ${new Set((data?.rows || []).map(row => facetValue(row, "datacenter"))).size} 个机房 / ${data?.rows.length || 0} 个套餐报价 · 当前筛选 ${new Set(rows.map(row => facetValue(row, "datacenter"))).size} 个机房 / ${rows.length} 个套餐报价。不同计费周期分别计数。`;
+    if (provider === "dmit") get("dmit-filter-note").textContent = `当前${scope === "all" ? "全部地区" : "地区 / 分类"}快照 ${data?.rows.length || 0} 个套餐 · 筛选后 ${new Set(rows.map(row => facetValue(row, "network"))).size} 种网络 / ${new Set(rows.map(row => facetValue(row, "hardware"))).size} 种处理器平台 / ${rows.length} 个套餐。`;
+    if (provider === "akile") get("akile-filter-note").textContent = `全目录 ${new Set((data?.rows || []).map(akileNodeKey)).size} 个节点 / ${data?.rows.length || 0} 个套餐 · 当前筛选 ${new Set(rows.map(akileNodeKey)).size} 个节点 / ${rows.length} 个套餐。筛选在已读取的全目录中完成。`;
     if (provider === "narwhal") get("narwhal-filter-note").textContent = `全目录 ${new Set((data?.rows || []).map(row => row.watch.machine_id)).size} 个实例 / ${data?.rows.length || 0} 个套餐 · 当前筛选 ${new Set(rows.map(row => row.watch.machine_id)).size} 个实例 / ${rows.length} 个套餐。筛选在已读取的全目录中完成。`;
     page = Math.max(0, Math.min(page, Math.ceil(rows.length / pageSize) - 1));
     const visible = rows.slice(page * pageSize, (page + 1) * pageSize);
@@ -167,7 +290,9 @@
       const identity = cell();
       identity.append(text("strong", provider === "narwhal" ? row.line : row.name), text("small", provider === "narwhal" ? `套餐：${row.name}` : row.provider));
       const region = cell(); region.append(text("span", provider === "narwhal" ? regionLabel(row.region) : row.region || "—"));
-      if (provider !== "narwhal" && row.line && row.line !== row.region) region.append(text("small", row.line));
+      if (provider === "bwh") region.append(text("small", `${row.line} · ${facetValue(row, "datacenter")}`));
+      else if (provider === "dmit") region.append(text("small", `${facetLabel(row, "network")} · ${facetValue(row, "hardware")}`));
+      else if (provider !== "narwhal" && row.line && row.line !== row.region) region.append(text("small", row.line));
       const hardware = cell();
       const metadata = productSnapshot({ adapter: row.watch.adapter, snapshot: row });
       if (metadata.specs) renderSpecs(hardware, metadata.specs);
@@ -225,15 +350,15 @@
   }
 
   function render() {
-    renderNarwhalFilters();
+    renderDirectoryFilters();
     document.querySelectorAll("[data-catalog-provider]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.catalogProvider === provider)));
     const scopes = data?.scopes || knownScopes.get(provider) || [];
     get("catalog-scope").replaceChildren(...(scopes.length ? scopes.map((row) => new Option(row.id === "all" ? "全部公开套餐（手动）" : row.name, row.id)) : [new Option("等待目录", "")]));
     get("catalog-scope").value = scope;
     get("catalog-scope").disabled = actionRunning || loading || !scopes.length;
-    const fullCatalog = scope === "all" && provider !== "narwhal";
+    const fullCatalog = scope === "all" && !fullDirectory();
     get("catalog-auto").disabled = actionRunning || fullCatalog;
-    get("catalog-auto").title = fullCatalog ? "全部公开套餐只支持手动刷新，避免重复读取多个分类" : "分类目录可按设定间隔自动刷新";
+    get("catalog-auto").title = fullCatalog ? "全部公开套餐只支持手动刷新，避免重复读取多个分类" : fullDirectory() ? "全目录可按设定间隔自动刷新，筛选共用一次读取" : "分类目录可按设定间隔自动刷新";
     const busy = Boolean(task?.pending);
     get("catalog-refresh").disabled = actionRunning || busy || loading;
     get("catalog-stop").hidden = !busy;
@@ -260,12 +385,12 @@
     routeHint.className = `hint${effectiveRoute.error ? " error" : changed ? " stale" : ""}`;
     const stale = data && Date.now() - Date.parse(data.fetched_at) > 300000;
     status.className = "hint";
-    if (busy) { status.classList.add("pending"); status.textContent = task.cancelled ? "正在终止目录刷新，保留上次快照…" : `正在刷新 ${providers[task.provider] || "商家"}${task.provider === "narwhal" ? "全部实例与套餐" : task.scope === "all" ? "全部公开套餐（会读取多个分类）" : "目录"}，页面仍可操作；可点击“停止刷新”。`; }
+    if (busy) { status.classList.add("pending"); status.textContent = task.cancelled ? "正在终止目录刷新，保留上次快照…" : `正在刷新 ${providers[task.provider] || "商家"}${task.provider === "narwhal" ? "全部实例与套餐" : task.provider === "akile" ? "全部地区、节点与套餐" : task.provider === "bwh" ? "全部地区、机房与套餐" : task.scope === "all" ? "全部公开套餐（会读取多个分类）" : "目录"}，页面仍可操作；可点击“停止刷新”。`; }
     else if (task?.provider === provider && task.error) { status.classList.add("error"); status.textContent = task.error; }
     else if (task?.provider === provider && task.cancelled) status.textContent = "刷新已停止，保留上次快照。";
     else if (loading) status.textContent = "正在读取目录缓存…";
     else if (metadataOutdated) { status.classList.add("stale"); status.textContent = provider === "narwhal" ? "此目录为旧版快照，请刷新以读取全部地区、实例与套餐。" : provider === "dmit" ? "此分类为旧版快照，有货记录尚未校验购买页，请刷新目录库存。" : "此分类为旧版快照，带宽信息尚未更新，请刷新分类库存。"; }
-    else { status.textContent = data ? `已读取${provider === "narwhal" ? "全部实例与套餐" : scope === "all" ? "全部公开套餐（仅手动刷新）" : "此分类"}。${data.unknown ? `${data.unknown} 个套餐库存未知，未当作缺货或现货。` : ""}${stale ? "当前为历史快照，请刷新后核对。" : "库存以此快照的检查时间为准。"}` : "选择商家后刷新公开套餐目录，无需先开启自动监控。"; if (stale) status.classList.add("stale"); }
+    else { status.textContent = data ? `已读取${provider === "narwhal" ? "全部实例与套餐" : provider === "akile" ? "全部地区、节点与套餐" : provider === "bwh" ? "全部地区、机房与套餐" : scope === "all" ? "全部公开套餐（仅手动刷新）" : "此分类"}。${data.unknown ? `${data.unknown} 个套餐库存未知，未当作缺货或现货。` : ""}${stale ? "当前为历史快照，请刷新后核对。" : "库存以此快照的检查时间为准。"}` : "选择商家后刷新公开套餐目录，无需先开启自动监控。"; if (stale) status.classList.add("stale"); }
     const filterArrived = filterGeneration === generation && !loading && (data?.fetched_at || !task?.pending);
     renderTable(Boolean(filterArrived));
     if (filterArrived) filterGeneration = null;
@@ -298,7 +423,7 @@
     clearTimeout(pollTimer); clearTimeout(autoTimer);
     if (!catalogPage() || document.hidden) return;
     if (task?.pending) pollTimer = setTimeout(() => loadSnapshot(false), 1200);
-    else if ((scope !== "all" || provider === "narwhal") && !task?.error && !task?.cancelled && Number(get("catalog-auto").value)) autoTimer = setTimeout(() => refresh(true), Number(get("catalog-auto").value) * 1000);
+    else if ((scope !== "all" || fullDirectory()) && !task?.error && !task?.cancelled && Number(get("catalog-auto").value)) autoTimer = setTimeout(() => refresh(true), Number(get("catalog-auto").value) * 1000);
   }
 
   async function loadSnapshot(refreshMissing = true) {
@@ -338,8 +463,10 @@
 
   document.querySelectorAll("[data-catalog-provider]").forEach((button) => button.addEventListener("click", () => {
     if (provider === button.dataset.catalogProvider) return;
-    generation++; provider = button.dataset.catalogProvider; scope = provider === "narwhal" ? "all" : ""; data = null; route = null; metadataOutdated = false; page = 0; selected.clear();
+    generation++; provider = button.dataset.catalogProvider; scope = fullDirectory() ? "all" : ""; data = null; route = null; metadataOutdated = false; page = 0; selected.clear();
     resetNarwhalFilters();
+    resetAkileFilters();
+    resetFacetFilters("bwh"); resetFacetFilters("dmit");
     filterGeneration = generation;
     sessionStorage.setItem("hostwatch-catalog-provider", provider);
     get("catalog-search").value = ""; get("catalog-stock").value = "all";
@@ -347,19 +474,41 @@
     animateFilterResult(get("catalog-results"));
   }));
   function catalogPage() { return currentPage === "catalog" || currentPage === "narwhal"; }
-  get("catalog-scope").addEventListener("change", () => {
-    generation++; scope = get("catalog-scope").value; page = 0; selected.clear();
+  function changeScope(value) {
+    generation++; scope = value; page = 0; selected.clear();
     filterGeneration = generation;
     const scopes = data?.scopes || knownScopes.get(provider) || []; data = { provider, scope, scopes, rows: [] }; metadataOutdated = false;
     void loadSnapshot();
     animateFilterResult(get("catalog-results"));
+  }
+  get("catalog-scope").addEventListener("change", () => changeScope(get("catalog-scope").value));
+  get("dmit-region").addEventListener("change", () => { resetFacetFilters("dmit"); changeScope(get("dmit-region").value); });
+  for (const kind of ["bwh", "dmit"]) {
+    const keys = Object.keys(facetState[kind]);
+    keys.forEach((key, index) => get(`${kind}-${key}`).addEventListener("change", () => {
+      facetState[kind][key] = get(`${kind}-${key}`).value;
+      keys.slice(index + 1).forEach(child => { facetState[kind][child] = ""; });
+      page = 0; selected.clear(); renderDirectoryFilters(); renderTable(true);
+    }));
+    get(`${kind}-reset`).addEventListener("click", () => {
+      resetFacetFilters(kind);
+      if (kind === "dmit" && scope !== "all" && (data?.scopes || []).some(row => row.id === "all")) changeScope("all");
+      else render();
+    });
+  }
+  for (const id of ["catalog-search", "catalog-stock"]) get(id).addEventListener(id === "catalog-search" ? "input" : "change", () => { page = 0; if (hierarchicalDirectory()) selected.clear(); renderTable(true); });
+  for (const id of ["akile-region", "akile-node", "akile-plan", "akile-node-search"]) get(id).addEventListener(id.endsWith("search") ? "input" : "change", () => {
+    if (id === "akile-region") { akileArea = get(id).value; akileNode = ""; akilePlan = ""; get("akile-node-search").value = ""; }
+    if (id === "akile-node") { akileNode = get(id).value; akilePlan = ""; }
+    if (id === "akile-plan") akilePlan = get(id).value;
+    page = 0; selected.clear(); renderDirectoryFilters(); renderTable(true);
   });
-  for (const id of ["catalog-search", "catalog-stock"]) get(id).addEventListener(id === "catalog-search" ? "input" : "change", () => { page = 0; if (provider === "narwhal") selected.clear(); renderTable(true); });
+  get("akile-reset").addEventListener("click", () => { resetAkileFilters(); render(); });
   for (const id of ["narwhal-region", "narwhal-machine", "narwhal-plan", "narwhal-machine-search"]) get(id).addEventListener(id.endsWith("search") ? "input" : "change", () => {
     if (id === "narwhal-region") { narwhalRegion = get(id).value; narwhalMachine = ""; narwhalPlan = ""; get("narwhal-machine-search").value = ""; }
     if (id === "narwhal-machine") { narwhalMachine = get(id).value; narwhalPlan = ""; }
     if (id === "narwhal-plan") narwhalPlan = get(id).value;
-    page = 0; selected.clear(); renderNarwhalFilters(); renderTable(true);
+    page = 0; selected.clear(); renderDirectoryFilters(); renderTable(true);
   });
   get("narwhal-reset").addEventListener("click", () => { resetNarwhalFilters(); render(); });
   get("catalog-auto").addEventListener("change", () => {

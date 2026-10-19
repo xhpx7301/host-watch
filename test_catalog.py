@@ -247,6 +247,21 @@ class CatalogServiceTests(unittest.TestCase):
         self.assertEqual(self.service.snapshot("akile", "999")["data"], None)
         self.assertEqual(self.service.snapshot("akile")["data"], full)
 
+    def test_dmit_regions_use_full_cache_without_overriding_newer_region_checks(self):
+        from dmit import STOCK_VERSION
+        full = {**self.value, "provider": "dmit", "stock_version": STOCK_VERSION,
+                "scopes": [{"id": "all", "name": "全部"}, {"id": "LAX", "name": "洛杉矶"}, {"id": "TYO", "name": "东京"}],
+                "rows": [{"key": "lax", "region": "美国 · 洛杉矶", "available": 0, "watch": {"catalog_scope": "all"}},
+                         {"key": "tyo", "region": "日本 · 东京", "available": None, "watch": {"catalog_scope": "all"}}]}
+        self.path.write_text(json.dumps({"dmit:all": full}), encoding="utf-8")
+        region = self.service.snapshot("dmit", "LAX")["data"]
+        self.assertEqual([row["key"] for row in region["rows"]], ["lax"])
+        self.assertEqual(region["unknown"], 0)
+        recent = {**region, "fetched_at": "2099-01-01T00:00:00+08:00", "rows": [{**region["rows"][0], "available": 1}]}
+        for fetched_at in [recent["fetched_at"], full["fetched_at"]]:
+            self.path.write_text(json.dumps({"dmit:all": full, "dmit:LAX": {**recent, "fetched_at": fetched_at}}), encoding="utf-8")
+            self.assertEqual(self.service.snapshot("dmit", "LAX")["data"]["rows"][0]["available"], 1)
+
     def test_non_akile_categories_are_derived_from_full_catalog_when_mapped(self):
         full = {**self.value, "provider": "vps_soy", "scope": "all",
                 "scopes": [{"id": "all", "name": "全部公开套餐"}, {"id": "1:8", "name": "深港"}],

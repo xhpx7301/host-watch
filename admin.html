@@ -261,19 +261,21 @@
     .catalog-merchants button[aria-pressed="true"] { color:#fff; background:var(--green); border-color:var(--green); }
     .catalog-browser { padding:16px; }
     .catalog-filters { display:grid; grid-template-columns:minmax(180px,220px) minmax(220px,1fr) minmax(150px,190px) minmax(150px,190px); gap:12px; }
-    .catalog-filters.narwhal-common { grid-template-columns:minmax(220px,1fr) minmax(150px,190px) minmax(150px,190px); }
-    .narwhal-directory { margin-bottom:16px; padding-bottom:16px; border-bottom:1px solid var(--line); }
-    .narwhal-directory-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px; }
-    .narwhal-directory-head strong { display:block; font-size:15px; }
-    .narwhal-directory-head p { margin:5px 0 0; color:var(--muted); font-size:12px; }
-    .narwhal-filters { display:grid; grid-template-columns:minmax(170px,.85fr) minmax(240px,1.5fr) minmax(180px,1fr); gap:12px; align-items:start; }
-    .narwhal-filters label { min-width:0; }
-    .narwhal-filters select { width:100%; min-width:0; text-overflow:ellipsis; }
-    .narwhal-instance-control { display:grid; gap:6px; }
-    #narwhal-filter-note { margin:12px 0 0; }
+    .catalog-filters.hierarchical-common { grid-template-columns:minmax(220px,1fr) minmax(150px,190px) minmax(150px,190px); }
+    .catalog-directory { margin-bottom:16px; padding-bottom:16px; border-bottom:1px solid var(--line); }
+    .catalog-directory-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px; }
+    .catalog-directory-head strong { display:block; font-size:15px; }
+    .catalog-directory-head p { margin:5px 0 0; color:var(--muted); font-size:12px; }
+    .directory-filters { display:grid; grid-template-columns:minmax(170px,.85fr) minmax(240px,1.5fr) minmax(180px,1fr); gap:12px; align-items:start; }
+    .directory-filters.dmit-filters { grid-template-columns:repeat(3,minmax(150px,1fr)); }
+    .dmit-filters > label:last-child { grid-column:1/-1; }
+    .directory-filters label { min-width:0; }
+    .directory-filters select { width:100%; min-width:0; text-overflow:ellipsis; }
+    .directory-instance-control { display:grid; gap:6px; }
+    .catalog-directory > .hint { margin:12px 0 0; }
     .catalog-table.narwhal-table td:nth-child(2) { min-width:230px; max-width:330px; }
-    @media(max-width:900px) { .narwhal-filters { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } .narwhal-filters > label:last-child { grid-column:1/-1; } .catalog-filters.narwhal-common { grid-template-columns:repeat(2,minmax(0,1fr)); } .catalog-filters.narwhal-common > label:nth-child(2) { grid-column:1/-1; } }
-    @media(max-width:520px) { .narwhal-filters,.catalog-filters.narwhal-common { grid-template-columns:minmax(0,1fr); } .narwhal-directory-head { align-items:flex-start; flex-direction:column; } }
+    @media(max-width:900px) { .directory-filters,.directory-filters.dmit-filters { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } .directory-filters > label:last-child { grid-column:1/-1; } .catalog-filters.hierarchical-common { grid-template-columns:repeat(2,minmax(0,1fr)); } .catalog-filters.hierarchical-common > label:nth-child(2) { grid-column:1/-1; } }
+    @media(max-width:520px) { .directory-filters,.directory-filters.dmit-filters,.catalog-filters.hierarchical-common { grid-template-columns:minmax(0,1fr); } .catalog-directory-head { align-items:flex-start; flex-direction:column; } }
     .catalog-sync { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; }
     .catalog-sync strong,.catalog-sync .subtle { display:block; }
     #catalog-status { min-height:18px; margin-bottom:14px; }
@@ -792,11 +794,39 @@
     <div class="catalog-intro"><div><span class="eyebrow">VPS DIRECTORY</span><h2>发现套餐，关注补货</h2><p>商家公开目录直接同步，分别选择库存监控或 Telegram 通知。无需先配置每一款商品。</p></div><span class="catalog-private">个人库存看板</span></div>
       <div class="section-head"><div class="catalog-merchants" role="group" aria-label="选择商家"><button type="button" data-catalog-provider="vmiss" aria-pressed="false">VMISS</button><button type="button" data-catalog-provider="vps_soy" aria-pressed="false">VPS.SOY</button><button type="button" data-catalog-provider="akile" aria-pressed="true">Akile</button><button type="button" data-catalog-provider="narwhal" aria-pressed="false">独角鲸云</button><button type="button" data-catalog-provider="isvoro" aria-pressed="false">Isvoro</button><button type="button" data-catalog-provider="dmit" aria-pressed="false">DMIT</button><button type="button" data-catalog-provider="bwh" aria-pressed="false">搬瓦工</button></div><button id="merchant-order-toggle" type="button" aria-expanded="false">调整商家顺序</button></div>
     <div class="panel-card catalog-browser">
-      <div id="narwhal-directory" class="narwhal-directory" hidden>
-        <div class="narwhal-directory-head"><div><strong>按地区、实例、套餐查找</strong><p>默认浏览全部套餐，可逐级缩小范围，也可直接搜索实例或套餐名称。</p></div><button id="narwhal-reset" type="button">查看全部套餐 / 重置筛选</button></div>
-        <div class="narwhal-filters">
+      <div id="bwh-directory" class="catalog-directory" hidden>
+        <div class="catalog-directory-head"><div><strong>按地区、机房、配置套餐查找</strong><p>默认浏览全部机房。相同机房名称用机房 ID 区分，不同计费周期分别列出。</p></div><button id="bwh-reset" type="button">查看全部套餐 / 重置筛选</button></div>
+        <div class="directory-filters">
+          <label>地区<select id="bwh-region"><option value="">全部地区</option></select></label>
+          <label>机房<select id="bwh-datacenter"><option value="">全部机房</option></select></label>
+          <label>机房下的配置套餐<select id="bwh-plan" disabled><option value="">全部配置套餐，可先选择机房</option></select></label>
+        </div>
+        <p id="bwh-filter-note" class="hint" role="status" aria-live="polite"></p>
+      </div>
+      <div id="dmit-directory" class="catalog-directory" hidden>
+        <div class="catalog-directory-head"><div><strong>按地区、网络、处理器、配置套餐查找</strong><p>处理器平台沿用官网 AS3、AN4、AN5 等标识。可逐级筛选，也可直接搜索配置。</p></div><button id="dmit-reset" type="button">查看全部套餐 / 重置筛选</button></div>
+        <div class="directory-filters dmit-filters">
+          <label>地区<select id="dmit-region"><option value="">等待读取地区</option></select></label>
+          <label>网络类型<select id="dmit-network"><option value="">全部网络类型</option></select></label>
+          <label>处理器 / 平台<select id="dmit-hardware"><option value="">全部处理器平台</option></select></label>
+          <label>处理器下的配置套餐<select id="dmit-plan" disabled><option value="">全部配置套餐，可先选择处理器</option></select></label>
+        </div>
+        <p id="dmit-filter-note" class="hint" role="status" aria-live="polite"></p>
+      </div>
+      <div id="akile-directory" class="catalog-directory" hidden>
+        <div class="catalog-directory-head"><div><strong>按地区、节点、套餐查找</strong><p>默认浏览全部套餐，可逐级筛选，也可搜索节点名称快速定位。</p></div><button id="akile-reset" type="button">查看全部套餐 / 重置筛选</button></div>
+        <div class="directory-filters">
+          <label>地区<select id="akile-region"><option value="">全部地区</option></select></label>
+          <label>节点<div class="directory-instance-control"><input id="akile-node-search" type="search" placeholder="输入节点名称缩小列表" aria-label="搜索 Akile 节点"><select id="akile-node" aria-label="选择 Akile 节点"><option value="">全部节点</option></select></div></label>
+          <label>节点下的套餐<select id="akile-plan" disabled><option value="">全部套餐（可先选择节点）</option></select></label>
+        </div>
+        <p id="akile-filter-note" class="hint" role="status" aria-live="polite"></p>
+      </div>
+      <div id="narwhal-directory" class="catalog-directory" hidden>
+        <div class="catalog-directory-head"><div><strong>按地区、实例、套餐查找</strong><p>默认浏览全部套餐，可逐级缩小范围，也可直接搜索实例或套餐名称。</p></div><button id="narwhal-reset" type="button">查看全部套餐 / 重置筛选</button></div>
+        <div class="directory-filters">
           <label>地区<select id="narwhal-region"><option value="">全部地区</option></select></label>
-          <label>商品 / 实例<div class="narwhal-instance-control"><input id="narwhal-machine-search" type="search" placeholder="输入实例名称或 ID 缩小列表" aria-label="搜索商品或实例"><select id="narwhal-machine" aria-label="选择商品或实例"><option value="">全部实例</option></select></div></label>
+          <label>商品 / 实例<div class="directory-instance-control"><input id="narwhal-machine-search" type="search" placeholder="输入实例名称或 ID 缩小列表" aria-label="搜索商品或实例"><select id="narwhal-machine" aria-label="选择商品或实例"><option value="">全部实例</option></select></div></label>
           <label>实例下的套餐<select id="narwhal-plan" disabled><option value="">全部套餐（可先选择实例）</option></select></label>
         </div>
         <p id="narwhal-filter-note" class="hint" role="status" aria-live="polite"></p>
@@ -1086,6 +1116,6 @@
   <dialog id="overview-log-dialog" class="watch-compare-dialog" aria-labelledby="overview-log-title"><div class="watch-compare-dialog-head"><div><span class="eyebrow">MODULE LOG</span><h2 id="overview-log-title">模块详细日志</h2><p>显示该模块保存的完整近期日志。</p></div><button id="overview-log-close" type="button" class="icon-button" aria-label="关闭模块详细日志">×</button></div><pre id="overview-log-detail-content" class="manage-logs">暂无日志</pre></dialog>
   <dialog id="seckill-picker-dialog" class="watch-compare-dialog" aria-labelledby="seckill-picker-title"><div class="watch-compare-dialog-head"><div><span class="eyebrow">SECKILL PICKER</span><h2 id="seckill-picker-title">选择补货抢购商品</h2><p>选择后加入 VPS 补货抢购，已加入的商品不会重复添加。</p></div><button id="seckill-picker-close" type="button" class="icon-button" aria-label="关闭商品选择">×</button></div><div id="seckill-picker-content"></div></dialog>
 <script src="/admin.js?v=narwhal-filters-20261019"></script>
-<script src="/catalog.js?v=narwhal-filters-20261019"></script>
+<script src="/catalog.js?v=provider-hierarchy-filters-20261019"></script>
 </body>
 </html>
