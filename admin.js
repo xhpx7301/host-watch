@@ -302,7 +302,8 @@ function renderMarket() {
   regionNode.replaceChildren(new Option("全部地区", "all"), ...regions.map(value => new Option(value, value)));
   regionNode.value = regions.includes(region) ? region : "all";
   const productNode = document.querySelector("#market-product"), product = productNode.value;
-  const products = [...new Set(all.map(row => row.plan_name || row.name).filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh-CN"));
+  const regionProducts = regionNode.value === "all" ? all : all.filter(row => row.region === regionNode.value);
+  const products = [...new Set(regionProducts.map(row => row.plan_name || row.name).filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh-CN"));
   productNode.replaceChildren(new Option("全部商品", "all"), ...products.map(value => new Option(value, value)));
   productNode.value = products.includes(product) ? product : "all";
   const visible = all.filter(row => {
