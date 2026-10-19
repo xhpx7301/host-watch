@@ -8,14 +8,13 @@
   const fullDirectory = () => ["akile", "narwhal", "bwh"].includes(provider);
   const hierarchicalDirectory = () => fullDirectory() || provider === "dmit";
   let scope = fullDirectory() ? "all" : "", data = null, task = null, route = null, page = 0, generation = 0, loading = false, metadataOutdated = false;
-  let narwhalRegion = "", narwhalMachine = "", narwhalPlan = "";
-  let akileArea = "", akileNode = "", akilePlan = "";
-  const facetState = { bwh: { region: "", datacenter: "", plan: "" }, dmit: { network: "", hardware: "", plan: "" } };
+  let narwhalRegion = "", narwhalMachine = "";
+  let akileArea = "", akileNode = "";
+  const facetState = { bwh: { region: "", datacenter: "" }, dmit: { network: "", hardware: "" } };
   const networkNames = { PREMIUM: "Premium（Pro）", EYEBALL: "Eyeball（EB）", TIER1: "Tier 1（T1）" };
   function facetValue(row, key) {
     if (key === "region") return row.region || "未标注地区";
     if (key === "datacenter") return row.watch.bwh_datacenter_id || "未标注机房";
-    if (key === "plan") return row.key;
     const parts = (row.watch.plan_key || "").split(":");
     if (key === "hardware") return parts[1] || /\b(?:AS|AN)\d+\b/i.exec(`${row.name} ${row.line}`)?.[0].toUpperCase() || "未标注处理器";
     const line = parts[2] || row.line.split("/").at(-1).trim().toUpperCase();
@@ -25,7 +24,6 @@
     const value = facetValue(row, key);
     if (key === "datacenter") return `${row.line || "机房名称未提供"} · ${value} · ${row.region}`;
     if (key === "network") return networkNames[value] || value;
-    if (key === "plan") return `${row.name} · ${row.specs || "配置未提供"} · ${row.price || "价格未提供"}`;
     return value;
   }
   function facetRows(kind) {
@@ -39,7 +37,7 @@
     }
     const state = facetState[kind], control = get(`${kind}-${key}`);
     if (state[key] && !choices.has(state[key])) state[key] = "";
-    control.replaceChildren(new Option(`${title}（${choices.size}）`, ""), ...[...choices].sort((a, b) => a[1].label.localeCompare(b[1].label, "zh-CN")).map(([value, choice]) => new Option(key === "plan" ? choice.label : `${choice.label} · ${choice.count} 套餐`, value)));
+    control.replaceChildren(new Option(`${title}（${choices.size}）`, ""), ...[...choices].sort((a, b) => a[1].label.localeCompare(b[1].label, "zh-CN")).map(([value, choice]) => new Option(`${choice.label} · ${choice.count} 套餐`, value)));
     control.value = state[key]; control.disabled = actionRunning || !rows.length || disabled;
     return state[key] ? rows.filter(row => facetValue(row, key) === state[key]) : rows;
   }
@@ -52,7 +50,6 @@
     let rows = data?.rows || [];
     rows = renderFacetSelect("bwh", "region", rows, "全部地区");
     rows = renderFacetSelect("bwh", "datacenter", rows, "全部机房");
-    renderFacetSelect("bwh", "plan", rows, facetState.bwh.datacenter ? "全部配置套餐" : "全部配置套餐，可先选择机房", !facetState.bwh.datacenter);
     get("bwh-reset").disabled = actionRunning;
   }
   function renderDmitFilters() {
@@ -63,7 +60,6 @@
     let rows = data?.rows || [];
     rows = renderFacetSelect("dmit", "network", rows, "全部网络类型");
     rows = renderFacetSelect("dmit", "hardware", rows, "全部处理器平台");
-    renderFacetSelect("dmit", "plan", rows, facetState.dmit.hardware ? "全部配置套餐" : "全部配置套餐，可先选择处理器", !facetState.dmit.hardware);
     get("dmit-reset").disabled = actionRunning;
   }
   const akileNodeKey = (row) => row.key.split(":").slice(0, 3).join(":");
@@ -114,14 +110,13 @@
     const query = get("narwhal-machine-search").value.trim().toLowerCase();
     return (data?.rows || []).filter(row => (!narwhalRegion || (row.region || "unknown") === narwhalRegion) &&
       (!query || `${row.line} ${row.watch.machine_id}`.toLowerCase().includes(query)) &&
-      (!narwhalMachine || row.watch.machine_id === narwhalMachine) && (!narwhalPlan || row.watch.plan_id === narwhalPlan));
+      (!narwhalMachine || row.watch.machine_id === narwhalMachine));
   }
 
   function akileRows() {
     const query = get("akile-node-search").value.trim().toLowerCase();
     return (data?.rows || []).filter(row => (!akileArea || row.watch.area_id === akileArea) &&
-      (!query || row.line.toLowerCase().includes(query)) && (!akileNode || akileNodeKey(row) === akileNode) &&
-      (!akilePlan || row.key === akilePlan));
+      (!query || row.line.toLowerCase().includes(query)) && (!akileNode || akileNodeKey(row) === akileNode));
   }
 
   function renderAkileFilters() {
@@ -134,19 +129,14 @@
       const node = nodes.get(key) || { name: row.line, area: area.name, count: 0 };
       node.count++; nodes.set(key, node);
     }
-    if (akileArea && !areas.has(akileArea)) { akileArea = ""; akileNode = ""; akilePlan = ""; return renderAkileFilters(); }
+    if (akileArea && !areas.has(akileArea)) { akileArea = ""; akileNode = ""; return renderAkileFilters(); }
     get("akile-region").replaceChildren(new Option(`全部地区（${areas.size}）`, ""), ...[...areas].map(([id, area]) => new Option(`${area.name} · ${area.nodes.size} 节点 / ${area.plans} 套餐`, id)));
     get("akile-region").value = akileArea;
     const query = get("akile-node-search").value.trim().toLowerCase();
     const choices = [...nodes].filter(([, node]) => !query || node.name.toLowerCase().includes(query)).sort((a, b) => a[1].name.localeCompare(b[1].name, "zh-CN"));
-    if (akileNode && !choices.some(([key]) => key === akileNode)) { akileNode = ""; akilePlan = ""; }
+    if (akileNode && !choices.some(([key]) => key === akileNode)) akileNode = "";
     get("akile-node").replaceChildren(new Option(`全部节点（${choices.length}）`, ""), ...choices.map(([key, node]) => new Option(`${node.name} · ${node.area} · ${node.count} 套餐（节点 ${key.split(":")[2]}）`, key)));
     get("akile-node").value = akileNode;
-    const plans = akileNode ? rows.filter(row => akileNodeKey(row) === akileNode) : [];
-    if (akilePlan && !plans.some(row => row.key === akilePlan)) akilePlan = "";
-    get("akile-plan").replaceChildren(new Option(akileNode ? `全部套餐（${plans.length}）` : "全部套餐（可先选择节点）", ""), ...plans.map(row => new Option(`${row.name} · ${row.price || "价格未提供"}`, row.key)));
-    get("akile-plan").value = akilePlan;
-    get("akile-plan").disabled = actionRunning || !akileNode;
     get("akile-region").disabled = actionRunning || !rows.length;
     get("akile-node").disabled = actionRunning || !rows.length;
     get("akile-node-search").disabled = actionRunning;
@@ -154,7 +144,7 @@
   }
 
   function resetAkileFilters() {
-    akileArea = ""; akileNode = ""; akilePlan = "";
+    akileArea = ""; akileNode = "";
     get("akile-node-search").value = "";
     get("catalog-search").value = ""; get("catalog-stock").value = "all";
     page = 0; selected.clear();
@@ -166,8 +156,15 @@
     get("akile-directory").hidden = provider !== "akile";
     get("bwh-directory").hidden = provider !== "bwh";
     get("dmit-directory").hidden = provider !== "dmit";
+    get("catalog-scope").closest(".catalog-filters").className = `catalog-filters provider-${["bwh", "dmit", "akile", "narwhal"].includes(provider) ? provider : "standard"}`;
     get("catalog-scope").closest("label").hidden = hierarchicalDirectory();
-    get("catalog-scope").closest(".catalog-filters").classList.toggle("hierarchical-common", hierarchicalDirectory());
+    const visibleFilters = {
+      "bwh-region": provider === "bwh", "bwh-datacenter": provider === "bwh",
+      "dmit-region": provider === "dmit", "dmit-network": provider === "dmit", "dmit-hardware": provider === "dmit",
+      "akile-region": provider === "akile", "akile-node-search": provider === "akile",
+      "narwhal-region": active, "narwhal-machine-search": active
+    };
+    for (const [id, visible] of Object.entries(visibleFilters)) get(id).closest("label").hidden = !visible;
     document.querySelector(".catalog-table").classList.toggle("narwhal-table", active);
     document.querySelector(".catalog-table th:nth-child(2)").textContent = active ? "实例 / 套餐" : "套餐";
     document.querySelector(".catalog-table th:nth-child(3)").textContent = active ? "地区" : provider === "akile" ? "地区 / 节点" : provider === "bwh" ? "地区 / 机房" : provider === "dmit" ? "地区 / 网络 / 处理器" : "地区 / 线路";
@@ -175,19 +172,19 @@
     document.querySelector(".catalog-intro h2").textContent = active ? "发现 NAT 实例，关注套餐补货" : "发现套餐，关注补货";
     document.querySelector(".catalog-intro p").textContent = active ? "全部地区、实例与套餐统一检索，按指定实例和套餐加入监控或 Telegram 通知。" : "商家公开目录直接同步，分别选择库存监控或 Telegram 通知。无需先配置每一款商品。";
     get("catalog-search").placeholder = active ? "实例、套餐、地区或配置，例如 HK、香港、SoftBank" : provider === "akile" ? "套餐、节点、地区或配置，例如 HKL、香港" : "名称、地区、线路或配置";
-    get("catalog-help").textContent = active ? "独角鲸云一次读取全部公开套餐，地区、实例和套餐筛选使用同一份库存快照；支持全目录自动刷新。大盘自动刷新仅在此栏目打开且页面可见时运行。加入库存通知并开启通知自动刷新后，服务器会在关闭网页后继续检查指定套餐，通过 Telegram 提醒补货；大盘刷新本身不发送通知。" : defaultCatalogHelp;
+    get("catalog-help").textContent = active ? "独角鲸云一次读取全部公开套餐，地区和实例筛选、套餐搜索使用同一份库存快照；支持全目录自动刷新。大盘自动刷新仅在此栏目打开且页面可见时运行。加入库存通知并开启通知自动刷新后，服务器会在关闭网页后继续检查指定套餐，通过 Telegram 提醒补货；大盘刷新本身不发送通知。" : defaultCatalogHelp;
     if (provider === "akile") {
-      get("catalog-help").textContent = "Akile 一次读取全部地区、节点和套餐，逐级筛选与搜索使用同一份库存快照；支持全目录自动刷新。大盘自动刷新仅在此栏目打开且页面可见时运行。将指定节点的套餐加入库存通知并开启通知自动刷新后，服务器会在关闭网页后继续检查，通过 Telegram 提醒补货；大盘刷新本身不发送通知。外币价格折算仅供参考。";
+      get("catalog-help").textContent = "Akile 一次读取全部地区、节点和套餐，地区、节点筛选与套餐搜索使用同一份库存快照；支持全目录自动刷新。大盘自动刷新仅在此栏目打开且页面可见时运行。将指定节点的套餐加入库存通知并开启通知自动刷新后，服务器会在关闭网页后继续检查，通过 Telegram 提醒补货；大盘刷新本身不发送通知。外币价格折算仅供参考。";
       renderAkileFilters();
     }
     if (provider === "bwh") {
       get("catalog-search").placeholder = "机房名称、机房 ID、地区或配置，例如 USCA_9、洛杉矶";
-      get("catalog-help").textContent = "搬瓦工一次读取全部公开报价，按地区、机房和配置套餐筛选；同名机房使用机房 ID 区分，不同计费周期分别列出。支持全目录自动刷新，筛选不重复请求商家。大盘刷新仅在页面可见时运行；已保存的库存通知按服务器的通知刷新设置检查补货。";
+      get("catalog-help").textContent = "搬瓦工一次读取全部公开报价，按地区和机房筛选，配置套餐与计费周期在下方列表查看；同名机房使用机房 ID 区分。支持全目录自动刷新，筛选不重复请求商家。大盘刷新仅在页面可见时运行；已保存的库存通知按服务器的通知刷新设置检查补货。";
       renderBwhFilters();
     }
     if (provider === "dmit") {
       get("catalog-search").placeholder = "地区、网络、处理器平台或配置，例如 Eyeball、AN5、TINY";
-      get("catalog-help").textContent = "DMIT 按地区、网络类型、处理器平台和配置套餐筛选；AS3、AN4、AN5 等标识沿用官网命名，未提供的平台单独标注。网络、处理器与套餐筛选使用当前地区快照。全地区仅手动刷新，选择单地区后可自动刷新；有货仍须校验购买页，校验失败显示未知。已保存的库存通知按服务器的通知刷新设置检查补货。";
+      get("catalog-help").textContent = "DMIT 按地区、网络类型和处理器平台筛选，完整配置套餐显示在下方列表；AS3、AN4、AN5 等标识沿用官网命名，未提供的平台单独标注。筛选使用当前地区快照。全地区仅手动刷新，选择单地区后可自动刷新；有货仍须校验购买页，校验失败显示未知。已保存的库存通知按服务器的通知刷新设置检查补货。";
       renderDmitFilters();
     }
     if (!active) return;
@@ -200,26 +197,21 @@
       const machine = machines.get(row.watch.machine_id) || { name: row.line, count: 0 };
       machine.count++; machines.set(row.watch.machine_id, machine);
     }
-    if (narwhalRegion && !regions.has(narwhalRegion)) { narwhalRegion = ""; narwhalMachine = ""; narwhalPlan = ""; return renderDirectoryFilters(); }
+    if (narwhalRegion && !regions.has(narwhalRegion)) { narwhalRegion = ""; narwhalMachine = ""; return renderDirectoryFilters(); }
     get("narwhal-region").replaceChildren(new Option(`全部地区（${regions.size}）`, ""), ...[...regions].sort((a, b) => b[1].plans - a[1].plans).map(([code, stats]) => new Option(`${regionLabel(code === "unknown" ? "" : code)} · ${stats.machines.size} 实例 / ${stats.plans} 套餐`, code)));
     get("narwhal-region").value = narwhalRegion;
     const query = get("narwhal-machine-search").value.trim().toLowerCase();
     const choices = [...machines].filter(([id, machine]) => !query || `${machine.name} ${id}`.toLowerCase().includes(query)).sort((a, b) => a[1].name.localeCompare(b[1].name, "zh-CN"));
-    if (narwhalMachine && !choices.some(([id]) => id === narwhalMachine)) { narwhalMachine = ""; narwhalPlan = ""; }
+    if (narwhalMachine && !choices.some(([id]) => id === narwhalMachine)) narwhalMachine = "";
     get("narwhal-machine").replaceChildren(new Option(`全部实例（${choices.length}）`, ""), ...choices.map(([id, machine]) => new Option(`${machine.name} · ${machine.count} 套餐（${id.slice(0, 8)}）`, id)));
     get("narwhal-machine").value = narwhalMachine;
-    const plans = narwhalMachine ? rows.filter(row => row.watch.machine_id === narwhalMachine) : [];
-    if (narwhalPlan && !plans.some(row => row.watch.plan_id === narwhalPlan)) narwhalPlan = "";
-    get("narwhal-plan").replaceChildren(new Option(narwhalMachine ? `全部套餐（${plans.length}）` : "全部套餐（可先选择实例）", ""), ...plans.map(row => new Option(`${row.name} · ${row.price}`, row.watch.plan_id)));
-    get("narwhal-plan").value = narwhalPlan;
-    get("narwhal-plan").disabled = actionRunning || !narwhalMachine;
     get("narwhal-region").disabled = actionRunning || !rows.length;
     get("narwhal-machine").disabled = actionRunning || !rows.length;
     get("narwhal-machine-search").disabled = actionRunning;
   }
 
   function resetNarwhalFilters() {
-    narwhalRegion = ""; narwhalMachine = ""; narwhalPlan = "";
+    narwhalRegion = ""; narwhalMachine = "";
     get("narwhal-machine-search").value = "";
     get("catalog-search").value = ""; get("catalog-stock").value = "all";
     page = 0; selected.clear();
@@ -497,17 +489,15 @@
     });
   }
   for (const id of ["catalog-search", "catalog-stock"]) get(id).addEventListener(id === "catalog-search" ? "input" : "change", () => { page = 0; if (hierarchicalDirectory()) selected.clear(); renderTable(true); });
-  for (const id of ["akile-region", "akile-node", "akile-plan", "akile-node-search"]) get(id).addEventListener(id.endsWith("search") ? "input" : "change", () => {
-    if (id === "akile-region") { akileArea = get(id).value; akileNode = ""; akilePlan = ""; get("akile-node-search").value = ""; }
-    if (id === "akile-node") { akileNode = get(id).value; akilePlan = ""; }
-    if (id === "akile-plan") akilePlan = get(id).value;
+  for (const id of ["akile-region", "akile-node", "akile-node-search"]) get(id).addEventListener(id.endsWith("search") ? "input" : "change", () => {
+    if (id === "akile-region") { akileArea = get(id).value; akileNode = ""; get("akile-node-search").value = ""; }
+    if (id === "akile-node") akileNode = get(id).value;
     page = 0; selected.clear(); renderDirectoryFilters(); renderTable(true);
   });
   get("akile-reset").addEventListener("click", () => { resetAkileFilters(); render(); });
-  for (const id of ["narwhal-region", "narwhal-machine", "narwhal-plan", "narwhal-machine-search"]) get(id).addEventListener(id.endsWith("search") ? "input" : "change", () => {
-    if (id === "narwhal-region") { narwhalRegion = get(id).value; narwhalMachine = ""; narwhalPlan = ""; get("narwhal-machine-search").value = ""; }
-    if (id === "narwhal-machine") { narwhalMachine = get(id).value; narwhalPlan = ""; }
-    if (id === "narwhal-plan") narwhalPlan = get(id).value;
+  for (const id of ["narwhal-region", "narwhal-machine", "narwhal-machine-search"]) get(id).addEventListener(id.endsWith("search") ? "input" : "change", () => {
+    if (id === "narwhal-region") { narwhalRegion = get(id).value; narwhalMachine = ""; get("narwhal-machine-search").value = ""; }
+    if (id === "narwhal-machine") narwhalMachine = get(id).value;
     page = 0; selected.clear(); renderDirectoryFilters(); renderTable(true);
   });
   get("narwhal-reset").addEventListener("click", () => { resetNarwhalFilters(); render(); });

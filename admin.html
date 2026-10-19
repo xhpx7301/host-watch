@@ -260,22 +260,26 @@
     .catalog-merchants button { min-width:84px; padding:6px 12px; border-radius:8px; color:var(--muted); font-weight:700; }
     .catalog-merchants button[aria-pressed="true"] { color:#fff; background:var(--green); border-color:var(--green); }
     .catalog-browser { padding:16px; }
-    .catalog-filters { display:grid; grid-template-columns:minmax(180px,220px) minmax(220px,1fr) minmax(150px,190px) minmax(150px,190px); gap:12px; }
-    .catalog-filters.hierarchical-common { grid-template-columns:minmax(220px,1fr) minmax(150px,190px) minmax(150px,190px); }
+    .catalog-filters { display:grid; grid-template-columns:repeat(3,minmax(140px,1fr)) minmax(220px,2fr) repeat(2,minmax(145px,1fr)); gap:10px; align-items:end; }
+    .catalog-filters.provider-standard { grid-template-columns:minmax(190px,1fr) minmax(260px,2fr) repeat(2,minmax(150px,1fr)); }
+    .catalog-filters.provider-bwh { grid-template-columns:repeat(2,minmax(150px,1fr)) minmax(260px,2fr) repeat(2,minmax(145px,1fr)); }
+    .catalog-filters.provider-dmit { grid-template-columns:repeat(3,minmax(140px,1fr)) minmax(260px,2fr) repeat(2,minmax(145px,1fr)); }
+    .catalog-filters.provider-akile,.catalog-filters.provider-narwhal { grid-template-columns:minmax(150px,1fr) minmax(250px,1.6fr) minmax(260px,2fr) repeat(2,minmax(145px,1fr)); }
+    .catalog-filters > label { min-width:0; }
+    .catalog-filters > label[hidden] { display:none; }
     .catalog-directory { margin-bottom:16px; padding-bottom:16px; border-bottom:1px solid var(--line); }
     .catalog-directory-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px; }
     .catalog-directory-head strong { display:block; font-size:15px; }
     .catalog-directory-head p { margin:5px 0 0; color:var(--muted); font-size:12px; }
-    .directory-filters { display:grid; grid-template-columns:minmax(170px,.85fr) minmax(240px,1.5fr) minmax(180px,1fr); gap:12px; align-items:start; }
-    .directory-filters.dmit-filters { grid-template-columns:repeat(3,minmax(150px,1fr)); }
-    .dmit-filters > label:last-child { grid-column:1/-1; }
+    .directory-filters { display:none; }
     .directory-filters label { min-width:0; }
-    .directory-filters select { width:100%; min-width:0; text-overflow:ellipsis; }
-    .directory-instance-control { display:grid; gap:6px; }
+    .catalog-filters select,.catalog-filters input { width:100%; min-width:0; text-overflow:ellipsis; }
+    .directory-instance-control { display:grid; gap:4px; }
     .catalog-directory > .hint { margin:12px 0 0; }
     .catalog-table.narwhal-table td:nth-child(2) { min-width:230px; max-width:330px; }
-    @media(max-width:900px) { .directory-filters,.directory-filters.dmit-filters { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } .directory-filters > label:last-child { grid-column:1/-1; } .catalog-filters.hierarchical-common { grid-template-columns:repeat(2,minmax(0,1fr)); } .catalog-filters.hierarchical-common > label:nth-child(2) { grid-column:1/-1; } }
-    @media(max-width:520px) { .directory-filters,.directory-filters.dmit-filters,.catalog-filters.hierarchical-common { grid-template-columns:minmax(0,1fr); } .catalog-directory-head { align-items:flex-start; flex-direction:column; } }
+    @media(max-width:1250px) { .catalog-filters,.catalog-filters.provider-standard,.catalog-filters.provider-bwh,.catalog-filters.provider-dmit,.catalog-filters.provider-akile,.catalog-filters.provider-narwhal { grid-template-columns:repeat(3,minmax(0,1fr)); } .catalog-filters > label:has(#catalog-search) { grid-column:span 2; } }
+    @media(max-width:900px) { .catalog-filters,.catalog-filters.provider-standard,.catalog-filters.provider-bwh,.catalog-filters.provider-dmit,.catalog-filters.provider-akile,.catalog-filters.provider-narwhal { grid-template-columns:repeat(2,minmax(0,1fr)); } .catalog-filters > label:has(#catalog-search) { grid-column:1/-1; } }
+    @media(max-width:520px) { .catalog-filters { grid-template-columns:minmax(0,1fr); } .catalog-directory-head { align-items:flex-start; flex-direction:column; } }
     .catalog-sync { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; }
     .catalog-sync strong,.catalog-sync .subtle { display:block; }
     #catalog-status { min-height:18px; margin-bottom:14px; }
@@ -313,7 +317,6 @@
     .catalog-pagination button { font-size:12px; }
     .catalog-reminders { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; padding:12px 16px; border:1px solid #ccddd5; border-radius:10px; background:#edf5f1; }
     #catalog-watch-count { margin-left:6px; color:var(--green); }
-    @media(max-width:1250px) { .catalog-filters { grid-template-columns:repeat(2,minmax(160px,260px)); justify-content:start; } }
     @media(max-width:520px) { .catalog-intro,.catalog-sync,.catalog-reminders { align-items:flex-start; flex-direction:column; } .catalog-browser { padding:14px; } .catalog-merchants { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); } .catalog-merchants button { min-width:0; } .catalog-filters { grid-template-columns:minmax(0,1fr); } .catalog-bulk .subtle { margin-right:0; } .catalog-table { min-width:0; } .catalog-table thead { display:none; } .catalog-table,.catalog-table tbody,.catalog-table tr,.catalog-table td { display:block; } .catalog-table tr { display:grid; grid-template-columns:52px minmax(0,1fr); padding:14px 10px; gap:8px; } .catalog-table tr + tr { border-top:1px solid var(--line); } .catalog-table td { grid-column:2; min-width:0 !important; max-width:none !important; width:auto !important; padding:0; border:0; } .catalog-table td:first-child { grid-column:1; grid-row:1; } .catalog-table td:nth-child(2) { grid-column:2; grid-row:1; } .catalog-table td:nth-child(4)::before { content:"配置："; } .catalog-table td:nth-child(5)::before { content:"价格："; color:var(--muted); font-weight:400; } .catalog-row-actions { display:flex; flex-wrap:wrap; align-items:center; } .catalog-pagination { flex-wrap:wrap; } }
     @media(max-width:1100px) { .shell { grid-template-columns:200px minmax(0,1fr); } .workspace { padding:26px 24px 20px; } .sidebar { padding-left:12px; padding-right:12px; } .overview { grid-template-columns:repeat(2,minmax(0,1fr)); } .product { grid-template-columns:1fr 1fr; gap:11px; } .product-name { grid-column:1/-1; } .product-actions { grid-column:1/-1; justify-content:flex-start; } .topbar { grid-template-columns:minmax(180px,1fr) minmax(80px,.6fr) minmax(110px,.8fr) minmax(0,1.15fr) minmax(180px,1fr); column-gap:10px; } .topbar > #exchange-rate-note,.topbar > #exchange-time { white-space:normal; overflow-wrap:anywhere; } }
     @media(max-width:980px) { .editor-head { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } .editor-head .actions { grid-column:2; justify-content:flex-end; } }
@@ -795,43 +798,36 @@
       <div class="section-head"><div class="catalog-merchants" role="group" aria-label="选择商家"><button type="button" data-catalog-provider="vmiss" aria-pressed="false">VMISS</button><button type="button" data-catalog-provider="vps_soy" aria-pressed="false">VPS.SOY</button><button type="button" data-catalog-provider="akile" aria-pressed="true">Akile</button><button type="button" data-catalog-provider="narwhal" aria-pressed="false">独角鲸云</button><button type="button" data-catalog-provider="isvoro" aria-pressed="false">Isvoro</button><button type="button" data-catalog-provider="dmit" aria-pressed="false">DMIT</button><button type="button" data-catalog-provider="bwh" aria-pressed="false">搬瓦工</button></div><button id="merchant-order-toggle" type="button" aria-expanded="false">调整商家顺序</button></div>
     <div class="panel-card catalog-browser">
       <div id="bwh-directory" class="catalog-directory" hidden>
-        <div class="catalog-directory-head"><div><strong>按地区、机房、配置套餐查找</strong><p>默认浏览全部机房。相同机房名称用机房 ID 区分，不同计费周期分别列出。</p></div><button id="bwh-reset" type="button">查看全部套餐 / 重置筛选</button></div>
-        <div class="directory-filters">
-          <label>地区<select id="bwh-region"><option value="">全部地区</option></select></label>
-          <label>机房<select id="bwh-datacenter"><option value="">全部机房</option></select></label>
-          <label>机房下的配置套餐<select id="bwh-plan" disabled><option value="">全部配置套餐，可先选择机房</option></select></label>
-        </div>
+        <div class="catalog-directory-head"><div><strong>按地区、机房筛选</strong><p>默认浏览全部机房。相同机房名称用机房 ID 区分，不同计费周期分别列出。</p></div><button id="bwh-reset" type="button">查看全部套餐 / 重置筛选</button></div>
         <p id="bwh-filter-note" class="hint" role="status" aria-live="polite"></p>
       </div>
       <div id="dmit-directory" class="catalog-directory" hidden>
-        <div class="catalog-directory-head"><div><strong>按地区、网络、处理器、配置套餐查找</strong><p>处理器平台沿用官网 AS3、AN4、AN5 等标识。可逐级筛选，也可直接搜索配置。</p></div><button id="dmit-reset" type="button">查看全部套餐 / 重置筛选</button></div>
-        <div class="directory-filters dmit-filters">
-          <label>地区<select id="dmit-region"><option value="">等待读取地区</option></select></label>
-          <label>网络类型<select id="dmit-network"><option value="">全部网络类型</option></select></label>
-          <label>处理器 / 平台<select id="dmit-hardware"><option value="">全部处理器平台</option></select></label>
-          <label>处理器下的配置套餐<select id="dmit-plan" disabled><option value="">全部配置套餐，可先选择处理器</option></select></label>
-        </div>
+        <div class="catalog-directory-head"><div><strong>按地区、网络、处理器筛选</strong><p>处理器平台沿用官网 AS3、AN4、AN5 等标识，也可直接搜索配置。</p></div><button id="dmit-reset" type="button">查看全部套餐 / 重置筛选</button></div>
         <p id="dmit-filter-note" class="hint" role="status" aria-live="polite"></p>
       </div>
       <div id="akile-directory" class="catalog-directory" hidden>
-        <div class="catalog-directory-head"><div><strong>按地区、节点、套餐查找</strong><p>默认浏览全部套餐，可逐级筛选，也可搜索节点名称快速定位。</p></div><button id="akile-reset" type="button">查看全部套餐 / 重置筛选</button></div>
-        <div class="directory-filters">
-          <label>地区<select id="akile-region"><option value="">全部地区</option></select></label>
-          <label>节点<div class="directory-instance-control"><input id="akile-node-search" type="search" placeholder="输入节点名称缩小列表" aria-label="搜索 Akile 节点"><select id="akile-node" aria-label="选择 Akile 节点"><option value="">全部节点</option></select></div></label>
-          <label>节点下的套餐<select id="akile-plan" disabled><option value="">全部套餐（可先选择节点）</option></select></label>
-        </div>
+        <div class="catalog-directory-head"><div><strong>按地区、节点筛选</strong><p>默认浏览全部套餐，也可搜索节点名称快速定位。</p></div><button id="akile-reset" type="button">查看全部套餐 / 重置筛选</button></div>
         <p id="akile-filter-note" class="hint" role="status" aria-live="polite"></p>
       </div>
       <div id="narwhal-directory" class="catalog-directory" hidden>
-        <div class="catalog-directory-head"><div><strong>按地区、实例、套餐查找</strong><p>默认浏览全部套餐，可逐级缩小范围，也可直接搜索实例或套餐名称。</p></div><button id="narwhal-reset" type="button">查看全部套餐 / 重置筛选</button></div>
-        <div class="directory-filters">
-          <label>地区<select id="narwhal-region"><option value="">全部地区</option></select></label>
-          <label>商品 / 实例<div class="directory-instance-control"><input id="narwhal-machine-search" type="search" placeholder="输入实例名称或 ID 缩小列表" aria-label="搜索商品或实例"><select id="narwhal-machine" aria-label="选择商品或实例"><option value="">全部实例</option></select></div></label>
-          <label>实例下的套餐<select id="narwhal-plan" disabled><option value="">全部套餐（可先选择实例）</option></select></label>
-        </div>
+        <div class="catalog-directory-head"><div><strong>按地区、实例筛选</strong><p>默认浏览全部套餐，可缩小实例范围，也可直接搜索实例或套餐名称。</p></div><button id="narwhal-reset" type="button">查看全部套餐 / 重置筛选</button></div>
         <p id="narwhal-filter-note" class="hint" role="status" aria-live="polite"></p>
       </div>
-      <div class="catalog-filters"><label>全部套餐 / 地区 / 线路<select id="catalog-scope" disabled><option value="">等待目录</option></select></label><label>搜索套餐<input id="catalog-search" type="search" placeholder="名称、地区、线路或配置"></label><label>库存状态<select id="catalog-stock"><option value="all">全部库存</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">状态未知</option><option value="watched">已加入监控</option><option value="notified">已加入通知</option></select></label><label>大盘自动刷新<select id="catalog-auto"><option value="0" selected>仅手动</option><option value="60">1 分钟</option><option value="300">5 分钟</option><option value="600">10 分钟</option></select></label></div>
+      <div class="catalog-filters">
+        <label>地区<select id="bwh-region"><option value="">全部地区</option></select></label>
+        <label>机房<select id="bwh-datacenter"><option value="">全部机房</option></select></label>
+        <label>地区<select id="dmit-region"><option value="">等待读取地区</option></select></label>
+        <label>网络类型<select id="dmit-network"><option value="">全部网络类型</option></select></label>
+        <label>处理器 / 平台<select id="dmit-hardware"><option value="">全部处理器平台</option></select></label>
+        <label>地区<select id="akile-region"><option value="">全部地区</option></select></label>
+        <label>节点<div class="directory-instance-control"><input id="akile-node-search" type="search" placeholder="输入节点名称缩小列表" aria-label="搜索 Akile 节点"><select id="akile-node" aria-label="选择 Akile 节点"><option value="">全部节点</option></select></div></label>
+        <label>地区<select id="narwhal-region"><option value="">全部地区</option></select></label>
+        <label>商品 / 实例<div class="directory-instance-control"><input id="narwhal-machine-search" type="search" placeholder="输入实例名称或 ID 缩小列表" aria-label="搜索商品或实例"><select id="narwhal-machine" aria-label="选择商品或实例"><option value="">全部实例</option></select></div></label>
+        <label>全部套餐 / 地区 / 线路<select id="catalog-scope" disabled><option value="">等待目录</option></select></label>
+        <label>搜索套餐<input id="catalog-search" type="search" placeholder="名称、地区、线路或配置"></label>
+        <label>库存状态<select id="catalog-stock"><option value="all">全部库存</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">状态未知</option><option value="watched">已加入监控</option><option value="notified">已加入通知</option></select></label>
+        <label>大盘自动刷新<select id="catalog-auto"><option value="0" selected>仅手动</option><option value="60">1 分钟</option><option value="300">5 分钟</option><option value="600">10 分钟</option></select></label>
+      </div>
       <div class="catalog-sync"><div><strong id="catalog-summary">尚未载入目录</strong><span id="catalog-updated" class="subtle"></span></div><div class="actions"><button id="catalog-refresh" type="button">刷新目录库存</button><button id="catalog-stop" type="button" class="danger" hidden>停止刷新</button></div></div>
       <p id="catalog-route" class="hint" role="status" aria-live="polite"></p>
       <p id="catalog-status" class="hint" role="status" aria-live="polite">选择商家后获取公开套餐目录；切换分类时优先使用已读取的全量快照。</p>
