@@ -34,12 +34,16 @@ class StockAlerts:
         return None
 
     def payload(self, item, product):
+        details = product.match_details or {}
+        narwhal = product.vendor == "独角鲸云"
         return dict(vendor=product.vendor, name=product.name, available=product.available, stock_mode=product.stock_mode,
             region=product.region or product.area_name, specs=product.specs, traffic=product.traffic, price=product.price,
-            line=(product.match_details or {}).get("category_name", "") or product.node_name or item.get("category_name", ""),
+            line="" if narwhal else details.get("category_name", "") or product.node_name or item.get("category_name", ""),
             coupon_code=effective_coupon(self.config, item, item.get("adapter", "")),
             item={key: item[key] for key in ("remarks", "line_label", "line_telecom", "line_unicom", "line_mobile") if item.get(key)},
-            checked_at=now_beijing().strftime("%Y-%m-%d %H:%M:%S 北京时间"), purchase_url=self.backend.purchase_link(product, item, self.config))
+            checked_at=now_beijing().strftime("%Y-%m-%d %H:%M:%S 北京时间"), purchase_url=self.backend.purchase_link(product, item, self.config),
+            mother_name=product.node_name if narwhal else "", expires_at=details.get("machine_expires_at", "") if narwhal else "",
+            configurations=details.get("machine_plans") if narwhal else None, machine_id=str(details.get("machine_id", "")) if narwhal else "")
 
     def edit(self, record, payload, uncertain=False):
         if record.get("uneditable"):
@@ -67,7 +71,7 @@ class StockAlerts:
             self.edit(record, record["snapshot"], uncertain=True)
             self.save()
 
-    def sync(self, item, product, old_count, first):
+    def sync(self, item, product, old_count, first, authorized=True):
         entry = self.current[item["id"]]
         if not self.backend.product_membership(item, "notify"):
             entry.pop("telegram", None)
@@ -87,6 +91,7 @@ class StockAlerts:
             self.save()
         payload = self.payload(item, product)
         if product.available <= 0:
+            entry.pop("telegram_pending_auth", None)
             if record and record.get("open"):
                 record.update(open=False, pending_close=True, snapshot=payload)
                 self.save()
@@ -96,12 +101,18 @@ class StockAlerts:
             elif record and record.get("pending_send"):
                 entry.pop("telegram", None)
             return
+        if not authorized:
+            entry["telegram_pending_auth"] = True
+            self.save()
+            self.warnings.append(f"{item.get('name', item['id'])}：抢购账户未认证，暂缓发送库存通知")
+            return
+        pending_auth = entry.pop("telegram_pending_auth", False)
         if record and record.get("open"):
             self.edit(record, payload)
             record["snapshot"] = payload
             self.save()
             return
-        if not (old_count == 0 or first or record and (record.get("pending_send") or record.get("pending_restock"))):
+        if not (old_count == 0 or first or pending_auth or record and (record.get("pending_send") or record.get("pending_restock"))):
             return
         record = {"target": self.target, "pending_send": True, "snapshot": payload}
         entry["telegram"] = record

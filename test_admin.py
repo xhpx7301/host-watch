@@ -119,6 +119,22 @@ class AdminAPITests(unittest.TestCase):
         manager.assert_called_once_with({"action": "monitor-apply"})
         self.assertEqual(json.loads(self.config.read_text())["telegram"]["bot_token"], "private-token")
 
+    def test_provider_schedules_keep_module_settings_independent(self):
+        from monitor import module_schedule
+        value = admin.default_config()
+        value["monitor_schedule"] = {"mode": "auto", "interval_seconds": 600}
+        value["provider_schedules"] = {
+            "monitor": {"vmiss": {"mode": "manual", "interval_seconds": 600}, "dmit": {"mode": "auto", "interval_seconds": 45}},
+            "notify": {"vmiss": {"mode": "auto", "interval_seconds": 180}, "dmit": {"mode": "manual", "interval_seconds": 600}},
+            "catalog": {"vmiss": {"mode": "manual", "interval_seconds": 300}},
+            "seckill": {"vmiss": {"mode": "rapid", "interval_seconds": 2}, "dmit": {"mode": "precise", "interval_seconds": 20}},
+        }
+        normalized = admin.validate_config(value)
+        self.assertEqual(module_schedule(normalized, "monitor", "vmiss")["mode"], "manual")
+        self.assertEqual(module_schedule(normalized, "monitor", "dmit")["interval_seconds"], 45)
+        self.assertEqual(module_schedule(normalized, "notify", "vmiss")["interval_seconds"], 180)
+        self.assertEqual(normalized["provider_schedules"]["seckill"]["dmit"]["mode"], "precise")
+
     def test_save_failure_does_not_apply_service(self):
         with patch.object(admin, "save_config", side_effect=OSError("disk full")), patch.object(admin, "manager_action") as manager:
             status, _ = self.request("/api/config", admin.default_config())

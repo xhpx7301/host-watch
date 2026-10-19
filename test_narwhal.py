@@ -49,7 +49,7 @@ class NarwhalTests(unittest.TestCase):
         self.assertEqual(result.available, 2)
         self.assertEqual(result.vendor, "独角鲸云")
         self.assertEqual(result.price, "$1/月")
-        self.assertEqual(result.region, "🇯🇵 日本")
+        self.assertEqual(result.region, "日本")
         self.assertEqual(result.match_details["machine_expires_at"], "2026-11-18")
         self.assertEqual(result.match_details["machine_plans"][0]["name"], "中杯")
         self.assertIn("plan_id=" + PLAN_ID, result.url)

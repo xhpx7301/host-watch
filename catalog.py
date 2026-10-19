@@ -457,7 +457,7 @@ class CatalogService:
             try:
                 from admin import STATUS_PATH, current_config
                 from monitor import module_schedule, update_module_status
-                update_module_status(STATUS_PATH, "catalog", module_schedule(current_config(), "catalog"), module_result, module_message, trigger=task.get("trigger"))
+                update_module_status(STATUS_PATH, "catalog", module_schedule(current_config(), "catalog", task.get("provider", "")), module_result, module_message, trigger=task.get("trigger"))
             except (OSError, ValueError, TypeError):
                 pass
 

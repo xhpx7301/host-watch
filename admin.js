@@ -5,6 +5,7 @@ let config = {
   notify_schedule: { mode: "auto", interval_seconds: 600 },
   catalog_schedule: { mode: "manual", interval_seconds: 300 },
   seckill_schedule: { mode: "manual", interval_seconds: 5 },
+  provider_schedules: {},
   notify_current_stock_on_start: false,
   isvoro_seckill: false,
   affiliate_id: "",
@@ -1610,6 +1611,41 @@ function productMonitorLabel(item, saved) {
 
 const merchantNames = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", narwhal: "独角鲸云", isvoro: "Isvoro", dmit: "DMIT", bwh: "搬瓦工" };
 const customMerchantEntry = ["html", "其他商家 / 自定义网页"];
+const providerScheduleModules = { monitor: "monitor", notifications: "notify", "seckill-settings": "seckill" };
+function scheduleProviderOptions() { return [...Object.entries(merchantNames), customMerchantEntry]; }
+function providerSchedule(module, provider) {
+  if (config.provider_schedules?.[module]?.[provider]) return config.provider_schedules[module][provider];
+  if (module === "seckill") return { mode: config.vps_seckill?.mode || "manual", interval_seconds: config.vps_seckill?.interval_seconds || 5 };
+  return config[`${module}_schedule`] || { mode: "manual", interval_seconds: 300 };
+}
+function renderProviderSchedule(scope) {
+  const module = providerScheduleModules[scope];
+  if (!module) return;
+  const providerId = scope === "monitor" ? "monitor-schedule-provider" : scope === "notifications" ? "notify-schedule-provider" : "vps-seckill-schedule-provider";
+  const providerSelect = document.querySelector(`#${providerId}`);
+  if (!providerSelect) return;
+  if (!providerSelect.options.length) providerSelect.replaceChildren(...scheduleProviderOptions().map(([value, label]) => new Option(label, value)));
+  const provider = providerSelect.value || "vmiss", schedule = providerSchedule(module, provider);
+  const modeId = scope === "monitor" ? "monitor-schedule-mode" : scope === "notifications" ? "notify-schedule-mode" : "vps-seckill-mode";
+  const intervalId = scope === "monitor" ? "interval" : scope === "notifications" ? "notify-interval" : "vps-seckill-interval";
+  document.querySelector(`#${modeId}`).value = schedule.mode;
+  document.querySelector(`#${intervalId}`).value = schedule.interval_seconds;
+}
+function updateProviderSchedule(scope) {
+  const module = providerScheduleModules[scope];
+  if (!module) return;
+  const providerId = scope === "monitor" ? "monitor-schedule-provider" : scope === "notifications" ? "notify-schedule-provider" : "vps-seckill-schedule-provider";
+  const provider = document.querySelector(`#${providerId}`).value || "vmiss";
+  const modeId = scope === "monitor" ? "monitor-schedule-mode" : scope === "notifications" ? "notify-schedule-mode" : "vps-seckill-mode";
+  const intervalId = scope === "monitor" ? "interval" : scope === "notifications" ? "notify-interval" : "vps-seckill-interval";
+  const mode = document.querySelector(`#${modeId}`).value, interval = Number(document.querySelector(`#${intervalId}`).value || 0);
+  config.provider_schedules ||= {};
+  config.provider_schedules[module] ||= {};
+  config.provider_schedules[module][provider] = { mode, interval_seconds: interval };
+  if (module !== "seckill") config[`${module}_schedule`] = config.provider_schedules[module][provider];
+  if (module === "seckill") { config.vps_seckill.mode = mode; config.vps_seckill.interval_seconds = interval; }
+  updateDraftState(); renderOverview(); scheduleAutoSave(scope, INTERVAL_AUTOSAVE_DELAY_MS);
+}
 function orderedMerchantEntries({ includeCustom = true } = {}) {
   const entries = merchantOrder().map(key => [key, merchantNames[key]]);
   if (includeCustom) entries.push(customMerchantEntry);
@@ -2526,29 +2562,31 @@ function renderOverview() {
     node.className = `overview-value state ${tone}`;
     const card = node.closest(".module-overview");
     if (card) card.dataset.state = tone || "unknown";
-    const schedule = key === "seckill"
-      ? { mode: vpsSeckillTask?.pending ? vpsSeckillTask.mode : config.vps_seckill?.mode, interval_seconds: config.vps_seckill?.interval_seconds ?? 5 }
-      : config[`${key === "notify" ? "notify" : key}_schedule`] || (key === "monitor" ? config.monitor_schedule : key === "catalog" ? config.catalog_schedule : config.seckill_schedule) || {};
+    const scheduleModule = ({ monitor: "monitor", notify: "notify", catalog: "catalog", seckill: "seckill" })[key];
+    const scheduleProvider = key === "catalog"
+      ? document.querySelector('[data-catalog-provider][aria-pressed="true"]')?.dataset.catalogProvider || "vmiss"
+      : document.querySelector(`#${key === "monitor" ? "monitor-schedule-provider" : key === "notify" ? "notify-schedule-provider" : "vps-seckill-schedule-provider"}`)?.value || "vmiss";
+    const schedule = key === "seckill" && vpsSeckillTask?.pending
+      ? { ...providerSchedule(scheduleModule, scheduleProvider), mode: vpsSeckillTask.mode }
+      : providerSchedule(scheduleModule, scheduleProvider);
     const mode = key === "seckill"
       ? ({ rapid: "极速抢购（自动）", precise: "精准抢购（自动）", manual: "手动抢购" }[schedule.mode] || "手动抢购")
-      : schedule.mode === "auto" ? "自动" : "手动";
+      : schedule.mode === "auto" ? "自动" : "仅手动";
+    const scheduleProviderName = merchantNames[scheduleProvider] || "其他商家";
     const at = state.last_checked ? formatBeijingDate(state.last_checked) : "暂无";
     const manualAt = state.last_manual_refresh ? formatBeijingDate(state.last_manual_refresh) : "暂无";
     const autoAt = state.last_auto_refresh ? formatBeijingDate(state.last_auto_refresh) : "暂无";
     const serviceState = key === "monitor" || key === "notify" ? ({ active: "运行中", inactive: "已停止", failed: "运行失败", activating: "启动中", deactivating: "停止中" }[monitorService?.active] || "状态未知") : "";
-    note.replaceChildren(...(key === "seckill"
-      ? [text("span", `${mode} · 检查间隔 ${intervalLabel(Number(schedule.interval_seconds ?? 0))} · 最近执行 ${at}`, "overview-note-main")]
-      : [
-          text("span", `${mode} · 间隔 ${intervalLabel(Number(schedule.interval_seconds ?? 0))}${serviceState ? ` · 服务${serviceState}` : ""} · 最近 ${at}`, "overview-note-main"),
-          text("span", `自动 ${autoAt}`, "overview-note-line"),
-          text("span", `手动 ${manualAt}`, "overview-note-line"),
-        ]));
+    note.replaceChildren(
+      text("span", `${scheduleProviderName} · ${mode} · 间隔 ${intervalLabel(Number(schedule.interval_seconds ?? 0))}${serviceState ? ` · 服务${serviceState}` : ""} · 最近 ${at}`, "overview-note-main"),
+    );
     if (log) {
       const sourceLogs = key === "seckill" && vpsSeckillTask?.logs?.length ? vpsSeckillTask.logs : state.logs || [];
       const lines = sourceLogs.slice(-5).map(item => {
         const trigger = item.trigger || "manual";
         const label = key === "seckill" ? ({ rapid: "极速抢购", precise: "精准抢购", manual: "手动抢购" }[trigger] || "抢购") : trigger === "manual" ? "手动" : "自动";
-        return `[${formatBeijingDate(item.at)}] ${label} · ${item.message || item.result || ""}`;
+        const provider = item.provider ? `${merchantNames[item.provider] || item.provider} · ` : "";
+        return `[${formatBeijingDate(item.at)}] ${provider}${label} · ${item.message || item.result || ""}`;
       });
       log.textContent = lines.length ? lines.join("\n") : "暂无日志";
     }
@@ -2779,6 +2817,16 @@ function accountHealth(account) {
   if (result.status === "expired") return { label: "登录已失效", tone: "error", detail: result.message || "请重新检查账户" };
   return { label: "待认证", tone: "pending", detail: result.message || "请点击检查账户" };
 }
+function storeAccountCheck(target, result) {
+  const accountId = String(result?.account_id || "");
+  if (!accountId) return;
+  const previous = target.get(accountId);
+  const nextAt = Date.parse(result.checked_at || "") || 0;
+  const previousAt = Date.parse(previous?.checked_at || "") || 0;
+  if (previous?.ok && result.status === "unknown") return;
+  if (previous && previousAt > nextAt) return;
+  target.set(accountId, result);
+}
 async function refreshAccountHealth() {
   if (actionRunning || document.hidden || currentPage !== "seckill") {
     accountHealthTimer = setTimeout(refreshAccountHealth, ACCOUNT_HEALTH_INTERVAL_MS);
@@ -2792,9 +2840,9 @@ async function refreshAccountHealth() {
   await Promise.allSettled(accounts.map(async account => {
     try {
       const result = await requestJSON("/api/seckill/account-status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account_id: account.id }), timeoutMs: 30_000 });
-      accountHealthChecks.set(account.id, result);
+      storeAccountCheck(accountHealthChecks, result);
     } catch (error) {
-      accountHealthChecks.set(account.id, { account_id: account.id, ok: false, status: "unknown", message: error.message, checked_at: new Date().toISOString() });
+      storeAccountCheck(accountHealthChecks, { account_id: account.id, ok: false, status: "unknown", message: error.message, checked_at: new Date().toISOString() });
     }
   }));
   renderVpsSeckill();
@@ -2873,8 +2921,7 @@ function toggleVpsSeckill(product) {
 }
 function renderVpsSeckill() {
   const value = config.vps_seckill || { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] };
-  document.querySelector("#vps-seckill-mode").value = value.mode || "manual";
-  document.querySelector("#vps-seckill-interval").value = value.interval_seconds || 5;
+  renderProviderSchedule("seckill-settings");
   const accountOptions = [new Option("不绑定账户", "")];
   const accounts = orderedSeckillAccounts();
   accounts.forEach(account => accountOptions.push(new Option(seckillAccountLabel(account), account.id)));
@@ -3040,7 +3087,7 @@ function renderVpsSeckill() {
           delete account.captcha_token;
           delete account.captcha_provider;
         }
-        standaloneAccountChecks.set(account.id, result); accountHealthChecks.set(account.id, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : result.verification_required ? "pending" : "error");
+        storeAccountCheck(standaloneAccountChecks, result); storeAccountCheck(accountHealthChecks, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : result.verification_required ? "pending" : "error");
       });
     });
     const remove = text("button", "删除账户", "danger"); remove.type = "button"; remove.disabled = actionRunning;
@@ -3063,7 +3110,7 @@ function renderVpsSeckill() {
       submitCode.addEventListener("click", () => {
         runAction(submitCode, "提交中…", "正在提交搬瓦工邮箱验证码…", async () => {
           const result = await requestJSON("/api/seckill/account-verification", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account_id: account.id, account, challenge_id: verification.challenge_id, verification_code: code.value }) });
-          standaloneAccountChecks.set(account.id, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : result.verification_required ? "pending" : "error");
+          storeAccountCheck(standaloneAccountChecks, result); storeAccountCheck(accountHealthChecks, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : result.verification_required ? "pending" : "error");
         });
       });
       const action = text("div", "", "actions"); action.append(submitCode); verificationBox.append(action);
@@ -3258,15 +3305,19 @@ document.querySelector("#vps-seckill-delete-all").addEventListener("click", () =
 document.querySelector("#vps-seckill-delete-all-accounts").addEventListener("click", () => deleteSeckillAccounts(seckillAccounts().map(account => account.id)));
 document.querySelector("#vps-seckill-add-account").addEventListener("click", () => { seckillAccounts().push({ id: `account-${Date.now()}`, name: "", provider: "", username: "", password: "", login_url: "" }); renderVpsSeckill(); updateDraftState(); setMessage("已添加账户草稿，请填写后点击该账户的“保存账户”。", "pending"); });
 document.querySelector("#vps-seckill-clear-log").addEventListener("click", () => { if (vpsSeckillTask) { vpsSeckillTask.logs = []; renderVpsSeckillTask(); } });
-document.querySelector("#vps-seckill-mode").addEventListener("change", event => { config.vps_seckill.mode = event.target.value; updateDraftState(); scheduleAutoSave("seckill-settings"); });
-document.querySelector("#vps-seckill-interval").addEventListener("input", event => { config.vps_seckill.interval_seconds = Number(event.target.value); updateDraftState(); scheduleAutoSave("seckill-settings"); });
+document.querySelector("#vps-seckill-mode").addEventListener("change", () => updateProviderSchedule("seckill-settings"));
+document.querySelector("#vps-seckill-interval").addEventListener("input", () => updateProviderSchedule("seckill-settings"));
 
 function renderMonitorState() {
   const active = monitorService?.active;
   const transitionTimedOut = monitorService?.transition_timeout;
   const labels = { active: "HostWatch 服务运行中", inactive: "HostWatch 服务已停止", failed: "HostWatch 服务运行失败", activating: transitionTimedOut ? "HostWatch 服务启动超时" : "HostWatch 服务启动中", deactivating: transitionTimedOut ? "HostWatch 服务停止超时" : "HostWatch 服务停止中" };
   const label = labels[active] || "自动刷新服务状态未知";
-  const automaticModules = [config.monitor_schedule?.mode === "auto" ? "库存监控" : "", config.notify_schedule?.mode === "auto" ? "库存通知" : ""].filter(Boolean);
+  const schedules = config.provider_schedules || {};
+  const automaticModules = [
+    Object.values(schedules.monitor || {}).some(row => row.mode === "auto") ? "库存监控" : "",
+    Object.values(schedules.notify || {}).some(row => row.mode === "auto") ? "库存通知" : "",
+  ].filter(Boolean);
   let note = automaticModules.length ? `已保存：${automaticModules.join("、")}开启自动刷新。` : "已保存：库存监控和库存通知均为仅手动刷新。";
   if (!savedConfig) note = "正在读取配置。";
   if (!monitorService) note += "请刷新状态核对服务器实际运行情况。";
@@ -3301,6 +3352,7 @@ function collectConfig(enabled = config.enabled) {
     monitor_schedule: { mode: document.querySelector("#monitor-schedule-mode").value, interval_seconds: Number(document.querySelector("#interval").value || NaN) },
     notify_schedule: { mode: document.querySelector("#notify-schedule-mode").value, interval_seconds: Number(document.querySelector("#notify-interval").value || NaN) },
     catalog_schedule: config.catalog_schedule || { mode: "manual", interval_seconds: 300 },
+    provider_schedules: cloneConfig(config.provider_schedules || {}),
     // VPS 抢购由页面上的启动/暂停按钮独立控制；执行模式（极速/精准/手动）
     // 只决定任务内行为，不把一次性任务误报成后台自动刷新。
     seckill_schedule: { mode: "manual", interval_seconds: Number(document.querySelector("#vps-seckill-interval")?.value || 5) },
@@ -3376,7 +3428,7 @@ function mergeConfigScope(baseValue, draftValue, scope) {
   if (!scope || scope === "all") return draft;
   if (scope === "affiliates") {
     for (const key of ["affiliate_id", "affiliates", "affiliate_notes", "affiliate_accounts", "affiliate_rates", "affiliate_coupons"]) base[key] = draft[key];
-  } else if (scope === "catalog") base.catalog_schedule = draft.catalog_schedule;
+  } else if (scope === "catalog") { base.catalog_schedule = draft.catalog_schedule; base.provider_schedules = { ...base.provider_schedules, catalog: draft.provider_schedules.catalog }; }
   else if (scope === "fetcher") {
     const keys = ["mode", "flaresolverr_url", "timeout_seconds", "wait_seconds", "disable_media", "provider_flaresolverr"];
     base.fetcher = { ...base.fetcher, ...Object.fromEntries(keys.map(key => [key, draft.fetcher[key]])) };
@@ -3394,9 +3446,11 @@ function mergeConfigScope(baseValue, draftValue, scope) {
   else if (scope === "telegram") base.telegram = draft.telegram;
   else if (scope === "monitor") {
     for (const key of ["interval_seconds", "monitor_schedule", "watch_order", "merchant_order"]) base[key] = draft[key];
+    base.provider_schedules = { ...base.provider_schedules, monitor: draft.provider_schedules.monitor };
     base.products = mergeProductMemberships(base.products, draft.products, "watch");
   } else if (scope === "notifications") {
     for (const key of ["notify_schedule", "notify_current_stock_on_start", "isvoro_seckill", "notify_order"]) base[key] = draft[key];
+    base.provider_schedules = { ...base.provider_schedules, notify: draft.provider_schedules.notify };
     base.products = mergeProductMemberships(base.products, draft.products, "notify");
   } else if (scope === "seckill") {
     const savedAccounts = base.vps_seckill?.accounts || [];
@@ -3405,7 +3459,10 @@ function mergeConfigScope(baseValue, draftValue, scope) {
     // effective; account edits and new accounts require their own save button.
     base.vps_seckill = { ...draft.vps_seckill, accounts: savedAccounts.filter(account => draftAccountIds.has(account.id)) };
   }
-  else if (scope === "seckill-settings") base.vps_seckill = { ...base.vps_seckill, mode: draft.vps_seckill.mode, interval_seconds: draft.vps_seckill.interval_seconds };
+  else if (scope === "seckill-settings") {
+    base.vps_seckill = { ...base.vps_seckill, mode: draft.vps_seckill.mode, interval_seconds: draft.vps_seckill.interval_seconds };
+    base.provider_schedules = { ...base.provider_schedules, seckill: draft.provider_schedules.seckill };
+  }
   else if (scope.startsWith("product:")) {
     const id = scope.slice("product:".length), item = draft.products.find(row => row.id === id);
     const index = base.products.findIndex(row => row.id === id);
@@ -3462,8 +3519,6 @@ function updateDraftState() {
   const valid = Number.isInteger(seconds) && seconds >= 0 && seconds <= 86400;
   const description = document.querySelector("#interval-description");
   if (description) description.textContent = valid ? (seconds === 0 ? "本轮检查完成后立即检查下一轮，不额外等待；各轮顺序执行。修改后自动保存。" : `每轮检查完成后等待 ${intervalLabel(seconds)}，再检查下一轮；修改后自动保存。`) : "检查间隔必须是 0–86400 秒的整数。";
-  const preset = document.querySelector("#interval-preset");
-  if (preset) preset.value = [0, 1, 5, 10, 30, 60, 300, 600, 1800, 3600].includes(seconds) ? String(seconds) : "";
   updateCardSaveStates();
   window.dispatchEvent(new Event("hostwatch-draft-change"));
 }
@@ -3585,6 +3640,7 @@ async function loadConfig() {
 
 function applyConfig(value) {
   config = value;
+  config.provider_schedules ||= {};
   config.products.forEach(item => { setMembership(item, "watch", membership(item, "watch")); });
   document.querySelector("#interval").value = config.interval_seconds ?? 600;
   const monitorSchedule = config.monitor_schedule || { mode: "auto", interval_seconds: config.interval_seconds ?? 600 };
@@ -3593,9 +3649,9 @@ function applyConfig(value) {
   document.querySelector("#interval").value = monitorSchedule.interval_seconds ?? config.interval_seconds ?? 600;
   document.querySelector("#notify-schedule-mode").value = notifySchedule.mode || "auto";
   document.querySelector("#notify-interval").value = notifySchedule.interval_seconds ?? config.interval_seconds ?? 600;
-  const catalogSchedule = config.catalog_schedule || { mode: "manual", interval_seconds: 300 };
-  const catalogAuto = document.querySelector("#catalog-auto");
-  if (catalogAuto) catalogAuto.value = catalogSchedule.mode === "auto" && [60, 300, 600].includes(Number(catalogSchedule.interval_seconds)) ? String(catalogSchedule.interval_seconds) : "0";
+  renderProviderSchedule("monitor");
+  renderProviderSchedule("notifications");
+  renderProviderSchedule("seckill-settings");
   for (const input of document.querySelectorAll("[data-affiliate]")) input.value = config.affiliates?.[input.dataset.affiliate] ?? (input.dataset.affiliate === "vmiss" ? config.affiliate_id || "" : "");
   for (const input of document.querySelectorAll("[data-affiliate-account]")) input.value = config.affiliate_accounts?.[input.dataset.affiliateAccount] ?? "";
   for (const input of document.querySelectorAll("[data-affiliate-rate]")) input.value = config.affiliate_rates?.[input.dataset.affiliateRate] ?? "";
@@ -3641,8 +3697,8 @@ function applyConfig(value) {
 async function loadStatus() {
   lastStatus = await requestJSON("/api/status");
   for (const [accountId, result] of Object.entries(lastStatus.account_checks || {})) {
-    accountHealthChecks.set(accountId, result);
-    standaloneAccountChecks.set(accountId, result);
+    storeAccountCheck(accountHealthChecks, result);
+    storeAccountCheck(standaloneAccountChecks, result);
   }
   const state = document.querySelector("#state");
   state.textContent = ({ partial: "部分库存待核对", ok: "最近库存检查成功", blocked: "最近库存检查被拦截", error: "最近库存检查失败", unknown: "尚无库存检查记录" })[lastStatus.state] || lastStatus.state || "尚无库存检查记录";
@@ -3780,7 +3836,7 @@ function fullModuleLogItems(key) {
 }
 function formatModuleLogs(key, limit = 0, includeHistory = false) {
   const logs = includeHistory ? fullModuleLogItems(key) : moduleLogItems(key), items = limit ? logs.slice(-limit) : logs;
-  return items.length ? items.map(item => `[${formatBeijingDate(item.at)}] ${(item.trigger || "manual") === "manual" ? "手动" : "自动"} · ${item.message || item.result || ""}`).join("\n") : "暂无日志";
+  return items.length ? items.map(item => `[${formatBeijingDate(item.at)}] ${item.provider ? `${merchantNames[item.provider] || item.provider} · ` : ""}${(item.trigger || "manual") === "manual" ? "手动" : "自动"} · ${item.message || item.result || ""}`).join("\n") : "暂无日志";
 }
 document.querySelectorAll("[data-overview-log-toggle]").forEach(button => button.addEventListener("click", () => {
   const log = document.querySelector(`#overview-${button.dataset.overviewLogToggle}-log`);
@@ -3814,21 +3870,15 @@ document.querySelector("#fetcher-test").addEventListener("click", (event) => run
   document.querySelector("#fetcher-health").textContent = `版本 ${result.version}：${result.message}`;
   setMessage(`FlareSolverr ${result.version} 服务连接成功；实际库存请在 VPS 库存通知中点击“测试通知”，无需开启监控。`, "success");
 }));
-document.querySelector("#interval").addEventListener("input", () => { config.interval_seconds = Number(document.querySelector("#interval").value || NaN); config.monitor_schedule = { ...(config.monitor_schedule || {}), interval_seconds: config.interval_seconds }; renderOverview(); updateDraftState(); scheduleAutoSave("monitor", INTERVAL_AUTOSAVE_DELAY_MS); });
-document.querySelector("#notify-interval").addEventListener("input", () => { config.notify_schedule = { ...(config.notify_schedule || {}), interval_seconds: Number(document.querySelector("#notify-interval").value || NaN) }; renderOverview(); updateDraftState(); scheduleAutoSave("notifications", INTERVAL_AUTOSAVE_DELAY_MS); });
-document.querySelector("#monitor-schedule-mode").addEventListener("change", event => { config.monitor_schedule = { ...(config.monitor_schedule || {}), mode: event.target.value }; renderOverview(); updateDraftState(); scheduleAutoSave("monitor"); });
-document.querySelector("#notify-schedule-mode").addEventListener("change", event => { config.notify_schedule = { ...(config.notify_schedule || {}), mode: event.target.value }; renderOverview(); updateDraftState(); scheduleAutoSave("notifications"); });
-document.querySelector("#interval-preset").addEventListener("change", (event) => {
-  if (event.target.value) {
-    document.querySelector("#interval").value = event.target.value;
-    config.interval_seconds = Number(event.target.value);
-    config.monitor_schedule = { ...(config.monitor_schedule || {}), interval_seconds: config.interval_seconds };
-    renderOverview();
-    updateDraftState(); scheduleAutoSave("monitor");
-  }
-});
+document.querySelector("#monitor-schedule-provider").addEventListener("change", () => renderProviderSchedule("monitor"));
+document.querySelector("#notify-schedule-provider").addEventListener("change", () => renderProviderSchedule("notifications"));
+document.querySelector("#vps-seckill-schedule-provider").addEventListener("change", () => renderProviderSchedule("seckill-settings"));
+document.querySelector("#interval").addEventListener("input", () => updateProviderSchedule("monitor"));
+document.querySelector("#notify-interval").addEventListener("input", () => updateProviderSchedule("notifications"));
+document.querySelector("#monitor-schedule-mode").addEventListener("change", () => updateProviderSchedule("monitor"));
+document.querySelector("#notify-schedule-mode").addEventListener("change", () => updateProviderSchedule("notifications"));
 document.querySelector(".shell").addEventListener("input", (event) => {
-  if (!event.target.closest("#page-catalog, .watchlist-filters") && event.target.id !== "interval-preset") updateDraftState();
+  if (!event.target.closest("#page-catalog, .watchlist-filters")) updateDraftState();
 });
 document.querySelector(".shell").addEventListener("change", (event) => {
   if (!event.target.closest("#page-catalog, .watchlist-filters")) updateDraftState();
