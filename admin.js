@@ -405,7 +405,10 @@ for (const id of ["market-account", "market-enabled", "market-interval"]) docume
   renderMarket();
 });
 document.querySelector("#market-provider").addEventListener("change", () => { marketPage = 0; renderMarketSettings(); void loadMarketSnapshot(); });
-for (const id of ["market-search", "market-region", "market-kind", "market-sort"]) document.getElementById(id).addEventListener("input", () => { marketPage = 0; renderMarket(); });
+for (const id of ["market-search", "market-region", "market-kind", "market-sort"]) document.getElementById(id).addEventListener("input", () => {
+  if (id === "market-sort") sessionStorage.setItem(`hostwatch-${activeMarketProvider()}-market-sort-key`, "");
+  marketPage = 0; renderMarket();
+});
 document.querySelector("#market-prev").addEventListener("click", () => { marketPage--; renderMarket(); });
 document.querySelector("#market-next").addEventListener("click", () => { marketPage++; renderMarket(); });
 window.addEventListener("hostwatch-page-change", event => { if (event.detail === "market") void loadMarketSnapshot(); });
