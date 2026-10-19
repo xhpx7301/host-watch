@@ -2705,7 +2705,7 @@ function seckillItemId() { return `seckill-${Date.now()}-${Math.random().toStrin
 function seckillItems() { return config.vps_seckill?.items || (config.vps_seckill = { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] }).items; }
 function seckillAccounts() { return config.vps_seckill?.accounts || (config.vps_seckill.accounts = []); }
 function seckillProviderKey(value) {
-  const aliases = { vmiss: "vmiss", "vps.soy": "vps_soy", vps_soy: "vps_soy", "搬瓦工": "bwh", bwh: "bwh", bandwagonhost: "bwh", akile: "akile", isvoro: "isvoro", dmit: "dmit" };
+  const aliases = { vmiss: "vmiss", "vps.soy": "vps_soy", vps_soy: "vps_soy", "搬瓦工": "bwh", bwh: "bwh", bandwagonhost: "bwh", akile: "akile", narwhal: "narwhal", "独角鲸云": "narwhal", isvoro: "isvoro", dmit: "dmit" };
   const raw = String(value || "").trim();
   return aliases[raw.toLowerCase()] || (Object.prototype.hasOwnProperty.call(merchantNames, raw) ? raw : "");
 }
@@ -2847,7 +2847,7 @@ function renderVpsSeckill() {
   if (!seckillAccounts().length) accountTarget.append(text("p", "尚未配置网站账户。手动抢购不需要账户。", "empty"));
   accounts.forEach(account => {
     const card = text("article", "", "seckill-account"), grid = text("div", "", "form-grid"); card.dataset.accountId = account.id;
-    const merchantIds = { vmiss: "vmiss", "vps.soy": "vps_soy", vps_soy: "vps_soy", "搬瓦工": "bwh", bwh: "bwh", bandwagonhost: "bwh", akile: "akile", isvoro: "isvoro", dmit: "dmit" };
+    const merchantIds = { vmiss: "vmiss", "vps.soy": "vps_soy", vps_soy: "vps_soy", "搬瓦工": "bwh", bwh: "bwh", bandwagonhost: "bwh", akile: "akile", isvoro: "isvoro", dmit: "dmit", narwhal: "narwhal", "独角鲸云": "narwhal" };
     const providerValue = () => account.provider ? (merchantIds[String(account.provider).trim().toLowerCase()] || "custom") : (account.login_url ? "custom" : "");
     const field = (label, key, placeholder, type = "text") => {
       const input = document.createElement("input"); input.type = type; input.value = account[key] || ""; input.placeholder = placeholder;
@@ -2864,18 +2864,18 @@ function renderVpsSeckill() {
     const setProviderExtra = () => {
       providerExtra.replaceChildren();
       const selected = provider.value;
-      const ids = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", isvoro: "Isvoro", dmit: "DMIT", bwh: "搬瓦工" };
+      const ids = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", narwhal: "独角鲸云", isvoro: "Isvoro", dmit: "DMIT", bwh: "搬瓦工" };
       if (selected === "custom") {
         adapterNote.textContent = "其他商家需要自行提供实现 hostwatch-unpaid-v1 的账户检查 JSON 接口；普通登录页不能直接使用。";
         const name = document.createElement("input"); name.value = account.provider && !merchantIds[String(account.provider).trim().toLowerCase()] ? account.provider : ""; name.placeholder = "商家名称"; name.addEventListener("input", () => { account.provider = name.value; updateDraftState(); scheduleAutoSave("seckill"); });
         const nameLabel = document.createElement("label"); nameLabel.append(text("span", "商家名称"), name); providerExtra.append(nameLabel);
         const login = document.createElement("input"); login.type = "url"; login.value = account.login_url || ""; login.placeholder = "https://…（HostWatch JSON 接口）"; login.addEventListener("input", () => { account.login_url = login.value; updateDraftState(); scheduleAutoSave("seckill"); });
         const loginLabel = document.createElement("label"); loginLabel.append(text("span", "账户检查接口"), login); providerExtra.append(loginLabel);
-      } else if (selected === "vmiss" || selected === "vps_soy" || selected === "bwh" || selected === "akile" || selected === "isvoro" || selected === "dmit") {
-        const urls = { vmiss: "https://app.vmiss.com/login", vps_soy: "https://www.vps.soy/login", bwh: "https://bwh81.net/clientarea.php", akile: "https://api.akile.ai/api/v1/user/login", isvoro: "https://isvoro.com/api/v1/auth/login", dmit: "https://www.dmit.io/clientarea.php" };
+      } else if (selected === "vmiss" || selected === "vps_soy" || selected === "bwh" || selected === "akile" || selected === "narwhal" || selected === "isvoro" || selected === "dmit") {
+        const urls = { vmiss: "https://app.vmiss.com/login", vps_soy: "https://www.vps.soy/login", bwh: "https://bwh81.net/clientarea.php", akile: "https://api.akile.ai/api/v1/user/login", narwhal: "https://api.fuckip.me/api/v1/auth/login", isvoro: "https://isvoro.com/api/v1/auth/login", dmit: "https://www.dmit.io/clientarea.php" };
         account.provider = selected; account.login_url = urls[selected];
-        adapterNote.textContent = selected === "akile" ? "Akile 已内置 API 登录检查；填写邮箱和密码。若要求邮箱验证、二步验证、Passkey 或验证码，请到官网完成。检查不下单、不付款。" : selected === "isvoro" ? "Isvoro 已内置 API 登录检查；首次在官网完成 hCaptcha 后导入 Cookie。服务会在内存中缓存最长 30 天，并在 access Cookie 过期时自动使用 refresh Cookie 续期；服务重启或 refresh Cookie 失效后需重新导入。" : selected === "vmiss" ? "VMISS 已内置登录与官网结算适配；填写官网登录邮箱和密码。自动抢购会预填商品配置并创建待付款发票，不会自动付款。" : selected === "bwh" ? "搬瓦工已内置登录与官网结算适配；可在官网完成邮箱验证后导入 Cookie，服务在内存中缓存最长 30 天。Cookie 不会写入配置或备份；过期或服务重启后需重新导入，密码登录仍可能要求邮箱验证码。" : selected === "dmit" ? "DMIT 已内置账号密码登录检查。也可在官网用账号密码登录并完成安全验证后导入 Cookie；验证成功后只保存在服务器内存，最长 30 天。Cookie 不会写入配置或备份；若 DMIT 将会话绑定浏览器或出口 IP，服务器可能无法验证。" : `${ids[selected]} 已内置登录检查；只需填写官网登录名和密码。检查仅登录，不下单、不付款。遇到安全验证时，请在网页请求中为该商家选择 FlareSolverr 或 cloudscraper。`;
-        const destinations = { ...urls, akile: "https://akile.ai/login", isvoro: "https://isvoro.com/login" };
+        adapterNote.textContent = selected === "akile" ? "Akile 已内置 API 登录检查；填写邮箱和密码。若要求邮箱验证、二步验证、Passkey 或验证码，请到官网完成。检查不下单、不付款。" : selected === "narwhal" ? "独角鲸云已内置 API 登录检查；填写注册邮箱和密码。服务会核对返回账户邮箱，并在内存中缓存登录令牌最长 30 天。检查不下单、不付款。" : selected === "isvoro" ? "Isvoro 已内置 API 登录检查；首次在官网完成 hCaptcha 后导入 Cookie。服务会在内存中缓存最长 30 天，并在 access Cookie 过期时自动使用 refresh Cookie 续期；服务重启或 refresh Cookie 失效后需重新导入。" : selected === "vmiss" ? "VMISS 已内置登录与官网结算适配；填写官网登录邮箱和密码。自动抢购会预填商品配置并创建待付款发票，不会自动付款。" : selected === "bwh" ? "搬瓦工已内置登录与官网结算适配；可在官网完成邮箱验证后导入 Cookie，服务在内存中缓存最长 30 天。Cookie 不会写入配置或备份；过期或服务重启后需重新导入，密码登录仍可能要求邮箱验证码。" : selected === "dmit" ? "DMIT 已内置账号密码登录检查。也可在官网用账号密码登录并完成安全验证后导入 Cookie；验证成功后只保存在服务器内存，最长 30 天。Cookie 不会写入配置或备份；若 DMIT 将会话绑定浏览器或出口 IP，服务器可能无法验证。" : `${ids[selected]} 已内置登录检查；只需填写官网登录名和密码。检查仅登录，不下单、不付款。遇到安全验证时，请在网页请求中为该商家选择 FlareSolverr 或 cloudscraper。`;
+        const destinations = { ...urls, akile: "https://akile.ai/login", narwhal: "https://dash.fuckip.me/login", isvoro: "https://isvoro.com/login" };
         const link = text("a", `打开 ${ids[selected]} 官网登录页`); link.href = destinations[selected]; link.target = "_blank"; link.rel = "noopener noreferrer"; link.className = "provider-login-link"; providerExtra.append(link);
         if (selected === "isvoro" || selected === "bwh" || selected === "dmit") {
           const cookie = document.createElement("input"); cookie.type = "password"; cookie.autocomplete = "off"; cookie.value = account.session_cookie || ""; cookie.placeholder = "官网手动登录后粘贴 Cookie: name=value; …";

@@ -437,6 +437,7 @@ BWH_PAYMENT_METHODS = {
 MERCHANT_LOGIN_ADAPTERS = {
     "vmiss": {"name": "VMISS", "url": "https://app.vmiss.com/login", "host": "app.vmiss.com", "username_field": "username"},
     "vps_soy": {"name": "VPS.SOY", "url": "https://www.vps.soy/login", "host": "www.vps.soy", "username_field": "email"},
+    "narwhal": {"name": "独角鲸云", "url": "https://api.fuckip.me/api/v1/auth/login", "host": "api.fuckip.me", "kind": "api"},
     "bwh": {"name": "搬瓦工", "url": "https://bwh81.net/clientarea.php", "host": "bwh81.net", "username_field": "username"},
     "dmit": {"name": "DMIT", "url": "https://www.dmit.io/clientarea.php", "auth_probe_url": "https://www.dmit.io/clientarea.php?action=details", "host": "www.dmit.io", "username_field": "username"},
 }
@@ -459,6 +460,9 @@ AKILE_ORDER_DETAIL_URL = "https://api.akile.ai/api/v1/order/GetOrderByOrderNo"
 AKILE_ORDER_PAGE_BASE = "https://akile.ai/console/finance/order/"
 AKILE_MARKET_LIST_URL = "https://api.akile.ai/api/v1/pushshop/GetPushProductList"
 AKILE_MARKET_DETAIL_URL = "https://api.akile.ai/api/v1/pushshop/GetPushProduct"
+NARWHAL_API_BASE_URL = "https://api.fuckip.me/api/v1"
+NARWHAL_LOGIN_URL = f"{NARWHAL_API_BASE_URL}/auth/login"
+NARWHAL_PROFILE_URL = f"{NARWHAL_API_BASE_URL}/user/me"
 AKILE_DEBIAN_TEMPLATES = {
     "Debian 11": "063c07af-b200-40c0-839c-21864474saw",
     "Debian 12": "063c07af-b200-40c0-839c-1864474saw",
@@ -477,7 +481,7 @@ VMISS_PAYMENT_METHODS = {"alipay": "motionpayalipay", "credit_card": "stripe", "
 MERCHANT_LOGIN_IDS = {
     "vmiss": "vmiss", "vps.soy": "vps_soy", "vps_soy": "vps_soy",
     "搬瓦工": "bwh", "bwh": "bwh", "bandwagonhost": "bwh",
-    "akile": "akile", "isvoro": "isvoro", "dmit": "dmit",
+    "akile": "akile", "isvoro": "isvoro", "dmit": "dmit", "narwhal": "narwhal", "独角鲸云": "narwhal",
 }
 
 
@@ -1013,6 +1017,57 @@ def _akile_login(session, account: dict) -> dict:
     return {"status": "valid", "message": "Akile 账户认证正常（不代表具有购买资格或库存）"}
 
 
+def _narwhal_profile_data(payload: object) -> dict | None:
+    if not isinstance(payload, dict) or payload.get("code") not in {0, "0"}:
+        return None
+    data = payload.get("data")
+    return data if isinstance(data, dict) else None
+
+
+def _narwhal_login(session, account: dict) -> dict:
+    """Log in to Narwhal Cloud and verify the returned account identity."""
+    try:
+        response = session.post(NARWHAL_LOGIN_URL,
+                                json={"email": account["username"], "password": account["password"]},
+                                timeout=(5, 20), allow_redirects=False,
+                                headers={"Accept": "application/json", "Content-Type": "application/json"})
+        payload = response.json()
+    except (requests.RequestException, OSError, ValueError, TypeError, AttributeError):
+        return {"status": "unknown", "message": "独角鲸云登录请求失败，请检查出口节点或官网状态"}
+    if response.status_code in {401, 403}:
+        return {"status": "invalid", "message": "独角鲸云账户认证失败，请检查邮箱和密码"}
+    if not 200 <= response.status_code < 300 or _narwhal_profile_data(payload) is None:
+        message = str(payload.get("msg", "")) if isinstance(payload, dict) else ""
+        if any(marker in message.casefold() for marker in ("password", "email", "credential", "密码", "邮箱", "账户")):
+            return {"status": "invalid", "message": "独角鲸云账户认证失败，请检查邮箱和密码"}
+        return {"status": "unknown", "message": "独角鲸云登录响应无法确认，请到官网检查"}
+    data = _narwhal_profile_data(payload) or {}
+    token = data.get("token")
+    if not isinstance(token, str) or not 1 <= len(token) <= 4096 or any(ord(char) < 33 for char in token):
+        return {"status": "unknown", "message": "独角鲸云未返回有效登录凭据，请到官网检查"}
+    session.headers["Authorization"] = f"Bearer {token}"
+    if not _narwhal_authenticated(session, account):
+        return {"status": "unknown", "message": "独角鲸云登录成功但无法确认账户身份，请到官网检查"}
+    return {"status": "valid", "message": "独角鲸云账户认证正常（不代表具有购买资格或库存）"}
+
+
+def _narwhal_authenticated(session, account: dict) -> bool:
+    token = str(getattr(session, "headers", {}).get("Authorization", "")).strip()
+    if not token.startswith("Bearer ") or len(token) > 4096 or any(ord(char) < 33 for char in token[7:]):
+        return False
+    try:
+        response = session.get(NARWHAL_PROFILE_URL, headers={"Authorization": token},
+                               timeout=(5, 20), allow_redirects=False)
+        if not 200 <= response.status_code < 300:
+            return False
+        payload = response.json()
+    except (requests.RequestException, OSError, ValueError, TypeError, AttributeError):
+        return False
+    profile = _narwhal_profile_data(payload)
+    email = str(profile.get("email", "")).strip().casefold() if isinstance(profile, dict) else ""
+    return bool(email and email == str(account.get("username", "")).strip().casefold())
+
+
 def _akile_authenticated(session, account: dict) -> bool:
     """Validate a cached Akile token and refresh the user id used by orders."""
     token = str(getattr(session, "headers", {}).get("Authorization", "")).strip()
@@ -1448,7 +1503,10 @@ def _dmit_order_flaresolverr(item: dict, account: dict, product, url: str, fetch
         raise DmitOrderFailure("DMIT 商品 PID 无效；最终结算请求尚未发送")
     session_id = ""
     try:
-        with browser_request_slot(wait=True):
+        # Web-triggered browser work must fail fast when FlareSolverr is busy;
+        # keeping the HTTP request queued makes the whole admin page appear
+        # frozen for tens of seconds.
+        with browser_request_slot(wait=False):
             session_id = flaresolverr_session_create(fetcher)
             login = flaresolverr_session_request(fetcher, session_id, MERCHANT_LOGIN_ADAPTERS["dmit"]["url"])
             login_page = _dmit_browser_response(login)
@@ -1572,7 +1630,9 @@ def _dmit_flaresolverr_account_check(account: dict, fetcher: dict) -> dict:
                          flaresolverr_session_destroy, flaresolverr_session_request)
     session_id = ""
     try:
-        with browser_request_slot(wait=True):
+        # Return a busy result immediately instead of holding the browser
+        # request open while another FlareSolverr task finishes.
+        with browser_request_slot(wait=False):
             session_id = flaresolverr_session_create(fetcher)
             login = flaresolverr_session_request(fetcher, session_id, MERCHANT_LOGIN_ADAPTERS["dmit"]["url"])
             page = _dmit_browser_response(login)
@@ -2640,6 +2700,19 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
                 if cached:
                     _remove_merchant_session(adapter_id, account, fetcher)
                 checked = _isvoro_login(session, account)
+                if checked["status"] == "valid":
+                    _store_merchant_session(adapter_id, account, fetcher, session)
+                return {**result, "ok": checked["status"] == "valid", **checked}
+            if adapter_id == "narwhal":
+                cached = _get_merchant_session(adapter_id, account, fetcher)
+                if cached and _narwhal_authenticated(cached, account):
+                    _renew_merchant_session(adapter_id, account, fetcher, cached)
+                    _copy_merchant_session(cached, session)
+                    return {**result, "ok": True, "status": "valid", "session_reused": True,
+                            "message": "独角鲸云已复用认证会话（内存缓存最长 30 天；不代表具有购买资格或库存）"}
+                if cached:
+                    _remove_merchant_session(adapter_id, account, fetcher)
+                checked = _narwhal_login(session, account)
                 if checked["status"] == "valid":
                     _store_merchant_session(adapter_id, account, fetcher, session)
                 return {**result, "ok": checked["status"] == "valid", **checked}

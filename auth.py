@@ -8,11 +8,44 @@ import json
 import os
 import re
 import secrets
+import threading
+import time
 from pathlib import Path
 
 
 ITERATIONS = 600_000
 DEFAULT_USERS_PATH = Path("/etc/stockwatch-users.json")
+_AUTH_CACHE_TTL = 90.0
+_AUTH_CACHE_LIMIT = 128
+_AUTH_CACHE_KEY = secrets.token_bytes(32)
+_AUTH_CACHE_LOCK = threading.Lock()
+_AUTH_CACHE = {}
+
+
+def _credential_cache_key(username: str, password: str, source: str = "") -> str:
+    return hmac.new(_AUTH_CACHE_KEY, f"{source}\0{username}\0{password}".encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _cached_credentials(username: str, password: str, source: str = ""):
+    key = _credential_cache_key(username, password, source)
+    now = time.monotonic()
+    with _AUTH_CACHE_LOCK:
+        expires = _AUTH_CACHE.get(key)
+        if expires and expires > now:
+            return True
+        if expires:
+            _AUTH_CACHE.pop(key, None)
+    return None
+
+
+def _cache_credentials(username: str, password: str, source: str = "") -> None:
+    key = _credential_cache_key(username, password, source)
+    now = time.monotonic()
+    with _AUTH_CACHE_LOCK:
+        if len(_AUTH_CACHE) >= _AUTH_CACHE_LIMIT:
+            oldest = min(_AUTH_CACHE, key=_AUTH_CACHE.get)
+            _AUTH_CACHE.pop(oldest, None)
+        _AUTH_CACHE[key] = now + _AUTH_CACHE_TTL
 
 
 def validate_username(username: str) -> str:
@@ -70,6 +103,13 @@ def credentials_authorized(username: str, password: str) -> bool:
     if path is None and not os.getenv("ADMIN_PASSWORD", ""):
         return True  # Preserve password-free local SSH-tunnel installations.
     try:
+        source = f"{path}:{path.stat().st_mtime_ns}:{path.stat().st_size}" if path is not None else "legacy"
+    except OSError:
+        source = "missing"
+    cached = _cached_credentials(username, password, source)
+    if cached is True:
+        return True
+    try:
         if len(username) > 64 or len(password) > 256:
             return False
         if path is not None:
@@ -78,10 +118,14 @@ def credentials_authorized(username: str, password: str) -> bool:
             if record is None:
                 return False
             digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(record["salt"]), record["iterations"])
-            return hmac.compare_digest(digest.hex(), record["hash"])
-        expected = f"{os.getenv('ADMIN_USERNAME', 'admin')}:{os.getenv('ADMIN_PASSWORD', '')}"
-        supplied = f"{username}:{password}"
-        return hmac.compare_digest(expected.encode("utf-8"), supplied.encode("utf-8"))
+            valid = hmac.compare_digest(digest.hex(), record["hash"])
+        else:
+            expected = f"{os.getenv('ADMIN_USERNAME', 'admin')}:{os.getenv('ADMIN_PASSWORD', '')}"
+            supplied = f"{username}:{password}"
+            valid = hmac.compare_digest(expected.encode("utf-8"), supplied.encode("utf-8"))
+        if valid:
+            _cache_credentials(username, password, source)
+        return valid
     except (OSError, ValueError, TypeError, KeyError):
         return False
 

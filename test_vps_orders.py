@@ -974,6 +974,31 @@ class AccountVerificationTests(unittest.TestCase):
         self.assertEqual(session.post.call_args.kwargs['json'], {'email': 'user@example.com', 'password': 'pw'})
         store.assert_called_once_with('isvoro', account, None, session)
 
+    def test_narwhal_api_login_verifies_profile_and_caches_session(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='narwhal', username='user@example.com', password='pw', login_url=admin.NARWHAL_LOGIN_URL)
+        login = response({'code': 0, 'data': {'token': 'narwhal-token', 'email': 'user@example.com'}})
+        profile = response({'code': 0, 'data': {'email': 'user@example.com', 'id': 42}})
+        session = requests.Session()
+        session.post = Mock(return_value=login)
+        session.get = Mock(return_value=profile)
+        with patch('admin._store_merchant_session') as store:
+            result = admin.check_order_account(session, account)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['status'], 'valid')
+        self.assertEqual(session.post.call_args.args[0], admin.NARWHAL_LOGIN_URL)
+        self.assertEqual(session.post.call_args.kwargs['json'], {'email': 'user@example.com', 'password': 'pw'})
+        self.assertEqual(session.get.call_args.args[0], admin.NARWHAL_PROFILE_URL)
+        self.assertEqual(session.headers['Authorization'], 'Bearer narwhal-token')
+        store.assert_called_once_with('narwhal', account, None, session)
+
+    def test_narwhal_provider_normalizes_to_builtin_login_adapter(self):
+        account = configuration()['vps_seckill']['accounts'][0]
+        account.update(provider='独角鲸云', username='user@example.com', password='pw', login_url='')
+        normalized = admin.validate_config({'vps_seckill': {'accounts': [account]}})['vps_seckill']['accounts'][0]
+        self.assertEqual(normalized['provider'], 'narwhal')
+        self.assertEqual(normalized['login_url'], admin.NARWHAL_LOGIN_URL)
+
     def test_isvoro_manual_cookie_is_verified_and_never_returned(self):
         account = configuration()['vps_seckill']['accounts'][0]
         account.update(provider='isvoro', username='user@example.com', password='pw', login_url=admin.ISVORO_LOGIN_URL,
