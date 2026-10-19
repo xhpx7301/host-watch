@@ -5,6 +5,7 @@ import hmac
 import hashlib
 import ipaddress
 import json
+import math
 import os
 import re
 import secrets
@@ -49,6 +50,11 @@ SECKILL_TASKS = {}
 STOPPED_SECKILL_IDS = {}
 SECKILL_TEST_TASKS = {}
 STOPPED_SECKILL_TEST_IDS = {}
+AKILE_MARKET_LOCK = threading.RLock()
+AKILE_MARKET_RUN_LOCK = threading.Lock()
+AKILE_MARKET_WAKE = threading.Event()
+AKILE_MARKET_CACHE = {"updated_at": "", "items": [], "error": "", "running": False}
+AKILE_MARKET_THREAD = None
 # BandwagonHost keeps the email-code challenge in the login session. Keep only
 # short-lived, in-memory sessions so an administrator can finish that login
 # without persisting the code or merchant cookies in configuration backups.
@@ -75,6 +81,7 @@ CLOUDSCRAPER_TEST_TARGETS = {
     "vmiss": ("VMISS", "https://app.vmiss.com/store"),
     "vps_soy": ("VPS.SOY", "https://www.vps.soy/cart"),
     "akile": ("Akile", "https://akile.ai/shop/server?areaId=3"),
+    "narwhal": ("独角鲸云", "https://api.fuckip.me/api/v1/plans"),
     "isvoro": ("Isvoro", "https://isvoro.com/buy"),
     "dmit": ("DMIT", "https://www.dmit.io/pages/pricing"),
     "bwh": ("搬瓦工", "https://bwh81.net/order/ecommerce/Los%20Angeles/USCA_9"),
@@ -450,6 +457,8 @@ AKILE_STORE_URL = "https://api.akile.ai/api/v1/store/GetVpsStoreV3"
 AKILE_ORDER_URL = "https://api.akile.ai/api/v1/store/makeOrder"
 AKILE_ORDER_DETAIL_URL = "https://api.akile.ai/api/v1/order/GetOrderByOrderNo"
 AKILE_ORDER_PAGE_BASE = "https://akile.ai/console/finance/order/"
+AKILE_MARKET_LIST_URL = "https://api.akile.ai/api/v1/pushshop/GetPushProductList"
+AKILE_MARKET_DETAIL_URL = "https://api.akile.ai/api/v1/pushshop/GetPushProduct"
 AKILE_DEBIAN_TEMPLATES = {
     "Debian 11": "063c07af-b200-40c0-839c-21864474saw",
     "Debian 12": "063c07af-b200-40c0-839c-1864474saw",
@@ -2269,6 +2278,200 @@ def akile_confirm_order(session, order_id: str, item: dict | None = None, produc
             "order_url": akile_order_page_url(order_id), "order_status": 1}
 
 
+def akile_market_cycle_days(cycle: object) -> int:
+    # Akile server_cycle is the renewal period in months (1 = month, 12 = year).
+    if isinstance(cycle, bool):
+        return 0
+    return {"1": 30, "3": 90, "6": 180, "12": 365, "24": 730, "36": 1095}.get(str(cycle), 0)
+
+
+def akile_market_valuation(row: dict, now: float | None = None) -> dict:
+    """Prorate the actual renewal amount; never treat unknown prices as zero."""
+    product_id = str(row.get("id", ""))
+    if not re.fullmatch(r"[1-9][0-9]{0,18}", product_id):
+        raise ValueError("Akile 交易市场商品 ID 无效")
+    try:
+        fields = [row.get(key) for key in ("price", "server_price", "due_time")]
+        if any(isinstance(value, bool) for value in fields):
+            raise ValueError()
+        price, renewal, due_time = map(float, fields)
+        cycle_days = akile_market_cycle_days(row.get("server_cycle"))
+        if not all(math.isfinite(value) and value >= 0 for value in (price, renewal, due_time)):
+            raise ValueError()
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("Akile 商品价格或到期时间无效") from None
+    price, renewal = price / 100, renewal / 100
+    remaining_days = max(0, (due_time - (time.time() if now is None else now)) / 86400)
+    fair_value = renewal * remaining_days / cycle_days if cycle_days else None
+    delta = fair_value - price if fair_value is not None else None
+    rate = delta / fair_value * 100 if fair_value and fair_value > 0 else None
+    return {"id": product_id, "name": str(row.get("name") or row.get("plan_name") or "")[:160],
+        "plan_name": str(row.get("plan_name") or "")[:160],
+        "region": str(row.get("area_name") or "")[:80], "node": str(row.get("node_name") or "")[:120],
+        **{key: row.get(key) for key in ("cpu", "memory", "disk", "bandwidth", "flow", "flow_used", "ipv4_num", "ipv6_num", "status")},
+        "is_bid": row.get("is_bid") is not False, "detail": str(row.get("detail") or "")[:240],
+        "price": price, "renewal": renewal, "cycle": row.get("server_cycle"), "cycle_days": cycle_days,
+        "due_time": due_time, "remaining_days": remaining_days, "fair_value": fair_value,
+        "delta": delta, "rate": rate, "updated_at": beijing_iso(),
+        "valuation_error": "未知续费周期" if not cycle_days else "已到期或续费价格为零，无法估值" if rate is None else ""}
+
+
+def akile_market_list(session: requests.Session, *, area: str = "", name: str = "", page_size: int = 30,
+                      max_items: int = 600) -> list[dict]:
+    """Deduplicate Akile's unstable ordering of equally priced listings."""
+    rows, seen, page, expected, scanned = [], set(), 1, None, 0
+    session._hostwatch_market_incomplete = False
+    while scanned < max_items:
+        payload = order_json(session.post(AKILE_MARKET_LIST_URL,
+            json={"area_name": area[:80], "name": name[:120], "page_num": page, "page_size": page_size},
+            timeout=(5, 20), allow_redirects=False))
+        if str(payload.get("status_code")) not in {"0", "200"}:
+            raise ValueError("Akile 市场读取失败，请检查登录或访问限制")
+        batch, total = payload.get("list"), payload.get("total")
+        if type(total) is not int or total < 0 or total > max_items:
+            raise ValueError("Akile 市场数量异常或超过读取上限，请缩小监控范围")
+        if expected is not None and total != expected:
+            raise ValueError("市场分页期间上架数量变化，本轮不触发，请稍后刷新")
+        expected = total
+        if total == 0 and batch in (None, []):
+            return []
+        if not isinstance(batch, list) or not batch:
+            raise ValueError("Akile 市场分页数据不完整，本轮不触发")
+        before = len(rows)
+        for row in batch:
+            if not isinstance(row, dict):
+                raise ValueError("Akile 市场分页商品格式异常")
+            identifier = str(row.get("id", ""))
+            if identifier not in seen:
+                seen.add(identifier)
+                rows.append(row)
+        if len(rows) == before:
+            raise ValueError("Akile 市场分页未取得新商品，请稍后刷新")
+        scanned += len(batch)
+        if scanned >= total:
+            if scanned != total:
+                raise ValueError("Akile 市场分页数量不一致")
+            session._hostwatch_market_incomplete = len(rows) != total
+            return rows
+        page += 1
+    raise ValueError("Akile 市场读取超出上限")
+
+
+def akile_market_detail(session: requests.Session, product_id: str) -> dict:
+    if not re.fullmatch(r"[1-9][0-9]{0,18}", str(product_id)):
+        raise ValueError("Akile 交易市场商品 ID 无效")
+    payload = order_json(session.get(AKILE_MARKET_DETAIL_URL, params={"id": product_id},
+        timeout=(5, 20), allow_redirects=False))
+    if (str(payload.get("status_code")) not in {"0", "200"} or not isinstance(payload.get("data"), dict)
+            or str(payload["data"].get("id")) != str(product_id)):
+        raise ValueError("Akile 商品详情无法确认或已下架")
+    return payload["data"]
+
+
+def normalize_akile_market(value: object, accounts: list[dict]) -> dict:
+    value = {} if value is None else value
+    if not isinstance(value, dict):
+        raise ValueError("Akile 交易市场配置必须是对象")
+    enabled = value.get("enabled", False)
+    if type(enabled) is not bool:
+        raise ValueError("Akile 市场启用状态必须是布尔值")
+    interval = value.get("interval_seconds", 60)
+    if type(interval) is not int or not 30 <= interval <= 3600:
+        raise ValueError("Akile 市场刷新间隔必须是 30 到 3600 秒")
+    account_id = str(value.get("account_id", ""))
+    account_ids = {row["id"] for row in accounts if row.get("provider") == "akile"}
+    if account_id and account_id not in account_ids:
+        raise ValueError("请为交易市场选择已保存的 Akile 网站账户")
+    rows = value.get("items", [])
+    if not isinstance(rows, list) or len(rows) > 100:
+        raise ValueError("Akile 市场规则最多 100 项")
+    normalized, seen = [], set()
+    for raw in rows:
+        if not isinstance(raw, dict):
+            raise ValueError("Akile 市场规则无效")
+        identifier = str(raw.get("id", ""))
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", identifier) or identifier in seen:
+            raise ValueError("Akile 市场规则 ID 必须唯一")
+        seen.add(identifier)
+        rule = {"id": identifier}
+        for key, allowed, default in (("target", {"listing", "plan"}, "listing"),
+                ("direction", {"discount", "premium"}, "discount"),
+                ("action", {"notify", "unpaid_order"}, "notify"), ("match", {"any", "all"}, "any")):
+            rule[key] = str(raw.get(key, default))
+            if rule[key] not in allowed:
+                raise ValueError("Akile 市场规则类型无效")
+        rule["enabled"] = raw.get("enabled", True)
+        if type(rule["enabled"]) is not bool:
+            raise ValueError("Akile 市场规则启用状态必须是布尔值")
+        for key, limit in (("product_id", 19), ("name", 160), ("plan_name", 160), ("region", 80), ("node", 120)):
+            rule[key] = str(raw.get(key, "")).strip()
+            if len(rule[key]) > limit:
+                raise ValueError("Akile 市场规则字段过长")
+        market_info = raw.get("market_info")
+        if market_info is not None:
+            if not isinstance(market_info, dict):
+                raise ValueError("Akile 市场商品信息无效")
+            normalized_info = {}
+            for key in ("cpu", "memory", "disk", "bandwidth", "flow"):
+                field = market_info.get(key)
+                if field is None:
+                    continue
+                if isinstance(field, (bool, dict, list)):
+                    raise ValueError("Akile 市场商品配置无效")
+                field = str(field).strip()
+                if len(field) > 80:
+                    raise ValueError("Akile 市场商品配置字段过长")
+                if field:
+                    normalized_info[key] = field
+            renewal = market_info.get("renewal")
+            if renewal is not None:
+                if (isinstance(renewal, bool) or not isinstance(renewal, (int, float))
+                        or not math.isfinite(renewal) or not 0 <= renewal <= 1000000):
+                    raise ValueError("Akile 市场续费金额无效")
+                normalized_info["renewal"] = float(renewal)
+            cycle = market_info.get("cycle")
+            if cycle is not None:
+                if isinstance(cycle, (bool, dict, list)) or len(str(cycle).strip()) > 12:
+                    raise ValueError("Akile 市场续费周期无效")
+                if str(cycle).strip():
+                    normalized_info["cycle"] = str(cycle).strip()
+            if normalized_info:
+                rule["market_info"] = normalized_info
+        if rule["target"] == "listing" and not re.fullmatch(r"[1-9][0-9]{0,18}", rule["product_id"]):
+            raise ValueError("监控单条挂单必须填写有效的市场商品 ID")
+        if rule["target"] == "plan" and not all(rule[key] for key in ("plan_name", "region", "node")):
+            raise ValueError("监控同套餐需指定完整套餐名、地区和节点")
+        for key in ("rate_threshold", "amount_threshold"):
+            number = raw.get(key)
+            if number is not None and (isinstance(number, bool) or not isinstance(number, (int, float))
+                    or not math.isfinite(number) or not 0 <= number <= 1000000):
+                raise ValueError("折价/溢价阈值必须是非负有限数字，留空不使用")
+            rule[key] = float(number) if number is not None else None
+        if rule["rate_threshold"] is None and rule["amount_threshold"] is None:
+            raise ValueError("每条市场规则至少设置一个比例或金额阈值")
+        normalized.append(rule)
+    if enabled and (not account_id or not any(row["enabled"] for row in normalized)):
+        raise ValueError("启用交易市场前请选择 Akile 账户并添加启用的规则")
+    return {"enabled": enabled, "interval_seconds": interval, "account_id": account_id, "items": normalized}
+
+
+def akile_market_rule_matches(rule: dict, item: dict) -> bool:
+    if (item.get("valuation_error") or item.get("remaining_days", 0) <= 0
+            or item.get("is_bid") is not False or type(item.get("status")) is not int or item["status"] != 0):
+        return False
+    if rule["target"] == "listing":
+        if rule["product_id"] != item["id"]:
+            return False
+    elif any(rule[key] != item[key] for key in ("plan_name", "region", "node")):
+        return False
+    results = []
+    for key, actual in (("rate_threshold", item["rate"]), ("amount_threshold", item["delta"])):
+        if rule.get(key) is not None:
+            # Discount is a minimum saving; premium is a maximum extra cost.
+            results.append(actual >= rule[key] if rule["direction"] == "discount" else -actual <= rule[key])
+    return bool(results) and (all(results) if rule.get("match") == "all" else any(results))
+
+
 def _bwh_canonical_url(url: str) -> str:
     parsed = urlsplit(str(url or "").strip())
     if parsed.scheme != "https" or (parsed.hostname or "").casefold() not in {"bwh81.net", "www.bwh81.net", "bandwagonhost.com", "www.bandwagonhost.com"}:
@@ -3293,6 +3496,7 @@ def default_config() -> dict:
         "telegram": {"bot_token": "", "chat_id": "", "disabled": False},
         "egress": {"nodes": [], "routes": {}},
         "vps_seckill": {"enabled": False, "mode": "manual", "interval_seconds": 5, "items": [], "accounts": []},
+        "akile_market": {"enabled": False, "interval_seconds": 60, "account_id": "", "items": []},
         "products": [],
     }
 
@@ -3664,7 +3868,7 @@ def validate_config(value: object) -> dict:
         product_id = str(item.get("id", "")).strip()
         name = str(item.get("name", "")).strip()
         adapter = str(item.get("adapter", "vmiss" if any(key in item for key in ("category_url", "selector", "gid", "pid")) else "html")).strip().casefold()
-        provider = str(item.get("provider", {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "isvoro": "Isvoro", "dmit": "DMIT", "bwh": "搬瓦工"}.get(adapter, "自定义网站"))).strip()
+        provider = str(item.get("provider", {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "narwhal": "独角鲸云", "isvoro": "Isvoro", "dmit": "DMIT", "bwh": "搬瓦工"}.get(adapter, "自定义网站"))).strip()
         gid = str(item.get("gid", "")).strip()
         pid = str(item.get("pid", "")).strip()
         if "enabled" in item and not isinstance(item["enabled"], bool):
@@ -3672,7 +3876,7 @@ def validate_config(value: object) -> dict:
         if not product_id or product_id in seen_ids:
             raise ValueError("每个产品都需要唯一 ID")
         if adapter not in {*PROVIDERS, "html"}:
-            raise ValueError(f"产品 {name or product_id} 的适配器必须是 vmiss、vps_soy、akile、isvoro、dmit、bwh 或 html")
+            raise ValueError(f"产品 {name or product_id} 的适配器必须是 vmiss、vps_soy、akile、narwhal、isvoro、dmit、bwh 或 html")
         if not name:
             raise ValueError(f"产品 {product_id} 需要填写商品名称")
         if not provider or len(provider) > 80:
@@ -3749,6 +3953,13 @@ def validate_config(value: object) -> dict:
             if not node_name or not selector or max(len(node_name), len(selector), len(name)) > 200:
                 raise ValueError(f"产品 {name} 需要填写 Akile 线路及套餐完整名称（最多 200 个字符）")
             normalized_item = {"id": product_id, "name": name, "provider": provider, "adapter": adapter, "area_mode": area_mode, "area_id": area_id, "node_name": node_name, "selector": selector, "enabled": item.get("enabled", False)}
+        elif adapter == "narwhal":
+            machine_id = str(item.get("machine_id", "")).strip()
+            plan_id = str(item.get("plan_id", "")).strip()
+            uuid_pattern = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}"
+            if not re.fullmatch(uuid_pattern, machine_id) or not re.fullmatch(uuid_pattern, plan_id) or len(name) > 120:
+                raise ValueError(f"产品 {name} 需要从独角鲸云目录选择有效的实例和套餐")
+            normalized_item = {"id": product_id, "name": name, "provider": "独角鲸云", "adapter": adapter, "machine_id": machine_id.lower(), "plan_id": plan_id.lower(), "enabled": item.get("enabled", False)}
         else:
             check_url = str(item.get("url", item.get("category_url", ""))).strip()
             parsed = urlsplit(check_url)
@@ -3846,6 +4057,7 @@ def validate_config(value: object) -> dict:
     telegram = normalize_telegram(value.get("telegram", {}))
     egress_config = egress.normalize(value.get("egress", {}))
     vps_seckill = normalize_seckill(value.get("vps_seckill", {}), seen_ids)
+    akile_market = normalize_akile_market(value.get("akile_market", {}), vps_seckill.get("accounts", []))
     product_orders = {}
     for key in ("watch_order", "notify_order"):
         order = value.get(key, [])
@@ -3873,6 +4085,7 @@ def validate_config(value: object) -> dict:
         "telegram": telegram,
         "egress": egress_config,
         "vps_seckill": vps_seckill,
+        "akile_market": akile_market,
         "products": normalized,
     }
 
@@ -4040,6 +4253,243 @@ def send_stock_test_result(product: dict, result: dict) -> dict:
         return {"status": "failed", "message": f"测试结果发送失败：{exc}"}
     except (OSError, ValueError, KeyError, TypeError):
         return {"status": "failed", "message": "测试结果发送失败：请检查已保存的 Telegram 配置和管理页日志"}
+
+
+def _akile_market_alert_state() -> dict:
+    path = CONFIG_PATH.parent / "state-akile-market.json"
+    if not path.exists():
+        return {"records": {}}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if (not isinstance(data, dict) or not isinstance(data.get("records"), dict)
+                or any(not isinstance(row, dict) or not isinstance(row.get("matched"), bool)
+                       or not isinstance(row.get("sent"), bool) or not isinstance(row.get("reason"), str)
+                       for row in data["records"].values())):
+            raise ValueError()
+        return data
+    except (OSError, ValueError, TypeError):
+        raise ValueError("交易市场去重状态损坏，已停止触发，请先检查状态文件") from None
+
+
+def _save_akile_market_alert_state(value: dict) -> None:
+    path = CONFIG_PATH.parent / "state-akile-market.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix="market-state-", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(value, stream, ensure_ascii=False, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(name, 0o600)
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def _akile_market_session(config: dict, account_id: str):
+    from monitor import product_fetcher
+    account = next((row for row in config["vps_seckill"]["accounts"]
+                    if row["id"] == account_id and row["provider"] == "akile"), None)
+    if not account:
+        raise ValueError("请选择已保存的 Akile 网站账户")
+    fetcher = product_fetcher(config["fetcher"], {"adapter": "akile", "egress_node_id": account.get("egress_node_id", "")})
+    session = requests.Session()
+    session.trust_env = False
+    session.headers.update({"User-Agent": "HostWatch/1.0 (Akile marketplace)", "Accept": "application/json"})
+    egress.apply_session(session, fetcher)
+    try:
+        checked = public_account_check_result(check_order_account(session, account, fetcher))
+        if not checked.get("ok"):
+            raise ValueError("Akile 账户认证失败：" + str(checked.get("message", "无法验证"))[:180])
+        return session
+    except Exception:
+        session.close()
+        raise
+
+
+def _akile_market_snapshot(account_id: str = "") -> dict:
+    with AKILE_MARKET_LOCK:
+        result = json.loads(json.dumps(AKILE_MARKET_CACHE))
+    # A browser selecting another account must not see the previous account's snapshot.
+    if account_id and account_id != result.get("account_id"):
+        return {"items": [], "updated_at": "", "error": "", "results": [], "account_id": account_id}
+    return result
+
+
+def _akile_market_alert(config: dict, rule: dict, item: dict, reason: str) -> bool:
+    token, chat_id = effective_telegram(config)
+    if not token or not chat_id:
+        return False
+    kind = "折价" if item["delta"] >= 0 else "溢价"
+    message = "\n".join([
+        "🔔 <b>HostWatch · Akile 交易市场</b>",
+        f"商品：{escape(item['name'])} · {escape(item['region'])} · {escape(item['node'])}",
+        f"挂单 ID：<code>{item['id']}</code>",
+        f"售价：¥{item['price']:.2f} · 续费：¥{item['renewal']:.2f}/{item['cycle']}个月",
+        f"剩余：{item['remaining_days']:.2f} 天 · 基准价值：¥{item['fair_value']:.2f}",
+        f"{kind}：{abs(item['rate']):.2f}% · ¥{abs(item['delta']):.2f}",
+        f"触发规则：{escape(rule.get('name') or rule['id'])}",
+        escape(reason[:400]), f"检查时间：{format_beijing(item['updated_at'])}",
+    ])
+    keyboard = {"inline_keyboard": [[{"text": "查看 Akile 商品", "url": f"https://akile.ai/console/pushshop?highlight={item['id']}"}]]}
+    telegram_call(token, "sendMessage", chat_id=chat_id, text=message, parse_mode="HTML",
+        disable_web_page_preview=True, reply_markup=keyboard)
+    return True
+
+
+def _evaluate_akile_market(config: dict, items: list[dict], session) -> list[dict]:
+    """Persist trigger decisions before delivery; failed delivery retries without re-running actions."""
+    market = config["akile_market"]
+    rules = [row for row in market["items"] if row["enabled"]]
+    state = _akile_market_alert_state()
+    records, results = state["records"], []
+    # Pausing Telegram must not change the destination identity and discard
+    # successfully delivered notifications when Telegram is resumed.
+    telegram = config.get("telegram", {})
+    token = telegram.get("bot_token") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = telegram.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID", "")
+    target = hashlib.sha256((token + ":" + chat_id).encode()).hexdigest()
+    valid_prefixes = set()
+    for rule in rules:
+        signature = hashlib.sha256(json.dumps([rule, market["account_id"], target], sort_keys=True).encode()).hexdigest()
+        valid_prefixes.add(signature)
+        hits = [item for item in items if akile_market_rule_matches(rule, item)]
+        if not hits:
+            results.append({"rule_id": rule["id"], "status": "waiting", "message": "等待满足阈值的有效挂单"})
+        for item in hits:
+            key = signature + ":" + item["id"]
+            record = records.get(key, {})
+            if not record.get("matched"):
+                record = {"matched": True, "sent": False, "at": beijing_iso()}
+                if rule["action"] == "unpaid_order":
+                    # The vendor requires a fresh WebAuthn user-presence assertion.
+                    # Do not call makeOrder with a missing or fabricated verification token.
+                    record.update(status="verification_required", reason="达到下单条件，但 Akile 要求用户在官网完成 Passkey 购买验证。未提交订单、未付款，请手动购买。")
+                else:
+                    record.update(status="matched", reason="已达到设定阈值，请到官网手动下单。")
+                records[key] = record
+                _save_akile_market_alert_state(state)
+            record["last_seen"] = time.time()
+            if not record.get("sent"):
+                try:
+                    record["sent"] = _akile_market_alert(config, rule, item, record["reason"])
+                    record["notification"] = "已发送 Telegram" if record["sent"] else "Telegram 未配置或已停用，等待恢复后发送"
+                except (ValueError, requests.RequestException):
+                    record["notification"] = "Telegram 发送失败，下一轮重试通知"
+                _save_akile_market_alert_state(state)
+            results.append({"rule_id": rule["id"], "product_id": item["id"], "status": record["status"],
+                            "message": record["reason"], "notification": record.get("notification", "")})
+        hit_ids = {item["id"] for item in hits}
+        readable = {item["id"] for item in items if not item.get("valuation_error")}
+        for key, record in records.items():
+            if key.startswith(signature + ":") and key.split(":", 1)[1] in readable - hit_ids:
+                record["matched"] = False
+    # Keep recent records across restarts without growing the file indefinitely.
+    state["records"] = {key: val for key, val in records.items()
+                        if key.split(":", 1)[0] in valid_prefixes
+                        and val.get("last_seen", time.time()) >= time.time() - 30 * 86400}
+    _save_akile_market_alert_state(state)
+    return results
+
+
+def refresh_akile_market(*, account_id: str = "", evaluate: bool = False, automatic: bool = False) -> dict:
+    if not AKILE_MARKET_RUN_LOCK.acquire(blocking=False):
+        raise ValueError("交易市场正在刷新，请稍后重试")
+    try:
+        config = current_config()
+        market = config["akile_market"]
+        account_id = account_id or market["account_id"]
+        with _akile_market_session(config, account_id) as session:
+            raw = akile_market_list(session)
+            items = []
+            for row in raw:
+                try:
+                    items.append(akile_market_valuation(row))
+                except ValueError:
+                    # Invalid rows are visible but can never trigger rules.
+                    items.append({"id": str(row.get("id", "")), "name": str(row.get("name", ""))[:160],
+                                  "valuation_error": "商品数据异常，无法估值"})
+            results = _akile_market_snapshot(account_id).get("results", [])
+            warning = "官网同价商品分页排序存在重叠，当前列表可能缺少部分挂单；指定挂单将单独核验。" if session._hostwatch_market_incomplete is True else ""
+            if evaluate:
+                # Read configured listings directly, and query exact plans separately,
+                # so overlapping general-market pages do not hide a watched listing.
+                candidates = {row["id"]: row for row in items if row.get("id")}
+                failed_details = []
+                for rule in market["items"]:
+                    if not rule["enabled"]:
+                        continue
+                    if rule["target"] == "plan":
+                        for source in akile_market_list(session, name=rule["plan_name"], area=rule["region"]):
+                            try:
+                                row = akile_market_valuation(source)
+                                candidates[row["id"]] = row
+                            except ValueError:
+                                pass
+                    else:
+                        candidates.setdefault(rule["product_id"], {"id": rule["product_id"]})
+                verified = []
+                for identifier, candidate in candidates.items():
+                    if not any(rule["enabled"] and ((rule["target"] == "listing" and rule["product_id"] == identifier)
+                           or (rule["target"] == "plan" and all(rule[key] == candidate.get(key) for key in ("plan_name", "region", "node"))))
+                           for rule in market["items"]):
+                        continue
+                    try:
+                        verified.append(akile_market_valuation(akile_market_detail(session, identifier)))
+                    except (ValueError, requests.RequestException):
+                        failed_details.extend({"rule_id": rule["id"], "product_id": identifier, "status": "unknown", "message": "商品详情无法核验，本轮不触发"}
+                            for rule in market["items"] if rule["enabled"] and ((rule["target"] == "listing" and rule["product_id"] == identifier)
+                                or (rule["target"] == "plan" and all(rule[key] == candidate.get(key) for key in ("plan_name", "region", "node")))))
+                latest = current_config()
+                if latest["akile_market"] != market or latest["vps_seckill"]["accounts"] != config["vps_seckill"]["accounts"]:
+                    raise ValueError("配置在刷新期间发生变化，本轮未触发规则")
+                if automatic and not latest["akile_market"]["enabled"]:
+                    raise ValueError("交易市场已暂停")
+                if account_id != market["account_id"]:
+                    raise ValueError("规则检查必须使用已保存的市场账户")
+                results = _evaluate_akile_market(latest, verified, session) + failed_details
+                items = list({row["id"]: row for row in [*items, *verified]}.values())
+        result = {"account_id": account_id, "updated_at": beijing_iso(), "items": items, "results": results,
+                  "error": "", "warning": warning, "running": current_config()["akile_market"]["enabled"],
+                  "order_capability": "Akile 交易市场要求官网 Passkey 验证；当前仅能提醒手动下单，未提交订单。"}
+        with AKILE_MARKET_LOCK:
+            AKILE_MARKET_CACHE.update(result)
+        return result
+    except (OSError, ValueError, requests.RequestException) as exc:
+        with AKILE_MARKET_LOCK:
+            AKILE_MARKET_CACHE["error"] = str(exc)[:300] if isinstance(exc, ValueError) else "交易市场网络请求失败，请检查商家出口与官网状态"
+        raise ValueError(AKILE_MARKET_CACHE["error"]) from None
+    finally:
+        AKILE_MARKET_RUN_LOCK.release()
+
+
+def _akile_market_loop() -> None:
+    deadline = 0.0
+    while True:
+        try:
+            market = current_config()["akile_market"]
+            with AKILE_MARKET_LOCK:
+                AKILE_MARKET_CACHE["running"] = market["enabled"]
+            if market["enabled"] and time.monotonic() >= deadline:
+                try:
+                    refresh_akile_market(evaluate=True, automatic=True)
+                finally:
+                    deadline = time.monotonic() + market["interval_seconds"]
+        except (OSError, ValueError, requests.RequestException) as exc:
+            with AKILE_MARKET_LOCK:
+                AKILE_MARKET_CACHE["error"] = str(exc)[:300]
+            deadline = time.monotonic() + 30
+        if AKILE_MARKET_WAKE.wait(2):
+            AKILE_MARKET_WAKE.clear()
+            deadline = 0
+
+
+def start_akile_market_loop() -> None:
+    global AKILE_MARKET_THREAD
+    if not AKILE_MARKET_THREAD or not AKILE_MARKET_THREAD.is_alive():
+        AKILE_MARKET_THREAD = threading.Thread(target=_akile_market_loop, name="akile-market-monitor", daemon=True)
+        AKILE_MARKET_THREAD.start()
 
 
 def request_body(handler: BaseHTTPRequestHandler) -> dict:
@@ -4283,6 +4733,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, "application/json; charset=utf-8", json.dumps({"error": f"配置文件无法读取：{exc}"}, ensure_ascii=False).encode("utf-8"))
                 return
             self._send(200, "application/json; charset=utf-8", data)
+        elif path == "/api/market":
+            output = _akile_market_snapshot()
+            output["running"] = current_config()["akile_market"]["enabled"]
+            self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
         elif path == "/api/egress":
             try:
                 data = json.dumps(public_config(json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else default_config()).get("egress", {"nodes": [], "routes": {}}), ensure_ascii=False).encode("utf-8")
@@ -4429,7 +4883,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(403)
             return
         # Stopping and polling tests must never wait behind config/service locks.
-        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-verification", "/api/seckill/test", "/api/seckill/test/stop", "/api/egress/probe"}:
+        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-verification", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/egress/probe"}:
             self._post_action()
             return
         if not MUTATION_LOCK.acquire(blocking=False):
@@ -4441,7 +4895,7 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/refresh", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-verification", "/api/seckill/account-cache-clear", "/api/seckill/test", "/api/seckill/test/stop", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
+        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/refresh", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-verification", "/api/seckill/account-cache-clear", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
             self.send_error(404)
             return
         try:
@@ -4454,7 +4908,8 @@ class Handler(BaseHTTPRequestHandler):
                 with TEST_LOCK, SECKILL_LOCK, CATALOG.lock:
                     if (any(task.snapshot().get("pending") for task in TEST_TASKS.values())
                             or any(task.snapshot().get("pending") for task in SECKILL_TASKS.values())
-                            or (CATALOG.task and CATALOG.task.get("pending"))):
+                            or (CATALOG.task and CATALOG.task.get("pending"))
+                            or AKILE_MARKET_RUN_LOCK.locked()):
                         raise ValueError("请先停止或等待商品测试、秒杀任务和大盘刷新完成，再导入备份")
                     raw = self.rfile.read(length)
                     if len(raw) != length or not raw.startswith(b"\x1f\x8b"):
@@ -4505,6 +4960,31 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(409, "application/json; charset=utf-8", json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"))
                     return
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
+                return
+            if self.path in {"/api/market/refresh", "/api/market/check"}:
+                output = refresh_akile_market(account_id=str(submitted.get("account_id", "")),
+                                              evaluate=self.path.endswith("/check"))
+                self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
+                return
+            if self.path == "/api/market/test-notification":
+                token, chat_id = effective_telegram(current_config())
+                if not token or not chat_id:
+                    raise ValueError("请先启用并保存 Telegram 机器人和接收 Chat ID")
+                message = "\n".join([
+                    "🧪 <b>测试通知 · HostWatch Akile 交易市场</b>",
+                    "这是一条示例市场提醒，用于确认 Telegram 通知通道正常。",
+                    "商品：测试套餐 · 示例地区 · 示例节点",
+                    "配置：2 核 · 2048 MB · 40 GB · 带宽 500 Mbps · 流量 1 TB/月",
+                    "售价：¥10.00 · 续费：¥20.00/1个月（折合 ¥20.00/月）",
+                    "折价：50.00% · ¥10.00",
+                    "触发规则：通知功能测试",
+                    "手动测试消息，不代表真实挂单；不会创建订单或付款。",
+                    f"测试时间：{format_beijing(beijing_iso())}",
+                ])
+                telegram_call(token, "sendMessage", chat_id=chat_id, text=message,
+                              parse_mode="HTML", disable_web_page_preview=True)
+                self._send(200, "application/json; charset=utf-8",
+                    json.dumps({"ok": True, "message": "Akile 市场测试通知已发送至 Telegram。"}, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/refresh":
                 output = start_manual_refresh(str(submitted.get("role", "")))
@@ -4628,6 +5108,8 @@ class Handler(BaseHTTPRequestHandler):
                     node.update({key: existing[key] for key in ("proxy_url", "health_url", "public_ip", "last_seen", "pending_registration")})
                 merged_nodes.append(node)
             submitted["egress"] = {**submitted_egress, "nodes": merged_nodes}
+            if "akile_market" not in submitted:
+                submitted["akile_market"] = current["akile_market"]
             submitted_seckill = submitted.get("vps_seckill", current["vps_seckill"])
             if not isinstance(submitted_seckill, dict):
                 raise ValueError("VPS 秒杀配置必须是对象")
@@ -4702,6 +5184,8 @@ class Handler(BaseHTTPRequestHandler):
             submitted["enabled"] = bool(automatic_refresh and has_refreshable_products)
             value = validate_config(submitted)
             save_config(value)
+            if value["akile_market"] != current["akile_market"]:
+                AKILE_MARKET_WAKE.set()
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             status = 502 if isinstance(exc, TelegramAPIError) else (413 if "请求体大小" in str(exc) else 400)
             self._send(status, "application/json; charset=utf-8", json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"))
@@ -4728,6 +5212,7 @@ def main() -> None:
         raise SystemExit("管理页只允许监听 localhost")
     port = int(os.getenv("ADMIN_PORT", "8765"))
     print(f"HostWatch admin listening on http://{host}:{port}")
+    start_akile_market_loop()
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 

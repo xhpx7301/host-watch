@@ -21,13 +21,15 @@ def settings(enabled=True, pending=False):
             "proxy_url": "" if pending else "http://203.0.113.20:8787",
             "health_url": "" if pending else "http://203.0.113.20:8787/health",
             "public_ip": "203.0.113.20", "token": "private-token:/@", "pending_registration": pending}
-    return {"mode": "requests", "egress": {"nodes": [node], "routes": {"akile": "node-a", "isvoro": "node-a", "vmiss": "node-a"}}}
+    return {"mode": "requests", "egress": {"nodes": [node], "routes": {"akile": "node-a", "narwhal": "node-a", "isvoro": "node-a", "vmiss": "node-a"}}}
 
 
 class RoutingTests(unittest.TestCase):
     def test_routes_are_per_merchant_and_never_reuse_previous_proxy(self):
         routed = monitor.product_fetcher(settings(), {"adapter": "akile"})
         self.assertIn("203.0.113.20", routed["egress_proxy_url"])
+        narwhal = monitor.product_fetcher(settings(), {"adapter": "narwhal"})
+        self.assertIn("203.0.113.20", narwhal["egress_proxy_url"])
         direct = monitor.product_fetcher(routed, {"adapter": "dmit"})
         self.assertNotIn("egress_proxy_url", direct)
         session = requests.Session()

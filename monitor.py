@@ -43,6 +43,69 @@ class ProductUnlisted(MonitorError):
     """A valid directory no longer includes the selected product; keep waiting."""
 
 
+NARWHAL_PLANS_URL = "https://api.fuckip.me/api/v1/plans"
+
+
+def fetch_narwhal_plans(session: requests.Session, machine_id: str = "", fetcher: dict | None = None) -> list[dict]:
+    url = NARWHAL_PLANS_URL + ("?" + urlencode({"machine_id": machine_id}) if machine_id else "")
+    body, _ = fetch_page(session, url, fetcher or {"mode": "requests"}, "api.fuckip.me")
+    nodes = BeautifulSoup(body, "html.parser").select("pre") if body.lstrip().startswith("<") else []
+    if len(nodes) == 1:
+        body = nodes[0].get_text()
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        raise MonitorError("独角鲸云接口未返回有效 JSON，未更新库存") from None
+    data = payload.get("data") if isinstance(payload, dict) and type(payload.get("code")) is int and payload["code"] == 0 else None
+    plans = data.get("plans") if isinstance(data, dict) else None
+    if not isinstance(plans, list) or any(not isinstance(plan, dict) for plan in plans):
+        raise MonitorError("独角鲸云套餐目录结构异常，未更新库存")
+    if type(data.get("total")) is not int or data["total"] != len(plans):
+        raise MonitorError("独角鲸云目录不完整，未更新库存")
+    ids = [plan.get("id") for plan in plans]
+    if any(not isinstance(identifier, str) or not re.fullmatch(r"[0-9a-f-]{36}", identifier) for identifier in ids) or len(set(ids)) != len(ids):
+        raise MonitorError("独角鲸云套餐标识无效或重复，未更新库存")
+    if machine_id and any(plan.get("machine_id") != machine_id for plan in plans):
+        raise MonitorError("独角鲸云返回实例不一致，未更新库存")
+    return plans
+
+
+def parse_narwhal(plans: object, item: dict) -> Product:
+    if not isinstance(plans, list) or any(not isinstance(plan, dict) for plan in plans):
+        raise MonitorError("独角鲸云套餐目录结构异常，未更新库存")
+    plan_id, machine_id = str(item.get("plan_id", "")), str(item.get("machine_id", ""))
+    matches = [p for p in plans if str(p.get("id", "")) == plan_id and str(p.get("machine_id", "")) == machine_id]
+    if not matches:
+        raise ProductUnlisted("独角鲸云套餐已下架或暂时无法匹配，保留配置等待恢复")
+    if len(matches) != 1:
+        raise MonitorError("独角鲸云套餐标识重复，未更新库存")
+    plan = matches[0]
+    stock = plan.get("remaining")
+    if type(stock) is not int or stock < 0 or not isinstance(plan.get("sold_out"), bool):
+        raise MonitorError("独角鲸云库存字段异常，未更新库存")
+    stock_mode = "quantity"
+    if plan["sold_out"] or plan.get("ram_insufficient") is True:
+        stock = 0
+    elif stock == 0:
+        stock, stock_mode = 1, "availability"
+    if not isinstance(plan.get("status"), str) or not isinstance(plan.get("machine_status"), str):
+        raise MonitorError("独角鲸云商品状态缺失，未更新库存")
+    if plan["status"] != "active" or plan["machine_status"] != "online":
+        raise MonitorError("独角鲸云实例不在线或套餐未启用，暂不更新库存")
+    plan_name = plan.get("name")
+    machine_name = plan.get("machine_name")
+    if not isinstance(plan_name, str) or not plan_name.strip() or not isinstance(machine_name, str) or not machine_name.strip():
+        raise MonitorError("独角鲸云商品缺少实例或套餐名称，未更新库存")
+    purchase_url = "https://dash.fuckip.me/deploy?" + urlencode({"plan_id": plan_id, "machine_id": machine_id})
+    specs = f"{plan.get('cpu', '—')} 核 · {plan.get('ram_mb', '—')} MB · {plan.get('disk_gb', '—')} GB · {plan.get('bandwidth_mbps', '—')} Mbps"
+    price = plan.get("price_monthly")
+    if type(price) not in {int, float} or not math.isfinite(price) or price < 0:
+        raise MonitorError("独角鲸云套餐价格异常，未更新库存")
+    return Product(plan_id, plan_name.strip(), stock, purchase_url, vendor="独角鲸云", stock_mode=stock_mode, region=str(plan.get("machine_region") or ""),
+        node_name=machine_name.strip(), specs=specs, traffic=f"{plan.get('monthly_traffic_gb', '—')} GB/月", price=f"¥{price:g}/月",
+        match_details={"machine_id": machine_id, "machine_name": machine_name.strip(), "plan_id": plan_id, "plan_name": plan_name.strip()})
+
+
 class SiteBlocked(MonitorError):
     """The site denied automated access; stop instead of retrying."""
 
@@ -1028,6 +1091,8 @@ def inspect_product(session: requests.Session, item: dict, fetcher: dict) -> Pro
         return parse_vps_soy(body, final_url, item["selector"])
     if item["adapter"] == "akile":
         return parse_akile(fetch_akile_catalog(session, product_fetcher(fetcher, item)), item)
+    if item["adapter"] == "narwhal":
+        return parse_narwhal(fetch_narwhal_plans(session, item["machine_id"], product_fetcher(fetcher, item)), item)
     if item["adapter"] == "isvoro":
         return inspect_isvoro(session, item, product_fetcher(fetcher, item))
     if item["adapter"] == "bwh":
@@ -1181,6 +1246,9 @@ def selected_products(config: dict, role: str | None = None) -> list[dict]:
             area_id = str(item.get("area_id", ""))
             if area_mode not in {"auto", "manual"} or ((area_mode == "manual" or area_id) and not re.fullmatch(r"[1-9][0-9]{0,9}", area_id)) or not item.get("node_name") or not item.get("selector"):
                 raise MonitorError(f"商品 {name} 的 Akile 配置不完整")
+        elif item.get("adapter") == "narwhal":
+            if any(not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", str(item.get(key, ""))) for key in ("machine_id", "plan_id")):
+                raise MonitorError(f"商品 {name} 的独角鲸云实例和套餐配置不完整")
         elif item.get("adapter") == "html":
             url = str(item.get("url", ""))
             if urlsplit(url).scheme != "https" or not str(item.get("stock_selector", "")).strip():
@@ -1221,7 +1289,7 @@ def inventory_cache_identity(item: dict, fetcher: dict) -> dict:
     """Return only request-affecting product fields for shared stock caching."""
     fields = ("url", "category_url", "selector", "stock_selector", "stock_mode", "stock_pattern",
               "available_pattern", "unavailable_pattern", "request_mode", "gid", "pid", "plan_key",
-              "bwh_offer_key", "type_id", "category_id", "product_id", "node_name", "area_id")
+              "bwh_offer_key", "type_id", "category_id", "product_id", "node_name", "area_id", "machine_id", "plan_id")
     return {
         "id": str(item.get("id", "")),
         "adapter": str(item.get("adapter", "")),
@@ -1363,6 +1431,7 @@ def collect_inventory(session, config, selected, found, unavailable, cache_path:
             write_inventory_cache(cache_path, item, product_fetcher(config.get("fetcher"), item), product)
     soy_pages = {}
     akile_catalogs = {}
+    narwhal_catalogs = {}
     isvoro_catalogs = {}
     dmit_catalogs = {}
     bwh_catalogs = {}
@@ -1396,6 +1465,14 @@ def collect_inventory(session, config, selected, found, unavailable, cache_path:
                 if mode not in akile_catalogs:
                     akile_catalogs[mode] = fetch_akile_catalog(session, fetcher)
                 found[item["id"]] = parse_akile(akile_catalogs[mode], item)
+                write_inventory_cache(cache_path, item, fetcher, found[item["id"]])
+            elif item["adapter"] == "narwhal":
+                fetcher = product_fetcher(config.get("fetcher"), item)
+                machine_id = item["machine_id"]
+                key = (machine_id, json.dumps(fetcher, sort_keys=True, default=str))
+                if key not in narwhal_catalogs:
+                    narwhal_catalogs[key] = fetch_narwhal_plans(session, machine_id, fetcher)
+                found[item["id"]] = parse_narwhal(narwhal_catalogs[key], item)
                 write_inventory_cache(cache_path, item, fetcher, found[item["id"]])
             elif item["adapter"] == "isvoro":
                 fetcher = product_fetcher(config.get("fetcher"), item)

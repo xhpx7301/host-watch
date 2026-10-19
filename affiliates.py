@@ -2,14 +2,14 @@
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import re
 
-PROVIDERS = ("vmiss", "vps_soy", "akile", "isvoro", "dmit", "bwh")
+PROVIDERS = ("vmiss", "vps_soy", "akile", "narwhal", "isvoro", "dmit", "bwh")
 DEFAULT_AFFILIATES = {
     "vmiss": "5340", "vps_soy": "",
     "akile": "eb2ff10d-f57f-485f-9621-ed873b36c2c0",
     "isvoro": "c57baee34737",
     "dmit": "22544", "bwh": "84938",
 }
-HOSTS = {"vmiss": "app.vmiss.com", "vps_soy": "www.vps.soy", "akile": "akile.ai", "isvoro": "isvoro.com", "dmit": "www.dmit.io", "bwh": "bwh81.net"}
+HOSTS = {"vmiss": "app.vmiss.com", "vps_soy": "www.vps.soy", "akile": "akile.ai", "narwhal": "dash.fuckip.me", "isvoro": "isvoro.com", "dmit": "www.dmit.io", "bwh": "bwh81.net"}
 
 
 def normalize_affiliate_coupons(value: dict) -> dict:

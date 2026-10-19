@@ -282,11 +282,11 @@ class CloudscraperAPITests(unittest.TestCase):
     def test_probe_uses_selected_target_current_options_and_forces_cloudscraper(self):
         task_id = "probe-api-1234567890123456"
         with patch.dict(admin.TEST_TASKS, {}, clear=True), patch.object(admin.StockTestTask, "run"), patch.object(admin, "manager_action") as manage:
-            code, body = self.request("/api/products/test", {"task_id": task_id, "kind": "cloudscraper_probe", "target": "vmiss", "fetcher": {"mode": "flaresolverr", "provider_modes": {"html": "requests"}, "cloudscraper": {"read_timeout_seconds": 44}}})
+            code, body = self.request("/api/products/test", {"task_id": task_id, "kind": "cloudscraper_probe", "target": "narwhal", "fetcher": {"mode": "flaresolverr", "provider_modes": {"html": "requests"}, "cloudscraper": {"read_timeout_seconds": 44}}})
             self.assertEqual(code, 200)
             task = admin.TEST_TASKS[task_id]
             self.assertTrue(task.product["_request_probe"])
-            self.assertEqual(task.product["target"], "vmiss")
+            self.assertEqual(task.product["target"], "narwhal")
             self.assertEqual(task.fetcher["mode"], "cloudscraper")
             self.assertEqual(task.fetcher["cloudscraper"]["read_timeout_seconds"], 44)
             self.assertFalse(task.browser)

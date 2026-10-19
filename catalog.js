@@ -1,9 +1,10 @@
 /* VPS browsing uses cached read-only snapshots; only explicit selection edits config. */
 (() => {
-  const providers = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", isvoro: "Isvoro", dmit: "DMIT", bwh: "搬瓦工" };
+  const providers = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", narwhal: "独角鲸云", isvoro: "Isvoro", dmit: "DMIT", bwh: "搬瓦工" };
   const get = (id) => document.getElementById(id);
   let provider = sessionStorage.getItem("hostwatch-catalog-provider") || "akile";
   if (!Object.hasOwn(providers, provider)) provider = "akile";
+  if (currentPage === "narwhal") provider = "narwhal";
   let scope = "", data = null, task = null, route = null, page = 0, generation = 0, loading = false, metadataOutdated = false;
   let pollTimer, autoTimer;
   let routeConfig = null;
@@ -25,6 +26,7 @@
     if (watch.adapter === "dmit") return Boolean(item.plan_key && watch.plan_key && equal(item.plan_key, watch.plan_key) || item.pid && watch.pid && equal(item.pid, watch.pid));
     if (watch.adapter === "bwh") return equal(item.bwh_offer_key || item.selector, watch.bwh_offer_key || watch.selector);
     if (watch.adapter === "akile") return (item.area_mode !== "manual" || equal(item.area_id, watch.area_id)) && equal(item.node_name, watch.node_name) && equal(item.selector, watch.selector);
+    if (watch.adapter === "narwhal") return equal(item.machine_id, watch.machine_id) && equal(item.plan_id, watch.plan_id);
     if (watch.adapter === "isvoro") return ["type_id", "category_id", "product_id"].every((key) => equal(item[key], watch[key]));
     if (watch.adapter === "vps_soy") {
       try {
@@ -124,7 +126,7 @@
       actions.append(text("small", reminderLabel(row)));
       if (row.purchase_url) {
         const url = new URL(row.purchase_url);
-        if (url.protocol === "https:" && ["app.vmiss.com", "www.vps.soy", "akile.ai", "isvoro.com", "www.dmit.io", "bwh81.net", "www.bwh81.net", "bandwagonhost.com", "www.bandwagonhost.com"].includes(url.hostname) && !url.username && !url.password) {
+        if (url.protocol === "https:" && ["app.vmiss.com", "www.vps.soy", "akile.ai", "dash.fuckip.me", "isvoro.com", "www.dmit.io", "bwh81.net", "www.bwh81.net", "bandwagonhost.com", "www.bandwagonhost.com"].includes(url.hostname) && !url.username && !url.password) {
           const link = text("a", "直接购买", "buy-link"); link.href = affiliatePurchaseURL(url.href, row.watch.adapter, row.watch); link.target = "_blank"; link.rel = "noopener noreferrer"; actions.append(link);
         }
       }
@@ -228,7 +230,7 @@
 
   function schedule() {
     clearTimeout(pollTimer); clearTimeout(autoTimer);
-    if (currentPage !== "catalog" || document.hidden) return;
+    if (!catalogPage() || document.hidden) return;
     if (task?.pending) pollTimer = setTimeout(() => loadSnapshot(false), 1200);
     else if (scope !== "all" && !task?.error && !task?.cancelled && Number(get("catalog-auto").value)) autoTimer = setTimeout(() => refresh(true), Number(get("catalog-auto").value) * 1000);
   }
@@ -238,7 +240,7 @@
     loading = true; render();
     try {
       const result = await requestJSON(`/api/catalog?${new URLSearchParams({ provider: requestedProvider, scope: requestedScope })}`, { timeoutMs: 10000 });
-      if (version !== generation || currentPage !== "catalog") return;
+      if (version !== generation || !catalogPage()) return;
       data = result.data; task = result.task; route = result.route; routeConfig = savedConfig; metadataOutdated = Boolean(result.needs_refresh);
       if (data) {
         scope = data.scope;
@@ -258,7 +260,7 @@
   }
 
   async function refresh(auto = false) {
-    if (loading || task?.pending || currentPage !== "catalog" || document.hidden || actionRunning) { schedule(); return; }
+    if (loading || task?.pending || !catalogPage() || document.hidden || actionRunning) { schedule(); return; }
     const version = generation;
     loading = true; render();
     try {
@@ -277,6 +279,7 @@
     void loadSnapshot();
     animateFilterResult(get("catalog-results"));
   }));
+  function catalogPage() { return currentPage === "catalog" || currentPage === "narwhal"; }
   get("catalog-scope").addEventListener("change", () => {
     generation++; scope = get("catalog-scope").value; page = 0; selected.clear();
     filterGeneration = generation;
@@ -314,15 +317,20 @@
   get("catalog-open-products").addEventListener("click", () => navigatePage("monitor"));
   window.addEventListener("hostwatch-page-change", (event) => {
     generation++; filterGeneration = null; clearTimeout(autoTimer); clearTimeout(pollTimer); loading = false;
-    if (event.detail === "catalog") void loadSnapshot();
+    if (event.detail === "narwhal") {
+      provider = "narwhal"; scope = ""; data = null; route = null; metadataOutdated = false; page = 0; selected.clear();
+      sessionStorage.setItem("hostwatch-catalog-provider", provider);
+      document.querySelectorAll("[data-catalog-provider]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.catalogProvider === provider)));
+      void loadSnapshot();
+    } else if (event.detail === "catalog") void loadSnapshot();
   });
-  for (const event of ["hostwatch-draft-change", "hostwatch-service-change"]) window.addEventListener(event, () => { if (currentPage === "catalog") render(); });
+  for (const event of ["hostwatch-draft-change", "hostwatch-service-change"]) window.addEventListener(event, () => { if (catalogPage()) render(); });
   window.addEventListener("hostwatch-action-change", () => {
-    if (currentPage !== "catalog") return;
+    if (!catalogPage()) return;
     render();
     if (!data && !loading && !task?.pending && !task?.error && !task?.cancelled) void loadSnapshot();
   });
-  document.addEventListener("visibilitychange", () => { if (currentPage === "catalog" && !document.hidden) void loadSnapshot(false); else schedule(); });
+  document.addEventListener("visibilitychange", () => { if (catalogPage() && !document.hidden) void loadSnapshot(false); else schedule(); });
   render();
-  if (currentPage === "catalog") void loadSnapshot();
+  if (catalogPage()) void loadSnapshot();
 })();

@@ -52,7 +52,7 @@ INSTALLER_FALLBACK_URL = "https://github.com/xhpx7301/host-watch/raw/refs/heads/
 MAX_BACKUP_UPLOAD = 20 * 1024 * 1024
 MAX_BACKUP_EXPANDED = 64 * 1024 * 1024
 MAX_BACKUP_REQUEST = (MAX_BACKUP_UPLOAD + 2) // 3 * 4 + 4096
-RESTORE_DATA_FILES = ("config.json", "state.json", "state-seckill.json", "status.json", "catalog.json", "exchange-rates.json")
+RESTORE_DATA_FILES = ("config.json", "state.json", "state-seckill.json", "state-akile-market.json", "status.json", "catalog.json", "exchange-rates.json")
 
 
 def run(*args: str) -> None:

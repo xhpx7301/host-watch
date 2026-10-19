@@ -19,7 +19,7 @@ from bs4 import BeautifulSoup
 from time_utils import beijing_iso
 
 
-PROVIDERS = {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "isvoro": "Isvoro", "dmit": "DMIT", "bwh": "搬瓦工"}
+PROVIDERS = {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "narwhal": "独角鲸云", "isvoro": "Isvoro", "dmit": "DMIT", "bwh": "搬瓦工"}
 MAX_ROWS = 600
 METADATA_VERSION = 1
 
@@ -91,6 +91,35 @@ def akile_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[lis
                         prices.append(f"¥{price['price'] / 100:g} / {price['cycle']}个月")
                 specs = f"{plan.get('cpu', '—')} 核 · {plan.get('memory', '—')} MB · {plan.get('disk', '—')} GB"
                 rows.append(make_row(f"akile:{area['id']}:{node['id']}:{plan['id']}", watch, area.get("area_name", ""), node.get("group_name", ""), specs, "；".join(prices[:3]), product, error, traffic=akile_network(plan)))
+    return scopes, selected["id"], rows
+
+
+def narwhal_catalog(session, scope: str, fetcher: dict | None = None) -> tuple[list, str, list]:
+    from monitor import MonitorError, fetch_narwhal_plans, parse_narwhal
+    all_plans = fetch_narwhal_plans(session, fetcher=fetcher)
+    machines = {}
+    for plan in all_plans:
+        machine_id, machine_name = plan.get("machine_id"), plan.get("machine_name")
+        if isinstance(machine_id, str) and machine_id and isinstance(machine_name, str) and machine_name.strip():
+            machines.setdefault(machine_id, clean(machine_name, 200))
+    scopes = [{"id": key, "name": f"{name}（{key[:8]}）"} for key, name in sorted(machines.items(), key=lambda entry: entry[1].casefold())]
+    if not scopes:
+        raise MonitorError("独角鲸云没有可识别的实例")
+    selected = scoped(scopes, scope)
+    plans = [plan for plan in all_plans if plan.get("machine_id") == selected["id"]]
+    rows = []
+    for plan in plans:
+        plan_id = plan.get("id")
+        if not isinstance(plan_id, str) or not plan_id:
+            raise MonitorError("独角鲸云套餐缺少稳定 ID，未更新目录")
+        watch = {"adapter": "narwhal", "provider": "独角鲸云", "name": clean(plan.get("name"), 120), "machine_id": selected["id"], "plan_id": plan_id}
+        error, product = "", None
+        try:
+            product = parse_narwhal(plans, watch)
+        except MonitorError as exc:
+            error = str(exc)
+        specs = f"{plan.get('cpu', '—')} 核 · {plan.get('ram_mb', '—')} MB · {plan.get('disk_gb', '—')} GB · {plan.get('bandwidth_mbps', '—')} Mbps"
+        rows.append(make_row(f"narwhal:{selected['id']}:{plan_id}", watch, plan.get("machine_region", ""), plan.get("machine_name", ""), specs, f"¥{plan.get('price_monthly', '—')}/月", product, error, traffic=f"{plan.get('monthly_traffic_gb', '—')} GB/月"))
     return scopes, selected["id"], rows
 
 
@@ -234,7 +263,7 @@ def load_catalog(provider: str, scope: str = "", fetcher: dict | None = None) ->
             from bwh import directory
             scopes, actual, rows = directory(session, scope, fetcher)
         else:
-            scopes, actual, rows = {"vmiss": vmiss_catalog, "vps_soy": soy_catalog, "akile": akile_catalog, "isvoro": isvoro_catalog}[provider](session, scope, fetcher)
+            scopes, actual, rows = {"vmiss": vmiss_catalog, "vps_soy": soy_catalog, "akile": akile_catalog, "narwhal": narwhal_catalog, "isvoro": isvoro_catalog}[provider](session, scope, fetcher)
     if len(rows) > MAX_ROWS or len({row["key"] for row in rows}) != len(rows):
         raise ValueError("商品目录超过容量或存在重复标识，未更新缓存")
     data = {"provider": provider, "scope": actual, "scopes": scopes, "rows": rows, "fetched_at": now(), "route": route, "metadata_version": METADATA_VERSION, "unknown": sum(row["available"] is None for row in rows)}

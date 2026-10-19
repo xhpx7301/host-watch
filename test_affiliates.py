@@ -56,7 +56,7 @@ class AffiliateTests(unittest.TestCase):
 
     def test_partial_merchant_order_appends_missing_vendors(self):
         config = admin.validate_config({"merchant_order": ["isvoro", "akile"]})
-        self.assertEqual(config["merchant_order"], ["isvoro", "akile", "vmiss", "vps_soy", "dmit"])
+        self.assertEqual(config["merchant_order"], ["isvoro", "akile", "vmiss", "vps_soy", "narwhal", "dmit"])
         self.assertEqual(admin.validate_config(config)["merchant_order"], config["merchant_order"])
 
     def test_deep_links_keep_exact_product_parameters_and_replace_old_code(self):

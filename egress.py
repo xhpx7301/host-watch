@@ -11,7 +11,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 import requests
 
 
-PROVIDERS = {"vmiss", "vps_soy", "akile", "isvoro", "dmit", "bwh", "html"}
+PROVIDERS = {"vmiss", "vps_soy", "akile", "narwhal", "isvoro", "dmit", "bwh", "html"}
 IP_CHECK_URLS = ("https://api.ipify.org", "https://ifconfig.me/ip")
 
 

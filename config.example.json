@@ -41,6 +41,7 @@
     "items": [],
     "accounts": []
   },
+  "akile_market": {"enabled": false, "interval_seconds": 60, "account_id": "", "items": []},
   "products": [],
   "affiliates": {
     "vmiss": "5340",

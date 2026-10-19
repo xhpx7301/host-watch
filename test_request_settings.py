@@ -10,7 +10,7 @@ import test_admin
 
 class MerchantRequestTests(unittest.TestCase):
     def test_merchant_choice_overrides_legacy_product_and_global(self):
-        for provider in ("vmiss", "vps_soy", "akile", "isvoro", "dmit", "html"):
+        for provider in ("vmiss", "vps_soy", "akile", "narwhal", "isvoro", "dmit", "html"):
             item = {"adapter": provider, "request_mode": "flaresolverr"}
             fetcher = admin.normalize_fetcher({"mode": "flaresolverr", "provider_modes": {provider: "requests"}})
             self.assertEqual(monitor.product_fetcher(fetcher, item)["mode"], "requests")

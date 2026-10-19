@@ -126,10 +126,24 @@ class BackupRestoreTests(unittest.TestCase):
                 member.linkname = "/etc/passwd"
                 if kind == tarfile.REGTYPE:
                     member.size = 65 * 1024 * 1024
-                archive.addfile(member)
+                    # Forge only the oversized header. Python 3.13 requires a
+                    # fileobj for nonempty addfile(), even for this attack fixture.
+                else:
+                    archive.addfile(member)
+            if kind == tarfile.REGTYPE:
+                buffer = io.BytesIO(gzip.compress(member.tobuf() + b"\0" * 1024))
             with self.subTest(kind=kind), self.assertRaises(ValueError):
                 self.manage.restore_backup({"content": base64.b64encode(buffer.getvalue()).decode()})
         self.run.assert_not_called()
+
+    def test_market_deduplication_state_is_restored(self):
+        state = {"records": {"rule:123": {"matched": True, "sent": True, "reason": "notified"}}}
+        market_path = self.data / "state-akile-market.json"
+        content = self.archive([(str(self.config).lstrip("/"), {"enabled": False, "products": []}),
+                                (str(market_path).lstrip("/"), state)])
+        with patch.object(self.manage, "save_backup_schedule"):
+            self.manage.restore_backup({"content": content})
+        self.assertEqual(json.loads(market_path.read_text()), state)
 
     def test_corrupt_gzip_checksum_and_excessive_decompression_are_rejected(self):
         valid = bytearray(base64.b64decode(self.archive()))

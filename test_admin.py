@@ -43,6 +43,64 @@ class AdminAPITests(unittest.TestCase):
         response = connection.getresponse()
         return response.status, response.read()
 
+    def test_market_endpoints_require_auth_and_refresh_does_not_evaluate(self):
+        with patch.object(admin, "authorized", return_value=False), patch.object(admin, "refresh_akile_market") as refresh:
+            code, _ = self.request("/api/market/refresh", {"account_id": "ak"})
+            self.assertEqual(code, 401)
+            refresh.assert_not_called()
+        with patch.object(admin, "refresh_akile_market", return_value={"items": []}) as refresh:
+            code, _ = self.request("/api/market/refresh", {"account_id": "ak"})
+            self.assertEqual(code, 200)
+            refresh.assert_called_once_with(account_id="ak", evaluate=False)
+        with patch.object(admin, "refresh_akile_market", return_value={"items": []}) as refresh:
+            code, _ = self.request("/api/market/check", {})
+            self.assertEqual(code, 200)
+            refresh.assert_called_once_with(account_id="", evaluate=True)
+
+    def test_market_test_notification_sends_explicit_sample_to_saved_telegram(self):
+        with patch.object(admin, "authorized", return_value=False), patch.object(admin, "telegram_call") as send:
+            code, _ = self.request("/api/market/test-notification", {})
+            self.assertEqual(code, 401)
+            send.assert_not_called()
+        with patch.object(admin, "effective_telegram", return_value=("test-token", "123")), \
+                patch.object(admin, "telegram_call") as send:
+            code, body = self.request("/api/market/test-notification", {})
+        self.assertEqual(code, 200)
+        self.assertTrue(json.loads(body)["ok"])
+        self.assertIn("已发送至 Telegram", json.loads(body)["message"])
+        send.assert_called_once()
+        args, kwargs = send.call_args
+        self.assertEqual(args, ("test-token", "sendMessage"))
+        self.assertEqual(kwargs["chat_id"], "123")
+        self.assertIn("测试通知", kwargs["text"])
+        self.assertIn("不会创建订单或付款", kwargs["text"])
+
+    def test_market_test_notification_requires_active_saved_telegram(self):
+        with patch.object(admin, "effective_telegram", return_value=("", "")), patch.object(admin, "telegram_call") as send:
+            code, body = self.request("/api/market/test-notification", {})
+        self.assertEqual(code, 400)
+        self.assertIn("保存 Telegram", json.loads(body)["error"])
+        send.assert_not_called()
+
+    def test_market_test_notification_reports_telegram_delivery_failure(self):
+        with patch.object(admin, "effective_telegram", return_value=("test-token", "123")), \
+                patch.object(admin, "telegram_call", side_effect=admin.TelegramAPIError("Telegram sendMessage 失败")):
+            code, body = self.request("/api/market/test-notification", {})
+        self.assertEqual(code, 502)
+        self.assertIn("sendMessage", json.loads(body)["error"])
+
+    def test_older_config_save_preserves_market_settings(self):
+        from test_akile_market import config as market_config
+        current = market_config()
+        self.config.write_text(json.dumps(current), encoding="utf-8")
+        draft = dict(current)
+        draft.pop("akile_market")
+        with patch.object(admin, "manager_action", return_value={"ok": True}):
+            code, body = self.request("/api/config", draft)
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(body)["config"]["akile_market"], current["akile_market"])
+        self.assertNotIn(b"secret-token", body)
+
     def test_versioned_static_assets_are_served(self):
         for asset in ("admin.js", "catalog.js"):
             with self.subTest(asset=asset):
