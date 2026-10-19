@@ -556,6 +556,42 @@
     .seckill-item .form-grid label,.seckill-account .form-grid label { min-width:0; }
     .seckill-item > .actions,.seckill-account > .actions { margin-top:12px; }
     .seckill-panel-actions { justify-content:flex-end; margin-top:14px; padding-top:12px; border-top:1px solid rgba(71,91,116,.16); }
+    .market-toolbar { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; margin-bottom:14px; }
+    .market-toolbar .state { margin-top:5px; font-size:12px; }
+    .market-source-link { display:inline-flex; align-items:center; min-height:var(--button-height); padding:6px 12px; border:1px solid #b8d2c8; border-radius:var(--button-radius); color:var(--green); background:var(--green-soft); text-decoration:none; font-weight:700; white-space:nowrap; }
+    .market-rules { display:grid; grid-template-columns:minmax(260px,1.2fr) minmax(260px,1fr) minmax(180px,.7fr); gap:16px; align-items:center; padding:16px; }
+    .market-rules h2 { margin:0; }
+    .market-rules p { margin:5px 0 0; color:var(--muted); font-size:12px; line-height:1.6; }
+    .market-rule-fields { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .market-rule-fields label { color:var(--muted); font-size:12px; }
+    .market-rule-fields label > span { display:flex; align-items:center; gap:5px; margin-top:4px; color:var(--ink); font-weight:650; }
+    .market-rule-fields input { width:90px; }
+    .market-formula { display:flex; flex-direction:column; gap:3px; padding-left:16px; border-left:1px solid var(--line); color:var(--muted); font-size:12px; }
+    .market-formula strong { color:var(--ink); font-size:13px; }
+    .market-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin:14px 0; }
+    .market-stats > div { padding:12px 14px; border:1px solid var(--line); border-radius:8px; background:var(--paper); }
+    .market-stats span,.market-stats strong { display:block; }
+    .market-stats span { color:var(--muted); font-size:11px; }
+    .market-stats strong { margin-top:4px; font-size:19px; font-variant-numeric:tabular-nums; }
+    .market-filters { display:grid; grid-template-columns:minmax(200px,1.5fr) repeat(3,minmax(150px,.75fr)); gap:12px; align-items:end; margin-bottom:12px; }
+    .market-filters label { color:var(--muted); font-size:12px; }
+    .market-filters input,.market-filters select { display:block; width:100%; margin-top:4px; }
+    .market-table-wrap { max-width:100%; overflow:auto; border:1px solid var(--line); border-radius:8px; background:var(--paper); }
+    .market-table { width:100%; min-width:980px; border-collapse:collapse; font-size:12px; }
+    .market-table th { padding:11px 10px; color:var(--muted); background:#f4f7f5; font-size:11px; white-space:nowrap; }
+    .market-table td { padding:11px 10px; border-top:1px solid #edf0ef; vertical-align:middle; text-align:center; }
+    .market-table td:first-child,.market-table td:nth-child(2) { text-align:left; }
+    .market-table strong,.market-table small { display:block; }
+    .market-table small { margin-top:3px; color:var(--muted); }
+    .market-table .market-number { font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .market-deal { display:inline-flex; flex-direction:column; gap:2px; min-width:72px; padding:4px 7px; border-radius:5px; font-weight:700; }
+    .market-deal.discount { color:var(--green); background:var(--green-soft); }
+    .market-deal.premium { color:var(--red); background:var(--red-soft); }
+    .market-deal.neutral { color:var(--muted); background:#f2f4f6; }
+    .market-buy { display:inline-flex; align-items:center; justify-content:center; min-height:30px; padding:5px 10px; border:1px solid var(--purple); border-radius:6px; color:#fff; background:var(--purple); text-decoration:none; font-size:12px; font-weight:700; white-space:nowrap; }
+    .market-disclaimer { margin:12px 0 0; color:var(--muted); font-size:12px; line-height:1.6; }
+    @media(max-width:900px) { .market-rules { grid-template-columns:1fr; } .market-formula { padding:0; border-left:0; border-top:1px solid var(--line); padding-top:12px; } .market-filters { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media(max-width:520px) { .market-toolbar { flex-direction:column; } .market-stats { grid-template-columns:repeat(2,minmax(0,1fr)); } .market-filters { grid-template-columns:1fr; } .market-rule-fields { grid-template-columns:1fr; } }
     #page-seckill .section-head { flex-wrap:wrap; }
     .seckill-logs { min-height:120px; max-height:360px; margin:0; padding:12px; overflow:auto; border:1px solid #2f4058; border-radius:6px; color:#e8eef8; background:#1f2937; font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; }
     .egress-panel { margin-top:18px; padding:14px; border:1px solid #cbd9f5; border-radius:8px; background:#f7faff; }
@@ -692,6 +728,7 @@
       <a href="#monitor" data-page-link="monitor"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4M6 11h3l2-4 3 7 2-3h2"/></svg>VPS 库存监控</a>
       <a href="#notifications" data-page-link="notifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>VPS 库存通知</a>
       <a href="#seckill" data-page-link="seckill"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 9-12h-7l1-8Z"/></svg>VPS 补货抢购</a>
+      <a href="#market" data-page-link="market"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h18l-2-5H5L3 9Zm2 0v11h14V9M9 20v-6h6v6M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0"/></svg>Akile 交易市场</a>
       <a href="#requests" data-page-link="requests"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></svg>网页请求</a>
       <a href="#affiliates" data-page-link="affiliates"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 13 4-4m-6 7-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 1 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0"/></svg>AFF 管理</a>
       <a href="#settings" data-page-link="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 14 5.2l3-.1.8 2.9 2.5 1.7-1.4 2.7 1.4 2.7-2.5 1.7-.8 2.9-3-.1L12 21l-2-2.2-3 .1-.8-2.9-2.5-1.7 1.4-2.7-1.4-2.7 2.5-1.7.8-2.9 3 .1L12 3Z"/><circle cx="12" cy="12" r="3"/></svg>设置</a>
@@ -748,7 +785,7 @@
     <div class="section-head"><div><h2>VPS 补货抢购</h2><p>从 VPS 库存监控或 VPS 库存通知逐个加入商品。下架商品仍可保留目标链接，恢复上架后继续检查。</p></div><div class="actions"><span id="seckill-task-state" class="state">未运行</span></div></div>
       <div class="seckill-control-grid">
       <div class="seckill-panel vps-seckill-panel">
-        <div class="section-head"><div><h3>执行模式</h3><p>所有模式均不自动付款。自动模式仅创建待付款订单，付款需要你手动前往商家官网完成。</p></div><div class="actions"><button id="vps-seckill-test" type="button">测试抢购配置</button><button id="vps-seckill-start" type="button" class="primary">启动补货抢购</button><button id="vps-seckill-stop" type="button" class="danger" hidden>暂停补货抢购</button></div></div>
+        <div class="section-head"><div><h3>执行模式</h3><p>所有模式均不自动付款。自动模式仅创建待付款订单，付款需要你手动前往商家官网完成。</p></div><div class="actions"><button id="vps-seckill-test" type="button">测试抢购配置</button><button id="vps-seckill-test-stop" type="button" class="danger" hidden>停止测试</button><button id="vps-seckill-start" type="button" class="primary">启动补货抢购</button><button id="vps-seckill-stop" type="button" class="danger" hidden>暂停补货抢购</button></div></div>
         <div class="form-grid"><label>模式<select id="vps-seckill-mode"><option value="rapid">极速抢购（自动）</option><option value="precise">精准抢购（自动）</option><option value="manual">手动抢购</option></select></label><label>检查间隔（秒）<input id="vps-seckill-interval" type="number" min="1" max="3600" step="1" value="5"></label></div>
         <p id="vps-seckill-test-status" class="hint" role="status" aria-live="polite">测试会访问网站、识别页面并检查账户，不创建订单、不付款。</p><div id="vps-seckill-test-results" class="seckill-results" aria-live="polite"></div>
         <div class="seckill-mode-guide">
@@ -761,8 +798,8 @@
       </div>
       <div class="seckill-panel seckill-log-panel"><div class="section-head"><div><h3>执行日志</h3><p id="vps-seckill-log-note">尚未启动补货抢购任务。</p></div><div class="actions"><button id="vps-seckill-clear-log" type="button">清空显示</button><button id="vps-seckill-log-detail" type="button">详细日志</button></div></div><div id="vps-seckill-results" aria-live="polite"></div><pre id="vps-seckill-logs" class="seckill-logs" aria-live="polite">暂无日志</pre></div>
       </div>
-      <div class="seckill-panel"><div class="section-head"><div><h3>补货抢购商品</h3><p>在库存监控 / 通知商品的“更多”中点击“加入 VPS 补货抢购”；数量、优惠码、系统、付款周期和付款方式按商品保存；每个商品可按所选出口检查绑定账户。自动模式会按商家内置下单适配提交待付款订单；未适配商家只提供购买链接。商品修改后点击本区域右下角的保存按钮。</p></div><div class="actions"><button id="vps-seckill-open-monitor" type="button">从库存监控添加</button><button id="vps-seckill-open-notifications" type="button">从库存通知添加</button><button id="vps-seckill-delete-all" type="button" class="danger" disabled>删除全部商品</button></div></div><div id="vps-seckill-items" class="seckill-items"></div><div class="seckill-panel-actions actions"><button type="button" class="card-save" data-save-card="seckill">保存补货抢购商品</button></div></div>
-      <div class="seckill-panel"><div class="section-head"><div><h3>网站账户</h3><p>选择商家后填写官网登录名和密码。VMISS、VPS.SOY、搬瓦工、DMIT、Akile、Isvoro 可自动检查登录；其他商家认证会话在内存中缓存最长 30 天。Isvoro 首次登录需在官网完成 hCaptcha 后导入 Cookie，内存缓存最长 30 天，并在 access Cookie 过期时自动用 refresh Cookie 续期；DMIT 可在官网用账号密码登录并完成安全验证后导入 Cookie，内存缓存最长 30 天，若会话绑定浏览器或出口 IP，服务器可能无法验证；搬瓦工可在官网登录并完成邮箱验证码后导入 Cookie，内存缓存最长 30 天。搬瓦工密码登录会自动启用官网 Remember Me，请求签发更持久的 Cookie；网站未提供可用的 refresh Cookie 接口，因此普通 Cookie 失效后仍需重新登录/导入。服务重启会清除内存缓存，Cookie 不写入配置或备份。若密码登录要求邮箱验证码，检查结果会在此账户卡片显示输入框。遇到 Cloudflare 或安全验证时，可在网页请求中为商家选择 FlareSolverr 或 cloudscraper。检查不下单、不付款。自动模式会按商家内置下单适配创建待付款订单；未适配商家不会自动创建订单。密码保存后不回显；账户修改后点击本区域右下角的保存按钮。</p></div><div class="actions"><button id="vps-seckill-add-account" type="button">添加账户</button><button id="vps-seckill-delete-all-accounts" type="button" class="danger" disabled>删除全部账户</button></div></div><div id="vps-seckill-accounts" class="seckill-accounts"></div><div class="seckill-panel-actions actions"><button type="button" class="card-save" data-save-card="seckill">保存网站账号</button></div></div>
+      <div class="seckill-panel"><div class="section-head"><div><h3>补货抢购商品</h3><p>在库存监控 / 通知商品的“更多”中点击“加入 VPS 补货抢购”；数量、优惠码、系统、付款周期、付款方式、账户和出口按商品配置。修改会自动保存并应用。自动模式会按商家内置下单适配提交待付款订单；未适配商家只提供购买链接。</p></div><div class="actions"><button id="vps-seckill-open-monitor" type="button">从库存监控添加</button><button id="vps-seckill-open-notifications" type="button">从库存通知添加</button><button id="vps-seckill-delete-all" type="button" class="danger" disabled>删除全部商品</button></div></div><div id="vps-seckill-items" class="seckill-items"></div></div>
+      <div class="seckill-panel"><div class="section-head"><div><h3>网站账户</h3><p>选择商家后填写官网登录名和密码。VMISS、VPS.SOY、搬瓦工、DMIT、Akile、Isvoro 可自动检查登录；其他商家认证会话在内存中缓存最长 30 天。Cookie 检查使用此处选择的出口；商品绑定账户检查使用抢购商品所选出口。Isvoro 首次登录需在官网完成 hCaptcha 后导入 Cookie；DMIT 和搬瓦工也可导入 Cookie。Cookie 只在服务器内存中使用，不写入配置或备份。服务重启会清除内存缓存。账户修改会自动保存并应用，密码不回显。</p></div><div class="actions"><button id="vps-seckill-add-account" type="button">添加账户</button><button id="vps-seckill-delete-all-accounts" type="button" class="danger" disabled>删除全部账户</button></div></div><div id="vps-seckill-accounts" class="seckill-accounts"></div></div>
     </div>
   </section>
 
@@ -843,6 +880,33 @@
       <div class="affiliate-card" data-affiliate-card="dmit"><div class="affiliate-card-fields"><label>DMIT · aff<input id="affiliate-dmit" data-affiliate="dmit" autocomplete="off" placeholder="22544 或完整推广链接，留空不添加" maxlength="2048"></label><label>默认通知优惠码<input data-affiliate-coupon="dmit" autocomplete="off" placeholder="例如：10%OFF" maxlength="128"></label><label>账号<input data-affiliate-account="dmit" autocomplete="off" placeholder="例如：主账号或邮箱" maxlength="120"></label><label>佣金比例<input data-affiliate-rate="dmit" autocomplete="off" placeholder="例如：10%" maxlength="40"></label></div><p class="hint" data-affiliate-state="dmit"></p><a data-affiliate-preview="dmit" target="_blank" rel="noopener noreferrer">推广入口预览</a></div>
       <div class="affiliate-card" data-affiliate-card="bwh"><div class="affiliate-card-fields"><label>搬瓦工 · aff<input id="affiliate-bwh" data-affiliate="bwh" autocomplete="off" placeholder="84938 或完整推广链接，留空不添加" maxlength="2048"></label><label>默认通知优惠码<input data-affiliate-coupon="bwh" autocomplete="off" placeholder="例如：10%OFF" maxlength="128"></label><label>账号<input data-affiliate-account="bwh" autocomplete="off" placeholder="例如：主账号或邮箱" maxlength="120"></label><label>佣金比例<input data-affiliate-rate="bwh" autocomplete="off" placeholder="例如：10%" maxlength="40"></label></div><p class="hint" data-affiliate-state="bwh"></p><a data-affiliate-preview="bwh" target="_blank" rel="noopener noreferrer">推广入口预览</a></div>
     </div><p class="hint">DMIT 与搬瓦工使用 aff.php 推广入口并保留商品参数；Akile 与 Isvoro 的商品入口附加对应推广参数，并保留套餐定位。推广归属、已有账号资格和有效期由商家规则决定。</p></div>
+  </section>
+
+  <section class="page-panel" id="page-market" data-page="market" aria-labelledby="page-title" hidden>
+    <div class="market-toolbar">
+      <div><span class="eyebrow">AKILE PUSH SHOP</span><p id="market-snapshot-state" class="state pending">演示快照 · 尚未连接实时接口</p></div>
+      <div class="actions"><a class="market-source-link" href="https://akile.ai/console/pushshop" target="_blank" rel="noopener noreferrer">打开 Akile 市场 ↗</a></div>
+    </div>
+    <div class="market-rules panel-card">
+      <div class="market-rules-copy"><h2>估值规则</h2><p>按续费价格折算商品到期前的剩余价值，再与售价比较。当前示例采用线性折算，不包含手续费、IP 质量或转让风险。</p></div>
+      <div class="market-rule-fields">
+        <label>最低折价提醒 <span><input id="market-discount-threshold" type="number" min="0" max="100" step="1" value="10"> %</span></label>
+        <label>最高溢价阈值 <span><input id="market-premium-threshold" type="number" min="0" max="500" step="1" value="5"> %</span></label>
+      </div>
+      <div class="market-formula"><strong>基准剩余价值</strong><span>续费价 × 剩余天数 ÷ 计费周期天数</span></div>
+    </div>
+    <div class="market-stats" aria-label="交易市场摘要">
+      <div><span>示例商品</span><strong id="market-count">0</strong></div><div><span>折价机会</span><strong id="market-discount-count">0</strong></div><div><span>临近到期（7 天）</span><strong id="market-expiring-count">0</strong></div><div><span>最近快照</span><strong id="market-updated">—</strong></div>
+    </div>
+    <div class="market-filters">
+      <label>搜索商品<input id="market-search" type="search" placeholder="套餐、地区或节点"></label>
+      <label>地区<select id="market-region"><option value="all">全部地区</option></select></label>
+      <label>估值结果<select id="market-kind"><option value="all">全部结果</option><option value="discount">折价</option><option value="premium">溢价</option><option value="near">7 天内到期</option></select></label>
+      <label>排序<select id="market-sort"><option value="deal">折价优先</option><option value="price">售价从低到高</option><option value="expiry">到期时间优先</option></select></label>
+    </div>
+    <div class="market-table-wrap" role="region" aria-label="Akile 交易市场商品" tabindex="0"><table class="market-table"><thead><tr><th>商品 / 配置</th><th>地区 / 节点</th><th>续费价格</th><th>剩余时间</th><th>售价</th><th>基准价值</th><th>估值</th><th>操作</th></tr></thead><tbody id="market-rows"></tbody></table></div>
+    <p id="market-empty" class="empty" hidden>没有符合条件的商品。</p>
+    <p class="market-disclaimer">演示数据来自本次页面查看，仅用于展示估值和筛选交互。折价不代表实际可转让价值；购买资格、服务器状态及订单结果以 Akile 官方页面为准。此版本只提供手动购买入口，不创建订单、不付款。</p>
   </section>
 
   <section class="page-panel panel-card" id="page-requests" data-page="requests" aria-labelledby="page-title" hidden>

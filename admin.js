@@ -75,6 +75,7 @@ const pages = {
   overview: { title: "运行概览", description: "每分钟查看大盘、监控、通知、抢购的状态与最近刷新记录。" },
   catalog: { title: "VPS 库存大盘", description: "浏览商家全部公开套餐或地区分类，选择你关心的 VPS 加入补货提醒。" },
   seckill: { title: "VPS 补货抢购", description: "从库存监控或库存通知选择商品，配置优惠码和账户后执行补货抢购。" },
+  market: { title: "Akile 交易市场", description: "查看 Akile 交易市场快照，按续费价格和到期时间估算折价或溢价。" },
   monitor: { title: "VPS 库存监控", description: "集中查看你关注的 VPS，查看库存与配置、编辑备注和线路，直接购买，不发送通知。" },
   notifications: { title: "VPS 库存通知", description: "选择需要 Telegram 库存提醒的商品，管理通知和测试。" },
   affiliates: { title: "AFF 管理", description: "统一管理各商家推广码，保存后应用到新的购买入口。" },
@@ -146,6 +147,102 @@ document.querySelectorAll("[data-page-link]").forEach((link) => {
 window.addEventListener("hashchange", () => navigatePage(location.hash.slice(1), { history: false }));
 const initialPage = location.hash.slice(1) || sessionStorage.getItem("hostwatch-current-page") || "overview";
 navigatePage(initialPage, { history: false, focus: false });
+
+// Initial market preview. The production adapter will replace this snapshot
+// with the authenticated Akile push-shop response once its API contract is
+// stable; the valuation and filtering code is intentionally data-source agnostic.
+const marketSnapshot = [
+  { name: "DE9929-Lite", region: "德国", node: "DE 9929", specs: "1核 · 1024M · 5GB · 300M", renewal: 19.90, cycle: "month", expires: "2026-10-28T00:08:31+08:00", sale: 20 },
+  { name: "TWLite-Mini", region: "中国台湾", node: "TWLite", specs: "1核 · 2048M · 10GB · 1000M", renewal: 24.99, cycle: "month", expires: "2026-11-16T20:56:10+08:00", sale: 21 },
+  { name: "HKS-Standard", region: "中国香港", node: "HKS", specs: "1核 · 1024M · 10GB · 1200M", renewal: 42.49, cycle: "month", expires: "2026-11-28T20:09:11+08:00", sale: 35 },
+  { name: "HKBase-One-1111", region: "中国香港", node: "HKBase", specs: "1核 · 1111M · 11GB · 1111M", renewal: 111.11, cycle: "year", expires: "2026-11-10T22:39:34+08:00", sale: 35 },
+  { name: "HKLite-One", region: "中国香港", node: "HKLite", specs: "1核 · 1024M · 5GB · 5000M", renewal: 9.99, cycle: "month", expires: "2026-10-30T09:05:57+08:00", sale: 48 },
+  { name: "LAXLite-One", region: "美国", node: "LAX Lite", specs: "1核 · 1024M · 5GB · 5000M", renewal: 8.88, cycle: "month", expires: "2026-11-24T20:04:10+08:00", sale: 60 },
+  { name: "JPIIJ-One", region: "日本", node: "JPIIJ", specs: "1核 · 512M · 5GB · 5000M", renewal: 10, cycle: "month", expires: "2026-12-28T23:59:59+08:00", sale: 65 },
+  { name: "HKLite-One(番茄清仓)", region: "中国香港", node: "HKLite", specs: "1核 · 1024M · 5GB · 5000M", renewal: 69.99, cycle: "year", expires: "2027-02-14T01:03:57+08:00", sale: 80 },
+  { name: "TWLite-One", region: "中国台湾", node: "TWLite", specs: "1核 · 2048M · 10GB · 500M", renewal: 9.99, cycle: "month", expires: "2027-01-12T16:24:30+08:00", sale: 78 },
+];
+
+function marketCycleDays(cycle) { return cycle === "year" ? 365 : 30; }
+function marketCurrency(value) { return `¥${Number(value).toFixed(2)}`; }
+function marketRows() {
+  const now = Date.now();
+  return marketSnapshot.map(item => {
+    const expiry = new Date(item.expires);
+    const remainingDays = Math.max(0, (expiry.getTime() - now) / 86400000);
+    const value = item.renewal * remainingDays / marketCycleDays(item.cycle);
+    const rate = value > 0 ? (value - item.sale) / value * 100 : -100;
+    return { ...item, expiry, remainingDays, value, rate, near: remainingDays <= 7 };
+  });
+}
+function marketFormatDays(days) { return days < 1 ? "不足 1 天" : `${Math.ceil(days)} 天`; }
+function renderMarket() {
+  const rowsNode = document.querySelector("#market-rows");
+  if (!rowsNode) return;
+  const discountInput = document.querySelector("#market-discount-threshold");
+  const premiumInput = document.querySelector("#market-premium-threshold");
+  const discountThreshold = Math.min(100, Math.max(0, Number(discountInput?.value ?? 10)));
+  const premiumThreshold = Math.min(500, Math.max(0, Number(premiumInput?.value ?? 5)));
+  const search = String(document.querySelector("#market-search")?.value || "").trim().toLowerCase();
+  const region = document.querySelector("#market-region")?.value || "all";
+  const kind = document.querySelector("#market-kind")?.value || "all";
+  const sort = document.querySelector("#market-sort")?.value || "deal";
+  const all = marketRows();
+  const classify = row => row.rate >= discountThreshold ? "discount" : row.rate <= -premiumThreshold ? "premium" : "neutral";
+  let visible = all.filter(row => {
+    const haystack = `${row.name} ${row.region} ${row.node} ${row.specs}`.toLowerCase();
+    if (search && !haystack.includes(search)) return false;
+    if (region !== "all" && row.region !== region) return false;
+    if (kind === "discount" && classify(row) !== "discount") return false;
+    if (kind === "premium" && classify(row) !== "premium") return false;
+    if (kind === "near" && !row.near) return false;
+    return true;
+  });
+  visible.sort((a, b) => sort === "price" ? a.sale - b.sale : sort === "expiry" ? a.expiry - b.expiry : b.rate - a.rate);
+  rowsNode.replaceChildren();
+  for (const row of visible) {
+    const tr = document.createElement("tr");
+    const add = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; };
+    const product = document.createElement("td"); product.append(add("strong", row.name), add("small", row.specs));
+    const location = document.createElement("td"); location.append(add("strong", row.region), add("small", row.node));
+    const renewal = document.createElement("td"); renewal.append(add("span", `${marketCurrency(row.renewal)}/${row.cycle === "year" ? "年" : "月"}`, "market-number"));
+    const expiry = document.createElement("td"); expiry.append(add("span", marketFormatDays(row.remainingDays), "market-number"), add("small", formatBeijingDate(row.expiry, { year: "numeric", month: "2-digit", day: "2-digit" })));
+    const sale = document.createElement("td"); sale.append(add("strong", marketCurrency(row.sale), "market-number"));
+    const value = document.createElement("td"); value.append(add("span", marketCurrency(row.value), "market-number"));
+    const dealKind = classify(row); const deal = document.createElement("td"); const badge = add("span", `${dealKind === "discount" ? "折价" : dealKind === "premium" ? "溢价" : "接近估值"} ${Math.abs(row.rate).toFixed(1)}%`, `market-deal ${dealKind}`); deal.append(badge);
+    const action = document.createElement("td"); const link = document.createElement("a"); link.className = "market-buy"; link.href = "https://akile.ai/console/pushshop"; link.target = "_blank"; link.rel = "noopener noreferrer"; link.textContent = "手动购买"; action.append(link);
+    tr.append(product, location, renewal, expiry, sale, value, deal, action); rowsNode.append(tr);
+  }
+  document.querySelector("#market-empty").hidden = visible.length > 0;
+  document.querySelector("#market-count").textContent = all.length;
+  document.querySelector("#market-discount-count").textContent = all.filter(row => classify(row) === "discount").length;
+  document.querySelector("#market-expiring-count").textContent = all.filter(row => row.near).length;
+  document.querySelector("#market-updated").textContent = "本次查看";
+}
+function initMarket() {
+  const regionNode = document.querySelector("#market-region");
+  if (!regionNode) return;
+  try {
+    const savedThresholds = JSON.parse(localStorage.getItem("hostwatch-akile-market-thresholds") || "{}");
+    if (Number.isFinite(savedThresholds.discount)) document.querySelector("#market-discount-threshold").value = String(Math.min(100, Math.max(0, savedThresholds.discount)));
+    if (Number.isFinite(savedThresholds.premium)) document.querySelector("#market-premium-threshold").value = String(Math.min(500, Math.max(0, savedThresholds.premium)));
+  } catch { /* Ignore invalid browser-local preferences. */ }
+  [...new Set(marketSnapshot.map(row => row.region))].forEach(region => regionNode.append(new Option(region, region)));
+  document.querySelectorAll("#page-market input, #page-market select").forEach(node => node.addEventListener("input", () => {
+    if (node.id === "market-discount-threshold" || node.id === "market-premium-threshold") {
+      try {
+        localStorage.setItem("hostwatch-akile-market-thresholds", JSON.stringify({
+          discount: Number(document.querySelector("#market-discount-threshold").value),
+          premium: Number(document.querySelector("#market-premium-threshold").value),
+        }));
+      } catch { /* Thresholds remain usable for this page session. */ }
+    }
+    renderMarket();
+  }));
+  document.querySelectorAll("#page-market select").forEach(node => node.addEventListener("change", renderMarket));
+  renderMarket();
+}
+initMarket();
 
 function setMessage(message, kind = "", notify = true, inline = true) {
   if (inline) {
@@ -2436,6 +2533,8 @@ document.querySelector("#egress-add-node").addEventListener("click", () => { con
 document.querySelector("#egress-refresh").addEventListener("click", async () => { try { mergeEgressStatus(await requestJSON("/api/egress")); renderEgress(); updateDraftState(); setMessage("出口节点状态已刷新，其他未保存修改已保留。", "success"); } catch (error) { setMessage(error.message, "error"); } });
 
 let vpsSeckillTask = null;
+let vpsSeckillTestTask = null;
+let vpsSeckillTestPoll = null;
 const seckillAccountChecks = new Map();
 const standaloneAccountChecks = new Map();
 function seckillAccountNote(item) {
@@ -2503,7 +2602,7 @@ function addToVpsSeckill(product) {
     const couponLabel = defaults.coupon_code ? "已填入默认优惠码" : "暂无默认优惠码";
     addedDefaults = `${accountLabel}、${egressLabel}、${couponLabel}`;
   }
-  renderVpsSeckill(); updateDraftState(); setMessage(`${product.name} 已加入 VPS 补货抢购${addedDefaults ? `：${addedDefaults}` : ""}，请在商品区右下角保存；账户、出口节点和优惠码仍可修改。`, "pending", true, false);
+  renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); setMessage(`${product.name} 已加入 VPS 补货抢购${addedDefaults ? `：${addedDefaults}` : ""}，正在自动保存。`, "pending", true, false);
 }
 function toggleVpsSeckill(product) {
   if (!product || actionRunning) return;
@@ -2511,8 +2610,8 @@ function toggleVpsSeckill(product) {
   if (existing) {
     const index = seckillItems().indexOf(existing);
     if (index >= 0) seckillItems().splice(index, 1);
-    renderVpsSeckill(); updateDraftState();
-    setMessage(`${product.name} 已移出 VPS 补货抢购，请在商品区右下角保存。`, "pending", true, false);
+    renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill");
+    setMessage(`${product.name} 已移出 VPS 补货抢购，正在自动保存。`, "pending", true, false);
     return;
   }
   addToVpsSeckill(product);
@@ -2533,23 +2632,23 @@ function renderVpsSeckill() {
     const head = text("div", "", "seckill-item-head"); head.append(title, text("small", product ? `${product.provider} · ${item.product_id}` : "商品已下架，保留补货抢购配置", "subtle")); card.append(head);
     const grid = text("div", "", "form-grid");
     const quantity = document.createElement("input"); quantity.type = "number"; quantity.min = "1"; quantity.max = "100"; quantity.step = "1"; quantity.value = item.quantity ?? 1;
-    quantity.addEventListener("input", () => { item.quantity = Number(quantity.value); updateDraftState(); });
-    const coupon = document.createElement("input"); coupon.value = item.coupon_code || ""; coupon.maxLength = 256; coupon.placeholder = "可选专属优惠码"; coupon.addEventListener("input", () => { item.coupon_code = coupon.value; updateDraftState(); });
+    quantity.addEventListener("input", () => { item.quantity = Number(quantity.value); updateDraftState(); scheduleAutoSave("seckill"); });
+    const coupon = document.createElement("input"); coupon.value = item.coupon_code || ""; coupon.maxLength = 256; coupon.placeholder = "可选专属优惠码"; coupon.addEventListener("input", () => { item.coupon_code = coupon.value; updateDraftState(); scheduleAutoSave("seckill"); });
     const operatingSystem = document.createElement("select");
     [["", "跟随商家默认系统"], ["AlmaLinux 9", "AlmaLinux 9"], ["AlmaLinux 10", "AlmaLinux 10"], ["Debian 11", "Debian 11"], ["Debian 12", "Debian 12"], ["Debian 13", "Debian 13"], ["Ubuntu 22", "Ubuntu 22"], ["Ubuntu 24", "Ubuntu 24"]].forEach(([value, label]) => operatingSystem.add(new Option(label, value)));
     operatingSystem.value = item.operating_system || "";
-    operatingSystem.addEventListener("change", () => { item.operating_system = operatingSystem.value; updateDraftState(); });
+    operatingSystem.addEventListener("change", () => { item.operating_system = operatingSystem.value; updateDraftState(); scheduleAutoSave("seckill"); });
     const billingCycle = document.createElement("select");
     [["", "跟随商家默认周期"], ["monthly", "月付"], ["quarterly", "季付"], ["annually", "年付"]].forEach(([value, label]) => billingCycle.add(new Option(label, value)));
     billingCycle.value = item.billing_cycle || "";
-    billingCycle.addEventListener("change", () => { item.billing_cycle = billingCycle.value; updateDraftState(); });
+    billingCycle.addEventListener("change", () => { item.billing_cycle = billingCycle.value; updateDraftState(); scheduleAutoSave("seckill"); });
     const paymentMethod = document.createElement("select");
     [["", "跟随商家默认付款方式"], ["alipay", "Alipay"], ["credit_card", "Credit Card"], ["usdt", "USDT"]].forEach(([value, label]) => paymentMethod.add(new Option(label, value)));
     paymentMethod.value = item.payment_method || "";
-    paymentMethod.addEventListener("change", () => { item.payment_method = paymentMethod.value; updateDraftState(); });
-    const account = document.createElement("select"); account.replaceChildren(...accountOptions.map(option => option.cloneNode(true))); account.value = item.account_id || ""; account.addEventListener("change", () => { item.account_id = account.value; seckillAccountChecks.delete(item.id); renderVpsSeckill(); updateDraftState(); });
-    const egressSelect = document.createElement("select"); const egressOptions = [new Option("跟随商家出口（未分配则直连）", "")]; egressNodes().forEach(node => egressOptions.push(new Option(node.name || node.id, node.id))); egressSelect.replaceChildren(...egressOptions); egressSelect.value = item.egress_node_id || ""; egressSelect.addEventListener("change", () => { item.egress_node_id = egressSelect.value; seckillAccountChecks.delete(item.id); renderVpsSeckill(); updateDraftState(); });
-    const target = document.createElement("input"); target.type = "url"; target.value = item.target_url || product?.purchase_url || ""; target.placeholder = "下架商品目标购买链接（可选）"; target.addEventListener("input", () => { item.target_url = target.value; updateDraftState(); });
+    paymentMethod.addEventListener("change", () => { item.payment_method = paymentMethod.value; updateDraftState(); scheduleAutoSave("seckill"); });
+    const account = document.createElement("select"); account.replaceChildren(...accountOptions.map(option => option.cloneNode(true))); account.value = item.account_id || ""; account.addEventListener("change", () => { item.account_id = account.value; seckillAccountChecks.delete(item.id); renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); });
+    const egressSelect = document.createElement("select"); const egressOptions = [new Option("跟随商家出口（未分配则直连）", "")]; egressNodes().forEach(node => egressOptions.push(new Option(node.name || node.id, node.id))); egressSelect.replaceChildren(...egressOptions); egressSelect.value = item.egress_node_id || ""; egressSelect.addEventListener("change", () => { item.egress_node_id = egressSelect.value; seckillAccountChecks.delete(item.id); renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); });
+    const target = document.createElement("input"); target.type = "url"; target.value = item.target_url || product?.purchase_url || ""; target.placeholder = "下架商品目标购买链接（可选）"; target.addEventListener("input", () => { item.target_url = target.value; updateDraftState(); scheduleAutoSave("seckill"); });
     const providerKey = seckillProviderKey(product?.adapter) || seckillProviderKey(product?.provider);
     if (providerKey === "akile" || providerKey === "vmiss") {
       item.operating_system = "Debian 12";
@@ -2567,13 +2666,13 @@ function renderVpsSeckill() {
           ? "搬瓦工使用内置官网结算适配：密码登录时自动启用官网 Remember Me，以请求更持久的登录 Cookie；认证会话在内存中缓存最长 30 天，验证仍有效时会续延本地缓存。官网未提供可用的 refresh Cookie 接口，手动导入的普通 Cookie 过期后仍需重新登录。"
         : "自动模式仅对已配置商家待付款适配的商品创建订单；未适配商家只提供购买链接。", "hint span-2");
     [["下单数量（台，1–100）", quantity], ["优惠码", coupon], ["系统", operatingSystem], ["付款周期", billingCycle], ["付款方式", paymentMethod], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
-    const enabled = settingButton("商品状态", item.enabled !== false, value => { item.enabled = value; renderVpsSeckillTask(); }, ["已停用", "已启用"]);
+    const enabled = settingButton("商品状态", item.enabled !== false, value => { item.enabled = value; renderVpsSeckillTask(); updateDraftState(); scheduleAutoSave("seckill"); }, ["已停用", "已启用"]);
     const flags = text("div", "", "actions"); flags.append(enabled);
     const status = text("p", seckillAccountNote(item), "hint seckill-account-status"); status.setAttribute("role", "status");
     card.append(status);
     const remove = text("button", "删除商品", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.setAttribute("aria-label", `删除补货抢购商品 ${title.textContent}`);
-    remove.addEventListener("click", () => { const index = seckillItems().indexOf(item); if (index >= 0) seckillItems().splice(index, 1); renderVpsSeckill(); updateDraftState(); setMessage("已删除该补货抢购商品。", "pending"); }); flags.append(remove);
+    remove.addEventListener("click", () => { const index = seckillItems().indexOf(item); if (index >= 0) seckillItems().splice(index, 1); renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); setMessage("已删除该补货抢购商品，正在自动保存。", "pending"); }); flags.append(remove);
     card.append(grid, submitHint, flags); itemTarget.append(card);
   });
   const accountTarget = document.querySelector("#vps-seckill-accounts"); accountTarget.replaceChildren();
@@ -2601,7 +2700,7 @@ function renderVpsSeckill() {
     const providerValue = () => account.provider ? (merchantIds[String(account.provider).trim().toLowerCase()] || "custom") : (account.login_url ? "custom" : "");
     const field = (label, key, placeholder, type = "text") => {
       const input = document.createElement("input"); input.type = type; input.value = account[key] || ""; input.placeholder = placeholder;
-      input.addEventListener("input", () => { account[key] = input.value; updateDraftState(); });
+      input.addEventListener("input", () => { account[key] = input.value; updateDraftState(); scheduleAutoSave("seckill"); });
       const node = document.createElement("label"); node.append(text("span", label), input); grid.append(node);
     };
     field("账户名称", "name", "账户名称");
@@ -2617,9 +2716,9 @@ function renderVpsSeckill() {
       const ids = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", isvoro: "Isvoro", dmit: "DMIT", bwh: "搬瓦工" };
       if (selected === "custom") {
         adapterNote.textContent = "其他商家需要自行提供实现 hostwatch-unpaid-v1 的账户检查 JSON 接口；普通登录页不能直接使用。";
-        const name = document.createElement("input"); name.value = account.provider && !merchantIds[String(account.provider).trim().toLowerCase()] ? account.provider : ""; name.placeholder = "商家名称"; name.addEventListener("input", () => { account.provider = name.value; updateDraftState(); });
+        const name = document.createElement("input"); name.value = account.provider && !merchantIds[String(account.provider).trim().toLowerCase()] ? account.provider : ""; name.placeholder = "商家名称"; name.addEventListener("input", () => { account.provider = name.value; updateDraftState(); scheduleAutoSave("seckill"); });
         const nameLabel = document.createElement("label"); nameLabel.append(text("span", "商家名称"), name); providerExtra.append(nameLabel);
-        const login = document.createElement("input"); login.type = "url"; login.value = account.login_url || ""; login.placeholder = "https://…（HostWatch JSON 接口）"; login.addEventListener("input", () => { account.login_url = login.value; updateDraftState(); });
+        const login = document.createElement("input"); login.type = "url"; login.value = account.login_url || ""; login.placeholder = "https://…（HostWatch JSON 接口）"; login.addEventListener("input", () => { account.login_url = login.value; updateDraftState(); scheduleAutoSave("seckill"); });
         const loginLabel = document.createElement("label"); loginLabel.append(text("span", "账户检查接口"), login); providerExtra.append(loginLabel);
       } else if (selected === "vmiss" || selected === "vps_soy" || selected === "bwh" || selected === "akile" || selected === "isvoro" || selected === "dmit") {
         const urls = { vmiss: "https://app.vmiss.com/login", vps_soy: "https://www.vps.soy/login", bwh: "https://bwh81.net/clientarea.php", akile: "https://api.akile.ai/api/v1/user/login", isvoro: "https://isvoro.com/api/v1/auth/login", dmit: "https://www.dmit.io/clientarea.php" };
@@ -2651,7 +2750,7 @@ function renderVpsSeckill() {
       } else {
         account.provider = ""; account.login_url = ""; adapterNote.textContent = "先选择账户所属商家。";
       }
-      updateDraftState();
+      updateDraftState(); scheduleAutoSave("seckill");
     };
     provider.addEventListener("change", () => {
       if (provider.value === "custom" && account.provider && merchantIds[String(account.provider).trim().toLowerCase()]) {
@@ -2661,7 +2760,13 @@ function renderVpsSeckill() {
     });
     setProviderExtra();
     field("用户名 / 邮箱", "username", "官网登录名或邮箱");
-    const password = document.createElement("input"); password.type = "password"; password.autocomplete = "new-password"; password.placeholder = account.password_configured ? "已保存，留空保持不变" : "登录密码"; password.addEventListener("input", () => { account.password = password.value; account.password_configured = Boolean(password.value) || account.password_configured; updateDraftState(); }); const passwordLabel = document.createElement("label"); passwordLabel.append(text("span", "密码"), password); grid.append(passwordLabel);
+    const accountEgress = document.createElement("select");
+    accountEgress.add(new Option("跟随商家出口（未分配则直连）", ""));
+    egressNodes().forEach(node => accountEgress.add(new Option(node.name || node.id, node.id)));
+    accountEgress.value = account.egress_node_id || "";
+    accountEgress.addEventListener("change", () => { account.egress_node_id = accountEgress.value; standaloneAccountChecks.delete(account.id); updateDraftState(); scheduleAutoSave("seckill"); });
+    const accountEgressLabel = document.createElement("label"); accountEgressLabel.append(text("span", "Cookie / 账户检查出口"), accountEgress); grid.append(accountEgressLabel);
+    const password = document.createElement("input"); password.type = "password"; password.autocomplete = "new-password"; password.placeholder = account.password_configured ? "已保存，留空保持不变" : "登录密码"; password.addEventListener("input", () => { account.password = password.value; account.password_configured = Boolean(password.value) || account.password_configured; updateDraftState(); scheduleAutoSave("seckill"); }); const passwordLabel = document.createElement("label"); passwordLabel.append(text("span", "密码"), password); grid.append(passwordLabel);
     const check = text("button", "检查账户", "seckill-check-account"); check.type = "button"; check.dataset.accountId = account.id; check.disabled = actionRunning;
     check.setAttribute("aria-label", `检查网站账户 ${account.name || account.username || account.id}`);
     check.addEventListener("click", () => {
@@ -2719,7 +2824,8 @@ function deleteSeckillAccounts(ids) {
   config.vps_seckill.accounts = seckillAccounts().filter(account => !deleted.has(account.id));
   seckillItems().forEach(item => { if (deleted.has(item.account_id)) item.account_id = ""; });
   renderVpsSeckill(); updateDraftState();
-  setMessage("已删除补货抢购账户并解除对应商品绑定，请在网站账号区域保存。", "pending");
+  scheduleAutoSave("seckill");
+  setMessage("已删除补货抢购账户并解除对应商品绑定，正在自动保存。", "pending");
 }
 function collectVpsSeckill() {
   const items = seckillItems().map(({ submit_url, auto_submit, ...item }) => item);
@@ -2741,6 +2847,7 @@ function comparableSeckillAccount(account) {
     provider: String(account.provider || ""),
     username: String(account.username || ""),
     login_url: String(account.login_url || ""),
+    egress_node_id: String(account.egress_node_id || ""),
     password: String(account.password || ""),
     password_configured: Boolean(account.password_configured || account.password),
   };
@@ -2799,7 +2906,11 @@ function renderVpsSeckillTask() {
 function renderVpsSeckillTest(result) {
   const status = document.querySelector("#vps-seckill-test-status"), target = document.querySelector("#vps-seckill-test-results");
   if (!status || !target || !result) return;
-  status.textContent = `${result.ok ? "抢购配置测试通过" : "抢购配置测试发现问题"} · ${result.checked_at ? formatBeijingDate(result.checked_at) : ""}`;
+  const stop = document.querySelector("#vps-seckill-test-stop"), start = document.querySelector("#vps-seckill-test");
+  const pending = result.pending !== false;
+  status.textContent = pending ? `正在测试抢购配置${result.phase === "checking" ? " · 检查商品中" : "…"}` : `${result.cancelled ? "抢购配置测试已停止" : result.ok ? "抢购配置测试通过" : "抢购配置测试发现问题"} · ${result.checked_at ? formatBeijingDate(result.checked_at) : ""}`;
+  if (start) start.disabled = pending || actionRunning;
+  if (stop) { stop.hidden = !pending; stop.disabled = !pending; }
   target.replaceChildren(...(result.items || []).map(item => {
     const row = text("article", "", `seckill-result ${item.ok ? "success" : "error"}`);
     row.append(text("strong", item.label || item.item_id));
@@ -2815,7 +2926,32 @@ function renderVpsSeckillTest(result) {
 window.addEventListener("hostwatch-action-change", renderVpsSeckillTask);
 async function pollVpsSeckill(taskId) { clearInterval(vpsSeckillPoll); vpsSeckillPoll = setInterval(async () => { try { vpsSeckillTask = await requestJSON(`/api/seckill/status/${encodeURIComponent(taskId)}`); renderVpsSeckillTask(); if (!vpsSeckillTask.pending) clearInterval(vpsSeckillPoll); } catch { clearInterval(vpsSeckillPoll); } }, 1000); }
 document.querySelector("#vps-seckill-start").addEventListener("click", async () => { try { const taskId = `seckill-${Date.now()}-${Math.random().toString(36).slice(2, 18)}`; vpsSeckillTask = await requestJSON("/api/seckill/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: collectConfig(), task_id: taskId, mode: document.querySelector("#vps-seckill-mode").value }) }); renderVpsSeckillTask(); pollVpsSeckill(taskId); setMessage("VPS 补货抢购任务已启动，使用当前页面配置（未保存的配置仅用于本次任务）。", "success"); } catch (error) { setMessage(error.message, "error"); } });
-document.querySelector("#vps-seckill-test").addEventListener("click", event => runAction(event.currentTarget, "测试中…", "正在访问网站、识别商品页面并检查账户；不会创建订单或付款…", async () => { const result = await requestJSON("/api/seckill/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: collectConfig(), mode: document.querySelector("#vps-seckill-mode").value }), timeoutMs: 180000 }); renderVpsSeckillTest(result); setMessage(result.ok ? "VPS 抢购配置测试通过（使用当前页面配置，未保存的内容不会写入服务器配置）。" : "VPS 抢购配置测试发现问题，请查看测试结果。", result.ok ? "success" : "error"); }));
+document.querySelector("#vps-seckill-test").addEventListener("click", async event => {
+  if (vpsSeckillTestTask?.pending) return;
+  const taskId = `seckill-test-${Date.now()}-${Math.random().toString(36).slice(2, 18)}`;
+  try {
+    vpsSeckillTestTask = await requestJSON("/api/seckill/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: collectConfig(), task_id: taskId, mode: document.querySelector("#vps-seckill-mode").value }), timeoutMs: 15000 });
+    renderVpsSeckillTest(vpsSeckillTestTask);
+    clearInterval(vpsSeckillTestPoll);
+    vpsSeckillTestPoll = setInterval(async () => {
+      try {
+        vpsSeckillTestTask = await requestJSON(`/api/seckill/test/status/${encodeURIComponent(taskId)}`, { timeoutMs: 10000 });
+        renderVpsSeckillTest(vpsSeckillTestTask);
+        if (!vpsSeckillTestTask.pending) {
+          clearInterval(vpsSeckillTestPoll);
+          setMessage(vpsSeckillTestTask.cancelled ? "抢购配置测试已停止。" : vpsSeckillTestTask.ok ? "VPS 抢购配置测试通过（使用当前页面配置，未保存的内容不会写入服务器配置）。" : "VPS 抢购配置测试发现问题，请查看测试结果。", vpsSeckillTestTask.cancelled || vpsSeckillTestTask.ok ? "success" : "error");
+        }
+      } catch (error) { clearInterval(vpsSeckillTestPoll); setMessage(error.message, "error"); }
+    }, 500);
+  } catch (error) { setMessage(error.message, "error"); }
+});
+document.querySelector("#vps-seckill-test-stop").addEventListener("click", async () => {
+  if (!vpsSeckillTestTask?.task_id) return;
+  try {
+    vpsSeckillTestTask = await requestJSON("/api/seckill/test/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: vpsSeckillTestTask.task_id }), timeoutMs: 10000 });
+    renderVpsSeckillTest(vpsSeckillTestTask);
+  } catch (error) { setMessage(error.message, "error"); }
+});
 document.querySelector("#vps-seckill-stop").addEventListener("click", async () => { if (!vpsSeckillTask?.task_id) return; try { vpsSeckillTask = await requestJSON("/api/seckill/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task_id: vpsSeckillTask.task_id }) }); renderVpsSeckillTask(); } catch (error) { setMessage(error.message, "error"); } });
 function openSeckillPicker(type) {
   const dialog = document.querySelector("#seckill-picker-dialog"), content = document.querySelector("#seckill-picker-content");
@@ -2836,9 +2972,9 @@ function openSeckillPicker(type) {
 document.querySelector("#vps-seckill-open-monitor").addEventListener("click", () => openSeckillPicker("watch"));
 document.querySelector("#vps-seckill-open-notifications").addEventListener("click", () => openSeckillPicker("notify"));
 document.querySelector("#seckill-picker-close").addEventListener("click", () => document.querySelector("#seckill-picker-dialog").close());
-document.querySelector("#vps-seckill-delete-all").addEventListener("click", () => { seckillItems().splice(0); renderVpsSeckill(); updateDraftState(); setMessage("已删除全部补货抢购商品，请保存抢购卡片。", "pending"); });
+document.querySelector("#vps-seckill-delete-all").addEventListener("click", () => { seckillItems().splice(0); renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); setMessage("已删除全部补货抢购商品，正在自动保存。", "pending"); });
 document.querySelector("#vps-seckill-delete-all-accounts").addEventListener("click", () => deleteSeckillAccounts(seckillAccounts().map(account => account.id)));
-document.querySelector("#vps-seckill-add-account").addEventListener("click", () => { seckillAccounts().push({ id: `account-${Date.now()}`, name: "", provider: "", username: "", password: "", login_url: "" }); renderVpsSeckill(); updateDraftState(); });
+document.querySelector("#vps-seckill-add-account").addEventListener("click", () => { seckillAccounts().push({ id: `account-${Date.now()}`, name: "", provider: "", username: "", password: "", login_url: "" }); renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); });
 document.querySelector("#vps-seckill-clear-log").addEventListener("click", () => { if (vpsSeckillTask) { vpsSeckillTask.logs = []; renderVpsSeckillTask(); } });
 document.querySelector("#vps-seckill-mode").addEventListener("change", event => { config.vps_seckill.mode = event.target.value; updateDraftState(); scheduleAutoSave("seckill-settings"); });
 document.querySelector("#vps-seckill-interval").addEventListener("input", event => { config.vps_seckill.interval_seconds = Number(event.target.value); updateDraftState(); scheduleAutoSave("seckill-settings"); });

@@ -47,6 +47,8 @@ STOPPED_TEST_IDS = {}
 SECKILL_LOCK = threading.Lock()
 SECKILL_TASKS = {}
 STOPPED_SECKILL_IDS = {}
+SECKILL_TEST_TASKS = {}
+STOPPED_SECKILL_TEST_IDS = {}
 # BandwagonHost keeps the email-code challenge in the login session. Keep only
 # short-lived, in-memory sessions so an administrator can finish that login
 # without persisting the code or merchant cookies in configuration backups.
@@ -2617,7 +2619,7 @@ def seckill_account_check(submitted: dict) -> dict:
         # Account-level checks follow the merchant's saved route and request mode.
         # They intentionally do not require a product to be configured first.
         adapter_id = merchant_login_id(account.get("provider")) or "html"
-        route_item = {"adapter": adapter_id, "provider": account.get("provider", ""), "egress_node_id": ""}
+        route_item = {"adapter": adapter_id, "provider": account.get("provider", ""), "egress_node_id": account.get("egress_node_id", "")}
     fetcher = product_fetcher(current.get("fetcher"), route_item)
     session = requests.Session()
     session.trust_env = False
@@ -2774,6 +2776,92 @@ def seckill_test(submitted: dict) -> dict:
                             and (not result["account"]["required"] or result["account"].get("ok")))
         results.append(result)
     return {"ok": all(item["ok"] for item in results), "mode": mode, "checked_at": beijing_iso(), "items": results}
+
+
+class SeckillTestTask:
+    """Run configuration checks in a cancellable background task."""
+    def __init__(self, task_id: str, submitted: dict):
+        self.id = task_id
+        self.submitted = submitted
+        self.cancelled = threading.Event()
+        self.done = threading.Event()
+        self.lock = threading.Lock()
+        self.output = {"task_id": task_id, "pending": True, "items": [], "phase": "starting"}
+
+    def snapshot(self) -> dict:
+        with self.lock:
+            return {**self.output, "stopping": self.cancelled.is_set() and not self.done.is_set()}
+
+    def cancel(self) -> None:
+        self.cancelled.set()
+
+    def run(self) -> None:
+        try:
+            current = _seckill_action_config(self.submitted)
+            mode = str(self.submitted.get("mode", current["vps_seckill"]["mode"])).strip().casefold()
+            products = {str(item.get("id")): item for item in current.get("products", [])}
+            accounts = {str(item.get("id")): item for item in current["vps_seckill"].get("accounts", [])}
+            items = [item for item in current["vps_seckill"].get("items", []) if item.get("enabled", True)]
+            if not items:
+                raise ValueError("请先从库存监控或库存通知选择至少一个启用的抢购商品")
+            results = []
+            for item in items:
+                if self.cancelled.is_set():
+                    break
+                submitted_one = dict(self.submitted)
+                submitted_one["config"] = current
+                # Keep the original function's validation and per-item behavior,
+                # while checking one item at a time so cancellation is observable.
+                draft = dict(current)
+                draft["vps_seckill"] = {**current["vps_seckill"], "items": [item]}
+                submitted_one["config"] = draft
+                result = seckill_test(submitted_one)["items"][0]
+                results.append(result)
+                with self.lock:
+                    self.output.update({"phase": "checking", "items": list(results), "mode": mode})
+            with self.lock:
+                self.output.update({"ok": not self.cancelled.is_set() and all(item["ok"] for item in results),
+                                    "mode": mode, "checked_at": beijing_iso()})
+        except (OSError, requests.RequestException, ValueError) as exc:
+            with self.lock:
+                self.output.update({"ok": False, "error": str(exc), "checked_at": beijing_iso()})
+        finally:
+            with self.lock:
+                if self.cancelled.is_set():
+                    self.output.update({"ok": False, "cancelled": True, "error": "测试已停止"})
+                self.output["pending"] = False
+                self.done.set()
+
+
+def start_seckill_test(submitted: dict) -> dict:
+    task_id = str(submitted.get("task_id", ""))
+    if not re.fullmatch(r"[a-zA-Z0-9-]{16,64}", task_id):
+        raise ValueError("测试任务编号无效")
+    with SECKILL_LOCK:
+        if task_id in SECKILL_TEST_TASKS or task_id in STOPPED_SECKILL_TEST_IDS:
+            raise ValueError("测试任务编号已使用，请重新测试")
+        for old_id in list(SECKILL_TEST_TASKS)[:-19]:
+            del SECKILL_TEST_TASKS[old_id]
+        for old_id in list(STOPPED_SECKILL_TEST_IDS)[:-20]:
+            del STOPPED_SECKILL_TEST_IDS[old_id]
+        if any(not task.done.is_set() for task in SECKILL_TEST_TASKS.values()):
+            raise ValueError("已有抢购配置测试正在执行，请先停止")
+        task = SeckillTestTask(task_id, submitted)
+        SECKILL_TEST_TASKS[task_id] = task
+    threading.Thread(target=task.run, daemon=True).start()
+    return task.snapshot()
+
+
+def stop_seckill_test(task_id: str) -> dict:
+    if not re.fullmatch(r"[a-zA-Z0-9-]{16,64}", task_id):
+        raise ValueError("测试任务编号无效")
+    with SECKILL_LOCK:
+        task = SECKILL_TEST_TASKS.get(task_id)
+        if task is None:
+            STOPPED_SECKILL_TEST_IDS[task_id] = True
+            return {"task_id": task_id, "pending": False, "ok": False, "cancelled": True, "error": "测试已停止"}
+    task.cancel()
+    return task.snapshot()
 
 
 class SeckillTask:
@@ -3422,6 +3510,7 @@ def normalize_seckill(value: object, product_ids: set[str]) -> dict:
         username = str(account.get("username", "")).strip()
         password = str(account.get("password", ""))
         login_url = str(account.get("login_url", "")).strip()
+        egress_node_id = str(account.get("egress_node_id", "")).strip()
         adapter_id = merchant_login_id(provider)
         if adapter_id in MERCHANT_LOGIN_ADAPTERS:
             provider = adapter_id
@@ -3443,6 +3532,7 @@ def normalize_seckill(value: object, product_ids: set[str]) -> dict:
         account_ids.add(account_id)
         normalized_accounts.append({"id": account_id, "name": name, "provider": provider, "username": username,
             "password": password, "login_url": login_url, "auto_submit": bool(account.get("auto_submit", False)),
+            "egress_node_id": egress_node_id[:64],
             "password_configured": bool(password) or bool(account.get("password_configured", False))})
     items = value.get("items", [])
     if not isinstance(items, list) or len(items) > 100:
@@ -4250,6 +4340,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, "application/json; charset=utf-8", b'{"error":"Test task not found"}')
                 return
             self._send(200, "application/json; charset=utf-8", json.dumps(task.snapshot(), ensure_ascii=False).encode("utf-8"))
+        elif self.path.startswith("/api/seckill/test/status/"):
+            task_id = self.path.rsplit("/", 1)[-1]
+            with SECKILL_LOCK:
+                task = SECKILL_TEST_TASKS.get(task_id)
+                stopped_early = task_id in STOPPED_SECKILL_TEST_IDS
+            if task is None and stopped_early:
+                self._send(200, "application/json; charset=utf-8", json.dumps({"task_id": task_id, "pending": False, "ok": False, "cancelled": True, "error": "测试已停止"}, ensure_ascii=False).encode("utf-8"))
+                return
+            if task is None:
+                self._send(404, "application/json; charset=utf-8", b'{"error":"Seckill test task not found"}')
+                return
+            self._send(200, "application/json; charset=utf-8", json.dumps(task.snapshot(), ensure_ascii=False).encode("utf-8"))
         elif self.path.startswith("/api/seckill/status/"):
             task_id = self.path.rsplit("/", 1)[-1]
             with SECKILL_LOCK:
@@ -4327,7 +4429,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(403)
             return
         # Stopping and polling tests must never wait behind config/service locks.
-        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-verification", "/api/seckill/test", "/api/egress/probe"}:
+        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-verification", "/api/seckill/test", "/api/seckill/test/stop", "/api/egress/probe"}:
             self._post_action()
             return
         if not MUTATION_LOCK.acquire(blocking=False):
@@ -4339,7 +4441,7 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/refresh", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-verification", "/api/seckill/account-cache-clear", "/api/seckill/test", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
+        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/refresh", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-verification", "/api/seckill/account-cache-clear", "/api/seckill/test", "/api/seckill/test/stop", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
             self.send_error(404)
             return
         try:
@@ -4435,7 +4537,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, "application/json; charset=utf-8", json.dumps({"ok": True, "removed": removed, "message": "登录缓存已清除，请下次检查时重新认证"}, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/seckill/test":
-                output = seckill_test(submitted)
+                output = start_seckill_test(submitted)
+                self._send(202, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
+                return
+            if self.path == "/api/seckill/test/stop":
+                output = stop_seckill_test(str(submitted.get("task_id", "")))
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/seckill/start":
