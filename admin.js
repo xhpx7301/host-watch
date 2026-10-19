@@ -301,13 +301,15 @@ function renderMarket() {
   const regions = [...new Set(all.map(row => row.region).filter(Boolean))];
   regionNode.replaceChildren(new Option("全部地区", "all"), ...regions.map(value => new Option(value, value)));
   regionNode.value = regions.includes(region) ? region : "all";
-  const kind = document.querySelector("#market-kind").value, sort = document.querySelector("#market-sort").value;
+  const productNode = document.querySelector("#market-product"), product = productNode.value;
+  const products = [...new Set(all.map(row => row.plan_name || row.name).filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh-CN"));
+  productNode.replaceChildren(new Option("全部商品", "all"), ...products.map(value => new Option(value, value)));
+  productNode.value = products.includes(product) ? product : "all";
   const visible = all.filter(row => {
     if (search && !`${row.id} ${row.name} ${row.region} ${row.node}`.toLowerCase().includes(search)) return false;
     if (regionNode.value !== "all" && row.region !== regionNode.value) return false;
-    if (kind === "discount" && !(row.delta > 0)) return false;
-    if (kind === "premium" && !(row.delta < 0)) return false;
-    return kind !== "near" || row.remaining_days <= 7;
+    if (productNode.value !== "all" && (row.plan_name || row.name) !== productNode.value) return false;
+    return true;
   });
   const columnSort = readMarketColumnSort();
   const compareNumeric = (a, b, key) => {
@@ -405,10 +407,7 @@ for (const id of ["market-account", "market-enabled", "market-interval"]) docume
   renderMarket();
 });
 document.querySelector("#market-provider").addEventListener("change", () => { marketPage = 0; renderMarketSettings(); void loadMarketSnapshot(); });
-for (const id of ["market-search", "market-region", "market-kind", "market-sort"]) document.getElementById(id).addEventListener("input", () => {
-  if (id === "market-sort") sessionStorage.setItem(`hostwatch-${activeMarketProvider()}-market-sort-key`, "");
-  marketPage = 0; renderMarket();
-});
+for (const id of ["market-search", "market-region", "market-product"]) document.getElementById(id).addEventListener("input", () => { marketPage = 0; renderMarket(); });
 document.querySelector("#market-prev").addEventListener("click", () => { marketPage--; renderMarket(); });
 document.querySelector("#market-next").addEventListener("click", () => { marketPage++; renderMarket(); });
 window.addEventListener("hostwatch-page-change", event => { if (event.detail === "market") void loadMarketSnapshot(); });

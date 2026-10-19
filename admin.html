@@ -607,7 +607,7 @@
     .market-stats span,.market-stats strong { display:block; }
     .market-stats span { color:var(--muted); font-size:11px; }
     .market-stats strong { margin-top:4px; font-size:19px; font-variant-numeric:tabular-nums; }
-    .market-filters { display:grid; grid-template-columns:minmax(200px,1.5fr) repeat(3,minmax(150px,.75fr)); gap:12px; align-items:end; margin-bottom:12px; }
+    .market-filters { display:grid; grid-template-columns:minmax(200px,1.5fr) repeat(2,minmax(150px,.75fr)); gap:12px; align-items:end; margin-bottom:12px; }
     .market-filters label { color:var(--muted); font-size:12px; }
     .market-filters input,.market-filters select { display:block; width:100%; margin-top:4px; }
     .market-table-wrap { max-width:100%; overflow:auto; border:1px solid var(--line); border-radius:8px; background:var(--paper); }
@@ -956,7 +956,7 @@
       <p class="hint" id="market-order-note">Akile 交易市场购买要求用户在官网完成 Passkey 验证；Isvoro 仅提供市场提醒。HostWatch 不会自动购买或付款。</p>
     </div>
     <div class="market-stats" aria-label="交易市场摘要"><div><span>市场商品</span><strong id="market-count">0</strong></div><div><span>折价商品</span><strong id="market-discount-count">0</strong></div><div><span>临近到期（7 天）</span><strong id="market-expiring-count">0</strong></div><div><span>最近成功读取</span><strong id="market-updated">—</strong></div></div>
-    <div class="market-filters"><label>搜索商品<input id="market-search" type="search" placeholder="套餐、地区、节点或挂单 ID"></label><label>地区<select id="market-region"><option value="all">全部地区</option></select></label><label>估值结果<select id="market-kind"><option value="all">全部结果</option><option value="discount">折价</option><option value="premium">溢价</option><option value="near">7 天内到期</option></select></label><label>排序<select id="market-sort"><option value="deal">折价优先</option><option value="price">售价从低到高</option><option value="expiry">到期时间优先</option></select></label></div>
+    <div class="market-filters"><label>搜索商品<input id="market-search" type="search" placeholder="套餐、地区、节点或挂单 ID"></label><label>地区<select id="market-region"><option value="all">全部地区</option></select></label><label>商品<select id="market-product"><option value="all">全部商品</option></select></label></div>
     <div class="market-table-wrap" role="region" aria-label="二手交易市场商品" tabindex="0"><table class="market-table"><thead><tr><th>商品 / 配置</th><th>地区 / 节点</th><th>续费价格</th><th>到期 / 剩余时间</th><th>售价</th><th>月付基准</th><th>折价 / 溢价率</th><th>折价 / 溢价金额</th><th>操作</th></tr></thead><tbody id="market-rows"></tbody></table></div><p id="market-empty" class="empty">选择已保存账户，点击“刷新市场商品”读取真实挂单。</p>
     <div class="catalog-pagination"><span id="market-page-label" class="subtle"></span><div class="actions"><button id="market-prev" type="button">上一页</button><button id="market-next" type="button">下一页</button></div></div>
     <div class="panel-card market-settings"><div class="section-head"><div><h2>指定商品规则</h2><p>折价设最低节省值（≥），溢价设最高额外成本（≤，折价也满足）。比例或金额留空表示不使用。</p></div><div class="actions"><button type="button" id="market-test-notification">测试通知</button><button type="button" id="market-check">检查已保存规则</button><button type="button" class="card-save" data-save-card="market">保存商品规则</button></div></div>
