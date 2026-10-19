@@ -2699,7 +2699,7 @@ const seckillAccountChecks = new Map();
 const standaloneAccountChecks = new Map();
 const accountHealthChecks = new Map();
 let accountHealthTimer;
-const ACCOUNT_HEALTH_INTERVAL_MS = 300_000;
+const ACCOUNT_HEALTH_INTERVAL_MS = 3_600_000;
 function seckillAccountNote(item) {
   if (!item.account_id) return "未绑定账户：发现有货后提供链接，由你到官网下单和付款。";
   const checks = [seckillAccountChecks.get(item.id), vpsSeckillTask?.accounts?.[item.id]]

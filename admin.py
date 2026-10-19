@@ -4860,26 +4860,44 @@ def refresh_isvoro_market(*, account_id: str = "", evaluate: bool = False, autom
 
 def _isvoro_market_loop() -> None:
     deadline = 0.0
+    failures = 0
     while True:
         try:
             market = current_config()["isvoro_market"]
             with ISVORO_MARKET_LOCK:
                 ISVORO_MARKET_CACHE["running"] = market["enabled"]
-            if market["enabled"] and time.monotonic() >= deadline:
+            if not market["enabled"]:
+                failures = 0
+                deadline = 0.0
+            elif failures < ISVORO_MARKET_MAX_FAILURES and time.monotonic() >= deadline:
                 try:
                     refresh_isvoro_market(evaluate=True, automatic=True)
-                finally:
+                    failures = 0
                     deadline = time.monotonic() + market["interval_seconds"]
+                except (OSError, ValueError, requests.RequestException) as exc:
+                    failures += 1
+                    with ISVORO_MARKET_LOCK:
+                        ISVORO_MARKET_CACHE["error"] = (
+                            f"Isvoro 市场连续请求失败 {failures}/{ISVORO_MARKET_MAX_FAILURES}：{str(exc)[:240]}"
+                            if failures < ISVORO_MARKET_MAX_FAILURES else
+                            f"Isvoro 市场连续请求失败 {ISVORO_MARKET_MAX_FAILURES} 次，已停止自动重试；请手动刷新或修改市场设置后再试"
+                        )
+                    deadline = time.monotonic() + max(300, market.get("interval_seconds", 600))
         except (OSError, ValueError, requests.RequestException) as exc:
+            failures += 1
             with ISVORO_MARKET_LOCK:
                 ISVORO_MARKET_CACHE["error"] = str(exc)[:300]
             deadline = time.monotonic() + max(300, market.get("interval_seconds", 600))
-        ISVORO_MARKET_WAKE.wait(2)
-        ISVORO_MARKET_WAKE.clear()
+        woke = ISVORO_MARKET_WAKE.wait(60 if failures >= ISVORO_MARKET_MAX_FAILURES else 2)
+        if woke:
+            ISVORO_MARKET_WAKE.clear()
+            failures = 0
+            deadline = 0.0
 
 
 ISVORO_MARKET_WAKE = threading.Event()
 ISVORO_MARKET_THREAD = None
+ISVORO_MARKET_MAX_FAILURES = 3
 
 
 def start_isvoro_market_loop() -> None:
@@ -5700,7 +5718,8 @@ class Handler(BaseHTTPRequestHandler):
             save_config(value)
             if value["akile_market"] != current["akile_market"]:
                 AKILE_MARKET_WAKE.set()
-            if value["isvoro_market"] != current["isvoro_market"]:
+            if (value["isvoro_market"] != current["isvoro_market"]
+                    or value["vps_seckill"]["accounts"] != current["vps_seckill"]["accounts"]):
                 ISVORO_MARKET_WAKE.set()
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             status = 502 if isinstance(exc, TelegramAPIError) else (413 if "请求体大小" in str(exc) else 400)
