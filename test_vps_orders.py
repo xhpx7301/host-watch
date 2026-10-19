@@ -569,36 +569,191 @@ class IsvoroOrderTests(unittest.TestCase):
 
 
 class DMitOrderTests(unittest.TestCase):
-    def test_dmit_order_uses_requested_defaults_and_alipay(self):
+    def test_dmit_invoice_id_accepts_redirect_html_and_json_responses(self):
+        self.assertEqual(admin._dmit_invoice_id('https://www.dmit.io/viewinvoice.php?id=11714336', ''), '11714336')
+        self.assertEqual(admin._dmit_invoice_id('https://www.dmit.io/cart.php?a=checkout', '<a href="viewinvoice.php?id=11714337">View invoice</a>'), '11714337')
+        self.assertEqual(admin._dmit_invoice_id('https://www.dmit.io/cart.php', '{"invoice_id":11714338,"status":"Unpaid"}'), '11714338')
+        self.assertEqual(admin._dmit_invoice_id('https://www.dmit.io/cart.php', '<h1>Order submitted</h1>'), '')
+        self.assertEqual(admin._dmit_invoice_id('https://www.dmit.io/cart.php?a=checkout', '<nav>Unpaid Invoices</nav><title>Shopping Cart</title>'), '')
+
+    def test_dmit_cart_confirmation_requires_the_configured_product(self):
+        self.assertTrue(admin._dmit_confirm_cart_item('<div class="item">HKG.AS3.Pro.TINY</div>', 'HKG.AS3.Pro.TINY'))
+        self.assertFalse(admin._dmit_confirm_cart_item('<div>Your Shopping Cart is Empty</div>', 'HKG.AS3.Pro.TINY'))
+        self.assertFalse(admin._dmit_confirm_cart_item('<div>HKG.AS3.Pro.STARTER</div>', 'HKG.AS3.Pro.TINY'))
+
+    def test_dmit_empty_cart_stops_before_final_checkout_post(self):
         class Resp:
             def __init__(self, body, url): self.content = body.encode(); self.text = body; self.status_code = 200; self.url = url
         session = requests.Session()
-        config = Resp('<form id="frmConfigureProduct" action="/cart.php?a=confproduct&i=0"><input name="configure" value="true"><input name="hostname"><select name="billingcycle"><option value="monthly" selected>Monthly</option></select><input name="configoption[29]" value="472"><input name="configoption[118]" value="0"></form>', 'https://www.dmit.io/cart.php?a=confproduct&i=0')
-        checkout = Resp('<form action="/cart.php?a=checkout"><input name="token" value="csrf"><input name="paymentmethod" value="alipay"></form>', 'https://www.dmit.io/cart.php?a=checkout')
+        config = Resp('<form id="frmConfigureProduct" action="/cart.php?a=confproduct&i=0"><input name="hostname"><select name="billingcycle"><option value="monthly" selected>Monthly</option></select><input name="configoption[29]" value="472" checked><input name="configoption[118]" value="0"></form>', 'https://www.dmit.io/cart.php?a=confproduct&i=0')
+        empty = Resp('<div>Your Shopping Cart is Empty</div>', 'https://www.dmit.io/cart.php?a=view')
+        session.get = Mock(side_effect=[config, empty]); session.post = Mock(return_value=Resp('', 'https://www.dmit.io/cart.php'))
+        product = Product('dmit:HKG:AS3:PREMIUM:TINY', 'HKG.AS3.Pro.TINY', 1, 'https://www.dmit.io/cart.php?a=add&pid=265', vendor='DMIT')
+        with self.assertRaises(admin.DmitOrderFailure) as raised:
+            admin._dmit_order(session, {'quantity': 1}, {'username': 'user@example.com'}, product, product.url, {'mode': 'requests'})
+        self.assertFalse(raised.exception.checkout_request_sent)
+        self.assertEqual(session.post.call_count, 1)
+
+    def test_dmit_response_diagnostic_reports_page_shape_without_body_content(self):
+        class Resp:
+            status_code = 200
+            url = 'https://www.dmit.io/cart.php?a=checkout'
+            content = b'<title>Shopping Cart</title><nav>Unpaid Invoices</nav><div class="alert alert-danger">Please accept terms</div><div class="alert alert-danger hidden">hidden secret error</div><form action="/cart.php?a=checkout"><input name="token" value="secret"></form>'
+        summary = admin._dmit_response_diagnostic(Resp())
+        self.assertIn('title=\'Shopping Cart\'', summary)
+        self.assertIn('forms=checkout', summary)
+        self.assertIn('Please accept terms', summary)
+        self.assertNotIn('hidden secret error', summary)
+        self.assertNotIn('secret', summary)
+
+    def test_dmit_checkout_payload_diagnostic_exposes_only_safe_fields(self):
+        summary = admin._dmit_checkout_payload_diagnostic({
+            'paymentmethod': 'stripe_next', 'accepttos': '1', 'custtype': 'existing',
+            'submit': 'true', 'token': 'sensitive-token', 'phonenumber': ''})
+        self.assertIn('paymentmethod=stripe_next', summary)
+        self.assertIn('accepttos=1', summary)
+        self.assertIn('phonenumber=blank', summary)
+        self.assertNotIn('sensitive-token', summary)
+
+    def test_dmit_checkout_form_prefers_order_form_over_coupon_checkout_form(self):
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup('''<form id="promo" action="/cart.php?a=checkout"><input name="submit" value="promo"></form><form id="frmCheckout" action="/cart.php?a=checkout"><input name="token" value="csrf"><input name="paymentmethod" value="stripe_next" checked><input type="checkbox" name="accepttos" value="1"></form>''', 'html.parser')
+        form = admin._dmit_checkout_form(soup)
+        self.assertEqual(form.get('id'), 'frmCheckout')
+
+    def test_dmit_terms_uses_dom_value_instead_of_assuming_on(self):
+        from bs4 import BeautifulSoup
+        payload = {}
+        form = BeautifulSoup('<form><input type="checkbox" name="accepttos" value="1"></form>', 'html.parser').form
+        self.assertTrue(admin._dmit_accept_terms(form, payload))
+        self.assertEqual(payload['accepttos'], '1')
+        payload.clear()
+        form = BeautifulSoup('<form><input type="checkbox" name="accepttos"></form>', 'html.parser').form
+        self.assertTrue(admin._dmit_accept_terms(form, payload))
+        self.assertEqual(payload['accepttos'], 'on')
+
+    def test_dmit_checkout_omits_disabled_profile_fields_but_keeps_enabled_duplicate(self):
+        from bs4 import BeautifulSoup
+        form = BeautifulSoup('<form><select name="country" disabled><option value="US" selected>US</option></select><select name="state" disabled><option value="">Choose</option></select><input name="cccvv" disabled value=""><input name="cccvv" value=""><input name="firstname" value="DD"><input name="phonenumber" value=""></form>', 'html.parser').form
+        values = admin._dmit_checkout_values(form)
+        self.assertNotIn('country', values)
+        self.assertNotIn('state', values)
+        self.assertEqual(values['cccvv'], '')
+        self.assertEqual(values['firstname'], 'DD')
+        self.assertIn('phonenumber', values)
+        self.assertEqual(values['phonenumber'], '')
+
+    def test_dmit_order_uses_checkout_default_gateway_and_accepts_terms(self):
+        class Resp:
+            def __init__(self, body, url): self.content = body.encode(); self.text = body; self.status_code = 200; self.url = url
+        session = requests.Session()
+        config = Resp('<form id="frmConfigureProduct" action="/cart.php?a=confproduct&i=0"><input name="configure" value="true"><input name="hostname"><select name="billingcycle"><option value="monthly" selected>Monthly</option></select><input name="configoption[29]" value="472" checked><input name="configoption[118]" value="0"><textarea name="customfield[2278]"></textarea></form>', 'https://www.dmit.io/cart.php?a=confproduct&i=0')
+        checkout = Resp('<form action="/cart.php?a=checkout"><input name="token" value="csrf"><span class="radio-inline active"><div><input type="radio" name="paymentmethod" value="stripe_next" checked></div>Credit Card &amp; Others</span><span class="radio-inline"><div><input type="radio" name="paymentmethod" value="alipay_global"></div>Alipay</span><input type="checkbox" name="accepttos" value="1"></form>', 'https://www.dmit.io/cart.php?a=checkout')
         invoice = Resp('<h1>Invoice 1171903: Unpaid</h1><p>HKG.AS3.Pro.MINI</p>', 'https://www.dmit.io/viewinvoice.php?id=1171903')
+        cart_view = Resp('<div class="cartitem">HKG.AS3.Pro.MINI</div>', 'https://www.dmit.io/cart.php?a=view')
         invoice_detail = Resp('<h1>Invoice 1171903: Unpaid</h1><p>HKG.AS3.Pro.MINI</p>', 'https://www.dmit.io/viewinvoice.php?id=1171903')
-        session.get = Mock(side_effect=[config, invoice_detail]); session.post = Mock(side_effect=[checkout, invoice])
+        session.get = Mock(side_effect=[config, cart_view, checkout, invoice_detail]); session.post = Mock(side_effect=[checkout, invoice])
         product = Product('dmit:HKG:AN5:PREMIUM:MINI', 'HKG.AS3.Pro.MINI', 1, 'https://www.dmit.io/cart.php?a=add&pid=125', vendor='DMIT')
         result = admin._dmit_order(session, {'quantity': 1}, {'username': 'user@example.com'}, product, product.url, {'mode': 'requests'})
         self.assertEqual(result['order_id'], '1171903')
         payload = session.post.call_args_list[0].kwargs['data']
         self.assertEqual(payload['billingcycle'], 'monthly')
-        self.assertEqual(payload['hostname'], '')
+        self.assertRegex(payload['hostname'], r'^DMIT-[A-Za-z0-9]{10}$')
         self.assertEqual(result['hostname'], payload['hostname'])
-        self.assertEqual(payload['configoption[29]'], '471')
+        self.assertEqual(payload['configoption[29]'], '472')
         self.assertEqual(payload['configoption[118]'], '0')
-        self.assertEqual(payload['customfield[1025]'], '')
+        self.assertEqual(payload['customfield[2278]'], '')
+        checkout_payload = session.post.call_args_list[1].kwargs['data']
+        self.assertEqual(checkout_payload['paymentmethod'], 'stripe_next')
+        self.assertEqual(checkout_payload['accepttos'], '1')
+        self.assertEqual(result['os'], 'Debian 13')
         self.assertEqual(session.get.call_args_list[-1].args[0], 'https://www.dmit.io/viewinvoice.php?id=1171903')
+
+    def test_dmit_cart_nav_unpaid_text_does_not_count_as_created_invoice(self):
+        class Resp:
+            def __init__(self, body, url): self.content = body.encode(); self.text = body; self.status_code = 200; self.url = url
+        session = requests.Session()
+        config = Resp('<form id="frmConfigureProduct" action="/cart.php?a=confproduct&i=0"><input name="hostname"><select name="billingcycle"><option value="monthly" selected>Monthly</option></select><input name="configoption[29]" value="472" checked><input name="configoption[118]" value="0"></form>', 'https://www.dmit.io/cart.php?a=confproduct&i=0')
+        cart = Resp('<div class="cartitem">HKG.AS3.Pro.TINY</div>', 'https://www.dmit.io/cart.php?a=view')
+        checkout = Resp('<form id="frmCheckout" action="/cart.php?a=checkout"><input name="paymentmethod" value="stripe_next" checked><input type="checkbox" name="accepttos" value="1"></form>', 'https://www.dmit.io/cart.php?a=checkout')
+        no_invoice = Resp('<title>Shopping Cart</title><nav>Unpaid Invoices</nav><form id="frmCheckout" action="/cart.php?a=checkout"><input name="paymentmethod" value="stripe_next" checked><input type="checkbox" name="accepttos" value="1"></form>', 'https://www.dmit.io/cart.php?a=checkout')
+        session.get = Mock(side_effect=[config, cart, checkout])
+        session.post = Mock(side_effect=[cart, no_invoice])
+        product = Product('dmit:HKG:AS3:PREMIUM:TINY', 'HKG.AS3.Pro.TINY', 1, 'https://www.dmit.io/cart.php?a=add&pid=265', vendor='DMIT')
+        with self.assertRaises(admin.DmitOrderFailure) as raised:
+            admin._dmit_order(session, {'quantity': 1}, {'username': 'user@example.com'}, product, product.url, {'mode': 'requests'})
+        self.assertTrue(raised.exception.checkout_request_sent)
+        self.assertIn('未返回账单号', str(raised.exception))
+        self.assertIn('accepttos=1', str(raised.exception))
+        self.assertIn('paymentmethod=stripe_next', str(raised.exception))
+        self.assertEqual(session.get.call_count, 3)
+        self.assertEqual(session.post.call_args_list[1].kwargs['data']['accepttos'], '1')
+
+    def test_dmit_flaresolverr_order_posts_browser_equivalent_checkout_fields(self):
+        from contextlib import nullcontext
+        from urllib.parse import parse_qs
+        import monitor
+
+        def result(body, url, status=200):
+            return {'response': body, 'url': url, 'status': status}
+
+        login = result('<form action="/login"><input name="username"><input name="password"></form>', 'https://www.dmit.io/clientarea.php')
+        logged_in = result('<a href="/logout.php">Logout</a>', 'https://www.dmit.io/clientarea.php?action=details')
+        config = result('<form id="frmConfigureProduct" action="/cart.php?a=confproduct&i=0"><input name="hostname"><select name="billingcycle"><option value="monthly" selected>Monthly</option></select><input name="configoption[29]" value="472" checked><input name="configoption[118]" value="0"></form>', 'https://www.dmit.io/cart.php?a=confproduct&i=0')
+        checkout = result('<form id="promo" action="/cart.php?a=checkout"><input name="submit" value="promo"></form><form id="frmCheckout" action="/cart.php?a=checkout"><input name="token" value="csrf"><input type="radio" name="paymentmethod" value="stripe_next" checked><input type="radio" name="paymentmethod" value="alipay_global"><input type="checkbox" name="accepttos" value="1"><input name="phonenumber" value=""></form>', 'https://www.dmit.io/cart.php?a=checkout')
+        invoice = result('<h1>Invoice 1171906: Unpaid</h1><p>HKG.AS3.Pro.TINY</p>', 'https://www.dmit.io/viewinvoice.php?id=1171906')
+        replies = [login, result('', login['url']), logged_in, config, result('', 'https://www.dmit.io/cart.php'),
+                   result('<div>HKG.AS3.Pro.TINY</div>', 'https://www.dmit.io/cart.php?a=view'),
+                   checkout, invoice, invoice]
+        calls = []
+
+        def request(*args):
+            calls.append(args)
+            return replies[len(calls) - 1]
+
+        with patch.object(monitor, 'browser_request_slot', return_value=nullcontext()), \
+             patch.object(monitor, 'flaresolverr_session_create', return_value='session'), \
+             patch.object(monitor, 'flaresolverr_session_request', side_effect=request), \
+             patch.object(monitor, 'flaresolverr_session_destroy'):
+            product = Product('dmit:HKG:AS3:PREMIUM:TINY', 'HKG.AS3.Pro.TINY', 1,
+                              'https://www.dmit.io/cart.php?a=add&pid=265', vendor='DMIT')
+            order = admin._dmit_order_flaresolverr(
+                {'quantity': 1, 'operating_system': 'Debian 13'},
+                {'username': 'user@example.com', 'password': 'secret'}, product, product.url,
+                {'mode': 'flaresolverr'}, 'test')
+
+        checkout_call = next(call for call in calls if len(call) > 3 and call[2] == 'https://www.dmit.io/cart.php?a=checkout' and call[3] == 'post')
+        submitted = parse_qs(checkout_call[4], keep_blank_values=True)
+        self.assertEqual(submitted['paymentmethod'], ['stripe_next'])
+        self.assertEqual(submitted['accepttos'], ['1'])
+        self.assertEqual(submitted['phonenumber'], [''])
+        self.assertEqual(order['order_id'], '1171906')
+
+    def test_dmit_order_honors_requested_debian_version(self):
+        class Resp:
+            def __init__(self, body, url): self.content = body.encode(); self.text = body; self.status_code = 200; self.url = url
+        session = requests.Session()
+        config = Resp('<form id="frmConfigureProduct" action="/cart.php?a=confproduct&i=0"><input name="hostname"><select name="billingcycle"><option value="monthly" selected>Monthly</option></select><div data-name="configoption[29]" data-value="472" data-version="13"></div><div data-name="configoption[29]" data-value="471" data-version="12"></div><input name="configoption[29]" value="472" checked><input name="configoption[29]" value="471"><input name="configoption[118]" value="0"></form>', 'https://www.dmit.io/cart.php?a=confproduct&i=0')
+        checkout = Resp('<form action="/cart.php?a=checkout"><input type="radio" name="paymentmethod" value="stripe_next" checked><input type="radio" name="paymentmethod" value="alipay_global"></form>', 'https://www.dmit.io/cart.php?a=checkout')
+        invoice = Resp('<h1>Invoice 1171905: Unpaid</h1><p>HKG.AS3.Pro.TINY</p>', 'https://www.dmit.io/viewinvoice.php?id=1171905')
+        cart_view = Resp('<div class="cartitem">HKG.AS3.Pro.TINY</div>', 'https://www.dmit.io/cart.php?a=view')
+        invoice_detail = Resp('<h1>Invoice 1171905: Unpaid</h1><p>HKG.AS3.Pro.TINY</p>', 'https://www.dmit.io/viewinvoice.php?id=1171905')
+        session.get = Mock(side_effect=[config, cart_view, checkout, invoice_detail]); session.post = Mock(side_effect=[checkout, invoice])
+        product = Product('dmit:HKG:AS3:PREMIUM:TINY', 'HKG.AS3.Pro.TINY', 1, 'https://www.dmit.io/cart.php?a=add&pid=265', vendor='DMIT')
+        result = admin._dmit_order(session, {'quantity': 1, 'operating_system': 'Debian 12'}, {'username': 'user@example.com'}, product, product.url, {'mode': 'requests'})
+        self.assertEqual(result['os'], 'Debian 12')
+        self.assertEqual(session.post.call_args_list[0].kwargs['data']['configoption[29]'], '471')
 
     def test_dmit_beta_configuration_ack_is_sent_before_final_checkout(self):
         class Resp:
             def __init__(self, body, url, status=200): self.content = body.encode(); self.text = body; self.status_code = status; self.url = url
         session = requests.Session()
         config = Resp('<form id="frmConfigureProduct" action="/cart.php?a=confproduct&i=0"><input name="configure" value="true"><input name="beta_ack" value=""><input name="hostname"><select name="billingcycle"><option value="monthly" selected>Monthly</option></select><input name="configoption[29]" value="472"><input name="configoption[118]" value="0"></form><div id="modalBetaConfirm"></div>', 'https://www.dmit.io/cart.php?a=confproduct&i=0')
-        checkout = Resp('<form action="/cart.php?a=checkout"><input name="token" value="csrf"><input name="paymentmethod" value="alipay"></form>', 'https://www.dmit.io/cart.php?a=checkout')
+        checkout = Resp('<form action="/cart.php?a=checkout"><input name="token" value="csrf"><input type="radio" name="paymentmethod" value="stripe_next" checked><input type="radio" name="paymentmethod" value="alipay_global"></form>', 'https://www.dmit.io/cart.php?a=checkout')
         invoice = Resp('<h1>Invoice 1171904: Unpaid</h1><p>HKG.AS3.Pro.MINI</p>', 'https://www.dmit.io/viewinvoice.php?id=1171904')
+        cart_view = Resp('<div class="cartitem">HKG.AS3.Pro.MINI</div>', 'https://www.dmit.io/cart.php?a=view')
         invoice_detail = Resp('<h1>Invoice 1171904: Unpaid</h1><p>HKG.AS3.Pro.MINI</p>', 'https://www.dmit.io/viewinvoice.php?id=1171904')
-        session.get = Mock(side_effect=[config, invoice_detail]); session.post = Mock(side_effect=[checkout, invoice])
+        session.get = Mock(side_effect=[config, cart_view, checkout, invoice_detail]); session.post = Mock(side_effect=[checkout, invoice])
         product = Product('dmit:HKG:AN5:PREMIUM:MINI', 'HKG.AS3.Pro.MINI', 1, 'https://www.dmit.io/cart.php?a=add&pid=125', vendor='DMIT')
         result = admin._dmit_order(session, {'quantity': 1}, {'username': 'user@example.com'}, product, product.url, {'mode': 'requests'}, 'task-item')
         self.assertEqual(result['order_id'], '1171904')
