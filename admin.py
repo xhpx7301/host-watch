@@ -25,7 +25,7 @@ import requests
 
 from auth import DEFAULT_USERS_PATH, authentication_required, authorized, credentials_authorized, users_path
 from catalog import CatalogBusy, CatalogService
-from affiliates import DEFAULT_AFFILIATES, PROVIDERS, affiliate_purchase_url, effective_coupon, normalize_affiliate_accounts, normalize_affiliate_coupons, normalize_affiliate_notes, normalize_affiliate_rates, normalize_affiliates, normalize_merchant_order
+from affiliates import AFFILIATE_PROVIDERS, DEFAULT_AFFILIATES, PROVIDERS, affiliate_purchase_url, effective_coupon, normalize_affiliate_accounts, normalize_affiliate_coupons, normalize_affiliate_notes, normalize_affiliate_rates, normalize_affiliates, normalize_merchant_order
 from time_utils import beijing_iso, format_beijing
 from notifications import hardware_text, network_text, purchase_button, stock_message, telegram_region
 import egress
@@ -4142,10 +4142,10 @@ def default_config() -> dict:
         "isvoro_seckill": False,
         "affiliate_id": DEFAULT_AFFILIATES["vmiss"],
         "affiliates": dict(DEFAULT_AFFILIATES),
-        "affiliate_notes": {provider: "" for provider in PROVIDERS},
-        "affiliate_accounts": {provider: "" for provider in PROVIDERS},
-        "affiliate_rates": {provider: "" for provider in PROVIDERS},
-        "affiliate_coupons": {provider: "" for provider in PROVIDERS},
+        "affiliate_notes": {provider: "" for provider in AFFILIATE_PROVIDERS},
+        "affiliate_accounts": {provider: "" for provider in AFFILIATE_PROVIDERS},
+        "affiliate_rates": {provider: "" for provider in AFFILIATE_PROVIDERS},
+        "affiliate_coupons": {provider: "" for provider in AFFILIATE_PROVIDERS},
         "merchant_order": list(PROVIDERS),
         "watch_order": [],
         "notify_order": [],

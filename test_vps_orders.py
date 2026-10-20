@@ -153,6 +153,15 @@ class OrderTaskTests(unittest.TestCase):
                 self.assertEqual(session.get.call_args.args[0], entry)
                 self.assertTrue(session.get.call_args.kwargs['allow_redirects'])
 
+    def test_vps_soy_does_not_visit_an_affiliate_entry(self):
+        config = admin.validate_config({"affiliates": {"vps_soy": "legacy-code"}})
+        task = admin.SeckillTask('vps-soy-no-aff-test', config, 'rapid')
+        session = Mock()
+        url = 'https://www.vps.soy/cart?action=configureproduct&pid=42'
+        product = {'adapter': 'vps_soy', 'provider': 'VPS.SOY', 'pid': '42'}
+        self.assertEqual(task._visit_affiliate_entry(session, {'id': 'vps-soy'}, url, product), url)
+        session.get.assert_not_called()
+
     def test_quantity_defaults_and_rejects_invalid_values(self):
         item = self.config['vps_seckill']['items'][0]
         del item['quantity']

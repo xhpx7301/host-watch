@@ -1767,6 +1767,7 @@ function merchantOrder() {
   return [...new Set([...(config.merchant_order || []), ...Object.keys(merchantNames)])].filter((key) => Object.hasOwn(merchantNames, key));
 }
 function affiliatePurchaseURL(raw, provider, item = {}, affiliates = config.affiliates || {}) {
+  if (provider === "vps_soy") return raw;
   try {
     const url = new URL(raw);
     const acceptedHosts = provider === "bwh" ? ["bwh81.net", "www.bwh81.net", "bandwagonhost.com", "www.bandwagonhost.com"] : [merchantHosts[provider]];

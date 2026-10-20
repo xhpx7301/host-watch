@@ -5,22 +5,22 @@ from urllib.parse import parse_qs, urlsplit
 
 import admin
 import monitor
-from affiliates import DEFAULT_AFFILIATES, PROVIDERS, affiliate_purchase_url
+from affiliates import AFFILIATE_PROVIDERS, DEFAULT_AFFILIATES, PROVIDERS, affiliate_purchase_url
 import test_admin
 
 
 class AffiliateTests(unittest.TestCase):
     def test_defaults_migrate_legacy_and_explicit_blanks_persist(self):
         self.assertEqual(admin.validate_config({})["affiliates"], DEFAULT_AFFILIATES)
-        self.assertEqual(admin.validate_config({})["affiliate_notes"], {key: "" for key in PROVIDERS})
+        self.assertEqual(admin.validate_config({})["affiliate_notes"], {key: "" for key in AFFILIATE_PROVIDERS})
         self.assertEqual(admin.validate_config({"affiliate_id": "321"})["affiliates"]["vmiss"], "321")
-        blank = {key: "" for key in PROVIDERS}
+        blank = {key: "" for key in AFFILIATE_PROVIDERS}
         config = admin.validate_config({"affiliate_id": "321", "affiliates": blank})
         self.assertEqual(config["affiliate_id"], "")
         self.assertEqual(admin.validate_config(config)["affiliates"], blank)
 
     def test_affiliate_notes_are_normalized_and_validated(self):
-        notes = {key: f"{key} account · 10%" for key in PROVIDERS}
+        notes = {key: f"{key} account · 10%" for key in AFFILIATE_PROVIDERS}
         config = admin.validate_config({"affiliate_notes": notes})
         self.assertEqual(config["affiliate_notes"], notes)
         for payload in [
@@ -59,11 +59,26 @@ class AffiliateTests(unittest.TestCase):
         self.assertEqual(config["merchant_order"], ["isvoro", "akile", "vmiss", "vps_soy", "narwhal", "dmit"])
         self.assertEqual(admin.validate_config(config)["merchant_order"], config["merchant_order"])
 
+    def test_vps_soy_has_no_affiliate_settings_or_purchase_parameters(self):
+        config = admin.validate_config({
+            "affiliates": {"vps_soy": "legacy-code"},
+            "affiliate_notes": {"vps_soy": "legacy note"},
+            "affiliate_accounts": {"vps_soy": "legacy account"},
+            "affiliate_rates": {"vps_soy": "10%"},
+            "affiliate_coupons": {"vps_soy": "LEGACY"},
+        })
+        self.assertNotIn("vps_soy", config["affiliates"])
+        self.assertNotIn("vps_soy", config["affiliate_notes"])
+        self.assertNotIn("vps_soy", config["affiliate_accounts"])
+        self.assertNotIn("vps_soy", config["affiliate_rates"])
+        self.assertNotIn("vps_soy", config["affiliate_coupons"])
+        raw = "https://www.vps.soy/cart?fid=1&gid=8&pid=11"
+        self.assertEqual(affiliate_purchase_url(raw, "vps_soy", config), raw)
+
     def test_deep_links_keep_exact_product_parameters_and_replace_old_code(self):
         for provider, raw, expected in [
             ("akile", "https://akile.ai/shop/server?type=traffic&areaId=6&nodeId=41&planId=1047&aff_code=old#plan", {"type": ["traffic"], "areaId": ["6"], "nodeId": ["41"], "planId": ["1047"], "aff_code": ["new"]}),
             ("isvoro", "https://isvoro.com/buy/HK-prod?product=188&aff=old&aff=older", {"product": ["188"], "aff": ["new"]}),
-            ("vps_soy", "https://www.vps.soy/cart?fid=1&gid=8&pid=11", {"fid": ["1"], "gid": ["8"], "pid": ["11"], "aff": ["new"]}),
         ]:
             with self.subTest(provider=provider):
                 result = affiliate_purchase_url(raw, provider, {"affiliates": {provider: "new"}})

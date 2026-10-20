@@ -3,13 +3,21 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import re
 
 PROVIDERS = ("vmiss", "vps_soy", "akile", "narwhal", "isvoro", "dmit", "bwh")
+AFFILIATE_PROVIDERS = tuple(provider for provider in PROVIDERS if provider != "vps_soy")
 DEFAULT_AFFILIATES = {
-    "vmiss": "5340", "vps_soy": "",
+    "vmiss": "5340",
     "akile": "eb2ff10d-f57f-485f-9621-ed873b36c2c0",
     "isvoro": "c57baee34737",
     "dmit": "22544", "bwh": "84938",
 }
-HOSTS = {"vmiss": "app.vmiss.com", "vps_soy": "www.vps.soy", "akile": "akile.ai", "narwhal": "dash.fuckip.me", "isvoro": "isvoro.com", "dmit": "www.dmit.io", "bwh": "bwh81.net"}
+HOSTS = {"vmiss": "app.vmiss.com", "akile": "akile.ai", "narwhal": "dash.fuckip.me", "isvoro": "isvoro.com", "dmit": "www.dmit.io", "bwh": "bwh81.net"}
+
+
+def _affiliate_settings(value: object) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("AFF 配置必须是支持商家的对象")
+    # Older configurations included VPS.SOY even though it has no affiliate program.
+    return {key: item for key, item in value.items() if key != "vps_soy"}
 
 
 def normalize_affiliate_coupons(value: dict) -> dict:
@@ -21,10 +29,10 @@ def normalize_affiliate_coupons(value: dict) -> dict:
     supplied = value.get("affiliate_coupons", {})
     if supplied is None:
         supplied = {}
-    if not isinstance(supplied, dict) or any(key not in PROVIDERS for key in supplied):
+    if not isinstance(supplied, dict) or any(key not in (*AFFILIATE_PROVIDERS, "vps_soy") for key in supplied):
         raise ValueError("商家优惠码必须是支持商家的对象")
-    result = {provider: "" for provider in PROVIDERS}
-    for provider, raw in supplied.items():
+    result = {provider: "" for provider in AFFILIATE_PROVIDERS}
+    for provider, raw in _affiliate_settings(supplied).items():
         if not isinstance(raw, str):
             raise ValueError("商家优惠码必须是文本")
         code = raw.strip()
@@ -46,10 +54,10 @@ def normalize_affiliate_notes(value: dict) -> dict:
     supplied = value.get("affiliate_notes", {})
     if supplied is None:
         supplied = {}
-    if not isinstance(supplied, dict) or any(key not in PROVIDERS for key in supplied):
+    if not isinstance(supplied, dict) or any(key not in (*AFFILIATE_PROVIDERS, "vps_soy") for key in supplied):
         raise ValueError("AFF 备注必须是支持商家的对象")
-    result = {provider: "" for provider in PROVIDERS}
-    for provider, raw in supplied.items():
+    result = {provider: "" for provider in AFFILIATE_PROVIDERS}
+    for provider, raw in _affiliate_settings(supplied).items():
         if not isinstance(raw, str):
             raise ValueError("AFF 备注必须是文本")
         note = raw.strip()
@@ -63,10 +71,10 @@ def _normalize_affiliate_text_map(value: dict, key: str, label: str, limit: int)
     supplied = value.get(key, {})
     if supplied is None:
         supplied = {}
-    if not isinstance(supplied, dict) or any(provider not in PROVIDERS for provider in supplied):
+    if not isinstance(supplied, dict) or any(provider not in (*AFFILIATE_PROVIDERS, "vps_soy") for provider in supplied):
         raise ValueError(f"{label}必须是支持商家的对象")
-    result = {provider: "" for provider in PROVIDERS}
-    for provider, raw in supplied.items():
+    result = {provider: "" for provider in AFFILIATE_PROVIDERS}
+    for provider, raw in _affiliate_settings(supplied).items():
         if not isinstance(raw, str):
             raise ValueError(f"{label}必须是文本")
         text = raw.strip()
@@ -86,12 +94,12 @@ def normalize_affiliate_rates(value: dict) -> dict:
 
 def normalize_affiliates(value: dict) -> dict:
     supplied = value.get("affiliates", {})
-    if not isinstance(supplied, dict) or any(key not in PROVIDERS for key in supplied):
+    if not isinstance(supplied, dict) or any(key not in (*AFFILIATE_PROVIDERS, "vps_soy") for key in supplied):
         raise ValueError("AFF 配置必须是支持商家的对象")
     result = dict(DEFAULT_AFFILIATES)
     if value.get("affiliate_id"):
         result["vmiss"] = str(value["affiliate_id"]).strip()
-    for provider, raw in supplied.items():
+    for provider, raw in _affiliate_settings(supplied).items():
         if not isinstance(raw, str):
             raise ValueError("AFF 推广码必须是文本")
         code = raw.strip()
