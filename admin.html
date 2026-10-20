@@ -692,6 +692,8 @@
     .provider-schedule-summary { display:flex; flex-wrap:wrap; gap:6px; }
     .provider-schedule-summary > span { display:inline-flex; flex-wrap:wrap; align-items:center; gap:3px 6px; padding:5px 8px; border:1px solid var(--line); border-radius:6px; background:#fbfcff; font-size:11px; color:var(--muted); }
     .provider-schedule-summary strong { color:var(--ink); font-weight:600; }
+    .seckill-schedule-overview { margin:14px 0; }
+    .seckill-schedule-overview h4 { margin:0 0 8px; font-size:13px; }
     .watchlist-filter-fields label,.watchlist-refresh-controls label { width:auto; min-width:0; flex:none; }
     .watchlist-filter-tools { min-width:0; padding:9px 11px; border:1px solid var(--line); border-radius:8px; background:#fbfcff; }
     .watchlist-refresh-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:7px; }
@@ -861,6 +863,7 @@
       <div class="seckill-control-grid">
       <div class="seckill-panel vps-seckill-panel">
         <div class="section-head"><div><h3>执行模式</h3><p>每个商家独立设置策略和检查间隔。自动模式只创建待付款订单，付款由你到官网完成。</p></div><div class="actions"><button id="vps-seckill-test" type="button">测试抢购配置</button><button id="vps-seckill-test-stop" type="button" class="danger" hidden>停止测试</button><button id="vps-seckill-start" type="button" class="primary">启动补货抢购</button><button id="vps-seckill-stop" type="button" class="danger" hidden>暂停补货抢购</button></div></div>
+        <div class="seckill-schedule-overview"><h4>各商家抢购设置总览</h4><div id="seckill-provider-summary" class="provider-schedule-summary" role="group" aria-label="各商家当前抢购模式和检查间隔"></div></div>
         <div class="form-grid"><label>商家<select id="vps-seckill-schedule-provider"></select></label><label>模式<select id="vps-seckill-mode"><option value="rapid">极速抢购（自动）</option><option value="precise">精准抢购（自动）</option><option value="manual">手动抢购</option></select></label><label>检查间隔（秒）<input id="vps-seckill-interval" type="number" min="1" max="3600" step="1" value="5"></label></div>
         <p id="vps-seckill-test-status" class="hint" role="status" aria-live="polite">测试会访问网站、识别页面并检查账户，不创建订单、不付款。</p><div id="vps-seckill-test-results" class="seckill-results" aria-live="polite"></div>
         <div class="seckill-mode-guide">

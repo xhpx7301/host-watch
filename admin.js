@@ -1624,13 +1624,16 @@ function providerSchedule(module, provider) {
   return config[`${module}_schedule`] || { mode: "manual", interval_seconds: 300 };
 }
 function renderProviderScheduleSummary() {
-  for (const module of ["monitor", "notify"]) {
+  for (const module of ["monitor", "notify", "seckill"]) {
     const target = document.getElementById(module + "-provider-summary");
     if (!target) continue;
     target.replaceChildren(...orderedMerchantEntries().map(([provider, name]) => {
       const schedule = providerSchedule(module, provider);
+      const modeLabel = module === "seckill"
+        ? ({ rapid: "极速抢购（自动）", precise: "精准抢购（自动）", manual: "手动抢购" })[schedule.mode] || schedule.mode
+        : schedule.mode === "auto" ? "自动刷新" : "仅手动刷新";
       const row = text("span", "");
-      row.append(text("strong", name), text("span", (schedule.mode === "auto" ? "自动刷新" : "仅手动刷新") + " · " + schedule.interval_seconds + " 秒"));
+      row.append(text("strong", name), text("span", modeLabel + " · " + schedule.interval_seconds + " 秒"));
       return row;
     }));
   }
