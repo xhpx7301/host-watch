@@ -161,8 +161,9 @@ class TriggerTests(unittest.TestCase):
         positions = [message.index(label) for label in labels]
         self.assertEqual(positions, sorted(positions))
         for value in ["🌍", "📍", "📦", "🖥", "🌐", "🔁", "📅", "💰", "💎", "📈", "📌",
-                      "1C/1G/5GB", "1000GB@1000Mbps", "¥30.00/1个月", "月付 ¥30.00"]:
+                      "1C/1G/5GB", "1000GB@1000Mbps", "¥30.00/1个月"]:
             self.assertIn(value, message)
+        self.assertNotIn("月付 ¥30.00", message)
         self.assertIn("2026-11-18 12:00:00 北京时间（剩余 30.00 天）", message)
         self.assertEqual(send.call_args.kwargs["parse_mode"], "HTML")
         self.assertIn("288702", send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["url"])

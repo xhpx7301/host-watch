@@ -5100,7 +5100,7 @@ def _akile_market_alert(config: dict, rule: dict, item: dict, reason: str) -> bo
         f"📦 <b>套餐：</b>{escape(str(item.get('plan_name') or '—'))}",
         f"🖥 <b>配置：</b>{escape(hardware)}",
         f"🌐 <b>网络：</b>{escape(network)}",
-        f"🔁 <b>续费价格：</b>¥{item['renewal']:.2f}/{escape(str(item['cycle']))}个月 · 月付 ¥{item['monthly_price']:.2f}",
+        f"🔁 <b>续费价格：</b>¥{item['renewal']:.2f}/{escape(str(item['cycle']))}个月",
         f"📅 <b>到期时间：</b>{_akile_market_display_time(item.get('due_time'))}（剩余 {item['remaining_days']:.2f} 天）",
         f"💰 <b>售价：</b>¥{item['price']:.2f}",
         f"💎 <b>剩余价值：</b>¥{item['fair_value']:.2f}",
