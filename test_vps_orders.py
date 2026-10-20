@@ -219,6 +219,7 @@ class OrderTaskTests(unittest.TestCase):
         payload = send.call_args.kwargs
         self.assertEqual(payload['chat_id'], '123')
         self.assertIn('订单号：<code>order-123</code>', payload['text'])
+        self.assertIn('商家：ExampleHost', payload['text'])
         self.assertIn('状态：待付款', payload['text'])
         self.assertEqual(payload['reply_markup']['inline_keyboard'][0][0]['text'], '💳 立即付款')
         self.assertEqual(payload['reply_markup']['inline_keyboard'][0][0]['url'], 'https://shop.example.com/buy')
@@ -1377,6 +1378,7 @@ class AccountVerificationTests(unittest.TestCase):
              patch.object(admin, 'telegram_call') as send:
             self.assertEqual(task._notify_unpaid_order({'product_id': 'plan'}, 'invoice-1', 1, 'https://app.vmiss.com/viewinvoice.php?id=1'), 'sent')
         self.assertIn('CN.HK.BGP.Pro', send.call_args.kwargs['text'])
+        self.assertIn('商家：ExampleHost', send.call_args.kwargs['text'])
 
     def test_akile_cached_auth_session_skips_api_login(self):
         account = configuration()['vps_seckill']['accounts'][0]

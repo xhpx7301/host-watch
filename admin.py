@@ -3874,8 +3874,11 @@ class SeckillTask:
             self.log("待付款订单已创建，但未发送 Telegram：机器人未配置或通知已关闭。", "warning", item)
             return "unconfigured"
         label = self._item_label(item)
+        product = next((row for row in self.config.get("products", []) if row.get("id") == item.get("product_id")), {})
+        merchant = str(product.get("provider") or product.get("adapter") or "未知商家").strip()
         message = "\n".join([
             "✅ <b>HostWatch · VPS 补货抢购成功</b>",
+            f"商家：{escape(merchant[:80])}",
             f"商品：{escape(str(label)[:160])}",
             f"订单号：<code>{escape(str(order_id)[:128])}</code>",
             f"数量：{quantity}",
