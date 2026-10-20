@@ -111,6 +111,33 @@ class OrderTaskTests(unittest.TestCase):
         return [call for session in self.sessions for call in session.post.call_args_list
             if call.kwargs['json']['action'] == 'create_unpaid_order']
 
+    def test_vmiss_auto_order_visits_aff_link_before_creating_invoice(self):
+        task = admin.SeckillTask('vmiss-aff-test', admin.default_config(), 'rapid')
+        item = {'id': 'vmiss-item', 'product_id': 'plan', 'quantity': 1}
+        product = {'adapter': 'vmiss', 'provider': 'VMISS', 'name': 'Mini', 'pid': '44'}
+        inspected = Product('plan', 'Mini', 1, 'https://app.vmiss.com/store/test/mini')
+        session = Mock(headers={})
+        session.get.return_value = Mock(status_code=200, url='https://app.vmiss.com/store/test/mini')
+        with patch.object(admin, 'vmiss_order', return_value={
+                'order_id': 'vmiss-invoice-123', 'invoice_url': 'https://app.vmiss.com/viewinvoice.php?id=123'}
+             ) as create_order:
+            result = task._submit(session, item, {}, inspected.url, product, inspected=inspected)
+        self.assertEqual(result['status'], 'submitted')
+        self.assertEqual(session.get.call_args.args[0], 'https://app.vmiss.com/aff.php?aff=5340&pid=44')
+        session.get.assert_called_once_with(session.get.call_args.args[0], timeout=(5, 20), allow_redirects=True)
+        create_order.assert_called_once()
+
+    def test_vmiss_auto_order_stops_when_aff_link_cannot_be_confirmed(self):
+        task = admin.SeckillTask('vmiss-aff-fail-test', admin.default_config(), 'rapid')
+        item = {'id': 'vmiss-item', 'product_id': 'plan', 'quantity': 1}
+        product = {'adapter': 'vmiss', 'provider': 'VMISS', 'name': 'Mini', 'pid': '44'}
+        session = Mock(headers={})
+        session.get.return_value = Mock(status_code=403, url='https://app.vmiss.com/aff.php?aff=5340&pid=44')
+        with patch.object(admin, 'vmiss_order') as create_order:
+            result = task._submit(session, item, {}, 'https://app.vmiss.com/store/test/mini', product)
+        self.assertEqual(result['status'], 'blocked')
+        create_order.assert_not_called()
+
     def test_quantity_defaults_and_rejects_invalid_values(self):
         item = self.config['vps_seckill']['items'][0]
         del item['quantity']

@@ -3748,6 +3748,20 @@ class SeckillTask:
                     "quantity": quantity, "payment_status": "unpaid", "order_verification": verification,
                     "telegram_status": notification}
         if product and str(product.get("adapter", "")).casefold() == "vmiss":
+            affiliate_url = self._affiliate_purchase_url(item, url, product)
+            has_affiliate = any(key == "aff" and value for key, value in parse_qsl(urlsplit(affiliate_url).query))
+            if affiliate_url != url and has_affiliate:
+                try:
+                    affiliate_response = session.get(affiliate_url, timeout=(5, 20), allow_redirects=True)
+                    if (not 200 <= affiliate_response.status_code < 300
+                            or not _same_merchant_url(affiliate_response.url or affiliate_url,
+                                                      MERCHANT_LOGIN_ADAPTERS["vmiss"])):
+                        raise ValueError("VMISS AFF 推广入口未能确认，已停止下单")
+                    self.log("VMISS AFF 推广入口已通过当前登录会话访问，继续提交待付款订单。", "info", item)
+                except (requests.RequestException, ValueError) as exc:
+                    detail = _order_exception_detail(exc)
+                    self.log(f"VMISS AFF 推广入口访问失败，未提交订单；原因：{detail[:240]}。", "error", item)
+                    return {"status": "blocked", "url": url, "quantity": quantity}
             try:
                 order = vmiss_order(session, item, account, inspected, url, key,
                                     progress=lambda message: self.log(message, "info", item))
