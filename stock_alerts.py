@@ -36,7 +36,8 @@ class StockAlerts:
     def payload(self, item, product):
         details = product.match_details or {}
         narwhal = product.vendor == "独角鲸云"
-        return dict(vendor=product.vendor, name=product.name, available=product.available, stock_mode=product.stock_mode,
+        display_name = (details.get("plan_name") or product.name) if narwhal else product.name
+        return dict(vendor=product.vendor, name=display_name, available=product.available, stock_mode=product.stock_mode,
             region=product.region or product.area_name, specs=product.specs, traffic=product.traffic, price=product.price,
             line="" if narwhal else details.get("category_name", "") or product.node_name or item.get("category_name", ""),
             coupon_code=effective_coupon(self.config, item, item.get("adapter", "")),

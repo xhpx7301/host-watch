@@ -1440,11 +1440,9 @@ def show_chat_ids(session: requests.Session, token: str) -> None:
 
 def notification_text(product: Product, old_count: int | None, purchase_url: str, item: dict | None = None,
                       *, checked_at: str = "", test: bool = False, duration: object = None) -> str:
-    display_name = product.name
-    if product.vendor == "独角鲸云" and product.node_name and product.node_name.casefold() != product.name.casefold():
-        display_name = f"{product.node_name} · {product.name}"
     details = product.match_details or {}
     is_narwhal = product.vendor == "独角鲸云"
+    display_name = (details.get("plan_name") or product.name) if is_narwhal else product.name
     return stock_message(vendor=product.vendor, name=display_name, available=product.available, stock_mode=product.stock_mode,
         region=product.region or product.area_name, specs=product.specs, traffic=product.traffic, price=product.price,
         line="" if is_narwhal else details.get("category_name", "") or product.node_name or (item or {}).get("category_name", ""),

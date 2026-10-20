@@ -95,12 +95,15 @@ class NotificationTests(unittest.TestCase):
         message = monitor.notification_text(monitor.Product("x", "Legacy", 1, "https://example.com"), 0, "https://example.com")
         self.assertIn("Legacy", message)
 
-    def test_narwhal_notification_includes_instance_and_plan(self):
+    def test_narwhal_notification_uses_vendor_heading_and_separate_plan(self):
         product = monitor.Product("plan", "Mini", 1, "https://example.com", vendor="独角鲸云",
                                   node_name="HKT商宽", region="香港")
         message = monitor.notification_text(product, 0, product.url)
         text = BeautifulSoup(message, "html.parser").get_text()
-        self.assertIn("独角鲸云 · HKT商宽 · Mini", text)
+        self.assertEqual(text.splitlines()[1], "独角鲸鱼")
+        self.assertIn("母鸡名称：HKT商宽", text)
+        self.assertIn("套餐名：MINI", text)
+        self.assertNotIn("独角鲸云 · HKT商宽 · Mini", text)
 
     def test_narwhal_notification_includes_region_host_expiry_and_all_configs(self):
         machine_id = "17141ff1-5623-4455-a7a5-91a0146f090e"
@@ -120,6 +123,41 @@ class NotificationTests(unittest.TestCase):
         text = BeautifulSoup(message, "html.parser").get_text()
         for value in ("🇯🇵 日本", "母鸡名称：东京实例", "母鸡到期时间：2026-11-18", "中杯 · $1/月 [剩 2 台]", "Mini · $0.5/月 [剩 1 台]"):
             self.assertIn(value, text)
+        self.assertIn("套餐名：中杯", text)
+        self.assertLess(text.index("套餐名："), text.index("硬件配置："))
+        self.assertLess(text.index("库存："), text.index("可选配置："))
+        self.assertLess(text.index("可选配置："), text.index("检查时间："))
+        self.assertIn("🌐 400 GB/月 · 100 Mbps\n\n🔸 Mini", text)
+
+    def test_narwhal_manual_test_uses_matched_plan_and_preserves_option_links(self):
+        machine_id, plan_id = "machine", "mini"
+        matched = {"machine_id": machine_id, "machine_name": "HKT商宽", "plan_name": "Mini",
+            "machine_plans": [
+                {"id": "special", "name": "Special", "stock": 10, "price": "$3.5/月", "specs": "1 核 · 1024 MB · 5 GB", "traffic": "5000 GB/月 · 776 Mbps"},
+                {"id": plan_id, "name": "Mini", "stock": 0, "price": "$0.2/月", "specs": "1 核 · 128 MB · 1 GB", "traffic": "200 GB/月 · 300 Mbps"},
+            ]}
+        result = {"ok": True, "name": "HKT商宽 · Mini", "available": 0,
+            "purchase_url": "https://dash.fuckip.me/deploy?plan_id=mini&machine_id=machine",
+            "region": "香港", "specs": "1 核 · 128 MB · 1 GB", "traffic": "200 GB/月 · 300 Mbps",
+            "price": "$0.2/月", "matched_product": matched,
+            "checked_at": "2026-10-20T17:28:10+08:00", "duration_seconds": 0.9}
+        config = admin.default_config()
+        config['affiliates']['narwhal'] = 'test-aff'
+        with patch.object(admin, 'telegram_credentials', return_value=('token', 'chat')), \
+             patch.object(admin, 'current_config', return_value=config), patch.object(admin, 'telegram_call') as send:
+            output = admin.send_stock_test_result({'adapter': 'narwhal', 'provider': '独角鲸云', 'name': 'Saved name', 'plan_id': plan_id}, result)
+        self.assertEqual(output['status'], 'sent')
+        soup = BeautifulSoup(send.call_args.kwargs['text'], 'html.parser')
+        text = soup.get_text()
+        self.assertEqual(text.splitlines()[1], '独角鲸鱼')
+        self.assertIn('套餐名：MINI', text)
+        self.assertNotIn('套餐名：HKT', text)
+        self.assertLess(text.index('库存：'), text.index('可选配置：'))
+        self.assertIn('🌐 5000 GB/月 · 776 Mbps\n\n🔸 Mini', text)
+        option_links = [link['href'] for link in soup.find_all('a') if link.get_text() == '点击抢购']
+        self.assertEqual(len(option_links), 1)
+        self.assertIn('plan_id=special', option_links[0])
+        self.assertIn('aff=test-aff', option_links[0])
 
 
 if __name__ == "__main__":

@@ -4884,10 +4884,6 @@ def send_stock_test_result(product: dict, result: dict) -> dict:
                 link = affiliate_purchase_url(result.get("url") or result["purchase_url"], product.get("adapter", ""), current_config(), product)
             display_name = result.get("name") or matched.get("plan_name") or product["name"]
             if product.get("adapter") == "narwhal":
-                instance_name = matched.get("machine_name") or product.get("node_name") or product.get("machine_name")
-                if instance_name and str(instance_name).casefold() != str(display_name).casefold():
-                    display_name = f"{instance_name} · {display_name}"
-            if product.get("adapter") == "narwhal":
                 from monitor import Product, notification_text
                 test_product = Product(str(product.get("plan_id", "")), display_name, result["available"], result.get("purchase_url", ""),
                     vendor="独角鲸云", stock_mode=result.get("stock_mode", "quantity"), node_name=matched.get("machine_name", ""),

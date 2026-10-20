@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import uuid
 from unittest.mock import Mock, patch
+from bs4 import BeautifulSoup
 
 import admin
 import catalog
@@ -129,6 +130,10 @@ class NarwhalTests(unittest.TestCase):
             send.assert_called_once()
             self.assertEqual(send.call_args.args[2], "sendMessage")
             self.assertIn("东京实例", send.call_args.kwargs["text"])
+            message = BeautifulSoup(send.call_args.kwargs["text"], 'html.parser').get_text()
+            self.assertEqual(message.splitlines()[1], '独角鲸鱼')
+            self.assertIn('套餐名：中杯', message)
+            self.assertLess(message.index('库存：'), message.index('可选配置：'))
             link = send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["url"]
             self.assertIn(PLAN_ID, link)
             monitor.check_once(Mock(), config, state, status, "token", "123")

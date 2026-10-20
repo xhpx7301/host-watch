@@ -213,7 +213,9 @@ def stock_message(*, vendor: str, name: str, available: int, stock_mode: str, re
         if uncertain:
             status = "暂未确认（上次成功检查：" + status + "）"
         title = "⚠️ HostWatch · 库存暂未确认" if uncertain else "✅ HostWatch · 补货提醒" if available > 0 else "❌ HostWatch · 已售罄"
-    lines = [f"<b>{title}</b>", f"<b>{safe(vendor, 80)} · {safe(name, 200)}</b>", "",
+    is_narwhal = vendor in {"独角鲸云", "独角鲸鱼"}
+    heading = "独角鲸鱼" if is_narwhal else f"{safe(vendor, 80)} · {safe(name, 200)}"
+    lines = [f"<b>{title}</b>", f"<b>{heading}</b>", "",
              f"🌏 <b>地区：</b>{safe(telegram_region(region) or '—', 120)}"]
     if line:
         lines.append(f"🛣 <b>地区/线路：</b>{safe(line, 160)}")
@@ -221,12 +223,30 @@ def stock_message(*, vendor: str, name: str, available: int, stock_mode: str, re
         lines.append(f"🖥 <b>母鸡名称：</b>{safe(mother_name, 120)}")
     if expires_at:
         lines.append(f"📅 <b>母鸡到期时间：</b>{safe(expires_at, 40)}")
+    if is_narwhal:
+        lines.append(f"📦 <b>套餐名：</b>{safe(str(name).upper(), 200)}")
+    if item.get("remarks"):
+        lines.append(f"📝 <b>备注：</b>{safe(item['remarks'])}")
+    if coupon_code:
+        # Telegram renders <code> as a copyable monospace token in clients.
+        lines.append(f"🎟 <b>优惠码：</b><code>{safe(coupon_code, 128)}</code>（点击复制）")
+    carriers = [f"{label}：{safe(item.get('line_' + key), 100)}" for key, label in (("telecom", "电"), ("unicom", "联"), ("mobile", "移")) if item.get("line_" + key)]
+    if carriers or item.get("line_label"):
+        lines.append("📡 <b>线路：</b>" + (" | ".join(carriers) if carriers else safe(item["line_label"])))
+    lines.extend([f"🖥 <b>硬件配置：</b>{safe(hardware_text(specs), 300)}",
+                  f"🌐 <b>流量/带宽：</b>{safe(network_text(traffic), 200)}",
+                  f"💰 <b>价格：</b>{safe(price_text(price), 350)}", "",
+                  f"{'⚠️' if uncertain else '✅' if available > 0 else '❌'} <b>库存：</b>{status}" + (f"（{change}）" if change else "")])
     if configurations:
         lines += ["", "📦 <b>可选配置：</b>"]
         affiliate = parse_qs(urlsplit(purchase_url).query).get("aff", [""])[0]
+        shown = 0
         for option in configurations[:5]:
             if not isinstance(option, dict):
                 continue
+            if shown:
+                lines.append("")
+            shown += 1
             stock = option.get("stock")
             label = "已售罄" if stock == 0 else f"剩 {stock} 台" if type(stock) is int else "库存未知"
             link = ""
@@ -240,19 +260,8 @@ def stock_message(*, vendor: str, name: str, available: int, stock_mode: str, re
             lines.append(f"⚙️ {safe(option.get('specs', ''), 100)} · 🌐 {safe(option.get('traffic', ''), 100)}")
         if len(configurations) > 5:
             lines.append(f"另有 {len(configurations) - 5} 个配置，请查看购买页面。")
-    if item.get("remarks"):
-        lines.append(f"📝 <b>备注：</b>{safe(item['remarks'])}")
-    if coupon_code:
-        # Telegram renders <code> as a copyable monospace token in clients.
-        lines.append(f"🎟 <b>优惠码：</b><code>{safe(coupon_code, 128)}</code>（点击复制）")
-    carriers = [f"{label}：{safe(item.get('line_' + key), 100)}" for key, label in (("telecom", "电"), ("unicom", "联"), ("mobile", "移")) if item.get("line_" + key)]
-    if carriers or item.get("line_label"):
-        lines.append("📡 <b>线路：</b>" + (" | ".join(carriers) if carriers else safe(item["line_label"])))
-    lines.extend([f"🖥 <b>硬件配置：</b>{safe(hardware_text(specs), 300)}",
-                  f"🌐 <b>流量/带宽：</b>{safe(network_text(traffic), 200)}",
-                  f"💰 <b>价格：</b>{safe(price_text(price), 350)}", "",
-                  f"{'⚠️' if uncertain else '✅' if available > 0 else '❌'} <b>库存：</b>{status}" + (f"（{change}）" if change else ""),
-                  f"🕒 <b>{'最后成功检查' if live else '检查时间'}：</b>{safe(checked_at, 80)}"])
+        lines.append("")
+    lines.append(f"🕒 <b>{'最后成功检查' if live else '检查时间'}：</b>{safe(checked_at, 80)}")
     if duration is not None:
         lines.append(f"⏱ <b>耗时：</b>{safe(duration, 40)} 秒")
     if warning:
