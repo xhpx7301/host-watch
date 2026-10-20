@@ -171,6 +171,13 @@ def telegram_region(value: str) -> str:
         return region
     lowered = region.casefold()
     for alias in sorted(REGION_FLAG_ALIASES, key=len, reverse=True):
+        compact = re.match(r"[a-z0-9._]+", lowered[len(alias):]) if lowered.startswith(alias) else None
+        if compact and len(alias) + compact.end() < len(lowered) and lowered[len(alias) + compact.end()] not in " ·-/,:：":
+            compact = None
+        if compact:
+            remainder = region[len(alias) + compact.end():].strip(" ·-/,:：")
+            flag, localized = REGION_FLAG_ALIASES[alias]
+            return f"{flag} {localized}" + (f" · {remainder}" if remainder else "")
         prefix = lowered == alias or lowered.startswith(alias) and len(lowered) > len(alias) and lowered[len(alias)] in " ·-/,:："
         suffix = lowered.endswith(" " + alias) or lowered.endswith(" · " + alias) or lowered.endswith(", " + alias)
         if prefix or suffix:

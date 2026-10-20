@@ -5,10 +5,15 @@ from bs4 import BeautifulSoup
 
 import admin
 import monitor
-from notifications import hardware_text, network_text, price_text, purchase_button, stock_message
+from notifications import hardware_text, network_text, price_text, purchase_button, stock_message, telegram_region
 
 
 class NotificationTests(unittest.TestCase):
+    def test_telegram_region_normalizes_compact_isvoro_region_names(self):
+        self.assertEqual(telegram_region("香港lite"), "🇭🇰 中国香港")
+        self.assertEqual(telegram_region("美国Pro"), "🇺🇸 美国")
+        self.assertEqual(telegram_region("香港lite · CNIX"), "🇭🇰 中国香港 · CNIX")
+
     def message(self, **overrides):
         return stock_message(**{"vendor": "Isvoro", "name": "HK CN2 Core", "available": 3, "stock_mode": "quantity",
             "region": "中国香港", "specs": "2 核 · 2048 MB · 30 GB", "traffic": "300 GB流量 · 100 Mbps",
