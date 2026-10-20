@@ -257,7 +257,9 @@ function renderMarketRules() {
     testState.setAttribute("aria-live", "polite"); card.append(testState);
     const grid = text("div", "", "form-grid");
     for (const [key, label, options] of [
-      ["target", "监控范围", isvoro ? [["renewal", "同地区、同续费价格商品"], ["listing", `此挂单 #${rule.product_id}`]] : [["listing", `此挂单 #${rule.product_id}`]]],
+      ["target", "监控范围", isvoro
+        ? [["renewal", "同地区、同续费价格商品"], ["listing", `此挂单 #${rule.product_id}`]]
+        : [["listing", `此挂单 #${rule.product_id}`], ["plan", "同地区、同节点、同套餐新挂单"]]],
       ["direction", "阈值方向", [["discount", "折价达到最低值（≥）"], ["premium", "溢价低于最高值（≤）"]]],
       ["match", "条件关系", [["any", "比例或金额任一满足"], ["all", "比例与金额全部满足"]]],
       ["action", "达到条件后", activeMarketProvider() === "isvoro" ? [["notify", "Telegram 提醒手动购买"]] : [["notify", "Telegram 提醒手动购买"], ["unpaid_order", "待付款下单（官网验证受限）"]]],
