@@ -14,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+from datetime import datetime, timezone
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
@@ -26,7 +27,7 @@ from auth import DEFAULT_USERS_PATH, authentication_required, authorized, creden
 from catalog import CatalogBusy, CatalogService
 from affiliates import DEFAULT_AFFILIATES, PROVIDERS, affiliate_purchase_url, effective_coupon, normalize_affiliate_accounts, normalize_affiliate_coupons, normalize_affiliate_notes, normalize_affiliate_rates, normalize_affiliates, normalize_merchant_order
 from time_utils import beijing_iso, format_beijing
-from notifications import purchase_button, stock_message, telegram_region
+from notifications import hardware_text, network_text, purchase_button, stock_message, telegram_region
 import egress
 
 
@@ -534,6 +535,8 @@ def _copy_merchant_session(source, target) -> None:
     target.proxies = proxies
     if hasattr(source, "_hostwatch_akile_user_id"):
         target._hostwatch_akile_user_id = source._hostwatch_akile_user_id
+    if hasattr(source, "_hostwatch_auth_probe_url"):
+        target._hostwatch_auth_probe_url = source._hostwatch_auth_probe_url
 
 
 def _merchant_auth_cache_paths() -> tuple[Path, Path]:
@@ -586,7 +589,8 @@ def _persistent_session_record(key: tuple[str, ...], record: dict) -> dict:
             "rest": dict(cookie._rest or {})})
     return {"key": list(key), "expires_at": record.get("expires_at", 0),
             "headers": dict(getattr(session, "headers", {}) or {}), "cookies": cookies,
-            "akile_user_id": getattr(session, "_hostwatch_akile_user_id", None)}
+            "akile_user_id": getattr(session, "_hostwatch_akile_user_id", None),
+            "auth_probe_url": getattr(session, "_hostwatch_auth_probe_url", None)}
 
 
 def _persist_merchant_sessions() -> None:
@@ -663,6 +667,9 @@ def load_merchant_auth_cache() -> int:
             user_id = record.get("akile_user_id")
             if isinstance(user_id, int) and user_id > 0:
                 session._hostwatch_akile_user_id = user_id
+            probe_url = record.get("auth_probe_url")
+            if isinstance(probe_url, str):
+                session._hostwatch_auth_probe_url = probe_url
             restored[tuple(key)] = {"session": session, "expires_at": float(expires_at)}
         with SECKILL_LOCK:
             old = list(MERCHANT_AUTH_SESSIONS.values())
@@ -725,13 +732,16 @@ def _renew_merchant_session(adapter_id: str, account: dict, fetcher: dict | None
             _persist_merchant_sessions()
 
 
-def _remove_merchant_session(adapter_id: str, account: dict, fetcher: dict | None = None) -> None:
+def _remove_merchant_session(adapter_id: str, account: dict, fetcher: dict | None = None, *, expected_session=None) -> bool:
     key = _merchant_session_key(adapter_id, account, fetcher)
     with SECKILL_LOCK:
+        if expected_session is not None and MERCHANT_AUTH_SESSIONS.get(key, {}).get("session") is not expected_session:
+            return False
         value = MERCHANT_AUTH_SESSIONS.pop(key, None)
         _persist_merchant_sessions()
     if value:
         _close_bwh_session(value.get("session"))
+    return value is not None
 
 
 def _clear_merchant_sessions_for_account(account: dict) -> int:
@@ -750,21 +760,44 @@ def _clear_merchant_sessions_for_account(account: dict) -> int:
     return len(removed)
 
 
-def _merchant_authenticated(session, adapter: dict) -> bool:
-    """Confirm a cached HTML login still reaches an authenticated page."""
+def _merchant_auth_probe(session, adapter: dict) -> str:
+    """Return valid, expired or unknown for a cached HTML login."""
     try:
-        probe_url = adapter.get("auth_probe_url") or adapter["url"]
+        cached_probe = getattr(session, "_hostwatch_auth_probe_url", "")
+        cached_probe = cached_probe if isinstance(cached_probe, str) and _same_merchant_url(cached_probe, adapter) else ""
+        probe_url = adapter.get("auth_probe_url") or cached_probe or adapter["url"]
+        private_probe = probe_url != adapter["url"]
         page = session.get(probe_url, timeout=(5, 20), allow_redirects=False,
                            headers={**MERCHANT_BROWSER_HEADERS, "Referer": adapter["url"], "Sec-Fetch-Site": "none", "Sec-Fetch-User": "?1"})
     except (requests.RequestException, OSError):
-        return False
+        return "unknown"
+    if page.status_code == 401:
+        return "expired"
+    if 300 <= page.status_code < 400:
+        destination = urljoin(page.url or probe_url, page.headers.get("Location", ""))
+        login = urlsplit(adapter["url"])
+        target = urlsplit(destination)
+        if private_probe and _same_merchant_url(destination, adapter) and target.path.rstrip("/") == login.path.rstrip("/") and target.query == login.query:
+            return "expired"
+        return "unknown"
     if not 200 <= page.status_code < 300 or not _same_merchant_url(page.url or probe_url, adapter):
-        return False
+        return "unknown"
     from bs4 import BeautifulSoup
     soup = BeautifulSoup(page.content or page.text or "", "html.parser")
     if _merchant_additional_verification_required(page, soup, adapter):
-        return False
-    return bool(soup.find("a", href=re.compile(r"logout|clientarea\.php\?action=details", re.I)))
+        return "unknown"
+    if soup.find("a", href=re.compile(r"logout|clientarea\.php\?action=details", re.I)):
+        return "valid"
+    if private_probe and _login_form(page, adapter["username_field"])[1] is not None:
+        return "expired"
+    # A public login page may still show its form to authenticated visitors.
+    # Missing a logout link there is not proof that the cached login expired.
+    return "unknown"
+
+
+def _merchant_authenticated(session, adapter: dict) -> bool:
+    """Confirm a cached HTML login still reaches an authenticated page."""
+    return _merchant_auth_probe(session, adapter) == "valid"
 
 
 def _merchant_cached_session_reusable(fetcher: dict | None) -> bool:
@@ -932,6 +965,9 @@ def _merchant_form_login(session, account: dict, adapter: dict, fetcher: dict | 
         return {"status": "invalid", "message": "官网仍显示登录表单，账户认证未通过"}
     authenticated = soup.find("a", href=re.compile(r"logout|clientarea\.php\?action=details", re.I))
     if authenticated:
+        confirmed_url = getattr(page, "url", "")
+        if isinstance(confirmed_url, str) and _same_merchant_url(confirmed_url, adapter):
+            session._hostwatch_auth_probe_url = confirmed_url
         return {"status": "valid", "message": "官网登录成功（不代表具有购买资格或库存）"}
     return {"status": "unknown", "message": "官网未返回可确认的登录状态，请到官网检查"}
 
@@ -3137,7 +3173,7 @@ def merchant_account_status(account_id: str) -> dict:
     """Probe only an existing in-memory auth session; never submit credentials."""
     config = current_config()
     account = next((row for row in config["vps_seckill"].get("accounts", []) if row.get("id") == account_id), None)
-    result = {"account_id": account_id, "status": "unknown", "ok": False, "checked_at": beijing_iso()}
+    result = {"account_id": account_id, "status": "unknown", "ok": False, "checked_at": beijing_iso(timespec="microseconds")}
     if not account:
         return {**result, "message": "网站账户不存在"}
     adapter_id = merchant_login_id(account.get("provider"))
@@ -3147,21 +3183,27 @@ def merchant_account_status(account_id: str) -> dict:
     fetcher = product_fetcher(config["fetcher"], {"adapter": adapter_id, "egress_node_id": account.get("egress_node_id", "")})
     session = _get_merchant_session(adapter_id, account, fetcher)
     if not session:
+        previous = read_merchant_account_checks().get(account_id, {})
+        if previous.get("ok"):
+            return {**result, "status": "expired", "message": "登录缓存已不存在或超过有效期，请点击“检查账户”重新认证"}
         return {**result, "message": "尚未建立认证缓存，请点击“检查账户”"}
     try:
         if adapter_id == "isvoro":
-            valid = _isvoro_authenticated(session, account)
+            probe = "valid" if _isvoro_authenticated(session, account) else "expired"
         elif adapter_id == "akile":
-            valid = _akile_authenticated(session, account)
+            probe = "valid" if _akile_authenticated(session, account) else "expired"
         elif adapter_id == "narwhal":
-            valid = _narwhal_authenticated(session, account)
+            probe = "valid" if _narwhal_authenticated(session, account) else "expired"
         else:
-            valid = _merchant_authenticated(session, MERCHANT_LOGIN_ADAPTERS[adapter_id])
-        if valid:
+            probe = _merchant_auth_probe(session, MERCHANT_LOGIN_ADAPTERS[adapter_id])
+        if probe == "valid":
             _renew_merchant_session(adapter_id, account, fetcher, session)
             return {**result, "status": "valid", "ok": True, "session_reused": True,
                     "message": f"{MERCHANT_LOGIN_ADAPTERS[adapter_id]['name']} 登录缓存正常"}
-        _remove_merchant_session(adapter_id, account, fetcher)
+        if probe == "unknown":
+            return {**result, "message": "官网暂时无法确认登录状态；已保留上次认证结果和缓存，请稍后重试"}
+        if not _remove_merchant_session(adapter_id, account, fetcher, expected_session=session):
+            return {**result, "message": "认证缓存已更新，请稍后刷新状态"}
         return {**result, "status": "expired", "message": "登录缓存已失效，请点击“检查账户”重新认证"}
     except (OSError, ValueError, requests.RequestException):
         return {**result, "status": "unknown", "message": "认证状态暂时无法确认，请稍后重试"}
@@ -3171,7 +3213,7 @@ def account_status_path() -> Path:
     return CONFIG_PATH.parent / "account-status.json"
 
 
-def save_merchant_account_check(result: dict) -> None:
+def save_merchant_account_check(result: dict, *, background: bool = False) -> None:
     """Persist public account-health results without transient challenge data."""
     account_id = str(result.get("account_id", ""))
     if not account_id:
@@ -3183,6 +3225,17 @@ def save_merchant_account_check(result: dict) -> None:
             checks = checks if isinstance(checks, dict) else {}
         except (OSError, ValueError, json.JSONDecodeError):
             checks = {}
+        previous = checks.get(account_id, {})
+        if background:
+            if result.get("status") == "unknown" and previous.get("ok"):
+                return
+            try:
+                previous_at = datetime.fromisoformat(previous.get("checked_at", ""))
+                next_at = datetime.fromisoformat(result.get("checked_at", ""))
+                if previous_at > next_at:
+                    return
+            except (TypeError, ValueError):
+                pass
         checks[account_id] = {
             "account_id": account_id,
             "status": str(result.get("status", "unknown")),
@@ -4993,20 +5046,55 @@ def _save_isvoro_market_alert_state(value: dict) -> None:
             os.unlink(name)
 
 
+def _akile_market_display_time(value: object) -> str:
+    """Format an Akile epoch timestamp in the same Beijing-time form as other alerts."""
+    try:
+        timestamp = float(value)
+        if not math.isfinite(timestamp) or timestamp <= 0:
+            return "—"
+        return format_beijing(datetime.fromtimestamp(timestamp, timezone.utc).isoformat())
+    except (TypeError, ValueError, OverflowError, OSError):
+        return "—"
+
+
+def _akile_market_display_unit(value: object, suffix: str) -> str:
+    """Append a unit to numeric market fields while preserving vendor-provided text."""
+    text = str(value).strip() if value is not None else ""
+    if not text:
+        return ""
+    return f"{text}{suffix}" if re.fullmatch(r"[+-]?\d+(?:\.\d+)?", text) else text
+
+
 def _akile_market_alert(config: dict, rule: dict, item: dict, reason: str) -> bool:
     token, chat_id = effective_telegram(config)
     if not token or not chat_id:
         return False
     kind = "折价" if item["delta"] >= 0 else "溢价"
+    hardware = hardware_text(" · ".join(filter(None, [
+        _akile_market_display_unit(item.get("cpu"), " 核"),
+        _akile_market_display_unit(item.get("memory"), "MB"),
+        _akile_market_display_unit(item.get("disk"), "GB"),
+    ])))
+    network = network_text(" · ".join(filter(None, [
+        _akile_market_display_unit(item.get("flow"), "GB"),
+        _akile_market_display_unit(item.get("bandwidth"), "Mbps"),
+    ])))
     message = "\n".join([
-        "🔔 <b>HostWatch · Akile 交易市场</b>",
-        f"实例名：{escape(item['name'])} · 套餐：{escape(item['plan_name'])} · 地区/节点：{escape(telegram_region(item['region']))} / {escape(item['node'])}",
-        f"挂单 ID：<code>{item['id']}</code>",
-        f"售价：¥{item['price']:.2f} · 续费：¥{item['renewal']:.2f}/{item['cycle']}个月",
-        f"剩余：{item['remaining_days']:.2f} 天 · 剩余价值：¥{item['fair_value']:.2f} · 月付：¥{item['monthly_price']:.2f}",
-        f"{kind}：{abs(item['rate']):.2f}% · ¥{abs(item['delta']):.2f}",
-        f"触发规则：{escape(rule.get('name') or rule['id'])}",
-        escape(reason[:400]), f"检查时间：{format_beijing(item['updated_at'])}",
+        "🔔 <b>HostWatch · Akile 交易市场</b>", "",
+        f"🌍 <b>地区：</b>{escape(telegram_region(item.get('region', '')) or '—')}",
+        f"📍 <b>节点：</b>{escape(str(item.get('node') or '—'))}",
+        f"📦 <b>套餐：</b>{escape(str(item.get('plan_name') or '—'))}",
+        f"🖥 <b>配置：</b>{escape(hardware)}",
+        f"🌐 <b>网络：</b>{escape(network)}",
+        f"🔁 <b>续费价格：</b>¥{item['renewal']:.2f}/{escape(str(item['cycle']))}个月 · 月付 ¥{item['monthly_price']:.2f}",
+        f"📅 <b>到期时间：</b>{_akile_market_display_time(item.get('due_time'))}（剩余 {item['remaining_days']:.2f} 天）",
+        f"💰 <b>售价：</b>¥{item['price']:.2f}",
+        f"💎 <b>剩余价值：</b>¥{item['fair_value']:.2f}",
+        f"📈 <b>{kind}：</b>{abs(item['rate']):.2f}% · ¥{abs(item['delta']):.2f}",
+        f"📌 <b>触发规则：</b>{escape(rule.get('name') or rule['id'])}",
+        "", f"🏷 <b>挂单 ID：</b><code>{item['id']}</code>",
+        f"📝 <b>说明：</b>{escape(reason[:400])}",
+        f"🕒 <b>检查时间：</b>{format_beijing(item.get('updated_at'))}",
     ])
     keyboard = {"inline_keyboard": [[{"text": "查看 Akile 商品", "url": f"https://akile.ai/console/pushshop?highlight={item['id']}"}]]}
     telegram_call(token, "sendMessage", chat_id=chat_id, text=message, parse_mode="HTML",
@@ -5865,19 +5953,20 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/seckill/account-check":
                 output = seckill_account_check(submitted)
-                output["checked_at"] = beijing_iso()
+                output["checked_at"] = beijing_iso(timespec="microseconds")
                 save_merchant_account_check(output)
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/seckill/account-status":
                 output = merchant_account_status(str(submitted.get("account_id", "")).strip())
-                output["checked_at"] = beijing_iso()
-                save_merchant_account_check(output)
+                # Keep the probe start time so a delayed background response
+                # cannot overwrite a newer manual login check.
+                save_merchant_account_check(output, background=True)
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/seckill/account-verification":
                 output = seckill_account_verification(submitted)
-                output["checked_at"] = beijing_iso()
+                output["checked_at"] = beijing_iso(timespec="microseconds")
                 save_merchant_account_check(output)
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return

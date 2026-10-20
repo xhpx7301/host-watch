@@ -151,6 +151,33 @@ class TriggerTests(unittest.TestCase):
             paused["telegram"]["disabled"]=False
             self.evaluate(paused);self.assertEqual(send.call_count,1)
 
+    def test_akile_telegram_alert_uses_requested_order_and_icons(self):
+        item = {**self.item, "cpu": 1, "memory": 1024, "disk": 5, "flow": 1000, "bandwidth": 1000}
+        with patch.object(admin, "telegram_call") as send:
+            self.assertTrue(admin._akile_market_alert(config(), rule(), item, "达到阈值"))
+        message = send.call_args.kwargs["text"]
+        labels = ["地区：", "节点：", "套餐：", "配置：", "网络：", "续费价格：", "到期时间：",
+                  "售价：", "剩余价值：", "折价：", "触发规则："]
+        positions = [message.index(label) for label in labels]
+        self.assertEqual(positions, sorted(positions))
+        for value in ["🌍", "📍", "📦", "🖥", "🌐", "🔁", "📅", "💰", "💎", "📈", "📌",
+                      "1C/1G/5GB", "1000GB@1000Mbps", "¥30.00/1个月", "月付 ¥30.00"]:
+            self.assertIn(value, message)
+        self.assertIn("2026-11-18 12:00:00 北京时间（剩余 30.00 天）", message)
+        self.assertEqual(send.call_args.kwargs["parse_mode"], "HTML")
+        self.assertIn("288702", send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["url"])
+
+    def test_alert_preserves_network_units_and_escapes_vendor_text(self):
+        item = {**self.item, "plan_name": "<b>Plan & test</b>", "memory": None,
+                "flow": "1 TB/月", "bandwidth": "500 Mbps", "delta": -10, "rate": -33.33}
+        with patch.object(admin, "telegram_call") as send:
+            admin._akile_market_alert(config(), rule(), item, "<操作提示>")
+        message = send.call_args.kwargs["text"]
+        self.assertIn("1TB/月@500Mbps", message)
+        self.assertIn("&lt;b&gt;Plan &amp; test&lt;/b&gt;", message)
+        self.assertIn("&lt;操作提示&gt;", message)
+        self.assertIn("📈 <b>溢价：</b>33.33% · ¥10.00", message)
+
     def test_passkey_blocked_mode_never_submits_order_or_payment(self):
         with patch.object(admin,"telegram_call") as send:
             result=self.evaluate(config([rule(action="unpaid_order")]))
