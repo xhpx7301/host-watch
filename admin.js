@@ -168,9 +168,26 @@ function marketUnit(value, unit) {
   const display = typeof value === "number" && Number.isFinite(value) ? String(value) : String(value).trim();
   return /^\d+(?:\.\d+)?$/.test(display) ? `${display} ${unit}` : display;
 }
+function marketCapacity(value, defaultUnit) {
+  if (value === null || value === undefined || String(value).trim() === "") return "";
+  const display = String(value).trim();
+  const match = display.match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*(MiB|GiB|TiB|PiB|MB|GB|TB|PB)?$/i);
+  if (!match) return display;
+  let amount = Number(match[1]);
+  const unit = (match[2] || defaultUnit).toUpperCase().replace("IB", "B");
+  const units = ["MB", "GB", "TB", "PB"];
+  let index = units.indexOf(unit);
+  if (!Number.isFinite(amount) || index < 0) return display;
+  while (amount >= 1024 && index < units.length - 1) {
+    amount /= 1024;
+    index++;
+  }
+  return `${Number(amount.toFixed(3))}${units[index]}`;
+}
 function marketSpecText(item) {
-  return [marketUnit(item.cpu, "核"), marketUnit(item.memory, "MB"), marketUnit(item.disk, "GB"),
-    item.bandwidth ? `带宽 ${item.bandwidth}` : "", item.flow ? `流量 ${item.flow}` : ""].filter(Boolean).join(" · ");
+  return [marketUnit(item.cpu, "核"), marketCapacity(item.memory, "MB"), marketCapacity(item.disk, "GB"),
+    item.bandwidth ? `带宽 ${marketUnit(item.bandwidth, "Mbps")}` : "",
+    item.flow ? `流量 ${marketCapacity(item.flow, "GB")}` : ""].filter(Boolean).join(" · ");
 }
 function marketRenewalText(item) {
   if (!Number.isFinite(item.renewal)) return "";
@@ -367,7 +384,9 @@ function renderMarket() {
     add.disabled = Boolean(row.valuation_error); add.addEventListener("click", () => addMarketRule(row));
     const buy = text("a", "官网查看", "market-buy"); buy.href = marketLink(row.id); buy.target = "_blank"; buy.rel = "noopener noreferrer";
     actions.append(add,buy);
-    tr.append(cell(text("strong", row.name), text("small", `#${row.id} · ${row.cpu ?? "—"}C/${row.memory ?? "—"}MB/${row.disk ?? "—"}GB`), text("small", row.is_bid ? "拍卖 · 不触发规则" : row.detail || "")),
+    const hardware = `${marketUnit(row.cpu, "C") || "—"}/${marketCapacity(row.memory, "MB") || "—"}/${marketCapacity(row.disk, "GB") || "—"}`;
+    const network = `带宽 ${marketUnit(row.bandwidth, "Mbps") || "—"} · 流量 ${marketCapacity(row.flow, "GB") || "—"}`;
+    tr.append(cell(text("strong", row.name), text("small", `#${row.id} · ${hardware}`), text("small", network, "market-network"), text("small", row.is_bid ? "拍卖 · 不触发规则" : row.detail || "")),
       cell(text("strong", row.region || "—"), text("small", row.node || "—")),
       cell(text("span", `${marketCurrency(row.renewal, row.currency_code)}/${row.cycle ?? "?"}${row.cycle_unit === "year" ? "年" : "个月"}`, "market-number")),
       cell(text("span", row.due_time ? formatBeijingDate(new Date(row.due_time * 1000)) : "—"), text("small", row.remaining_days > 0 ? `剩余 ${row.remaining_days.toFixed(2)} 天` : "已到期")),
