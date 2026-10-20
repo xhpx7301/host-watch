@@ -100,14 +100,14 @@ class IsvoroMarketTests(unittest.TestCase):
             self.assertTrue(admin._isvoro_market_alert(value, rule, item))
         message = send.call_args.kwargs["text"]
         labels = ["地区：", "节点：", "配置：", "网络：", "续费价格：", "到期时间：",
-                  "售价：", "剩余价值：", "折价：", "触发规则：", "挂单 ID：", "说明：", "检查时间："]
+                  "剩余价值：", "折价：", "售价：", "触发规则：", "挂单 ID：", "说明：", "检查时间："]
         positions = [message.index(label) for label in labels]
         self.assertEqual(positions, sorted(positions))
         self.assertIn("🌍", message)
         self.assertIn("2C/2G/40GB", message)
         self.assertIn("1TB@500Mbps", message)
         self.assertIn("¥30.00/1个月", message)
-        self.assertIn("¥12.00", message)
+        self.assertIn("💰 <b>售价：</b><b>¥12.00</b>", message)
         self.assertIn(f"¥{item['fair_value']:.2f}", message)
         self.assertIn(f"¥{abs(item['delta']):.2f}", message)
         self.assertNotIn("套餐", message)
