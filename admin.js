@@ -155,6 +155,8 @@ navigatePage(initialPage, { history: false, focus: false });
 
 let marketSnapshot = { items: [], results: [], updated_at: "", error: "" };
 let marketBusy = false;
+let marketRuleTestBusy = "";
+const marketRuleTestMessages = new Map();
 let marketNotificationTestBusy = false;
 let marketPage = 0;
 function activeMarketProvider() { return document.querySelector("#market-provider")?.value || "akile"; }
@@ -208,9 +210,11 @@ function collectMarket() {
 }
 function addMarketRule(item) {
   const marketInfo = marketRuleInfo(item);
+  const isvoro = activeMarketProvider() === "isvoro";
   const rule = { id: `market-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, product_id: item.id,
     name: item.name, plan_name: item.plan_name, region: item.region, node: item.node,
-    target: "listing", direction: "discount", rate_threshold: 10, amount_threshold: null,
+    target: isvoro ? "renewal" : "listing", renewal_price: isvoro ? item.renewal : null,
+    direction: "discount", rate_threshold: 10, amount_threshold: null,
     match: "any", action: "notify", enabled: true, ...(marketInfo ? { market_info: marketInfo } : {}) };
   marketConfig().items.push(rule);
   renderMarketRules(); renderMarket(); updateDraftState();
@@ -222,13 +226,21 @@ function renderMarketRules() {
   for (const rule of marketConfig().items) {
     const card = text("article", "", "market-rule-item"), head = text("div", "", "section-head");
     card.dataset.marketRuleId = rule.id;
-    head.append(text("strong", `${rule.name || rule.product_id} · ${rule.region} · ${rule.node}`));
+    const isvoro = activeMarketProvider() === "isvoro";
+    const ruleTitle = rule.target === "renewal" ? `${rule.region || "—"} · 续费 ${marketCurrency(rule.renewal_price)}` : `${rule.name || rule.product_id} · ${rule.region} · ${rule.node}`;
+    head.append(text("strong", ruleTitle));
     const remove = text("button", "移除", "danger"); remove.type = "button";
     remove.addEventListener("click", () => { marketConfig().items = marketConfig().items.filter(row => row.id !== rule.id); renderMarketRules(); updateDraftState(); });
-    head.append(remove); card.append(head, text("div", "", "market-rule-meta"));
+    const test = text("button", marketRuleTestBusy === rule.id ? "检查中…" : "测试", "secondary"); test.type = "button";
+    test.disabled = Boolean(marketRuleTestBusy) || marketBusy || !rule.enabled;
+    test.title = rule.enabled ? "仅检查这条已保存的规则" : "启用规则后才能测试";
+    test.addEventListener("click", () => testMarketRule(rule.id));
+    head.append(test, remove); card.append(head, text("div", "", "market-rule-meta"));
+    const testState = text("p", marketRuleTestMessages.get(rule.id) || "", "hint market-rule-test-state");
+    testState.setAttribute("aria-live", "polite"); card.append(testState);
     const grid = text("div", "", "form-grid");
     for (const [key, label, options] of [
-      ["target", "监控范围", [["listing", `此挂单 #${rule.product_id}`], ["plan", "同地区、同节点、同套餐新挂单"]]],
+      ["target", "监控范围", isvoro ? [["renewal", "同地区、同续费价格商品"], ["listing", `此挂单 #${rule.product_id}`], ["plan", "同地区、同节点、同套餐商品"]] : [["listing", `此挂单 #${rule.product_id}`], ["plan", "同地区、同节点、同套餐新挂单"]]],
       ["direction", "阈值方向", [["discount", "折价达到最低值（≥）"], ["premium", "溢价低于最高值（≤）"]]],
       ["match", "条件关系", [["any", "比例或金额任一满足"], ["all", "比例与金额全部满足"]]],
       ["action", "达到条件后", activeMarketProvider() === "isvoro" ? [["notify", "Telegram 提醒手动购买"]] : [["notify", "Telegram 提醒手动购买"], ["unpaid_order", "待付款下单（官网验证受限）"]]],
@@ -240,6 +252,13 @@ function renderMarketRules() {
       select.addEventListener("change", () => { rule[key] = key === "enabled" ? select.value === "on" : select.value; updateDraftState(); });
       field.append(select); grid.append(field);
     }
+    if (isvoro && rule.target === "renewal") {
+      const field = text("label", "续费价格（元）"), input = document.createElement("input");
+      input.type = "number"; input.min = "0"; input.max = "1000000"; input.step = "0.01";
+      input.value = rule.renewal_price ?? "";
+      input.addEventListener("input", () => { rule.renewal_price = input.value === "" ? null : Number(input.value); updateDraftState(); });
+      field.append(input); grid.append(field);
+    }
     for (const [key, label] of [["rate_threshold", "比例阈值（%）"], ["amount_threshold", "金额阈值（人民币元）"]]) {
       const field = text("label", label), input = document.createElement("input");
       input.type = "number"; input.min = "0"; input.max = "1000000"; input.step = "0.01";
@@ -247,7 +266,7 @@ function renderMarketRules() {
       input.addEventListener("input", () => { rule[key] = input.value === "" ? null : Number(input.value); updateDraftState(); });
       field.append(input); grid.append(field);
     }
-    card.append(grid, text("p", activeMarketProvider() === "isvoro" ? `套餐匹配：${rule.plan_name || "—"}；金额按剩余价值差额计算，比例以续费月付价为基准。这里只发送提醒，不会购买或付款。` : `套餐匹配：${rule.plan_name || "—"}；金额按剩余价值差额计算，比例以续费月付价为基准。待付款模式受 Akile Passkey 购买验证限制，当前只通知需要手动操作，未创建订单。`, "hint"));
+    card.append(grid, text("p", isvoro ? (rule.target === "renewal" ? `匹配条件：${rule.region || "—"} · 续费 ${marketCurrency(rule.renewal_price)}；同地区同续费价的新挂单都会参与检查。这里只发送提醒，不会购买或付款。` : `套餐匹配：${rule.plan_name || "—"}；这里只发送提醒，不会购买或付款。`) : `套餐匹配：${rule.plan_name || "—"}；金额按剩余价值差额计算，比例以续费月付价为基准。待付款模式受 Akile Passkey 购买验证限制，当前只通知需要手动操作，未创建订单。`, "hint"));
     target.append(card);
   }
   document.querySelector("#market-rule-empty").hidden = marketConfig().items.length > 0;
@@ -263,6 +282,7 @@ function renderMarketRuleDetails() {
     meta.replaceChildren();
     const current = snapshotMatches ? (marketSnapshot.items || []).filter(item => rule.target === "listing"
       ? String(item.id) === String(rule.product_id)
+      : rule.target === "renewal" ? item.region === rule.region && Math.abs(Number(item.renewal) - Number(rule.renewal_price)) <= 0.01
       : item.plan_name === rule.plan_name && item.region === rule.region && item.node === rule.node) : [];
     const groups = new Map();
     for (const item of current) {
@@ -299,19 +319,22 @@ function renderMarket() {
   const accountId = document.querySelector("#market-account")?.value || "";
   const all = marketSnapshot.account_id === accountId ? (marketSnapshot.items || []) : [];
   const search = document.querySelector("#market-search").value.trim().toLowerCase();
+  const isvoro = activeMarketProvider() === "isvoro";
+  document.querySelector("#market-product-label").textContent = isvoro ? "续费价格" : "商品";
   const regionNode = document.querySelector("#market-region"), region = regionNode.value;
   const regions = [...new Set(all.map(row => row.region).filter(Boolean))];
   regionNode.replaceChildren(new Option("全部地区", "all"), ...regions.map(value => new Option(value, value)));
   regionNode.value = regions.includes(region) ? region : "all";
   const productNode = document.querySelector("#market-product"), product = productNode.value;
   const regionProducts = regionNode.value === "all" ? all : all.filter(row => row.region === regionNode.value);
-  const products = [...new Set(regionProducts.map(row => row.plan_name || row.name).filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh-CN"));
-  productNode.replaceChildren(new Option("全部商品", "all"), ...products.map(value => new Option(value, value)));
-  productNode.value = products.includes(product) ? product : "all";
+  const products = [...new Set(regionProducts.map(row => isvoro ? row.renewal : (row.plan_name || row.name)).filter(value => value !== null && value !== undefined && value !== ""))]
+    .sort((a, b) => Number(a) - Number(b));
+  productNode.replaceChildren(new Option(isvoro ? "全部续费价格" : "全部商品", "all"), ...products.map(value => new Option(isvoro ? marketCurrency(Number(value)) : value, String(value))));
+  productNode.value = products.map(String).includes(product) ? product : "all";
   const visible = all.filter(row => {
-    if (search && !`${row.id} ${row.name} ${row.region} ${row.node}`.toLowerCase().includes(search)) return false;
+    if (search && !`${row.id} ${row.name} ${row.region} ${row.node} ${row.renewal ?? ""}`.toLowerCase().includes(search)) return false;
     if (regionNode.value !== "all" && row.region !== regionNode.value) return false;
-    if (productNode.value !== "all" && (row.plan_name || row.name) !== productNode.value) return false;
+    if (productNode.value !== "all" && String(isvoro ? row.renewal : (row.plan_name || row.name)) !== productNode.value) return false;
     return true;
   });
   const columnSort = readMarketColumnSort();
@@ -391,6 +414,28 @@ async function refreshMarket(evaluate) {
     setMessage(evaluate ? "已检查保存的规则，触发结果见下方。" : `${activeMarketProvider() === "isvoro" ? "Isvoro" : "Akile"} 市场商品已刷新。`, "success", true, false);
   } catch(error) { marketSnapshot.error = error.message; setMessage(error.message, "error"); }
   finally { marketBusy = false; renderMarketRuleDetails(); renderMarket(); }
+}
+async function testMarketRule(ruleId) {
+  if (marketBusy || marketRuleTestBusy) return;
+  if (scopeIsDirty("market")) { setMessage("请先保存交易市场规则后再测试。", "error"); return; }
+  const rule = marketConfig().items.find(row => row.id === ruleId);
+  if (!rule?.enabled) return;
+  marketRuleTestBusy = ruleId; marketRuleTestMessages.set(ruleId, "正在检查此规则…"); renderMarketRules(); renderMarket();
+  try {
+    const result = await requestJSON("/api/market/check", {
+      method: "POST", headers: { "Content-Type": "application/json" }, timeoutMs: 120000,
+      body: JSON.stringify({ provider: activeMarketProvider(), account_id: document.querySelector("#market-account").value, rule_id: ruleId }),
+    });
+    marketSnapshot = result;
+    const entries = (result.results || []).filter(row => row.rule_id === ruleId);
+    marketRuleTestMessages.set(ruleId, entries.length
+      ? entries.map(row => `${row.product_id ? `#${row.product_id}：` : ""}${row.message}${row.notification ? ` · ${row.notification}` : ""}`).join("\n")
+      : "本次检查没有返回该规则的结果。");
+  } catch (error) {
+    marketRuleTestMessages.set(ruleId, `检查失败：${error.message}`);
+  } finally {
+    marketRuleTestBusy = ""; renderMarketRules(); renderMarketRuleDetails(); renderMarket();
+  }
 }
 document.querySelector("#market-refresh").addEventListener("click", () => refreshMarket(false));
 document.querySelector("#market-check").addEventListener("click", () => refreshMarket(true));

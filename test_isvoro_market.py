@@ -88,6 +88,30 @@ class IsvoroMarketTests(unittest.TestCase):
             admin._evaluate_isvoro_market(config, [item])
             self.assertEqual(send.call_count, 1)
 
+    def test_renewal_rule_matches_region_and_renewal_price(self):
+        item = admin.isvoro_market_valuation(listing(), NOW)
+        rule = {"id": "r-renewal", "target": "renewal", "product_id": "", "name": "",
+                "plan_name": "", "region": "中国香港", "node": "", "renewal_price": 30,
+                "direction": "discount", "rate_threshold": 10, "amount_threshold": None,
+                "match": "any", "action": "notify", "enabled": True}
+        self.assertTrue(admin._isvoro_market_rule_matches(rule, item))
+        self.assertFalse(admin._isvoro_market_rule_matches({**rule, "region": "美国"}, item))
+        self.assertFalse(admin._isvoro_market_rule_matches({**rule, "renewal_price": 29.99}, item))
+
+    def test_renewal_rule_requires_isvoro_region_and_price(self):
+        value = admin.default_config()
+        value["vps_seckill"]["accounts"] = [{"id": "iv", "name": "Isvoro", "provider": "isvoro",
+            "username": "user@example.com", "password": "secret"}]
+        value["isvoro_market"] = {"enabled": False, "interval_seconds": 600, "account_id": "iv", "items": [{
+            "id": "rule", "target": "renewal", "region": "中国香港", "renewal_price": 30,
+            "direction": "discount", "rate_threshold": 10, "amount_threshold": None, "enabled": True,
+        }]}
+        normalized = admin.validate_config(value)
+        self.assertEqual(normalized["isvoro_market"]["items"][0]["renewal_price"], 30.0)
+        value["isvoro_market"]["items"][0]["renewal_price"] = None
+        with self.assertRaises(ValueError):
+            admin.validate_config(value)
+
     def test_account_status_only_probes_cached_session(self):
         value = admin.default_config()
         value["vps_seckill"]["accounts"] = [{"id": "iv", "name": "Isvoro", "provider": "isvoro",

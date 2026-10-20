@@ -56,6 +56,10 @@ class AdminAPITests(unittest.TestCase):
             code, _ = self.request("/api/market/check", {})
             self.assertEqual(code, 200)
             refresh.assert_called_once_with(account_id="", evaluate=True)
+        with patch.object(admin, "refresh_akile_market", return_value={"items": [], "results": []}) as refresh:
+            code, _ = self.request("/api/market/check", {"account_id": "ak", "rule_id": "rule-1"})
+            self.assertEqual(code, 200)
+            refresh.assert_called_once_with(account_id="ak", evaluate=True, rule_id="rule-1")
 
     def test_market_test_notification_sends_explicit_sample_to_saved_telegram(self):
         with patch.object(admin, "authorized", return_value=False), patch.object(admin, "telegram_call") as send:

@@ -2777,7 +2777,10 @@ def _normalize_market_config(value: object, accounts: list[dict], provider: str,
             raise ValueError(f"{label}市场规则 ID 必须唯一")
         seen.add(identifier)
         rule = {"id": identifier}
-        for key, allowed, default in (("target", {"listing", "plan"}, "listing"),
+        target_allowed = {"listing", "plan"}
+        if provider == "isvoro":
+            target_allowed.add("renewal")
+        for key, allowed, default in (("target", target_allowed, "listing"),
                 ("direction", {"discount", "premium"}, "discount"),
                 ("action", {"notify"}, "notify"), ("match", {"any", "all"}, "any")):
             rule[key] = str(raw.get(key, default))
@@ -2794,6 +2797,21 @@ def _normalize_market_config(value: object, accounts: list[dict], provider: str,
             raise ValueError(f"监控单条挂单必须填写有效的 {label} 市场商品 ID")
         if rule["target"] == "plan" and not all(rule[key] for key in ("plan_name", "region", "node")):
             raise ValueError("监控同套餐需指定完整套餐名、地区和节点")
+        renewal_price = raw.get("renewal_price")
+        if rule["target"] == "renewal":
+            if provider != "isvoro" or not rule["region"]:
+                raise ValueError("Isvoro 续费价格规则必须指定地区")
+            if (isinstance(renewal_price, bool) or not isinstance(renewal_price, (int, float))
+                    or not math.isfinite(renewal_price) or renewal_price < 0):
+                raise ValueError("Isvoro 续费价格规则必须填写有效金额")
+            rule["renewal_price"] = float(renewal_price)
+        elif renewal_price is not None:
+            if (isinstance(renewal_price, bool) or not isinstance(renewal_price, (int, float))
+                    or not math.isfinite(renewal_price) or renewal_price < 0):
+                raise ValueError("续费价格必须是非负有限数字")
+            rule["renewal_price"] = float(renewal_price)
+        else:
+            rule["renewal_price"] = None
         for key in ("rate_threshold", "amount_threshold"):
             number = raw.get(key)
             if number is not None and (isinstance(number, bool) or not isinstance(number, (int, float))
@@ -5098,10 +5116,10 @@ def _akile_market_alert(config: dict, rule: dict, item: dict, reason: str) -> bo
     return True
 
 
-def _evaluate_akile_market(config: dict, items: list[dict], session) -> list[dict]:
+def _evaluate_akile_market(config: dict, items: list[dict], session, rule_id: str = "") -> list[dict]:
     """Persist trigger decisions before delivery; failed delivery retries without re-running actions."""
     market = config["akile_market"]
-    rules = [row for row in market["items"] if row["enabled"]]
+    rules = [row for row in market["items"] if row["enabled"] and (not rule_id or row["id"] == rule_id)]
     state = _akile_market_alert_state()
     records, results = state["records"], []
     # Pausing Telegram must not change the destination identity and discard
@@ -5146,9 +5164,10 @@ def _evaluate_akile_market(config: dict, items: list[dict], session) -> list[dic
             if key.startswith(signature + ":") and key.split(":", 1)[1] in readable - hit_ids:
                 record["matched"] = False
     # Keep recent records across restarts without growing the file indefinitely.
-    state["records"] = {key: val for key, val in records.items()
-                        if key.split(":", 1)[0] in valid_prefixes
-                        and val.get("last_seen", time.time()) >= time.time() - 30 * 86400}
+    if not rule_id:
+        state["records"] = {key: val for key, val in records.items()
+                            if key.split(":", 1)[0] in valid_prefixes
+                            and val.get("last_seen", time.time()) >= time.time() - 30 * 86400}
     _save_akile_market_alert_state(state)
     return results
 
@@ -5158,6 +5177,9 @@ def _isvoro_market_rule_matches(rule: dict, item: dict) -> bool:
         return False
     if rule["target"] == "listing":
         if rule["product_id"] != item["id"]:
+            return False
+    elif rule["target"] == "renewal":
+        if rule["region"] != item.get("region") or abs(float(rule.get("renewal_price")) - float(item.get("renewal"))) > 0.01:
             return False
     elif any(rule[key] != item.get(key) for key in ("plan_name", "region", "node")):
         return False
@@ -5189,9 +5211,9 @@ def _isvoro_market_alert(config: dict, rule: dict, item: dict) -> bool:
     return True
 
 
-def _evaluate_isvoro_market(config: dict, items: list[dict]) -> list[dict]:
+def _evaluate_isvoro_market(config: dict, items: list[dict], rule_id: str = "") -> list[dict]:
     market = config["isvoro_market"]
-    rules = [row for row in market["items"] if row["enabled"]]
+    rules = [row for row in market["items"] if row["enabled"] and (not rule_id or row["id"] == rule_id)]
     state = _isvoro_market_alert_state()
     records, results = state["records"], []
     telegram = config.get("telegram", {})
@@ -5227,20 +5249,23 @@ def _evaluate_isvoro_market(config: dict, items: list[dict]) -> list[dict]:
         for key, record in records.items():
             if key.startswith(signature + ":") and key.split(":", 1)[1] in readable - hit_ids:
                 record["matched"] = False
-    state["records"] = {key: val for key, val in records.items()
-                        if key.split(":", 1)[0] in valid_prefixes
-                        and val.get("last_seen", time.time()) >= time.time() - 30 * 86400}
+    if not rule_id:
+        state["records"] = {key: val for key, val in records.items()
+                            if key.split(":", 1)[0] in valid_prefixes
+                            and val.get("last_seen", time.time()) >= time.time() - 30 * 86400}
     _save_isvoro_market_alert_state(state)
     return results
 
 
-def refresh_isvoro_market(*, account_id: str = "", evaluate: bool = False, automatic: bool = False) -> dict:
+def refresh_isvoro_market(*, account_id: str = "", evaluate: bool = False, automatic: bool = False, rule_id: str = "") -> dict:
     if not ISVORO_MARKET_RUN_LOCK.acquire(blocking=False):
         raise ValueError("Isvoro 交易市场正在刷新，请稍后重试")
     try:
         config = current_config()
         market = config["isvoro_market"]
         account_id = account_id or market["account_id"]
+        if rule_id and not any(row["id"] == rule_id and row["enabled"] for row in market["items"]):
+            raise ValueError("指定商品规则不存在或已暂停")
         if not account_id:
             raise ValueError("请选择已保存的 Isvoro 网站账户")
         with _isvoro_market_session(config, account_id) as session:
@@ -5263,7 +5288,7 @@ def refresh_isvoro_market(*, account_id: str = "", evaluate: bool = False, autom
                     raise ValueError("Isvoro 交易市场已暂停")
                 if account_id != market["account_id"]:
                     raise ValueError("规则检查必须使用已保存的市场账户")
-                results = _evaluate_isvoro_market(latest, items)
+                results = _evaluate_isvoro_market(latest, items, rule_id)
         result = {"account_id": account_id, "updated_at": beijing_iso(), "items": items, "results": results,
                   "error": "", "warning": "", "running": current_config()["isvoro_market"]["enabled"]}
         with ISVORO_MARKET_LOCK:
@@ -5326,13 +5351,15 @@ def start_isvoro_market_loop() -> None:
         ISVORO_MARKET_THREAD.start()
 
 
-def refresh_akile_market(*, account_id: str = "", evaluate: bool = False, automatic: bool = False) -> dict:
+def refresh_akile_market(*, account_id: str = "", evaluate: bool = False, automatic: bool = False, rule_id: str = "") -> dict:
     if not AKILE_MARKET_RUN_LOCK.acquire(blocking=False):
         raise ValueError("交易市场正在刷新，请稍后重试")
     try:
         config = current_config()
         market = config["akile_market"]
         account_id = account_id or market["account_id"]
+        if rule_id and not any(row["id"] == rule_id and row["enabled"] for row in market["items"]):
+            raise ValueError("指定商品规则不存在或已暂停")
         with _akile_market_session(config, account_id) as session:
             raw = akile_market_list(session)
             items = []
@@ -5351,7 +5378,7 @@ def refresh_akile_market(*, account_id: str = "", evaluate: bool = False, automa
                 candidates = {row["id"]: row for row in items if row.get("id")}
                 failed_details = []
                 for rule in market["items"]:
-                    if not rule["enabled"]:
+                    if not rule["enabled"] or (rule_id and rule["id"] != rule_id):
                         continue
                     if rule["target"] == "plan":
                         for source in akile_market_list(session, name=rule["plan_name"], area=rule["region"]):
@@ -5381,7 +5408,7 @@ def refresh_akile_market(*, account_id: str = "", evaluate: bool = False, automa
                     raise ValueError("交易市场已暂停")
                 if account_id != market["account_id"]:
                     raise ValueError("规则检查必须使用已保存的市场账户")
-                results = _evaluate_akile_market(latest, verified, session) + failed_details
+                results = _evaluate_akile_market(latest, verified, session, rule_id) + failed_details
                 items = list({row["id"]: row for row in [*items, *verified]}.values())
         result = {"account_id": account_id, "updated_at": beijing_iso(), "items": items, "results": results,
                   "error": "", "warning": warning, "running": current_config()["akile_market"]["enabled"],
@@ -5906,7 +5933,13 @@ class Handler(BaseHTTPRequestHandler):
                 if provider not in {"akile", "isvoro"}:
                     raise ValueError("交易市场商家无效")
                 refresh = refresh_isvoro_market if provider == "isvoro" else refresh_akile_market
-                output = refresh(account_id=str(submitted.get("account_id", "")), evaluate=self.path.endswith("/check"))
+                rule_id = str(submitted.get("rule_id", "")).strip()
+                if rule_id and self.path.endswith("/refresh"):
+                    raise ValueError("单条规则测试必须使用检查接口")
+                arguments = {"account_id": str(submitted.get("account_id", "")), "evaluate": self.path.endswith("/check")}
+                if rule_id:
+                    arguments["rule_id"] = rule_id
+                output = refresh(**arguments)
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/market/test-notification":
