@@ -3029,6 +3029,7 @@ function renderVpsSeckill() {
     const table = document.createElement("table"); table.className = "merchant-auth-table";
     table.innerHTML = `<thead><tr><th>商家</th><th>主方案</th><th>Cookie 备用</th><th>浏览器增强</th></tr></thead><tbody>
       <tr><th>Akile</th><td>官方 API + 令牌校验</td><td>不作为常规方案</td><td>API 异常时人工恢复</td></tr>
+      <tr><th>独角鲸云</th><td>邮箱密码登录 API + Bearer 令牌，核对账户邮箱</td><td>暂不支持导入，令牌最长缓存 30 天</td><td>API 异常或安全验证时到官网人工处理</td></tr>
       <tr><th>Isvoro</th><td>Cookie 主方案 + refresh Cookie</td><td>主方案</td><td>refresh 失败后人工 hCaptcha 恢复</td></tr>
       <tr><th>VMISS</th><td>账号密码 + Remember Me</td><td>支持导入后验证</td><td>Cloudflare 或安全验证时使用</td></tr>
       <tr><th>DMIT</th><td>账号密码 + Remember Me</td><td>支持 Cookie + User-Agent</td><td>浏览器/IP 绑定时人工恢复</td></tr>
