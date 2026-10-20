@@ -2685,7 +2685,7 @@ function renderOverview() {
       const sourceLogs = key === "seckill" && vpsSeckillTask?.logs?.length ? vpsSeckillTask.logs : state.logs || [];
       const lines = sourceLogs.slice(-5).map(item => {
         const trigger = item.trigger || "manual";
-        const label = key === "seckill" ? ({ rapid: "极速抢购", precise: "精准抢购", manual: "手动抢购" }[trigger] || "抢购") : trigger === "manual" ? "手动" : "自动";
+        const label = key === "seckill" ? ({ rapid: "极速抢购（手动）", precise: "精准抢购（手动）", manual: "手动抢购" }[trigger] || "抢购") : trigger === "manual" ? "手动" : "自动";
         const provider = item.provider ? `${merchantNames[item.provider] || item.provider} · ` : "";
         return `[${formatBeijingDate(item.at)}] ${provider}${label} · ${item.message || item.result || ""}`;
       });
@@ -3989,7 +3989,11 @@ function fullModuleLogItems(key) {
 }
 function formatModuleLogs(key, limit = 0, includeHistory = false) {
   const logs = includeHistory ? fullModuleLogItems(key) : moduleLogItems(key), items = limit ? logs.slice(-limit) : logs;
-  return items.length ? items.map(item => `[${formatBeijingDate(item.at)}] ${item.provider ? `${merchantNames[item.provider] || item.provider} · ` : ""}${(item.trigger || "manual") === "manual" ? "手动" : "自动"} · ${item.message || item.result || ""}`).join("\n") : "暂无日志";
+  return items.length ? items.map(item => {
+    const trigger = item.trigger || "manual";
+    const label = key === "seckill" ? ({ rapid: "极速抢购（手动）", precise: "精准抢购（手动）", manual: "手动抢购" }[trigger] || "抢购") : trigger === "manual" ? "手动" : "自动";
+    return `[${formatBeijingDate(item.at)}] ${item.provider ? `${merchantNames[item.provider] || item.provider} · ` : ""}${label} · ${item.message || item.result || ""}`;
+  }).join("\n") : "暂无日志";
 }
 document.querySelectorAll("[data-overview-log-toggle]").forEach(button => button.addEventListener("click", () => {
   const log = document.querySelector(`#overview-${button.dataset.overviewLogToggle}-log`);
