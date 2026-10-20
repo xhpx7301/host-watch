@@ -776,6 +776,8 @@
       <a href="#notifications" data-page-link="notifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>VPS 库存通知</a>
       <a href="#seckill" data-page-link="seckill"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 9-12h-7l1-8Z"/></svg>VPS 补货抢购</a>
       <a href="#market" data-page-link="market"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h18l-2-5H5L3 9Zm2 0v11h14V9M9 20v-6h6v6M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0"/></svg>二手交易市场</a>
+      <a href="#accounts" data-page-link="accounts"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M16 5.5a3 3 0 0 1 0 5.8M17 14c2.2.7 4 2.8 4 6"/></svg>网站账户</a>
+      <a href="#products" data-page-link="products"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"/></svg>自定义商品 / 已移出商品</a>
       <a href="#requests" data-page-link="requests"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></svg>网页请求</a>
       <a href="#affiliates" data-page-link="affiliates"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 13 4-4m-6 7-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 1 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0"/></svg>AFF 管理</a>
       <a href="#settings" data-page-link="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 14 5.2l3-.1.8 2.9 2.5 1.7-1.4 2.7 1.4 2.7-2.5 1.7-.8 2.9-3-.1L12 21l-2-2.2-3 .1-.8-2.9-2.5-1.7 1.4-2.7-1.4-2.7 2.5-1.7.8-2.9 3 .1L12 3Z"/><circle cx="12" cy="12" r="3"/></svg>设置</a>
@@ -878,7 +880,13 @@
       <div class="seckill-panel seckill-log-panel"><div class="section-head"><div><h3>执行日志</h3><p id="vps-seckill-log-note">尚未启动补货抢购任务。</p></div><div class="actions"><button id="vps-seckill-clear-log" type="button">清空显示</button><button id="vps-seckill-log-detail" type="button">详细日志</button></div></div><div id="vps-seckill-results" aria-live="polite"></div><pre id="vps-seckill-logs" class="seckill-logs" aria-live="polite">暂无日志</pre></div>
       </div>
       <div class="seckill-panel"><div class="section-head"><div><h3>补货抢购商品</h3><p>在库存监控 / 通知商品的“更多”中点击“加入 VPS 补货抢购”；数量、优惠码、系统、付款周期、付款方式、账户和出口按商品配置。修改会自动保存并应用。自动模式会按商家内置下单适配提交待付款订单；未适配商家只提供购买链接。</p></div><div class="actions"><button id="vps-seckill-open-monitor" type="button">从库存监控添加</button><button id="vps-seckill-open-notifications" type="button">从库存通知添加</button><button id="vps-seckill-delete-all" type="button" class="danger" disabled>删除全部商品</button></div></div><div id="vps-seckill-items" class="seckill-items"></div></div>
-      <div class="seckill-panel"><div class="section-head"><div><h3>网站账户</h3><p>选择商家后填写官网登录名和密码。每个账户独立保存，修改后点击该账户的“保存账户”；不会自动提交整组账户。VMISS、VPS.SOY、独角鲸云、搬瓦工、DMIT、Akile、Isvoro 可自动检查登录；其他商家认证会话在内存中缓存最长 30 天。Cookie 检查使用此处选择的出口；商品绑定账户检查使用抢购商品所选出口。独角鲸云会核对返回邮箱；Isvoro 首次登录需在官网完成 hCaptcha 后导入 Cookie；DMIT 和搬瓦工也可导入 Cookie。Cookie 和 API 令牌只在服务器内存中使用，不写入配置或备份。服务重启会清除内存缓存。账号状态会定期复核已有认证缓存，密码不回显。</p></div><div class="actions"><button id="vps-seckill-add-account" type="button">添加账户</button><button id="vps-seckill-delete-all-accounts" type="button" class="danger" disabled>删除全部账户</button></div></div><div id="vps-seckill-accounts" class="seckill-accounts"></div></div>
+    </div>
+  </section>
+
+  <section class="page-panel panel-card" id="page-accounts" data-page="accounts" aria-labelledby="page-title" hidden>
+    <div class="section-body">
+      <div class="section-head"><div><h2>网站账户</h2><p>供 VPS 补货抢购绑定使用。每个账户独立保存；Cookie 和 API 令牌仅在服务器内存中使用，服务重启后需按需重新验证。</p></div><div class="actions"><button id="vps-seckill-add-account" type="button">添加账户</button><button id="vps-seckill-delete-all-accounts" type="button" class="danger" disabled>删除全部账户</button></div></div>
+      <div class="seckill-panel" id="account-settings-panel"><div id="vps-seckill-accounts" class="seckill-accounts"></div></div>
     </div>
   </section>
 
@@ -956,14 +964,15 @@
     <div id="blocked-help" class="blocked-help" hidden><strong>上次库存检查被网站拦截（历史记录）</strong><span id="blocked-message">检测到拒绝访问或安全验证。请确认厂商允许当前的自动检查方式后再恢复。</span><p class="hint">该记录保留至下一次检查；当前服务状态请看上方。请先确认访问方式，避免反复重启。</p></div>
     <p id="request-error" class="blocked-help" hidden></p>
     <p class="table-footnote">监控设置、通知模式、检查间隔和通知选项均会自动保存 · 仅手动模式下也可测试通知</p>
-  <details class="section" id="advanced-products" data-tone="slate"><summary><span>高级：自定义商品 / 已移出商品</span><span class="section-toggle" aria-hidden="true"></span></summary>
-    <div class="section-body">
-    <div class="section-head"><div><h2>手动商品管理</h2><p>通知商品按上方库存通知的顺序排列，其余商品列在后方。大盘未收录、临时下架的商品可手动添加并保存，重新上架后继续匹配；也可恢复已移出商品。下架不等于缺货，线路与套餐名称请分别填写。商家请求方式统一在“网页请求”设置。</p></div><div class="merchant-add"><div class="actions"><label for="add-merchant">商家适配<select id="add-merchant" aria-describedby="add-merchant-hint"></select></label><button id="add" type="button" class="primary">＋ 添加商品</button></div><p id="add-merchant-hint" class="hint"></p></div></div>
-    <p class="hint">点击商品标题展开配置。“测试通知”会显示库存或错误，并通过已保存的 Telegram 机器人发送结果，无需开启监控；测试期间页面仍可操作，可停止库存检查，停止后不发送结果。VMISS、VPS.SOY、Akile、Isvoro 和通用网页仅显示对应适配器的字段。</p>
-    <div id="product-editors"></div>
     </div>
-  </details>
+  </section>
 
+  <section class="page-panel panel-card" id="page-products" data-page="products" aria-labelledby="page-title" hidden>
+    <div class="section-body">
+      <div class="section-head"><div><h2>新增自定义商品 / 已移出商品</h2><p>手动添加大盘未收录或临时下架的商品，也可恢复已移出商品。商品配置与库存监控、库存通知共用同一份数据。</p></div></div>
+      <div class="section-head"><div class="merchant-add"><div class="actions"><label for="add-merchant">商家适配<select id="add-merchant" aria-describedby="add-merchant-hint"></select></label><button id="add" type="button" class="primary">＋ 添加商品</button></div><p id="add-merchant-hint" class="hint"></p></div></div>
+      <p class="hint">点击商品标题展开配置。商家请求方式统一在“网页请求”设置。</p>
+      <div id="product-editors"></div>
     </div>
   </section>
 

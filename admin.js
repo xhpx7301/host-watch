@@ -80,6 +80,8 @@ const pages = {
   catalog: { title: "VPS 库存大盘", description: "浏览商家全部公开套餐或地区分类，选择你关心的 VPS 加入补货提醒。" },
   seckill: { title: "VPS 补货抢购", description: "从库存监控或库存通知选择商品，配置优惠码和账户后执行补货抢购。" },
   market: { title: "Akile 交易市场", description: "查看 Akile 交易市场快照，按续费价格和到期时间计算折价/溢价金额与比例，设置指定商品的 Telegram 提醒。" },
+  accounts: { title: "网站账户", description: "集中管理 VPS 补货抢购使用的网站登录账户，检查账户状态并导入商家认证信息。" },
+  products: { title: "自定义商品 / 已移出商品", description: "新增大盘未收录的商品，编辑手动配置，或恢复已移出的商品。" },
   monitor: { title: "VPS 库存监控", description: "集中查看你关注的 VPS，查看库存与配置、编辑备注和线路，直接购买，不发送通知。" },
   notifications: { title: "VPS 库存通知", description: "选择需要 Telegram 库存提醒的商品，管理通知和测试。" },
   affiliates: { title: "AFF 管理", description: "统一管理各商家推广码，保存后应用到新的购买入口。" },
@@ -113,7 +115,6 @@ window.addEventListener("resize", () => {
 });
 
 function navigatePage(name, { history = true, focus = true } = {}) {
-  if (name === "products") { navigatePage("notifications", { history, focus }); openAdvancedProducts(); return; }
   if (name === "narwhal") name = "catalog";
   if (name === "telegram" || name === "management") name = "settings";
   if (!Object.hasOwn(pages, name)) name = "overview";
@@ -480,7 +481,7 @@ for (const id of ["market-search", "market-region", "market-product"]) document.
 document.querySelector("#market-prev").addEventListener("click", () => { marketPage--; renderMarket(); });
 document.querySelector("#market-next").addEventListener("click", () => { marketPage++; renderMarket(); });
 window.addEventListener("hostwatch-page-change", event => { if (event.detail === "market") void loadMarketSnapshot(); });
-window.addEventListener("hostwatch-page-change", event => { if (event.detail === "seckill") scheduleAccountHealthCheck(500); else clearTimeout(accountHealthTimer); });
+window.addEventListener("hostwatch-page-change", event => { if (["seckill", "accounts"].includes(event.detail)) scheduleAccountHealthCheck(500); else clearTimeout(accountHealthTimer); });
 setInterval(() => { if (!document.hidden && currentPage === "market" && savedConfig) void loadMarketSnapshot(); }, 10000);
 
 function setMessage(message, kind = "", notify = true, inline = true) {
@@ -2933,7 +2934,7 @@ function invalidateAccountCheck(accountId) {
   accountCheckGenerations.set(id, (accountCheckGenerations.get(id) || 0) + 1);
 }
 async function refreshAccountHealth() {
-  if (actionRunning || document.hidden || currentPage !== "seckill") {
+  if (actionRunning || document.hidden || !["seckill", "accounts"].includes(currentPage)) {
     accountHealthTimer = setTimeout(refreshAccountHealth, ACCOUNT_HEALTH_INTERVAL_MS);
     return;
   }
@@ -3782,8 +3783,7 @@ function updateFetcherStatus() {
 }
 
 function openAdvancedProducts() {
-  const panel = document.querySelector("#advanced-products"); panel.open = true;
-  panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  navigatePage("products");
 }
 
 async function loadConfig() {
@@ -3837,7 +3837,7 @@ function applyConfig(value) {
   renderEgress();
   scheduleEgressHealthCheck(1_000);
   renderVpsSeckill();
-  if (currentPage === "seckill") scheduleAccountHealthCheck(1_000);
+  if (["seckill", "accounts"].includes(currentPage)) scheduleAccountHealthCheck(1_000);
   renderMarketSettings();
   if (currentPage === "market") void loadMarketSnapshot();
   savedConfig = JSON.stringify(collectConfig());
@@ -3883,7 +3883,7 @@ function addProducts(items) {
   config.products.push(...items);
   openProducts.add(items[0].id);
   renderProducts();
-  navigatePage("notifications"); openAdvancedProducts();
+  navigatePage("products");
   editorNode.querySelector(`[data-id="${CSS.escape(items[0].id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
   setMessage(items.length === 1 ? "商品已添加，填写内容后会自动保存。" : `已添加 ${items.length} 个商品，可先测试，填写内容后会自动保存。`, "pending");
   updateDraftState();
@@ -3945,7 +3945,7 @@ document.querySelector("#add").addEventListener("click", () => {
   if (existing) {
     openProducts.add(existing.id);
     renderProducts();
-    navigatePage("notifications"); openAdvancedProducts();
+    navigatePage("products");
     editorNode.querySelector(`[data-id="${CSS.escape(existing.id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
     setMessage("TWLite-Mini 已存在，已展开配置；监控其他套餐可修改此商品的套餐完整名称后再添加。", "success");
     return;
