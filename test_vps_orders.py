@@ -138,6 +138,21 @@ class OrderTaskTests(unittest.TestCase):
         self.assertEqual(result['status'], 'blocked')
         create_order.assert_not_called()
 
+    def test_other_native_merchants_visit_aff_entry_before_checkout(self):
+        task = admin.SeckillTask('merchant-aff-test', admin.default_config(), 'rapid')
+        for provider, raw, product in [
+            ('isvoro', 'https://isvoro.com/buy/HK-prod?product=188', {'adapter': 'isvoro', 'product_id': '188'}),
+            ('dmit', 'https://www.dmit.io/cart.php?a=add&pid=123', {'adapter': 'dmit', 'pid': '123'}),
+            ('bwh', 'https://bwh81.net/cart.php?gid=8&pid=11', {'adapter': 'bwh', 'gid': '8', 'pid': '11'}),
+        ]:
+            with self.subTest(provider=provider):
+                session = Mock()
+                entry = admin.affiliate_purchase_url(raw, provider, task.config, product)
+                session.get.return_value = Mock(status_code=200, url=entry)
+                task._visit_affiliate_entry(session, {'id': provider}, raw, product)
+                self.assertEqual(session.get.call_args.args[0], entry)
+                self.assertTrue(session.get.call_args.kwargs['allow_redirects'])
+
     def test_quantity_defaults_and_rejects_invalid_values(self):
         item = self.config['vps_seckill']['items'][0]
         del item['quantity']
@@ -529,8 +544,9 @@ class VmissOrderTests(OrderTaskTests):
         self.assertEqual(result["url"], order_url)
         self.assertEqual(result["telegram_status"], "sent")
         self.assertEqual(session.post.call_args.args[0], admin.AKILE_ORDER_URL)
-        self.assertEqual(session.get.call_args.args[0], admin.AKILE_ORDER_DETAIL_URL)
-        self.assertEqual(session.get.call_args.kwargs["params"], {"orderNo": "202610170001"})
+        self.assertEqual(session.get.call_args_list[0].args[0], "https://akile.ai/shop/server?areaId=6&nodeId=41&planId=1047&aff_code=eb2ff10d-f57f-485f-9621-ed873b36c2c0")
+        self.assertEqual(session.get.call_args_list[1].args[0], admin.AKILE_ORDER_DETAIL_URL)
+        self.assertEqual(session.get.call_args_list[1].kwargs["params"], {"orderNo": "202610170001"})
         self.assertNotIn("payment_url", session.post.call_args.kwargs["json"])
         self.assertEqual(telegram.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["url"], order_url)
 

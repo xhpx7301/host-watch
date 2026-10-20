@@ -1689,7 +1689,7 @@ def _dmit_browser_response(solution):
                            url=str(solution.get("url", "")), headers=solution.get("headers", {}) or {})
 
 
-def _dmit_order_flaresolverr(item: dict, account: dict, product, url: str, fetcher: dict, key: str) -> dict:
+def _dmit_order_flaresolverr(item: dict, account: dict, product, url: str, fetcher: dict, key: str, affiliate_url: str = "") -> dict:
     """Log in and complete DMIT checkout inside one FlareSolverr browser session."""
     from bs4 import BeautifulSoup
     from monitor import (browser_request_slot, flaresolverr_session_create,
@@ -1707,6 +1707,11 @@ def _dmit_order_flaresolverr(item: dict, account: dict, product, url: str, fetch
         # frozen for tens of seconds.
         with browser_request_slot(wait=False):
             session_id = flaresolverr_session_create(fetcher)
+            if affiliate_url and affiliate_url != url:
+                tracked = _dmit_browser_response(flaresolverr_session_request(fetcher, session_id, affiliate_url))
+                tracked_url = tracked.url if isinstance(tracked.url, str) and tracked.url else affiliate_url
+                if not 200 <= tracked.status_code < 300 or urlsplit(tracked_url).hostname != urlsplit(affiliate_url).hostname:
+                    raise DmitOrderFailure("DMIT AFF 推广入口未能确认，最终结算请求尚未发送")
             login = flaresolverr_session_request(fetcher, session_id, MERCHANT_LOGIN_ADAPTERS["dmit"]["url"])
             login_page = _dmit_browser_response(login)
             login_soup = BeautifulSoup(login_page.content, "html.parser")
@@ -3716,6 +3721,21 @@ class SeckillTask:
         provider = product.get("adapter") or product.get("provider") or ""
         return affiliate_purchase_url(url, str(provider).casefold(), self.config, product)
 
+    def _visit_affiliate_entry(self, session, item, url, product) -> str:
+        """Visit the merchant AFF entry in the same session before checkout."""
+        affiliate_url = self._affiliate_purchase_url(item, url, product)
+        if affiliate_url == url:
+            return affiliate_url
+        query = parse_qsl(urlsplit(affiliate_url).query, keep_blank_values=True)
+        if not any(key in {"aff", "aff_code"} and value for key, value in query):
+            return affiliate_url
+        response = session.get(affiliate_url, timeout=(5, 20), allow_redirects=True)
+        final_url = response.url if isinstance(response.url, str) and response.url else affiliate_url
+        if not 200 <= response.status_code < 300 or urlsplit(final_url).hostname != urlsplit(affiliate_url).hostname:
+            raise ValueError("AFF 推广入口未能确认，已停止下单")
+        self.log("AFF 推广入口已通过当前登录会话访问，继续提交待付款订单。", "info", item)
+        return affiliate_url
+
     def _item_label(self, item: dict, product: dict | None = None) -> str:
         product = product or next((row for row in self.config.get("products", []) if row.get("id") == item.get("product_id")), {})
         return str(item.get("label") or product.get("name") or item.get("product_id") or "VPS 商品")
@@ -3727,6 +3747,16 @@ class SeckillTask:
         if self.cancelled.is_set():
             return {"status": "cancelled", "url": url, "quantity": quantity}
         key = hashlib.sha256(f"{self.id}:{item['id']}".encode()).hexdigest()
+        affiliate_url = self._affiliate_purchase_url(item, url, product) if product else url
+        dmit_browser = (product and str(product.get("adapter", "")).casefold() == "dmit"
+                        and str((fetcher or {}).get("mode", "")).casefold() == "flaresolverr")
+        if affiliate_url != url and not dmit_browser:
+            try:
+                self._visit_affiliate_entry(session, item, url, product)
+            except (requests.RequestException, ValueError) as exc:
+                detail = _order_exception_detail(exc)
+                self.log(f"AFF 推广入口访问失败，未提交订单；原因：{detail[:240]}。", "error", item)
+                return {"status": "blocked", "url": url, "quantity": quantity}
         if product and str(product.get("adapter", "")).casefold() == "akile":
             try:
                 payload = akile_order_payload(item, inspected, url)
@@ -3748,20 +3778,6 @@ class SeckillTask:
                     "quantity": quantity, "payment_status": "unpaid", "order_verification": verification,
                     "telegram_status": notification}
         if product and str(product.get("adapter", "")).casefold() == "vmiss":
-            affiliate_url = self._affiliate_purchase_url(item, url, product)
-            has_affiliate = any(key == "aff" and value for key, value in parse_qsl(urlsplit(affiliate_url).query))
-            if affiliate_url != url and has_affiliate:
-                try:
-                    affiliate_response = session.get(affiliate_url, timeout=(5, 20), allow_redirects=True)
-                    if (not 200 <= affiliate_response.status_code < 300
-                            or not _same_merchant_url(affiliate_response.url or affiliate_url,
-                                                      MERCHANT_LOGIN_ADAPTERS["vmiss"])):
-                        raise ValueError("VMISS AFF 推广入口未能确认，已停止下单")
-                    self.log("VMISS AFF 推广入口已通过当前登录会话访问，继续提交待付款订单。", "info", item)
-                except (requests.RequestException, ValueError) as exc:
-                    detail = _order_exception_detail(exc)
-                    self.log(f"VMISS AFF 推广入口访问失败，未提交订单；原因：{detail[:240]}。", "error", item)
-                    return {"status": "blocked", "url": url, "quantity": quantity}
             try:
                 order = vmiss_order(session, item, account, inspected, url, key,
                                     progress=lambda message: self.log(message, "info", item))
@@ -3799,7 +3815,7 @@ class SeckillTask:
                     "os": order["os"], "payment_method": order["payment_method"]}
         if product and str(product.get("adapter", "")).casefold() == "dmit":
             try:
-                order = (_dmit_order_flaresolverr(item, account, inspected, url, fetcher, key)
+                order = (_dmit_order_flaresolverr(item, account, inspected, url, fetcher, key, affiliate_url)
                          if str((fetcher or {}).get("mode", "")).casefold() == "flaresolverr"
                          else _dmit_order(session, item, account, inspected, url, fetcher, key))
                 self.log(f"DMIT 已创建待付款账单 {order['order_id']}（月付 / PZ / {order.get('os', 'DMIT 默认系统')} / 结算页默认付款方式 / SSH Key 订单后生成 / 额外硬盘 0GB），正在准备订单通知", "success", item)
