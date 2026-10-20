@@ -69,6 +69,11 @@ class ValuationTests(unittest.TestCase):
         self.assertFalse(admin.akile_market_rule_matches(rule(direction="premium", rate_threshold=9), expensive))
         self.assertTrue(admin.akile_market_rule_matches(rule(direction="premium", rate_threshold=0), cheap))
 
+    def test_missing_direction_defaults_to_premium(self):
+        raw = rule()
+        raw.pop("direction")
+        self.assertEqual(config([raw])["akile_market"]["items"][0]["direction"], "premium")
+
     def test_listing_vs_exact_plan_region_node(self):
         item = admin.akile_market_valuation(listing(id="999"), NOW)
         self.assertFalse(admin.akile_market_rule_matches(rule(), item))

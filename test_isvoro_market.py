@@ -88,6 +88,27 @@ class IsvoroMarketTests(unittest.TestCase):
             admin._evaluate_isvoro_market(config, [item])
             self.assertEqual(send.call_count, 1)
 
+    def test_alert_uses_akile_layout_and_real_newlines(self):
+        item = admin.isvoro_market_valuation(listing(), NOW)
+        item.update(cpu=2, memory=2048, disk=40, flow=1000, bandwidth=500)
+        value = admin.default_config()
+        value["telegram"] = {"bot_token": "token", "chat_id": "123", "disabled": False}
+        rule = {"id": "r-alert", "name": "HK 续费价", "target": "listing", "product_id": "901",
+                "direction": "discount", "rate_threshold": 10, "amount_threshold": None,
+                "match": "any", "action": "notify", "enabled": True}
+        with patch.object(admin, "telegram_call") as send:
+            self.assertTrue(admin._isvoro_market_alert(value, rule, item))
+        message = send.call_args.kwargs["text"]
+        labels = ["地区：", "节点：", "套餐：", "配置：", "网络：", "续费价格：", "到期时间：",
+                  "售价：", "剩余价值：", "折价：", "触发规则：", "挂单 ID：", "说明：", "检查时间："]
+        positions = [message.index(label) for label in labels]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("🌍", message)
+        self.assertIn("2C/2G/40GB", message)
+        self.assertIn("CNY 30.00/1个月", message)
+        self.assertNotIn("\\n", message)
+        self.assertNotIn("月付", message)
+
     def test_renewal_rule_matches_region_and_renewal_price(self):
         item = admin.isvoro_market_valuation(listing(), NOW)
         rule = {"id": "r-renewal", "target": "renewal", "product_id": "", "name": "",

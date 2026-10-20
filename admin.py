@@ -2669,7 +2669,7 @@ def normalize_akile_market(value: object, accounts: list[dict]) -> dict:
         seen.add(identifier)
         rule = {"id": identifier}
         for key, allowed, default in (("target", {"listing", "plan"}, "listing"),
-                ("direction", {"discount", "premium"}, "discount"),
+                ("direction", {"discount", "premium"}, "premium"),
                 ("action", {"notify", "unpaid_order"}, "notify"), ("match", {"any", "all"}, "any")):
             rule[key] = str(raw.get(key, default))
             if rule[key] not in allowed:
@@ -2781,7 +2781,7 @@ def _normalize_market_config(value: object, accounts: list[dict], provider: str,
         if provider == "isvoro":
             target_allowed.add("renewal")
         for key, allowed, default in (("target", target_allowed, "listing"),
-                ("direction", {"discount", "premium"}, "discount"),
+                ("direction", {"discount", "premium"}, "premium"),
                 ("action", {"notify"}, "notify"), ("match", {"any", "all"}, "any")):
             rule[key] = str(raw.get(key, default))
             if rule[key] not in allowed:
@@ -5196,15 +5196,32 @@ def _isvoro_market_alert(config: dict, rule: dict, item: dict) -> bool:
         return False
     kind = "折价" if item["delta"] >= 0 else "溢价"
     cycle = f"{item['cycle']}{'个月' if item['cycle_unit'] == 'month' else '年'}"
-    message = "\\n".join([
-        "🔔 <b>HostWatch · Isvoro 二手市场</b>",
-        f"实例名：{escape(item['name'])} · 套餐：{escape(item['plan_name'])} · 地区/节点：{escape(telegram_region(item['region']))} / {escape(item['node'])}",
-        f"挂单 ID：<code>{item['id']}</code>",
-        f"售价：{escape(item['currency_code'])} {item['price']:.2f} · 续费：{escape(item['currency_code'])} {item['renewal']:.2f}/{cycle}",
-        f"剩余：{item['remaining_days']:.2f} 天 · 剩余价值：{escape(item['currency_code'])} {item['fair_value']:.2f} · 月付：{escape(item['currency_code'])} {item['monthly_price']:.2f}",
-        f"{kind}：{abs(item['rate']):.2f}% · {escape(item['currency_code'])} {abs(item['delta']):.2f}",
-        f"触发规则：{escape(rule.get('name') or rule['id'])}",
-        f"检查时间：{format_beijing(item['updated_at'])}",
+    hardware = hardware_text(" · ".join(filter(None, [
+        _akile_market_display_unit(item.get("cpu"), " 核"),
+        _akile_market_display_unit(item.get("memory"), "MB"),
+        _akile_market_display_unit(item.get("disk"), "GB"),
+    ])))
+    network = network_text(" · ".join(filter(None, [
+        _akile_market_display_unit(item.get("flow"), "GB"),
+        _akile_market_display_unit(item.get("bandwidth"), "Mbps"),
+    ])))
+    currency = escape(str(item.get("currency_code") or "CNY"))
+    message = "\n".join([
+        "🔔 <b>HostWatch · Isvoro 二手市场</b>", "",
+        f"🌍 <b>地区：</b>{escape(telegram_region(item.get('region', '')) or '—')}",
+        f"📍 <b>节点：</b>{escape(str(item.get('node') or '—'))}",
+        f"📦 <b>套餐：</b>{escape(str(item.get('plan_name') or '—'))}",
+        f"🖥 <b>配置：</b>{escape(hardware)}",
+        f"🌐 <b>网络：</b>{escape(network)}",
+        f"🔁 <b>续费价格：</b>{currency} {item['renewal']:.2f}/{cycle}",
+        f"📅 <b>到期时间：</b>{_akile_market_display_time(item.get('due_time'))}（剩余 {item['remaining_days']:.2f} 天）",
+        f"💰 <b>售价：</b>{currency} {item['price']:.2f}",
+        f"💎 <b>剩余价值：</b>{currency} {item['fair_value']:.2f}",
+        f"📈 <b>{kind}：</b>{abs(item['rate']):.2f}% · {currency} {abs(item['delta']):.2f}",
+        f"📌 <b>触发规则：</b>{escape(rule.get('name') or rule['id'])}",
+        "", f"🏷 <b>挂单 ID：</b><code>{item['id']}</code>",
+        "📝 <b>说明：</b>已达到设定阈值，请到 Isvoro 官网手动购买。",
+        f"🕒 <b>检查时间：</b>{format_beijing(item['updated_at'])}",
     ])
     telegram_call(token, "sendMessage", chat_id=chat_id, text=message, parse_mode="HTML",
         disable_web_page_preview=True, reply_markup={"inline_keyboard": [[{"text": "查看 Isvoro 商品", "url": "https://isvoro.com/marketplace"}]]})
