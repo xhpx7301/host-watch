@@ -90,7 +90,7 @@ class IsvoroMarketTests(unittest.TestCase):
 
     def test_alert_uses_akile_layout_and_real_newlines(self):
         item = admin.isvoro_market_valuation(listing(), NOW)
-        item.update(cpu=2, memory=2048, disk=40, flow=1000, bandwidth=500)
+        item.update(cpu=2, memory=2048, disk=40, flow=1024, bandwidth=500)
         value = admin.default_config()
         value["telegram"] = {"bot_token": "token", "chat_id": "123", "disabled": False}
         rule = {"id": "r-alert", "name": "HK 续费价", "target": "listing", "product_id": "901",
@@ -99,13 +99,19 @@ class IsvoroMarketTests(unittest.TestCase):
         with patch.object(admin, "telegram_call") as send:
             self.assertTrue(admin._isvoro_market_alert(value, rule, item))
         message = send.call_args.kwargs["text"]
-        labels = ["地区：", "节点：", "套餐：", "配置：", "网络：", "续费价格：", "到期时间：",
+        labels = ["地区：", "节点：", "配置：", "网络：", "续费价格：", "到期时间：",
                   "售价：", "剩余价值：", "折价：", "触发规则：", "挂单 ID：", "说明：", "检查时间："]
         positions = [message.index(label) for label in labels]
         self.assertEqual(positions, sorted(positions))
         self.assertIn("🌍", message)
         self.assertIn("2C/2G/40GB", message)
-        self.assertIn("CNY 30.00/1个月", message)
+        self.assertIn("1TB@500Mbps", message)
+        self.assertIn("¥30.00/1个月", message)
+        self.assertIn("¥12.00", message)
+        self.assertIn(f"¥{item['fair_value']:.2f}", message)
+        self.assertIn(f"¥{abs(item['delta']):.2f}", message)
+        self.assertNotIn("套餐", message)
+        self.assertNotIn("CNY", message)
         self.assertNotIn("\\n", message)
         self.assertNotIn("月付", message)
 

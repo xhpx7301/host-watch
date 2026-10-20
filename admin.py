@@ -5079,6 +5079,24 @@ def _akile_market_display_unit(value: object, suffix: str) -> str:
     return f"{text}{suffix}" if re.fullmatch(r"[+-]?\d+(?:\.\d+)?", text) else text
 
 
+def _isvoro_market_display_flow(value: object) -> str:
+    """Show Isvoro traffic in compact binary units while preserving vendor text."""
+    text = str(value).strip() if value is not None else ""
+    if not text:
+        return ""
+    match = re.fullmatch(r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*(GB|TB|PB)?", text, re.IGNORECASE)
+    if not match:
+        return _akile_market_display_unit(value, "GB")
+    amount = float(match.group(1))
+    units = ["GB", "TB", "PB"]
+    unit = (match.group(2) or "GB").upper()
+    index = units.index(unit)
+    while amount >= 1024 and index < len(units) - 1:
+        amount /= 1024
+        index += 1
+    return f"{amount:.3f}".rstrip("0").rstrip(".") + units[index]
+
+
 def _akile_market_alert(config: dict, rule: dict, item: dict, reason: str) -> bool:
     token, chat_id = effective_telegram(config)
     if not token or not chat_id:
@@ -5202,22 +5220,22 @@ def _isvoro_market_alert(config: dict, rule: dict, item: dict) -> bool:
         _akile_market_display_unit(item.get("disk"), "GB"),
     ])))
     network = network_text(" · ".join(filter(None, [
-        _akile_market_display_unit(item.get("flow"), "GB"),
+        _isvoro_market_display_flow(item.get("flow")),
         _akile_market_display_unit(item.get("bandwidth"), "Mbps"),
     ])))
-    currency = escape(str(item.get("currency_code") or "CNY"))
+    currency_code = str(item.get("currency_code") or "CNY").strip().upper()
+    currency = "¥" if currency_code == "CNY" else f"{escape(currency_code)} "
     message = "\n".join([
         "🔔 <b>HostWatch · Isvoro 二手市场</b>", "",
         f"🌍 <b>地区：</b>{escape(telegram_region(item.get('region', '')) or '—')}",
         f"📍 <b>节点：</b>{escape(str(item.get('node') or '—'))}",
-        f"📦 <b>套餐：</b>{escape(str(item.get('plan_name') or '—'))}",
         f"🖥 <b>配置：</b>{escape(hardware)}",
         f"🌐 <b>网络：</b>{escape(network)}",
-        f"🔁 <b>续费价格：</b>{currency} {item['renewal']:.2f}/{cycle}",
+        f"🔁 <b>续费价格：</b>{currency}{item['renewal']:.2f}/{cycle}",
         f"📅 <b>到期时间：</b>{_akile_market_display_time(item.get('due_time'))}（剩余 {item['remaining_days']:.2f} 天）",
-        f"💰 <b>售价：</b>{currency} {item['price']:.2f}",
-        f"💎 <b>剩余价值：</b>{currency} {item['fair_value']:.2f}",
-        f"📈 <b>{kind}：</b>{abs(item['rate']):.2f}% · {currency} {abs(item['delta']):.2f}",
+        f"💰 <b>售价：</b>{currency}{item['price']:.2f}",
+        f"💎 <b>剩余价值：</b>{currency}{item['fair_value']:.2f}",
+        f"📈 <b>{kind}：</b>{abs(item['rate']):.2f}% · {currency}{abs(item['delta']):.2f}",
         f"📌 <b>触发规则：</b>{escape(rule.get('name') or rule['id'])}",
         "", f"🏷 <b>挂单 ID：</b><code>{item['id']}</code>",
         "📝 <b>说明：</b>已达到设定阈值，请到 Isvoro 官网手动购买。",
