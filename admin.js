@@ -711,15 +711,17 @@ async function refreshManagement() {
   if (updateUnit) {
     const update = await refreshUpdateStatus();
     if (update.finished || update.LoadState === "not-found") {
+      const reloadAfterUpdate = sessionStorage.getItem(UPDATE_RELOAD_KEY) === "pending" && update.Result === "success";
       updateUnit = "";
       sessionStorage.removeItem("hostwatch-update-unit");
-      // A reload marker left by a previous completed update must not start
-      // another reload loop when the browser restores the old tab.
-      if (!sessionStorage.getItem(UPDATE_RELOAD_KEY)) {
-        clearTimeout(updateReloadTimer);
-        sessionStorage.removeItem(UPDATE_RELOAD_KEY);
-      }
+      sessionStorage.removeItem(UPDATE_RELOAD_KEY);
+      clearInterval(updatePollTimer); updatePollTimer = null;
+      clearTimeout(updatePollTimeout); updatePollTimeout = null;
       syncUpdateControl();
+      if (reloadAfterUpdate) {
+        document.querySelector("#manage-task-status").textContent = "HostWatch 更新完成，管理页将在 2 秒后刷新。";
+        scheduleUpdateReload(2_000);
+      }
     }
   }
   return state;
@@ -795,32 +797,24 @@ function syncUpdateControl() {
   button.title = updateUnit ? "更新任务正在执行，请等待完成" : "从 GitHub 更新 HostWatch";
 }
 
-function scheduleUpdateReload(delayMs = 10_000) {
+function scheduleUpdateReload(delayMs = 2_000) {
   clearTimeout(updateReloadTimer);
-  const deadline = Date.now() + Math.max(0, Number(delayMs) || 0);
-  sessionStorage.setItem(UPDATE_RELOAD_KEY, String(deadline));
+  sessionStorage.removeItem(UPDATE_RELOAD_KEY);
   const reload = () => {
-    sessionStorage.removeItem(UPDATE_RELOAD_KEY);
     sessionStorage.setItem("hostwatch-current-page", "overview");
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#overview`);
     window.location.reload();
   };
-  updateReloadTimer = setTimeout(reload, Math.max(0, deadline - Date.now()));
+  updateReloadTimer = setTimeout(reload, Math.max(0, Number(delayMs) || 0));
 }
 
 function resumeUpdateReload() {
-  const deadline = Number(sessionStorage.getItem(UPDATE_RELOAD_KEY));
-  if (!updateUnit || !Number.isFinite(deadline) || deadline <= Date.now()) {
-    sessionStorage.removeItem(UPDATE_RELOAD_KEY);
+  const reloadState = sessionStorage.getItem(UPDATE_RELOAD_KEY);
+  if (updateUnit && reloadState) {
+    sessionStorage.setItem(UPDATE_RELOAD_KEY, "pending");
     return;
   }
-  const delay = Math.max(0, deadline - Date.now());
-  updateReloadTimer = setTimeout(() => {
-    sessionStorage.removeItem(UPDATE_RELOAD_KEY);
-    sessionStorage.setItem("hostwatch-current-page", "overview");
-    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#overview`);
-    window.location.reload();
-  }, delay);
+  sessionStorage.removeItem(UPDATE_RELOAD_KEY);
 }
 
 async function performManagementAction(action, extra = {}) {
@@ -828,13 +822,13 @@ async function performManagementAction(action, extra = {}) {
   if (result.update_unit) {
     updateUnit = result.update_unit;
     sessionStorage.setItem("hostwatch-update-unit", updateUnit);
+    sessionStorage.setItem(UPDATE_RELOAD_KEY, "pending");
     syncUpdateControl();
     document.querySelector("#manage-task-status").textContent = result.message;
     setMessage(result.message, "success");
     pollUpdateStatus();
     if (action === "update") {
-      document.querySelector("#manage-task-status").textContent = `${result.message} 管理页将在 10 秒后自动刷新。`;
-      scheduleUpdateReload();
+      document.querySelector("#manage-task-status").textContent = `${result.message} 更新完成后管理页会自动刷新。`;
     }
   } else {
     setMessage(result.message || "管理员操作已完成。", "success");
@@ -937,11 +931,14 @@ function pollUpdateStatus() {
         updatePollTimer = null;
         clearTimeout(updatePollTimeout);
         updatePollTimeout = null;
-        setMessage(result.Result === "success" ? "HostWatch 更新完成，管理页将在 10 秒后自动刷新。" : `HostWatch 更新结束：${result.Result || result.LoadState}`, result.Result === "success" ? "success" : "error");
+        const reloadAfterUpdate = sessionStorage.getItem(UPDATE_RELOAD_KEY) === "pending" && result.Result === "success";
+        setMessage(result.Result === "success" ? "HostWatch 更新完成，管理页将在服务恢复后刷新。" : `HostWatch 更新结束：${result.Result || result.LoadState}`, result.Result === "success" ? "success" : "error");
         updateUnit = "";
         sessionStorage.removeItem("hostwatch-update-unit");
+        sessionStorage.removeItem(UPDATE_RELOAD_KEY);
         syncUpdateControl();
         await refreshManagement();
+        if (reloadAfterUpdate) scheduleUpdateReload(2_000);
       }
     } catch (error) {
       document.querySelector("#manage-task-status").textContent = `更新可能正在重启服务，等待管理页恢复：${error.message}`;
