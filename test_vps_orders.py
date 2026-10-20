@@ -1,8 +1,10 @@
 """Order-only seckill regressions: no live merchant requests or payments."""
 import copy
 import json
+import tempfile
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import requests
@@ -788,6 +790,11 @@ class DMitOrderTests(unittest.TestCase):
 
 class AccountVerificationTests(unittest.TestCase):
     def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        setting = patch.object(admin, 'CONFIG_PATH', Path(folder.name) / 'config.json')
+        setting.start()
+        self.addCleanup(setting.stop)
         # Authentication caches are intentionally process-global in production;
         # isolate account-check examples so one test cannot reuse another's
         # short-lived session.
@@ -1330,9 +1337,148 @@ class AccountVerificationTests(unittest.TestCase):
         admin._remove_merchant_session('akile', account, {'egress_node_id': 'route-a'})
 
 
+class MerchantAccountHealthTests(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        setting = patch.object(admin, 'CONFIG_PATH', Path(folder.name) / 'config.json')
+        setting.start()
+        self.addCleanup(setting.stop)
+        self.adapter = admin.MERCHANT_LOGIN_ADAPTERS['vps_soy']
+        self.config = configuration()
+        self.account = self.config['vps_seckill']['accounts'][0]
+        self.account.update(provider='vps_soy', login_url=self.adapter['url'])
+        admin.CONFIG_PATH.write_text(json.dumps(self.config), encoding='utf-8')
+        cache = patch.dict(admin.MERCHANT_AUTH_SESSIONS, {}, clear=True)
+        cache.start()
+        self.addCleanup(cache.stop)
+
+    def page(self, url, body='', status=200, location=''):
+        page = requests.Response()
+        page.status_code = status
+        page.url = url
+        page._content = body.encode('utf-8')
+        if location:
+            page.headers['Location'] = location
+        return page
+
+    def test_public_login_redirect_or_missing_marker_is_inconclusive(self):
+        session = requests.Session()
+        for page in (
+            self.page(self.adapter['url'], status=302, location='/clientarea.php'),
+            self.page(self.adapter['url'], '<form><input name="email"><input name="password"></form>'),
+            self.page(self.adapter['url'], 'Temporarily unavailable', status=503),
+            self.page(self.adapter['url'], 'Security challenge', status=403),
+        ):
+            with self.subTest(status=page.status_code):
+                session.get = Mock(return_value=page)
+                self.assertEqual(admin._merchant_auth_probe(session, self.adapter), 'unknown')
+
+    def test_private_probe_requires_explicit_expiration(self):
+        session = requests.Session()
+        session._hostwatch_auth_probe_url = 'https://www.vps.soy/clientarea.php'
+        for page, expected in (
+            (self.page(session._hostwatch_auth_probe_url, '<a href="/logout">Logout</a>'), 'valid'),
+            (self.page(session._hostwatch_auth_probe_url, status=302, location='/login'), 'expired'),
+            (self.page(session._hostwatch_auth_probe_url, '<form><input name="email"><input name="password"></form>'), 'expired'),
+            (self.page(session._hostwatch_auth_probe_url, status=401), 'expired'),
+            (self.page(session._hostwatch_auth_probe_url, status=302, location='/dashboard'), 'unknown'),
+            (self.page(session._hostwatch_auth_probe_url, status=302, location='https://other.example/login'), 'unknown'),
+        ):
+            with self.subTest(expected=expected, status=page.status_code):
+                session.get = Mock(return_value=page)
+                self.assertEqual(admin._merchant_auth_probe(session, self.adapter), expected)
+                self.assertEqual(session.get.call_args.args[0], session._hostwatch_auth_probe_url)
+                self.assertFalse(session.get.call_args.kwargs['allow_redirects'])
+
+    def test_dmit_redirect_between_private_actions_does_not_mean_expired(self):
+        adapter = admin.MERCHANT_LOGIN_ADAPTERS['dmit']
+        session = requests.Session()
+        session.get = Mock(return_value=self.page(adapter['auth_probe_url'], status=302, location='/clientarea.php?action=security'))
+        self.assertEqual(admin._merchant_auth_probe(session, adapter), 'unknown')
+
+    def test_probe_does_not_use_cached_url_on_another_host(self):
+        session = requests.Session()
+        session._hostwatch_auth_probe_url = 'https://other.example/account'
+        session.get = Mock(return_value=self.page(self.adapter['url']))
+        self.assertEqual(admin._merchant_auth_probe(session, self.adapter), 'unknown')
+        self.assertEqual(session.get.call_args.args[0], self.adapter['url'])
+
+    def test_successful_login_probe_url_survives_cache_copy_and_reload(self):
+        session = requests.Session()
+        private_url = 'https://www.vps.soy/clientarea.php'
+        session.get = Mock(side_effect=[
+            self.page(self.adapter['url'], '<form action="/login"><input name="email"><input name="password"></form>'),
+            self.page(private_url, '<a href="/logout">Logout</a>'),
+        ])
+        session.post = Mock(return_value=self.page(self.adapter['url'], status=302, location='/clientarea.php'))
+        result = admin.check_order_account(session, self.account)
+        self.assertTrue(result['ok'])
+        cached = admin._get_merchant_session('vps_soy', self.account)
+        self.assertEqual(cached._hostwatch_auth_probe_url, private_url)
+        admin.MERCHANT_AUTH_SESSIONS.clear()
+        self.assertEqual(admin.load_merchant_auth_cache(), 1)
+        cached = admin._get_merchant_session('vps_soy', self.account)
+        self.assertEqual(cached._hostwatch_auth_probe_url, private_url)
+        cached.get = Mock(return_value=self.page(private_url, '<a href="/logout">Logout</a>'))
+        self.assertTrue(admin.merchant_account_status('account')['ok'])
+        self.assertEqual(cached.get.call_args.args[0], private_url)
+
+    def test_uncertain_health_preserves_cache_but_explicit_expiration_removes_it(self):
+        admin._store_merchant_session('vps_soy', self.account, None, requests.Session())
+        cached = admin._get_merchant_session('vps_soy', self.account)
+        cached.get = Mock(side_effect=requests.ConnectionError('private-detail'))
+        result = admin.merchant_account_status('account')
+        self.assertEqual(result['status'], 'unknown')
+        self.assertNotIn('private-detail', str(result))
+        self.assertIs(admin._get_merchant_session('vps_soy', self.account), cached)
+        cached.get = Mock(return_value=self.page(self.adapter['url'], status=401))
+        self.assertEqual(admin.merchant_account_status('account')['status'], 'expired')
+        self.assertIsNone(admin._get_merchant_session('vps_soy', self.account))
+
+    def test_delayed_failed_probe_does_not_remove_a_new_login_session(self):
+        admin._store_merchant_session('vps_soy', self.account, None, requests.Session())
+        def replace_session(*args):
+            admin._store_merchant_session('vps_soy', self.account, None, requests.Session())
+            return 'expired'
+        with patch.object(admin, '_merchant_auth_probe', side_effect=replace_session):
+            result = admin.merchant_account_status('account')
+        self.assertEqual(result['status'], 'unknown')
+        self.assertIsNotNone(admin._get_merchant_session('vps_soy', self.account))
+
+
 class AccountCheckAPITests(unittest.TestCase):
     setUp = _AdminAPIBase.setUp
     request = _AdminAPIBase.request
+
+    def test_background_unknown_preserves_last_success_on_disk(self):
+        self.config.write_text(json.dumps(configuration()), encoding='utf-8')
+        previous = {'account_id': 'account', 'ok': True, 'status': 'valid',
+                    'checked_at': '2026-10-20T12:00:00.200000+08:00', 'message': 'Login succeeded'}
+        admin.save_merchant_account_check(previous)
+        before = admin.read_merchant_account_checks()
+        probe = {**previous, 'ok': False, 'status': 'unknown', 'checked_at': '2026-10-20T12:00:01+08:00'}
+        with patch.object(admin, 'merchant_account_status', return_value=probe):
+            code, body = self.request('/api/seckill/account-status', {'account_id': 'account'})
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(body)['status'], 'unknown')
+        self.assertEqual(admin.read_merchant_account_checks(), before)
+
+    def test_delayed_background_expiration_cannot_overwrite_newer_login(self):
+        self.config.write_text(json.dumps(configuration()), encoding='utf-8')
+        previous = {'account_id': 'account', 'ok': True, 'status': 'valid',
+                    'checked_at': '2026-10-20T12:00:00.200000+08:00', 'message': 'Login succeeded'}
+        admin.save_merchant_account_check(previous)
+        probe = {**previous, 'ok': False, 'status': 'expired', 'checked_at': '2026-10-20T12:00:00.100000+08:00'}
+        with patch.object(admin, 'merchant_account_status', return_value=probe):
+            code, body = self.request('/api/seckill/account-status', {'account_id': 'account'})
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(body)['checked_at'], probe['checked_at'])
+        self.assertTrue(admin.read_merchant_account_checks()['account']['ok'])
+        probe['checked_at'] = '2026-10-20T12:00:01+08:00'
+        with patch.object(admin, 'merchant_account_status', return_value=probe):
+            self.request('/api/seckill/account-status', {'account_id': 'account'})
+        self.assertEqual(admin.read_merchant_account_checks()['account']['status'], 'expired')
 
     def test_account_check_result_is_persisted_without_transient_challenge_fields(self):
         self.config.write_text(json.dumps(configuration()), encoding="utf-8")

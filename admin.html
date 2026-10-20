@@ -576,6 +576,9 @@
     @media (max-width:760px) { .merchant-auth-table { display:block; overflow-x:auto; white-space:nowrap; } }
     .seckill-item .form-grid label,.seckill-account .form-grid label { min-width:0; }
     .seckill-item > .actions,.seckill-account > .actions { margin-top:12px; }
+    .seckill-account-save-status { margin:10px 0 0; font-size:12px; font-weight:600; }
+    .seckill-account-save-status.success { color:var(--green); }
+    .seckill-account-save-status.error { color:var(--red); }
     .seckill-panel-actions { justify-content:flex-end; margin-top:14px; padding-top:12px; border-top:1px solid rgba(71,91,116,.16); }
     .market-settings { margin-bottom:14px; padding:16px; }
     .market-settings .market-formula { border-left:0; padding:12px 0; border-bottom:1px solid var(--line); }
@@ -685,6 +688,10 @@
     @media(max-width:620px) { .module-settings-head { flex-direction:column; gap:6px; } }
     .watchlist-filters { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(440px,1fr); align-items:end; gap:10px 14px; margin:10px 0 12px; }
     .watchlist-filter-fields { display:grid; grid-template-columns:minmax(0,1.55fr) minmax(120px,.75fr) minmax(120px,.75fr); align-items:end; gap:10px; min-width:0; }
+    .watchlist-filter-left { display:grid; gap:12px; min-width:0; }
+    .provider-schedule-summary { display:flex; flex-wrap:wrap; gap:6px; }
+    .provider-schedule-summary > span { display:inline-flex; flex-wrap:wrap; align-items:center; gap:3px 6px; padding:5px 8px; border:1px solid var(--line); border-radius:6px; background:#fbfcff; font-size:11px; color:var(--muted); }
+    .provider-schedule-summary strong { color:var(--ink); font-weight:600; }
     .watchlist-filter-fields label,.watchlist-refresh-controls label { width:auto; min-width:0; flex:none; }
     .watchlist-filter-tools { min-width:0; padding:9px 11px; border:1px solid var(--line); border-radius:8px; background:#fbfcff; }
     .watchlist-refresh-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:7px; }
@@ -696,6 +703,9 @@
     .watchlist-refresh-meta .hint { margin:0; font-size:11px; }
     .watchlist-refresh-meta .subtle { margin:0; font-size:11px; }
     .watchlist-filter-tools #interval-description { margin:5px 0 0; font-size:11px; }
+    .notification-settings-extra { display:flex; align-items:center; flex-wrap:wrap; gap:8px 10px; margin-top:8px; }
+    .notification-settings-extra .option-button { min-height:30px; padding:5px 9px; font-size:11px; }
+    .notification-settings-extra .hint { margin:0; font-size:11px; }
     @media(max-width:1100px) { .watchlist-filters { grid-template-columns:1fr; } }
     @media(max-width:760px) { .watchlist-filter-fields { grid-template-columns:minmax(0,1fr) minmax(130px,.65fr) minmax(130px,.65fr); } .watchlist-refresh-controls { grid-template-columns:repeat(2,minmax(0,1fr)); } .watchlist-refresh-controls button { width:max-content; } }
     @media(max-width:520px) { .watchlist-filter-fields { grid-template-columns:1fr; } .watchlist-refresh-controls { grid-template-columns:1fr; } .watchlist-refresh-controls button { width:100%; } .watchlist-refresh-heading { align-items:flex-start; flex-direction:column; gap:4px; } }
@@ -872,10 +882,13 @@
     <div class="section-body">
     <div class="section-head"><div><h2>我的 VPS 库存监控 <span id="watchlist-count" class="subtle">0</span></h2><p>关注商品与实时库存 · 仅查看，不发送通知。</p></div><div class="actions"><button id="watchlist-browse" type="button">从大盘添加</button></div></div>
     <div class="watchlist-filters">
+      <div class="watchlist-filter-left">
+      <div id="monitor-provider-summary" class="provider-schedule-summary" role="group" aria-label="各商家库存监控刷新模式和间隔"></div>
       <div class="watchlist-filter-fields">
         <label>搜索商品<input id="watchlist-search" type="search" placeholder="商品、商家或线路"></label>
         <label>商家<select id="watchlist-provider"><option value="all">全部商家</option></select></label>
         <label>最近库存<select id="watchlist-stock"><option value="all">全部状态</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">暂无记录</option></select></label>
+      </div>
       </div>
       <div class="watchlist-filter-tools" aria-labelledby="monitor-settings-title">
         <div class="watchlist-refresh-heading"><h3 id="monitor-settings-title">库存监控刷新</h3><strong id="monitor-runtime" class="state">正在读取服务状态</strong></div>
@@ -898,17 +911,31 @@
   <section class="page-panel panel-card" id="page-notifications" data-page="notifications" aria-labelledby="page-title" hidden>
     <div class="section-body">
     <div class="section-head"><div><h2>我的 VPS 库存通知 <span id="notification-count" class="subtle"></span></h2><p>每轮补货通知一次，库存变化更新原 Telegram 消息，支持单次测试。</p></div><div class="actions"><button id="notification-browse" type="button">从大盘添加</button></div></div>
-    <details class="help-note"><summary>库存通知说明</summary><p id="notification-note" class="hint"></p></details>
-    <div class="module-settings" aria-labelledby="notify-settings-title">
-      <div class="module-settings-head"><div><h3 id="notify-settings-title">库存通知刷新设置</h3><p>模式和间隔按商家分别保存，只控制库存通知商品，不影响库存监控。</p></div><span class="subtle">独立于库存监控</span></div>
-      <div class="form-grid">
-        <label>商家<select id="notify-schedule-provider"></select></label>
-        <label>刷新模式<select id="notify-schedule-mode"><option value="manual">仅手动刷新</option><option value="auto">自动刷新</option></select></label>
-        <label>通知检查间隔（秒）<input id="notify-interval" type="number" min="0" max="86400" step="1" value="600"></label>
-        <button id="notify-current" class="option-button span-2" type="button" data-config-option data-on="已开启" data-off="未开启" aria-pressed="false" aria-label="首次启用该商品通知时，有货也发送提醒"><span>首次启用该商品通知时，有货也发送提醒</span><span data-option-state>未开启</span></button>
+    <div class="watchlist-filters notification-filters">
+      <div class="watchlist-filter-left">
+      <div id="notify-provider-summary" class="provider-schedule-summary" role="group" aria-label="各商家库存通知刷新模式和间隔"></div>
+      <div class="watchlist-filter-fields">
+        <label>搜索商品<input id="notification-search" type="search" placeholder="商品、商家或线路"></label>
+        <label>商家<select id="notification-provider"><option value="all">全部商家</option></select></label>
+        <label>最近库存<select id="notification-stock"><option value="all">全部状态</option><option value="in">有货</option><option value="out">缺货</option><option value="unknown">暂无记录</option></select></label>
       </div>
-      <div class="module-settings-actions"><button id="notify-refresh-manual" type="button">手动刷新库存通知</button><span class="hint">间隔为 0 秒时，当前轮次完成后立即开始下一轮。</span></div>
+      </div>
+      <div class="watchlist-filter-tools notification-settings-tools" aria-labelledby="notify-settings-title">
+        <div class="watchlist-refresh-heading"><h3 id="notify-settings-title">库存通知刷新设置</h3><strong id="notify-runtime" class="state">正在读取服务状态</strong></div>
+        <div class="watchlist-refresh-controls">
+          <label>商家<select id="notify-schedule-provider"></select></label>
+          <label>刷新模式<select id="notify-schedule-mode"><option value="manual">仅手动刷新</option><option value="auto">自动刷新</option></select></label>
+          <label>监控间隔（秒）<input id="notify-interval" type="number" min="0" max="86400" step="1" value="600"></label>
+          <button id="notify-refresh-manual" type="button">手动刷新</button>
+        </div>
+        <div class="watchlist-refresh-meta"><span id="notify-runtime-note" class="subtle">模式和间隔按商家分别保存；以服务器实际运行状态为准。</span><span id="notify-draft" class="hint" aria-live="polite">配置读取中。</span></div>
+        <div class="notification-settings-extra">
+          <button id="notify-current" class="option-button" type="button" data-config-option data-on="已开启" data-off="未开启" aria-pressed="false" aria-label="首次启用该商品通知时，有货也发送提醒"><span>首次启用该商品通知时，有货也发送提醒</span><span data-option-state>未开启</span></button>
+          <span class="hint">间隔为 0 秒时，当前轮次完成后立即开始下一轮。</span>
+        </div>
+      </div>
     </div>
+    <details class="help-note"><summary>库存通知说明</summary><p id="notification-note" class="hint"></p></details>
     <div id="notification-list"></div>
     <p class="table-footnote">拖动商家旁的 ⠿ 调整顺序，保存后保留；与库存监控分别排序</p>
     <div class="seckill-panel" id="seckill-panel">
