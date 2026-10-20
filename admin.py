@@ -3776,7 +3776,8 @@ class SeckillTask:
                 return {"status": "uncertain", "url": url, "quantity": quantity}
             purchase_url = akile_order_page_url(order["order_id"])
             self.log(f"Akile 待付款订单已确认，数量 {quantity}；正在准备订单通知。", "success", item)
-            notification = self._notify_unpaid_order(item, order["order_id"], quantity, purchase_url)
+            notification = self._notify_unpaid_order(item, order["order_id"], quantity, purchase_url,
+                                                      duration_seconds=self._total_duration())
             return {"status": "submitted", "order_id": order["order_id"], "url": purchase_url,
                     "quantity": quantity, "payment_status": "unpaid", "order_verification": verification,
                     "telegram_status": notification}
@@ -3790,7 +3791,8 @@ class SeckillTask:
                 return {"status": "uncertain", "url": url, "quantity": quantity}
             self.log(f"VMISS 订单 {order['order_id']} 检查正常：状态为未付款，商品、系统和优惠码已匹配", "success", item)
             self.log(f"VMISS 待付款订单已确认，数量 {quantity}；正在准备订单通知。", "success", item)
-            notification = self._notify_unpaid_order(item, order["order_id"], quantity, order["invoice_url"])
+            notification = self._notify_unpaid_order(item, order["order_id"], quantity, order["invoice_url"],
+                                                      duration_seconds=self._total_duration())
             return {"status": "submitted", "order_id": order["order_id"], "url": order["invoice_url"],
                     "quantity": quantity, "payment_status": "unpaid", "telegram_status": notification}
         if product and str(product.get("adapter", "")).casefold() == "bwh":
@@ -3801,7 +3803,8 @@ class SeckillTask:
                 self.log(f"已发送一次搬瓦工下单请求，但无法确认未付款账单；原因：{detail[:240]}。已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
                 return {"status": "uncertain", "url": url, "quantity": quantity}
             self.log(f"搬瓦工待付款账单 {order['order_id']} 已确认，数量 {quantity}；正在准备订单通知。", "success", item)
-            notification = self._notify_unpaid_order(item, order["order_id"], quantity, order["invoice_url"])
+            notification = self._notify_unpaid_order(item, order["order_id"], quantity, order["invoice_url"],
+                                                      duration_seconds=self._total_duration())
             return {"status": "submitted", "order_id": order["order_id"], "url": order["invoice_url"],
                     "quantity": quantity, "payment_status": "unpaid", "telegram_status": notification}
         if product and str(product.get("adapter", "")).casefold() == "isvoro":
@@ -3812,7 +3815,8 @@ class SeckillTask:
                 detail = _order_exception_detail(exc)
                 self.log(f"已发送一次 Isvoro 下单请求，但无法确认待付款账单；原因：{detail[:240]}。已停止该商品，勿重复启动，请先到官网核对。未发起付款请求。", "error", item)
                 return {"status": "uncertain", "url": url, "quantity": quantity}
-            notification = self._notify_unpaid_order(item, order["order_id"], quantity, order["invoice_url"])
+            notification = self._notify_unpaid_order(item, order["order_id"], quantity, order["invoice_url"],
+                                                      duration_seconds=self._total_duration())
             return {"status": "submitted", "order_id": order["order_id"], "url": order["invoice_url"],
                     "quantity": quantity, "payment_status": "unpaid", "telegram_status": notification,
                     "os": order["os"], "payment_method": order["payment_method"]}
@@ -3833,7 +3837,8 @@ class SeckillTask:
                 detail = _order_exception_detail(exc)
                 self.log(f"DMIT 抢购流程在账单核验前异常；最终结算请求是否发出无法确认。原因：{detail[:240]}。请先检查官网账单，勿重复启动。未发起付款请求。", "error", item)
                 return {"status": "uncertain", "url": url, "quantity": quantity}
-            notification = self._notify_unpaid_order(item, order["order_id"], quantity, order["invoice_url"])
+            notification = self._notify_unpaid_order(item, order["order_id"], quantity, order["invoice_url"],
+                                                      duration_seconds=self._total_duration())
             return {"status": "submitted", "order_id": order["order_id"], "url": order["invoice_url"],
                     "quantity": quantity, "payment_status": "unpaid", "telegram_status": notification,
                     "os": order["os"], "payment_method": order["payment_method"], "hostname": order["hostname"],
@@ -3863,12 +3868,17 @@ class SeckillTask:
             return {"status": "uncertain", "url": url, "quantity": quantity}
         purchase_url = self._affiliate_purchase_url(item, url)
         self.log(f"已创建待付款订单，数量 {quantity}；请手动前往官网核对订单并支付。", "success", item)
-        notification = self._notify_unpaid_order(item, data["order_id"], quantity, purchase_url)
+        notification = self._notify_unpaid_order(item, data["order_id"], quantity, purchase_url,
+                                                  duration_seconds=self._total_duration())
         # Do not expose or visit arbitrary response links, and never fetch payment_url.
         return {"status": "submitted", "order_id": data["order_id"][:128], "url": purchase_url, "quantity": quantity,
                 "payment_status": "unpaid", "telegram_status": notification}
 
-    def _notify_unpaid_order(self, item: dict, order_id: str, quantity: int, url: str) -> str:
+    def _total_duration(self) -> float:
+        return round(max(0.0, time.monotonic() - self.started), 1)
+
+    def _notify_unpaid_order(self, item: dict, order_id: str, quantity: int, url: str,
+                             duration_seconds: float | None = None) -> str:
         token, chat_id = effective_telegram(self.config)
         if not token or not chat_id:
             self.log("待付款订单已创建，但未发送 Telegram：机器人未配置或通知已关闭。", "warning", item)
@@ -3876,6 +3886,8 @@ class SeckillTask:
         label = self._item_label(item)
         product = next((row for row in self.config.get("products", []) if row.get("id") == item.get("product_id")), {})
         merchant = str(product.get("provider") or product.get("adapter") or "未知商家").strip()
+        if duration_seconds is None:
+            duration_seconds = self._total_duration()
         message = "\n".join([
             "✅ <b>HostWatch · VPS 补货抢购成功</b>",
             f"商家：{escape(merchant[:80])}",
@@ -3883,6 +3895,7 @@ class SeckillTask:
             f"订单号：<code>{escape(str(order_id)[:128])}</code>",
             f"数量：{quantity}",
             "状态：待付款",
+            f"总耗时：{duration_seconds} 秒",
             f"下单时间：{format_beijing(beijing_iso())}",
             "请登录商家官网手动付款，系统不会自动付款。",
         ])

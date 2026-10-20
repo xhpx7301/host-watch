@@ -101,6 +101,20 @@ class AdminAPITests(unittest.TestCase):
         self.assertEqual(code, 502)
         self.assertIn("sendMessage", json.loads(body)["error"])
 
+    def test_seckill_success_notification_includes_merchant_and_total_duration(self):
+        config = admin.default_config()
+        config["products"] = [{"id": "product-1", "provider": "VMISS", "name": "US Basic"}]
+        task = admin.SeckillTask("seckill-test-1234567890", config, "rapid")
+        item = {"id": "item-1", "product_id": "product-1", "quantity": 1}
+        with patch.object(admin, "effective_telegram", return_value=("test-token", "123")), \
+                patch.object(admin, "telegram_call") as send:
+            result = task._notify_unpaid_order(item, "INV-123", 1, "https://example.com/invoice/INV-123",
+                                               duration_seconds=21.4)
+        self.assertEqual(result, "sent")
+        message = send.call_args.kwargs["text"]
+        self.assertIn("商家：VMISS", message)
+        self.assertIn("总耗时：21.4 秒", message)
+
     def test_older_config_save_preserves_market_settings(self):
         from test_akile_market import config as market_config
         current = market_config()
