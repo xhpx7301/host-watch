@@ -355,6 +355,20 @@ class OrderTaskTests(unittest.TestCase):
         self.sessions[0].post.assert_not_called()
         self.sessions[2].post.assert_not_called()
 
+    def test_same_product_can_have_separate_items_bound_to_different_accounts(self):
+        second_account = copy.deepcopy(self.config['vps_seckill']['accounts'][0])
+        second_account.update(id='account-2', name='Backup', username='backup-user')
+        self.config['vps_seckill']['accounts'].append(second_account)
+        second_item = copy.deepcopy(self.config['vps_seckill']['items'][0])
+        second_item.update(id='two', account_id='account-2', quantity=1)
+        self.config['vps_seckill']['items'].append(second_item)
+
+        normalized = admin.validate_config(self.config)['vps_seckill']
+
+        self.assertEqual([item['product_id'] for item in normalized['items']], ['plan', 'plan'])
+        self.assertEqual([item['account_id'] for item in normalized['items']], ['account', 'account-2'])
+        self.assertEqual(normalized['items'][1]['quantity'], 1)
+
     def test_stop_during_stock_check_prevents_order_post(self):
         def inspect(*args):
             self.task.cancel()

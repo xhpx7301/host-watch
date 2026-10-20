@@ -104,8 +104,9 @@ class AdminAPITests(unittest.TestCase):
     def test_seckill_success_notification_includes_merchant_and_total_duration(self):
         config = admin.default_config()
         config["products"] = [{"id": "product-1", "provider": "VMISS", "name": "US Basic"}]
+        config["vps_seckill"]["accounts"] = [{"id": "account-1", "name": "VMISS 备用账号", "provider": "vmiss"}]
         task = admin.SeckillTask("seckill-test-1234567890", config, "rapid")
-        item = {"id": "item-1", "product_id": "product-1", "quantity": 1}
+        item = {"id": "item-1", "product_id": "product-1", "account_id": "account-1", "quantity": 1}
         with patch.object(admin, "effective_telegram", return_value=("test-token", "123")), \
                 patch.object(admin, "telegram_call") as send:
             result = task._notify_unpaid_order(item, "INV-123", 1, "https://example.com/invoice/INV-123",
@@ -113,6 +114,7 @@ class AdminAPITests(unittest.TestCase):
         self.assertEqual(result, "sent")
         message = send.call_args.kwargs["text"]
         self.assertIn("商家：VMISS", message)
+        self.assertIn("账户：VMISS 备用账号", message)
         self.assertIn("总耗时：21.4 秒", message)
 
     def test_older_config_save_preserves_market_settings(self):

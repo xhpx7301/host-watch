@@ -3885,6 +3885,8 @@ class SeckillTask:
             return "unconfigured"
         label = self._item_label(item)
         product = next((row for row in self.config.get("products", []) if row.get("id") == item.get("product_id")), {})
+        account = next((row for row in self.config.get("vps_seckill", {}).get("accounts", [])
+                        if row.get("id") == item.get("account_id")), None)
         merchant = str(product.get("provider") or product.get("adapter") or "未知商家").strip()
         if duration_seconds is None:
             duration_seconds = self._total_duration()
@@ -3892,6 +3894,7 @@ class SeckillTask:
             "✅ <b>HostWatch · VPS 补货抢购成功</b>",
             f"商家：{escape(merchant[:80])}",
             f"商品：{escape(str(label)[:160])}",
+            *([f"账户：{escape(str(account.get('name') or account.get('username') or account.get('id'))[:120])}"] if account else []),
             f"订单号：<code>{escape(str(order_id)[:128])}</code>",
             f"数量：{quantity}",
             "状态：待付款",

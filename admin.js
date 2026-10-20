@@ -3017,14 +3017,38 @@ function addToVpsSeckill(product) {
   }
   renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); setMessage(`${product.name} 已加入 VPS 补货抢购${addedDefaults ? `：${addedDefaults}` : ""}，正在自动保存。`, "pending", true, false);
 }
+function addSeckillAccountItem(item, product) {
+  if (!item || actionRunning) return;
+  const items = seckillItems();
+  const usedAccountIds = new Set(items.filter(row => row.product_id === item.product_id && row.account_id).map(row => row.account_id));
+  const provider = String(product?.adapter || product?.provider || "").trim().toLowerCase();
+  const providerKey = seckillProviderKey(provider) || provider;
+  const account = orderedSeckillAccounts().find(row => {
+    const rowProvider = seckillProviderKey(row.provider) || String(row.provider || "").trim().toLowerCase();
+    return Boolean(providerKey && rowProvider === providerKey) && !usedAccountIds.has(row.id);
+  });
+  const copy = {
+    ...item,
+    id: seckillItemId(),
+    quantity: 1,
+    account_id: account?.id || "",
+    enabled: true,
+  };
+  items.push(copy);
+  renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill");
+  const accountLabel = account ? `已绑定账号“${account.name || account.username || account.id}”` : "请在新条目中选择网站账户";
+  setMessage(`${product?.name || item.label || item.product_id} 已新增一个账号抢购项（${accountLabel}），正在自动保存。`, "pending", true, false);
+}
 function toggleVpsSeckill(product) {
   if (!product || actionRunning) return;
   const existing = seckillItems().find(item => item.product_id === product.id);
   if (existing) {
-    const index = seckillItems().indexOf(existing);
-    if (index >= 0) seckillItems().splice(index, 1);
+    const items = seckillItems();
+    const removed = items.filter(item => item.product_id === product.id);
+    for (const item of removed) seckillAccountChecks.delete(item.id);
+    config.vps_seckill.items = items.filter(item => item.product_id !== product.id);
     renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill");
-    setMessage(`${product.name} 已移出 VPS 补货抢购，正在自动保存。`, "pending", true, false);
+    setMessage(`${product.name} 的 ${removed.length} 个账号抢购项已全部移出，正在自动保存。`, "pending", true, false);
     return;
   }
   addToVpsSeckill(product);
@@ -3080,6 +3104,9 @@ function renderVpsSeckill() {
     [["下单数量（台，1–100）", quantity], ["优惠码", coupon], ["系统", operatingSystem], ["付款周期", billingCycle], ["付款方式", paymentMethod], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
     const enabled = settingButton("商品状态", item.enabled !== false, value => { item.enabled = value; renderVpsSeckillTask(); updateDraftState(); scheduleAutoSave("seckill"); }, ["已停用", "已启用"]);
     const flags = text("div", "", "actions"); flags.append(enabled);
+    const addAccount = text("button", "添加其他账号抢购"); addAccount.type = "button"; addAccount.disabled = actionRunning; addAccount.dataset.seckillAddAccount = "true";
+    addAccount.setAttribute("aria-label", `为${title.textContent}添加其他账号抢购`);
+    addAccount.addEventListener("click", () => addSeckillAccountItem(item, product)); flags.append(addAccount);
     const status = text("p", seckillAccountNote(item), "hint seckill-account-status"); status.setAttribute("role", "status");
     card.append(status);
     const remove = text("button", "删除商品", "danger"); remove.type = "button"; remove.disabled = actionRunning;
@@ -3354,7 +3381,7 @@ function hasUnsavedSeckillItem(itemId) {
   return JSON.stringify(comparableSeckillItem(current)) !== JSON.stringify(comparableSeckillItem(previous));
 }
 function renderVpsSeckillTask() {
-  document.querySelectorAll("#page-seckill .option-button, .seckill-item .danger, .seckill-account .danger, .seckill-account [data-account-save], #egress-nodes .egress-node-head button, #egress-nodes .egress-install-copy, #egress-nodes .egress-uninstall-copy").forEach(button => { button.disabled = actionRunning; });
+  document.querySelectorAll("#page-seckill .option-button, .seckill-item .danger, .seckill-item [data-seckill-add-account], .seckill-account .danger, .seckill-account [data-account-save], #egress-nodes .egress-node-head button, #egress-nodes .egress-install-copy, #egress-nodes .egress-uninstall-copy").forEach(button => { button.disabled = actionRunning; });
   document.querySelectorAll(".seckill-check-account").forEach(button => { const itemCard = button.closest(".seckill-item"); const item = itemCard ? seckillItems().find(row => row.id === itemCard.dataset.id) : null; button.disabled = actionRunning || (itemCard ? !item?.account_id : !button.dataset.accountId); });
   seckillAccounts().forEach(account => updateSeckillAccountControls(account.id));
   document.querySelectorAll(".seckill-account-status").forEach(node => { const itemCard = node.closest(".seckill-item"); if (itemCard) { const item = seckillItems().find(row => row.id === itemCard.dataset.id); if (item) node.textContent = seckillAccountNote(item); } else { const account = seckillAccounts().find(row => row.id === node.closest(".seckill-account")?.dataset.accountId); if (account) node.textContent = standaloneAccountNote(account); } });
