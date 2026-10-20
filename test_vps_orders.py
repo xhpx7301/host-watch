@@ -162,6 +162,16 @@ class OrderTaskTests(unittest.TestCase):
         self.assertEqual(task._visit_affiliate_entry(session, {'id': 'vps-soy'}, url, product), url)
         session.get.assert_not_called()
 
+    def test_successful_order_persists_full_seckill_logs(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(admin, 'STATUS_PATH', Path(directory) / 'status.json'):
+            result = self.run_task()
+            self.assertEqual(result['items'][0]['status'], 'submitted')
+            saved = json.loads(admin.STATUS_PATH.read_text(encoding='utf-8'))
+            messages = [item['message'] for item in saved['modules']['seckill']['logs']]
+            self.assertTrue(any('开始账户认证' in message for message in messages))
+            self.assertTrue(any('创建' in message and '待付款订单' in message for message in messages))
+            self.assertIn('秒杀任务已完成；已确认的待付款订单请到官网手动支付', messages)
+
     def test_quantity_defaults_and_rejects_invalid_values(self):
         item = self.config['vps_seckill']['items'][0]
         del item['quantity']

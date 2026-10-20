@@ -8,7 +8,7 @@ import requests
 from admin import validate_config
 from monitor import (MonitorError, Product, RequestServiceError, SiteBlocked,
                      fetch_html_stock, notification_text, check_once, inspect_product,
-                     read_inventory_cache, write_inventory_cache)
+                     read_inventory_cache, update_module_status, write_inventory_cache)
 
 
 class FakeResponse:
@@ -46,6 +46,29 @@ def html_product(**overrides):
 
 
 class GenericAdapterTests(unittest.TestCase):
+    def test_module_status_can_persist_a_successful_task_log(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "status.json"
+            entries = [
+                {"at": "2026-10-21T01:01:57+08:00", "message": "开始检查商品", "trigger": "rapid"},
+                {"at": "2026-10-21T01:01:58+08:00", "message": "已创建待付款订单 16488", "trigger": "rapid"},
+            ]
+            update_module_status(path, "seckill", {"mode": "rapid", "interval_seconds": 5}, "success",
+                "秒杀任务已完成；已确认的待付款订单请到官网手动支付", trigger="rapid", log_entries=entries)
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            logs = saved["modules"]["seckill"]["logs"]
+            self.assertEqual([item["message"] for item in logs], [entry["message"] for entry in entries] + ["秒杀任务已完成；已确认的待付款订单请到官网手动支付"])
+            self.assertEqual(saved["modules"]["seckill"]["message"], "秒杀任务已完成；已确认的待付款订单请到官网手动支付")
+            later = [{"at": "2026-10-21T02:01:57+08:00", "message": "第二次抢购检查", "trigger": "precise"}]
+            update_module_status(path, "seckill", {"mode": "precise", "interval_seconds": 5}, "success",
+                "第二次抢购完成", trigger="precise", log_entries=later)
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            messages = [item["message"] for item in saved["modules"]["seckill"]["logs"]]
+            self.assertIn("开始检查商品", messages)
+            self.assertIn("已创建待付款订单 16488", messages)
+            self.assertIn("第二次抢购检查", messages)
+            self.assertEqual(messages[-1], "第二次抢购完成")
+
     def test_reads_quantity_from_unique_stock_element(self):
         product = fetch_html_stock(FakeSession(FakeResponse('<p class="stock">库存 1,200 台</p>')), html_product())
         self.assertEqual(product.available, 1200)

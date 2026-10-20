@@ -3700,12 +3700,12 @@ class SeckillTask:
             del self.logs[:-200]
             self.output["logs"] = list(self.logs)
 
-    def publish_module_status(self, result: str, message: str = "") -> None:
+    def publish_module_status(self, result: str, message: str = "", log_entries: list[dict] | None = None) -> None:
         try:
             from monitor import update_module_status
             interval = self.config.get("vps_seckill", {}).get("interval_seconds", 5)
             schedule = {"mode": self.mode, "interval_seconds": interval}
-            update_module_status(STATUS_PATH, "seckill", schedule, result, message, trigger=self.mode)
+            update_module_status(STATUS_PATH, "seckill", schedule, result, message, trigger=self.mode, log_entries=log_entries)
         except (OSError, ValueError, TypeError):
             pass
 
@@ -4053,7 +4053,8 @@ class SeckillTask:
                 final_message = "秒杀任务已完成；没有确认创建待付款订单"
             self.log(final_message)
             failed = any(item.get("status") in {"blocked", "failed_before_submit", "uncertain"} for item in completed_items)
-            self.publish_module_status("error" if failed else "success", final_message)
+            self.publish_module_status("error" if failed else "success", final_message,
+                log_entries=list(self.logs) if any(item.get("status") == "submitted" for item in completed_items) else None)
 
     def mode_label(self):
         return "按商家执行模式" if self.config.get("provider_schedules", {}).get("seckill") else {"rapid": "极速秒杀（自动）", "precise": "精准秒杀（自动）", "manual": "手动秒杀"}.get(self.mode, self.mode)

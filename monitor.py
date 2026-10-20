@@ -1210,7 +1210,8 @@ def module_schedule(config: dict, module: str, provider: str = "") -> dict:
 
 
 def update_module_status(path: Path, module: str, schedule: dict, result: str,
-                        message: str = "", checked_at: str | None = None, trigger: str | None = None) -> None:
+                        message: str = "", checked_at: str | None = None, trigger: str | None = None,
+                        log_entries: list[dict] | None = None) -> None:
     if path is None:
         return
     try:
@@ -1223,9 +1224,15 @@ def update_module_status(path: Path, module: str, schedule: dict, result: str,
     at = checked_at or beijing_iso()
     log = {"at": at, "result": result, "trigger": trigger or schedule.get("mode", "manual"),
            "provider": schedule.get("provider", ""), "message": message or ("完成" if result == "success" else "等待执行")}
-    logs = [item for item in previous.get("logs", []) if isinstance(item, dict)][-19:]
+    logs = [item for item in previous.get("logs", []) if isinstance(item, dict)]
+    if log_entries:
+        logs.extend(item.copy() for item in log_entries if isinstance(item, dict))
+        logs = logs[-199:]
+    else:
+        logs = logs[-19:]
     if result != "pending" or not logs:
-        logs.append(log)
+        if not logs or logs[-1].get("at") != log.get("at") or logs[-1].get("message") != log.get("message"):
+            logs.append(log)
     modules[module] = {
         "mode": schedule.get("mode", "manual"),
         "interval_seconds": schedule.get("interval_seconds", 0),
@@ -1236,7 +1243,7 @@ def update_module_status(path: Path, module: str, schedule: dict, result: str,
         "last_manual_refresh": previous.get("last_manual_refresh", ""),
         "last_auto_refresh": previous.get("last_auto_refresh", ""),
         "message": message or previous.get("message", ""),
-        "logs": logs[-20:],
+        "logs": logs[-200:] if log_entries else logs[-20:],
     }
     if result != "pending":
         if (trigger or schedule.get("mode")) == "manual":
