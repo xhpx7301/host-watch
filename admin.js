@@ -81,7 +81,7 @@ const pages = {
   seckill: { title: "VPS 补货抢购", description: "从库存监控或库存通知选择商品，配置优惠码和账户后执行补货抢购。" },
   market: { title: "Akile 交易市场", description: "查看 Akile 交易市场快照，按续费价格和到期时间计算折价/溢价金额与比例，设置指定商品的 Telegram 提醒。" },
   accounts: { title: "网站账户", description: "集中管理 VPS 补货抢购使用的网站登录账户，检查账户状态并导入商家认证信息。" },
-  products: { title: "自定义商品 / 已移出商品", description: "新增大盘未收录的商品，编辑手动配置，或恢复已移出的商品。" },
+  products: { title: "自定义商品", description: "新增大盘未收录的商品，编辑手动配置，或恢复已移出的商品。" },
   monitor: { title: "VPS 库存监控", description: "集中查看你关注的 VPS，查看库存与配置、编辑备注和线路，直接购买，不发送通知。" },
   notifications: { title: "VPS 库存通知", description: "选择需要 Telegram 库存提醒的商品，管理通知和测试。" },
   affiliates: { title: "AFF 管理", description: "统一管理各商家推广码，保存后应用到新的购买入口。" },
