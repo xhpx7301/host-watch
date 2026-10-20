@@ -3748,9 +3748,12 @@ class SeckillTask:
             return {"status": "cancelled", "url": url, "quantity": quantity}
         key = hashlib.sha256(f"{self.id}:{item['id']}".encode()).hexdigest()
         affiliate_url = self._affiliate_purchase_url(item, url, product) if product else url
+        adapter_id = str((product or {}).get("adapter", "")).casefold()
         dmit_browser = (product and str(product.get("adapter", "")).casefold() == "dmit"
                         and str((fetcher or {}).get("mode", "")).casefold() == "flaresolverr")
-        if affiliate_url != url and not dmit_browser:
+        # Akile's official client stores aff_code in browser localStorage and
+        # does not include it in makeOrder; an HTTP visit cannot bind API orders.
+        if affiliate_url != url and adapter_id != "akile" and not dmit_browser:
             try:
                 self._visit_affiliate_entry(session, item, url, product)
             except (requests.RequestException, ValueError) as exc:

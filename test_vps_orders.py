@@ -544,9 +544,8 @@ class VmissOrderTests(OrderTaskTests):
         self.assertEqual(result["url"], order_url)
         self.assertEqual(result["telegram_status"], "sent")
         self.assertEqual(session.post.call_args.args[0], admin.AKILE_ORDER_URL)
-        self.assertEqual(session.get.call_args_list[0].args[0], "https://akile.ai/shop/server?areaId=6&nodeId=41&planId=1047&aff_code=eb2ff10d-f57f-485f-9621-ed873b36c2c0")
-        self.assertEqual(session.get.call_args_list[1].args[0], admin.AKILE_ORDER_DETAIL_URL)
-        self.assertEqual(session.get.call_args_list[1].kwargs["params"], {"orderNo": "202610170001"})
+        self.assertEqual(session.get.call_args.args[0], admin.AKILE_ORDER_DETAIL_URL)
+        self.assertEqual(session.get.call_args.kwargs["params"], {"orderNo": "202610170001"})
         self.assertNotIn("payment_url", session.post.call_args.kwargs["json"])
         self.assertEqual(telegram.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["url"], order_url)
 
