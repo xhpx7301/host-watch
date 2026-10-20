@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch, Mock
 
@@ -42,6 +43,13 @@ class AdminAPITests(unittest.TestCase):
         connection.request("GET", path)
         response = connection.getresponse()
         return response.status, response.read()
+
+    def test_backup_download_manager_action_allows_archive_creation_time(self):
+        with patch.object(admin.subprocess, "run", return_value=SimpleNamespace(
+                returncode=0, stdout='{"ok":true}\n', stderr="")) as run:
+            result = admin.manager_action({"action": "backup-download"})
+        self.assertTrue(result["ok"])
+        self.assertEqual(run.call_args.kwargs["timeout"], 180)
 
     def test_market_endpoints_require_auth_and_refresh_does_not_evaluate(self):
         with patch.object(admin, "authorized", return_value=False), patch.object(admin, "refresh_akile_market") as refresh:

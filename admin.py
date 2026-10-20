@@ -5507,7 +5507,7 @@ def manager_action(value: dict) -> dict:
             input=json.dumps(value, ensure_ascii=False),
             capture_output=True,
             text=True,
-            timeout=120 if value.get("action") == "backup-import" else 30,
+            timeout={"backup-import": 120, "backup-download": 180}.get(value.get("action"), 30),
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):

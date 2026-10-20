@@ -864,7 +864,7 @@ async function performManagementAction(action, extra = {}) {
 
 async function exportManagementBackup() {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 40_000);
+  const timer = setTimeout(() => controller.abort(), 210_000);
   try {
     const response = await fetch("/api/manage", {
       method: "POST",
