@@ -14,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+from datetime import datetime, timezone
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
@@ -26,7 +27,7 @@ from auth import DEFAULT_USERS_PATH, authentication_required, authorized, creden
 from catalog import CatalogBusy, CatalogService
 from affiliates import DEFAULT_AFFILIATES, PROVIDERS, affiliate_purchase_url, effective_coupon, normalize_affiliate_accounts, normalize_affiliate_coupons, normalize_affiliate_notes, normalize_affiliate_rates, normalize_affiliates, normalize_merchant_order
 from time_utils import beijing_iso, format_beijing
-from notifications import purchase_button, stock_message, telegram_region
+from notifications import hardware_text, network_text, purchase_button, stock_message, telegram_region
 import egress
 
 
@@ -4993,20 +4994,55 @@ def _save_isvoro_market_alert_state(value: dict) -> None:
             os.unlink(name)
 
 
+def _akile_market_display_time(value: object) -> str:
+    """Format an Akile epoch timestamp in the same Beijing-time form as other alerts."""
+    try:
+        timestamp = float(value)
+        if not math.isfinite(timestamp) or timestamp <= 0:
+            return "—"
+        return format_beijing(datetime.fromtimestamp(timestamp, timezone.utc).isoformat())
+    except (TypeError, ValueError, OverflowError, OSError):
+        return "—"
+
+
+def _akile_market_display_unit(value: object, suffix: str) -> str:
+    """Append a unit to numeric market fields while preserving vendor-provided text."""
+    text = str(value).strip() if value is not None else ""
+    if not text:
+        return ""
+    return f"{text}{suffix}" if re.fullmatch(r"[+-]?\d+(?:\.\d+)?", text) else text
+
+
 def _akile_market_alert(config: dict, rule: dict, item: dict, reason: str) -> bool:
     token, chat_id = effective_telegram(config)
     if not token or not chat_id:
         return False
     kind = "折价" if item["delta"] >= 0 else "溢价"
+    hardware = hardware_text(" · ".join(filter(None, [
+        _akile_market_display_unit(item.get("cpu"), " 核"),
+        _akile_market_display_unit(item.get("memory"), "MB"),
+        _akile_market_display_unit(item.get("disk"), "GB"),
+    ])))
+    network = network_text(" · ".join(filter(None, [
+        _akile_market_display_unit(item.get("flow"), "GB"),
+        _akile_market_display_unit(item.get("bandwidth"), "Mbps"),
+    ])))
     message = "\n".join([
-        "🔔 <b>HostWatch · Akile 交易市场</b>",
-        f"实例名：{escape(item['name'])} · 套餐：{escape(item['plan_name'])} · 地区/节点：{escape(telegram_region(item['region']))} / {escape(item['node'])}",
-        f"挂单 ID：<code>{item['id']}</code>",
-        f"售价：¥{item['price']:.2f} · 续费：¥{item['renewal']:.2f}/{item['cycle']}个月",
-        f"剩余：{item['remaining_days']:.2f} 天 · 剩余价值：¥{item['fair_value']:.2f} · 月付：¥{item['monthly_price']:.2f}",
-        f"{kind}：{abs(item['rate']):.2f}% · ¥{abs(item['delta']):.2f}",
-        f"触发规则：{escape(rule.get('name') or rule['id'])}",
-        escape(reason[:400]), f"检查时间：{format_beijing(item['updated_at'])}",
+        "🔔 <b>HostWatch · Akile 交易市场</b>", "",
+        f"🌍 <b>地区：</b>{escape(telegram_region(item.get('region', '')) or '—')}",
+        f"📍 <b>节点：</b>{escape(str(item.get('node') or '—'))}",
+        f"📦 <b>套餐：</b>{escape(str(item.get('plan_name') or '—'))}",
+        f"🖥 <b>配置：</b>{escape(hardware)}",
+        f"🌐 <b>网络：</b>{escape(network)}",
+        f"🔁 <b>续费价格：</b>¥{item['renewal']:.2f}/{escape(str(item['cycle']))}个月 · 月付 ¥{item['monthly_price']:.2f}",
+        f"📅 <b>到期时间：</b>{_akile_market_display_time(item.get('due_time'))}（剩余 {item['remaining_days']:.2f} 天）",
+        f"💰 <b>售价：</b>¥{item['price']:.2f}",
+        f"💎 <b>剩余价值：</b>¥{item['fair_value']:.2f}",
+        f"📈 <b>{kind}：</b>{abs(item['rate']):.2f}% · ¥{abs(item['delta']):.2f}",
+        f"📌 <b>触发规则：</b>{escape(rule.get('name') or rule['id'])}",
+        "", f"🏷 <b>挂单 ID：</b><code>{item['id']}</code>",
+        f"📝 <b>说明：</b>{escape(reason[:400])}",
+        f"🕒 <b>检查时间：</b>{format_beijing(item.get('updated_at'))}",
     ])
     keyboard = {"inline_keyboard": [[{"text": "查看 Akile 商品", "url": f"https://akile.ai/console/pushshop?highlight={item['id']}"}]]}
     telegram_call(token, "sendMessage", chat_id=chat_id, text=message, parse_mode="HTML",
