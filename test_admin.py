@@ -101,6 +101,15 @@ class AdminAPITests(unittest.TestCase):
         self.assertEqual(code, 502)
         self.assertIn("sendMessage", json.loads(body)["error"])
 
+    def test_current_seckill_task_reports_no_task_without_exposing_configuration(self):
+        with patch.dict(admin.SECKILL_TASKS, {}, clear=True):
+            status, body = self.get_request("/api/seckill/current")
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertFalse(result["found"])
+        self.assertFalse(result["pending"])
+        self.assertNotIn("config", result)
+
     def test_seckill_success_notification_includes_merchant_and_total_duration(self):
         config = admin.default_config()
         config["products"] = [{"id": "product-1", "provider": "VMISS", "name": "US Basic"}]

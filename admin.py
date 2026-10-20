@@ -4117,6 +4117,16 @@ def stop_seckill(task_id: str) -> dict:
     return task.snapshot()
 
 
+def current_seckill_task() -> dict:
+    with SECKILL_LOCK:
+        tasks = list(SECKILL_TASKS.values())
+        task = next((item for item in reversed(tasks) if not item.done.is_set()), tasks[-1] if tasks else None)
+    if task is None:
+        return {"task_id": "", "pending": False, "found": False,
+                "message": "当前管理服务进程中没有可恢复的 VPS 抢购任务"}
+    return {**task.snapshot(), "found": True}
+
+
 def start_manual_refresh(role: str) -> dict:
     if role not in {"watch", "notify"}:
         raise ValueError("刷新模块无效")
@@ -5802,6 +5812,9 @@ class Handler(BaseHTTPRequestHandler):
             status = read_json(STATUS_PATH, {"state": "unknown", "products": []})
             status["account_checks"] = read_merchant_account_checks()
             data = json.dumps(status, ensure_ascii=False).encode("utf-8")
+            self._send(200, "application/json; charset=utf-8", data)
+        elif path == "/api/seckill/current":
+            data = json.dumps(current_seckill_task(), ensure_ascii=False).encode("utf-8")
             self._send(200, "application/json; charset=utf-8", data)
         elif urlsplit(self.path).path == "/api/catalog":
             try:

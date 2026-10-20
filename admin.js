@@ -481,7 +481,10 @@ for (const id of ["market-search", "market-region", "market-product"]) document.
 document.querySelector("#market-prev").addEventListener("click", () => { marketPage--; renderMarket(); });
 document.querySelector("#market-next").addEventListener("click", () => { marketPage++; renderMarket(); });
 window.addEventListener("hostwatch-page-change", event => { if (event.detail === "market") void loadMarketSnapshot(); });
-window.addEventListener("hostwatch-page-change", event => { if (["seckill", "accounts"].includes(event.detail)) scheduleAccountHealthCheck(500); else clearTimeout(accountHealthTimer); });
+window.addEventListener("hostwatch-page-change", event => {
+  if (["seckill", "accounts"].includes(event.detail)) scheduleAccountHealthCheck(500); else clearTimeout(accountHealthTimer);
+  if (event.detail === "seckill") void syncVpsSeckillTask();
+});
 setInterval(() => { if (!document.hidden && currentPage === "market" && savedConfig) void loadMarketSnapshot(); }, 10000);
 
 function setMessage(message, kind = "", notify = true, inline = true) {
@@ -760,7 +763,10 @@ function scheduleServiceRefresh() {
 async function refreshLiveState() {
   if (document.hidden || actionRunning || serviceRefreshPending) { scheduleServiceRefresh(); return; }
   serviceRefreshPending = true;
-  try { await Promise.allSettled([refreshManagement(), loadStatus()]); }
+  try {
+    await Promise.allSettled([refreshManagement(), loadStatus()]);
+    if (currentPage === "seckill") await syncVpsSeckillTask();
+  }
   finally { serviceRefreshPending = false; scheduleServiceRefresh(); }
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) void refreshLiveState(); });
@@ -3388,7 +3394,7 @@ function renderVpsSeckillTask() {
   document.querySelector("#vps-seckill-delete-all").disabled = actionRunning || !seckillItems().length;
   document.querySelector("#vps-seckill-delete-all-accounts").disabled = actionRunning || !seckillAccounts().length;
   const state = document.querySelector("#seckill-task-state"), start = document.querySelector("#vps-seckill-start"), stop = document.querySelector("#vps-seckill-stop");
-  const running = vpsSeckillTask && vpsSeckillTask.pending !== false; state.textContent = running ? "执行中" : vpsSeckillTask ? (vpsSeckillTask.cancelled ? "已暂停" : "已完成") : "未运行"; state.className = `state ${running ? "pending" : vpsSeckillTask?.cancelled ? "error" : vpsSeckillTask ? "ok" : ""}`; start.disabled = Boolean(running) || actionRunning || !seckillItems().some(item => item.enabled !== false); stop.hidden = !running; stop.disabled = !running;
+  const running = vpsSeckillTask && vpsSeckillTask.pending !== false; state.textContent = running ? "执行中" : vpsSeckillTask?.not_found ? "无活动任务" : vpsSeckillTask ? (vpsSeckillTask.cancelled ? "已暂停" : "已完成") : "未运行"; state.className = `state ${running ? "pending" : vpsSeckillTask?.cancelled || vpsSeckillTask?.not_found ? "error" : vpsSeckillTask ? "ok" : ""}`; start.disabled = Boolean(running) || actionRunning || !seckillItems().some(item => item.enabled !== false); stop.hidden = !running; stop.disabled = !running;
   const results = document.querySelector("#vps-seckill-results"); results.replaceChildren();
   const labels = { submitted: "已创建待付款订单", ready: "请手动下单", uncertain: "结果待核对，请勿重复下单", blocked: "预检查未通过", failed_before_submit: "配置失败，未提交账单", cancelled: "已停止" };
   (vpsSeckillTask?.items || []).forEach(result => {
@@ -3399,7 +3405,7 @@ function renderVpsSeckillTask() {
     try { const url = new URL(result.url); if (url.protocol === "https:" && !url.username && !url.password) { const link = text("a", "前往官网核对 / 手动支付"); link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer"; row.append(link); } } catch {}
     results.append(row);
   });
-  const logs = vpsSeckillTask?.logs || []; document.querySelector("#vps-seckill-logs").textContent = logs.length ? logs.map(log => `[${formatBeijingDate(log.at)}] ${log.message}`).join("\n") : "暂无日志"; document.querySelector("#vps-seckill-log-note").textContent = vpsSeckillTask ? `${vpsSeckillTask.mode || ""} · ${logs.length} 条日志` : "尚未启动补货抢购任务。"; renderOverview();
+  const logs = vpsSeckillTask?.logs || []; document.querySelector("#vps-seckill-logs").textContent = logs.length ? logs.map(log => `[${formatBeijingDate(log.at)}] ${log.message}`).join("\n") : "暂无日志"; document.querySelector("#vps-seckill-log-note").textContent = vpsSeckillTask?.not_found ? vpsSeckillTask.message : vpsSeckillTask ? `${vpsSeckillTask.mode || ""} · ${logs.length} 条日志` : "尚未启动补货抢购任务。"; renderOverview();
 }
 function renderVpsSeckillTest(result) {
   const status = document.querySelector("#vps-seckill-test-status"), target = document.querySelector("#vps-seckill-test-results");
@@ -3422,7 +3428,28 @@ function renderVpsSeckillTest(result) {
   }));
 }
 window.addEventListener("hostwatch-action-change", renderVpsSeckillTask);
-async function pollVpsSeckill(taskId) { clearInterval(vpsSeckillPoll); vpsSeckillPoll = setInterval(async () => { try { vpsSeckillTask = await requestJSON(`/api/seckill/status/${encodeURIComponent(taskId)}`); renderVpsSeckillTask(); if (!vpsSeckillTask.pending) clearInterval(vpsSeckillPoll); } catch { clearInterval(vpsSeckillPoll); } }, 1000); }
+async function syncVpsSeckillTask() {
+  try {
+    const task = await requestJSON("/api/seckill/current", { timeoutMs: 10000 });
+    vpsSeckillTask = task.found ? task : { ...task, not_found: true };
+    renderVpsSeckillTask();
+    clearInterval(vpsSeckillPoll);
+    if (task.found && task.pending) pollVpsSeckill(task.task_id);
+  } catch { /* Keep the last known task state while the server is unavailable. */ }
+}
+async function pollVpsSeckill(taskId) {
+  clearInterval(vpsSeckillPoll);
+  vpsSeckillPoll = setInterval(async () => {
+    try {
+      vpsSeckillTask = await requestJSON(`/api/seckill/status/${encodeURIComponent(taskId)}`);
+      renderVpsSeckillTask();
+      if (!vpsSeckillTask.pending) clearInterval(vpsSeckillPoll);
+    } catch {
+      clearInterval(vpsSeckillPoll);
+      await syncVpsSeckillTask();
+    }
+  }, 1000);
+}
 document.querySelector("#vps-seckill-start").addEventListener("click", async () => { try { const taskId = `seckill-${Date.now()}-${Math.random().toString(36).slice(2, 18)}`; vpsSeckillTask = await requestJSON("/api/seckill/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: collectConfig(), task_id: taskId, mode: document.querySelector("#vps-seckill-mode").value }) }); renderVpsSeckillTask(); pollVpsSeckill(taskId); setMessage("VPS 补货抢购任务已启动，使用当前页面配置（未保存的配置仅用于本次任务）。", "success"); } catch (error) { setMessage(error.message, "error"); } });
 document.querySelector("#vps-seckill-test").addEventListener("click", async event => {
   if (vpsSeckillTestTask?.pending) return;
@@ -3900,6 +3927,7 @@ async function reloadConfig(notify = true) {
   const failures = results.map((result, index) => result.status === "rejected"
     ? `${["配置", "检查结果", "服务状态", "汇率"][index]}载入失败：${result.reason.message}` : "").filter(Boolean);
   if (failures.length) throw new Error(failures.join("；"));
+  if (currentPage === "seckill") await syncVpsSeckillTask();
   setMessage("配置和监控状态已载入。", "success", notify);
   restoreProductTest();
 }
