@@ -4,7 +4,14 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import sys
 import time
+
+# This worker is launched by Compose as ``python docker/backup_worker.py``;
+# make the application root importable before loading manage.py.
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from manage import backup, read_backup_schedule
 from time_utils import now_beijing

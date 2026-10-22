@@ -5,7 +5,15 @@ import json
 import os
 from pathlib import Path
 import secrets
+import sys
 import tempfile
+
+# When this file is launched as ``python docker/bootstrap.py``, Python puts
+# ``/app/docker`` on sys.path instead of the application root.  Add the root
+# explicitly so the bootstrap can import the same modules as the services.
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from auth import password_record
 
