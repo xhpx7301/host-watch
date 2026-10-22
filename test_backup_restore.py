@@ -194,11 +194,17 @@ class BackupRestoreTests(unittest.TestCase):
         self.run.assert_any_call("systemctl", "start", self.manage.MONITOR)
 
     def test_validator_uses_current_installed_app_and_disables_monitor(self):
-        with patch.object(self.manage.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout='{"enabled":false}')) as run:
+        install = self.root / "app"
+        interpreter = install / ".venv" / "bin" / "python"
+        interpreter.parent.mkdir(parents=True)
+        interpreter.write_text("#!/usr/bin/env python3\n")
+        interpreter.chmod(0o755)
+        with patch.object(self.manage, "INSTALL_DIR", install), patch.object(self.manage.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout='{"enabled":false}')) as run:
             result = self.validator({"enabled": True})
         self.assertFalse(result["enabled"])
         self.assertFalse(json.loads(run.call_args.kwargs["input"])["enabled"])
         self.assertIn("-I", run.call_args.args[0])
+        self.assertEqual(run.call_args.args[0][0], str(interpreter))
 
     def test_web_worker_accepts_large_import_without_expanding_other_actions(self):
         (self.root / "admin.py").touch()

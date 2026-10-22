@@ -280,11 +280,30 @@ def backup_for_download() -> dict:
         target.unlink(missing_ok=True)
 
 
+def installed_python() -> str:
+    """Return the interpreter that has HostWatch's runtime dependencies.
+
+    Native web actions are intentionally launched through the system Python by
+    sudo.  The application dependencies, however, are installed in the
+    deployment virtual environment.  Use that interpreter for validation
+    subprocesses so imports such as ``bs4`` work during backup restore.
+    Docker keeps using its container interpreter because it has no separate
+    application venv.
+    """
+    configured = os.getenv("HOSTWATCH_PYTHON", "").strip()
+    if configured:
+        return configured
+    candidate = INSTALL_DIR / ".venv" / "bin" / "python"
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return str(candidate)
+    return sys.executable
+
+
 def validate_restore_config(value: dict) -> dict:
     """Validate using the installed application's dependencies, never archive code."""
     value = {**value, "enabled": False}
     result = subprocess.run(
-        [os.getenv("HOSTWATCH_PYTHON", sys.executable), "-I", "-c",
+        [installed_python(), "-I", "-c",
          "import json,sys; sys.path.insert(0,sys.argv[1]); from admin import validate_config; "
          "print(json.dumps(validate_config(json.load(sys.stdin)),ensure_ascii=False))", str(INSTALL_DIR)],
         input=json.dumps(value, ensure_ascii=False), capture_output=True, text=True, timeout=30, check=False)
