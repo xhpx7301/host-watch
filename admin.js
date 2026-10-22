@@ -36,6 +36,8 @@ let updateUnit = sessionStorage.getItem("hostwatch-update-unit") || "";
 const UPDATE_RELOAD_KEY = "hostwatch-update-reload-at";
 let updateReloadTimer;
 let managementUsers = [];
+let containerMode = false;
+let dockerUpdateCommand = "hw update";
 let backupScheduleDraft = null;
 let backupScheduleSaved = null;
 let backupScheduleRuntime = null;
@@ -704,15 +706,26 @@ async function refreshManagement() {
   managementUsers = state.users;
   renderManagementUsers();
   document.querySelector("#manage-backup-storage").textContent = `自动备份存储位置：${state.backup_dir || "服务器备份目录未返回"}`;
-  const containerMode = state.container_mode === true;
-  for (const id of ["manage-restart-admin", "manage-restart-monitor", "manage-update"]) {
+  containerMode = state.container_mode === true;
+  dockerUpdateCommand = state.docker_update_command || "hw update";
+  for (const id of ["manage-restart-admin", "manage-restart-monitor"]) {
     const button = document.querySelector(`#${id}`);
     if (button) button.hidden = containerMode;
   }
+  const updateButton = document.querySelector("#manage-update");
+  if (updateButton) {
+    updateButton.hidden = false;
+    updateButton.textContent = containerMode ? "复制 Docker 更新命令" : "更新 HostWatch";
+    updateButton.title = containerMode ? `复制 ${dockerUpdateCommand}，在部署主机执行` : "从 GitHub 更新 HostWatch";
+  }
   const operationsNote = document.querySelector("#manage-operations-note");
   if (operationsNote) operationsNote.textContent = containerMode
-    ? "Docker 部署请使用 docker compose 管理容器重启和版本更新；管理页仍可执行备份、导入和配置操作。"
+    ? `Docker 部署不挂载宿主机 Docker 控制接口；点击“复制 Docker 更新命令”，然后在部署主机执行 ${dockerUpdateCommand}。`
     : "读取状态不会触发库存检查；更新会先创建备份。";
+  const operationsHelp = document.querySelector("#manage-operations-help");
+  if (operationsHelp) operationsHelp.textContent = containerMode
+    ? "导出备份通过浏览器保存到本地；导入会恢复商品配置、库存记录和备份计划，并保留管理员账号。容器重启、项目更新和日志查看请使用部署目录中的 hw 快捷菜单。"
+    : "导出备份通过浏览器保存到本地。导入支持 20 MB 以内的 HostWatch .tar.gz 备份，恢复商品配置、库存记录和备份计划，保留当前管理员账号、访问设置及程序版本。导入前自动备份当前数据，恢复后按保存的自动刷新设置运行。重启 HostWatch 服务组会让监控服务和管理页短暂中断，随后重新读取已保存配置。";
   const backupDirty = backupScheduleDraft && JSON.stringify(backupScheduleDraft) !== JSON.stringify(backupScheduleSaved);
   backupScheduleRuntime = state.backup_schedule || null;
   backupScheduleSaved = backupScheduleRuntime ? { enabled: backupScheduleRuntime.enabled, time: backupScheduleRuntime.time } : null;
@@ -809,8 +822,40 @@ async function refreshUpdateStatus(includeLogs = true) {
 function syncUpdateControl() {
   const button = document.querySelector("#manage-update");
   if (!button) return;
+  if (containerMode) {
+    button.disabled = actionRunning;
+    button.textContent = "复制 Docker 更新命令";
+    button.title = `复制 ${dockerUpdateCommand}，在部署主机执行`;
+    return;
+  }
   button.disabled = actionRunning || Boolean(updateUnit);
   button.title = updateUnit ? "更新任务正在执行，请等待完成" : "从 GitHub 更新 HostWatch";
+}
+
+async function copyDockerUpdateCommand() {
+  const command = dockerUpdateCommand || "hw update";
+  let copied = false;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(command);
+      copied = true;
+    }
+  } catch (_) { /* HTTP pages may not expose the Clipboard API. */ }
+  if (!copied) {
+    const input = document.createElement("textarea");
+    input.value = command;
+    input.setAttribute("readonly", "");
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.append(input);
+    input.select();
+    try { copied = document.execCommand("copy"); } catch (_) { copied = false; }
+    input.remove();
+  }
+  document.querySelector("#manage-task-status").textContent = copied
+    ? `已复制：${command}；请在 Docker 部署主机的终端执行。`
+    : `请在 Docker 部署主机执行：${command}`;
+  setMessage(copied ? "Docker 更新命令已复制。" : `请在部署主机执行：${command}`, copied ? "success" : "pending");
 }
 
 function scheduleUpdateReload(delayMs = 2_000) {
@@ -1005,7 +1050,9 @@ function bindManagementActions() {
   ]) {
     document.querySelector(`#${id}`).addEventListener("click", (event) => {
       if (action === "hostwatch-restart" && !window.confirm("确认重启 HostWatch 服务组？监控服务和管理页服务会短暂重启，当前页面将在服务恢复后自动刷新。")) return;
-      const operation = action === "backup-download" ? exportManagementBackup : () => performManagementAction(action);
+      const operation = action === "backup-download" ? exportManagementBackup
+        : action === "update" && containerMode ? copyDockerUpdateCommand
+        : () => performManagementAction(action);
       runAction(event.currentTarget, label, message, operation);
     });
   }

@@ -10,6 +10,7 @@ ENV PYTHONUNBUFFERED=1 \
     HOSTWATCH_FLARESOLVERR_URL=http://flaresolverr:8191/v1 \
     HOSTWATCH_USERS_PATH=/data/stockwatch-users.json \
     HOSTWATCH_MANAGER_LOCK=/data/.manager.lock \
+    HOSTWATCH_DOCKER_UPDATE_COMMAND="hw update" \
     ADMIN_USERS_FILE=/data/stockwatch-users.json \
     VMISS_CONFIG=/data/config.json \
     VMISS_STATUS=/data/status.json \

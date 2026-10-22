@@ -42,6 +42,7 @@ LEGACY_ENV = Path(os.getenv("HOSTWATCH_LEGACY_ENV", "/etc/vmiss-monitor.env"))
 BACKUP_DIR = Path(os.getenv("HOSTWATCH_BACKUP_DIR", "/var/backups/stockwatch"))
 BACKUP_SETTINGS = Path(os.getenv("HOSTWATCH_BACKUP_SETTINGS", "/etc/hostwatch-backup.json"))
 LOCK_PATH = Path(os.getenv("HOSTWATCH_MANAGER_LOCK", "/run/stockwatch-manager.lock"))
+DOCKER_UPDATE_COMMAND = os.getenv("HOSTWATCH_DOCKER_UPDATE_COMMAND", "hw update")
 SYSTEMD_DIR = Path("/etc/systemd/system")
 BACKUP_TIMER = "hostwatch-backup.timer"
 BACKUP_SERVICE = "hostwatch-backup.service"
@@ -816,7 +817,7 @@ def web_action(payload: dict) -> dict:
                     "admin": {"active": "running", "enabled": "enabled"},
                     "users": sorted(users), "backups": backups,
                     "backup_dir": str(BACKUP_DIR), "backup_schedule": backup_schedule_status(),
-                    "container_mode": True}
+                    "container_mode": True, "docker_update_command": DOCKER_UPDATE_COMMAND}
         def unit_state(unit: str) -> dict:
             try:
                 result = subprocess.run(

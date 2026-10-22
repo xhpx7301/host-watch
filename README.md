@@ -8,6 +8,35 @@
 
 VMISS 曾对自动化访问返回拦截页。请先确认目标厂商允许自动检查及访问频率。遇到 HTTP 403、429 或安全验证页时，程序会记录状态、尝试告警并停止，不会自动重试。FlareSolverr 仅适用于你拥有或明确获准测试的站点，默认关闭。检查间隔可自定义到秒，0 表示本轮检查完成后立即检查下一轮。
 
+## Docker 一键部署（推荐）
+
+Docker 部署不需要 systemd，也不挂载宿主机 Docker socket。管理页、监控、自动备份和 FlareSolverr 会自动创建为 Compose 服务，管理页对公网监听 `25678`；防火墙只需放行 TCP `25678`，FlareSolverr 的 `8191` 保持内网访问。
+
+在全新 Debian/Ubuntu 服务器执行一条命令：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/xhpx7301/host-watch/main/docker/install.sh | sudo sh
+```
+
+安装脚本会检查 Docker Compose、克隆项目到 `/opt/host-watch`、构建并启动服务，并安装 `hw` 快捷命令。首次管理员密码只在容器日志中显示一次，请立即保存：
+
+```sh
+docker compose -f /opt/host-watch/docker-compose.yml logs --no-log-prefix admin | grep '初始密码'
+```
+
+访问 `http://服务器公网地址:25678`，使用日志中的 `admin` 和随机密码登录。以后在任意目录输入 `hw` 呼出 Docker 管理菜单；常用命令如下：
+
+```sh
+hw                  # 交互式菜单
+hw update           # 拉取 main、更新 FlareSolverr、重建并启动
+hw status           # 查看容器状态
+hw logs             # 查看管理页、监控和备份日志
+hw backup           # 立即备份数据
+hw restart          # 重启 HostWatch 容器
+```
+
+管理页“设置 → 运维操作”中的 Docker 更新按钮会复制 `hw update`。管理页容器不控制宿主机 Docker，复制后请在部署服务器终端执行；这样即使管理页对公网开放，也不会把 Docker socket 暴露给网页进程。
+
 ## 支持的监控方式
 
 - **VMISS WHMCS**：解析商品卡片和库存数量，可生成 `aff.php` 推广入口。
@@ -74,43 +103,13 @@ Telegram 补货提醒使用分段消息：商品标题、地区与线路、管�
 
 “AFF 管理”统一设置各商家推广码或完整推广链接，保存后应用于监控、大盘、通知与测试的购买入口；保留具体套餐参数，留空使用普通商品入口。大盘可调整商家顺序。各商家的后台检查和测试请求方式在“网页请求”统一设置。
 
-## 一键安装
+## Debian 原生部署（非 Docker）
 
 适用于 Debian 12/13，要求 systemd 和 root/sudo 权限。脚本会安装依赖、创建 `vmiss-monitor` 系统用户、自动部署 Docker 和官方 FlareSolverr 容器、安装程序和 systemd 单元，并启动仅监听 `127.0.0.1:8765` 的管理页。FlareSolverr 仅监听本机 `127.0.0.1:8191`，设置自动重启，启动后检测就绪状态。库存监控默认关闭，安装脚本不会启用或启动它。首次部署需要下载浏览器镜像，请预留内存、磁盘和到 ghcr.io 的网络连接；浏览器请求按商品顺序执行。
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/xhpx7301/host-watch/main/install.sh | sudo bash
 ```
-
-## Docker Compose 部署
-
-主程序也可以使用 Docker Compose 部署。管理页、监控和自动备份使用同一个 HostWatch 镜像，FlareSolverr 使用独立容器；配置、库存状态、管理员账号和备份保存在命名卷中。此部署方式不需要在容器内运行 systemd，也不挂载宿主机的 Docker socket。
-
-```sh
-git clone https://github.com/xhpx7301/host-watch.git
-cd host-watch
-docker compose up -d --build
-docker compose logs -f admin
-```
-
-首次启动 `admin` 容器会在日志中显示一次随机管理员密码。请立即保存，然后访问：
-
-```text
-http://服务器公网地址:25678
-```
-
-Compose 部署的管理页监听 `0.0.0.0:25678` 并直接映射到宿主机，因此防火墙需允许 TCP 25678。公网访问必须使用管理员账号；生产环境建议在前面加 HTTPS 反向代理，或仅允许固定管理 IP 访问该端口。FlareSolverr 的 `8191` 只在 Compose 内网暴露，不应映射到公网。
-
-Docker 部署中的“更新程序”和“重启服务器”操作不会通过管理页控制宿主机，请在 Compose 项目目录执行：
-
-```sh
-git pull
-docker compose build --pull
-docker compose up -d
-docker compose restart
-```
-
-Docker 部署的管理日志使用 `docker compose logs --tail 100 admin monitor backup` 查看。
 
 脚本可重复执行用于升级，已有的 `/var/lib/vmiss-monitor/config.json`、`/etc/vmiss-monitor.env` 和 `/etc/vmiss-monitor-admin.env` 会保留。
 
