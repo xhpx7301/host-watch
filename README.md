@@ -120,17 +120,17 @@ Telegram 补货提醒使用分段消息：商品标题、地区与线路、管�
 
 ## Debian 原生部署（非 Docker）
 
-适用于 Debian 12/13，要求 systemd 和 root/sudo 权限。脚本会安装依赖、创建 `vmiss-monitor` 系统用户、自动部署 Docker 和官方 FlareSolverr 容器、安装程序和 systemd 单元，并启动仅监听 `127.0.0.1:8765` 的管理页。FlareSolverr 仅监听本机 `127.0.0.1:8191`，设置自动重启，启动后检测就绪状态。库存监控默认关闭，安装脚本不会启用或启动它。首次部署需要下载浏览器镜像，请预留内存、磁盘和到 ghcr.io 的网络连接；浏览器请求按商品顺序执行。
+适用于 Debian 12/13，要求 systemd 和 root/sudo 权限。脚本会安装依赖、创建 `vmiss-monitor` 系统用户、自动部署 Docker 和官方 FlareSolverr 容器、安装程序和 systemd 单元，并启动监听 `0.0.0.0:25678` 的公网管理页。防火墙需允许 TCP `25678`；FlareSolverr 仍仅监听本机 `127.0.0.1:8191`。库存监控默认关闭，安装脚本不会启用或启动它。首次部署需要下载浏览器镜像，请预留内存、磁盘和到 ghcr.io 的网络连接；浏览器请求按商品顺序执行。
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/xhpx7301/host-watch/main/install.sh | sudo bash
 ```
 
-脚本可重复执行用于升级，已有的 `/var/lib/vmiss-monitor/config.json`、`/etc/vmiss-monitor.env` 和 `/etc/vmiss-monitor-admin.env` 会保留。
+脚本可重复执行用于升级，已有的 `/var/lib/vmiss-monitor/config.json`、`/etc/vmiss-monitor.env` 和 `/etc/vmiss-monitor-admin.env` 会保留；管理页服务名为 `hostwatch.service`，旧的 `vmiss-monitor-admin.service` 仅作为兼容别名。
 
 全新安装会自动创建管理页管理员 `admin`，使用每台服务器独立生成的随机密码，并在安装终端显示一次；认证文件仅保存密码哈希。请保存安装输出中的密码，遗失后可运行 `hw passwd` 重置。安装器保留已有账号、旧密码及自定义账号文件；旧版未配置账号的安装可运行 `hw init-admin` 补建，不会重置已有账号。
 
-项目已更名为 HostWatch，仓库名为 `host-watch`。为兼容已部署版本，继续沿用 `vmiss-monitor` 安装目录、系统用户和 systemd 服务名，以及 `/etc/stockwatch-users.json`、`/var/backups/stockwatch/` 等数据路径；菜单快捷命令改为 `hw`。
+项目已更名为 HostWatch，仓库名为 `host-watch`。为兼容已部署版本，继续沿用 `vmiss-monitor` 安装目录、系统用户和监控服务名，以及 `/etc/stockwatch-users.json`、`/var/backups/stockwatch/` 等数据路径；管理页服务名使用 `hostwatch.service`，菜单快捷命令为 `hw`。
 
 ## Debian 管理菜单
 
@@ -167,19 +167,29 @@ hw uninstall   # 二次确认后从服务器完全删除 HostWatch
 
 ## 管理页访问
 
-### SSH 隧道（推荐）
+### 公网访问
 
-管理页默认只监听本机地址。从自己的电脑建立隧道：
+原生部署的管理页监听 `0.0.0.0:25678`，放行防火墙后直接访问：
 
 ```sh
-ssh -N -L 8765:127.0.0.1:8765 your-user@your-server
+http://服务器公网地址:25678
 ```
 
-保持 SSH 窗口运行，然后打开 [http://127.0.0.1:8765](http://127.0.0.1:8765)。
+公网访问必须使用管理员账号；生产环境建议前置 HTTPS 反向代理或限制固定管理 IP。
+
+### SSH 隧道（可选）
+
+如果不希望从公网直接访问，也可以通过 SSH 隧道访问同一端口：
+
+```sh
+ssh -N -L 25678:127.0.0.1:25678 your-user@your-server
+```
+
+保持 SSH 窗口运行，然后打开 [http://127.0.0.1:25678](http://127.0.0.1:25678)。
 
 ### 反向代理域名
 
-使用 Nginx、Caddy 或面板将 HTTPS 域名转发到 `http://127.0.0.1:8765`，并传递原始 `Host`，即可用管理员账号登录。管理页不限制访问域名，无需逐个添加允许列表；旧配置中的 `ADMIN_ALLOWED_HOSTS`（包括 `*`）不再生效，也不会阻止启动。
+使用 Nginx、Caddy 或面板将 HTTPS 域名转发到 `http://127.0.0.1:25678`，并传递原始 `Host`，即可用管理员账号登录。管理页不限制访问域名，无需逐个添加允许列表；旧配置中的 `ADMIN_ALLOWED_HOSTS`（包括 `*`）不再生效，也不会阻止启动。
 
 新安装自动创建管理员并在终端显示一次随机密码。旧安装如果尚无账号，先执行：
 
@@ -191,7 +201,7 @@ hw init-admin
 
 迁移服务器或更换域名时，只需调整 DNS 和反向代理，无需修改 HostWatch 允许列表。账号仍由新服务器的安装及账号配置管理，导入业务备份不会覆盖管理员账号。旧命令 `hw admin-domain [域名]` 保留兼容，只检查账号并重启服务，不再保存或限制域名。
 
-管理服务继续仅监听本机地址，管理员认证和浏览器跨站请求校验保持启用。通过域名或 SSH 隧道打开管理页时会显示 HostWatch 登录界面，登录成功后使用仅限当前浏览器的 HttpOnly 会话 Cookie；页面右上角可退出登录。旧版 Basic Auth 请求仍兼容，便于已有脚本和反向代理继续使用。
+管理服务监听 `0.0.0.0:25678`，管理员认证和浏览器跨站请求校验保持启用。通过公网地址、域名或 SSH 隧道打开管理页时会显示 HostWatch 登录界面，登录成功后使用仅限当前浏览器的 HttpOnly 会话 Cookie；页面右上角可退出登录。旧版 Basic Auth 请求仍兼容，便于已有脚本和反向代理继续使用。
 
 ## 在管理页配置 Telegram
 
@@ -480,9 +490,9 @@ Isvoro 账户支持官网 API 登录检查。由于官网登录包含 hCaptcha�
 每个节点旁还提供“一键复制卸载命令”，所有节点使用同一条命令，无需节点 ID 或令牌；复制不会保存或修改配置。请在需要卸载的子服务器以 root 执行（支持 sudo），自动识别 Debian / Alpine，停止服务、取消开机启动，删除节点程序、配置、Alpine 日志及专用服务账户，不移除共享 Python 依赖或主服务数据。新安装的节点优先运行本地 `/opt/hostwatch-egress/uninstall.sh`，无需联网；旧节点会自动下载卸载脚本。也可直接执行 `sudo sh /opt/hostwatch-egress/uninstall.sh`。卸载后，在主服务管理页调整使用该节点的商家/秒杀出口，点击“移除节点”并保存配置；管理页移除记录不会远程卸载子服务器程序。
 
 ```sh
-sudo systemctl status vmiss-monitor-admin.service vmiss-monitor.service
+sudo systemctl status hostwatch.service vmiss-monitor.service
 sudo journalctl -u vmiss-monitor.service -f
-sudo journalctl -u vmiss-monitor-admin.service -f
+sudo journalctl -u hostwatch.service -f
 ```
 
 程序安装在 `/opt/vmiss-monitor/`；配置和状态在 `/var/lib/vmiss-monitor/`；兼容用 Telegram 环境文件在 `/etc/vmiss-monitor.env`；反向代理访问设置在 `/etc/vmiss-monitor-admin.env`。
@@ -491,7 +501,7 @@ sudo journalctl -u vmiss-monitor-admin.service -f
 
 ```sh
 sudo systemctl disable --now vmiss-monitor.service
-sudo systemctl disable --now vmiss-monitor-admin.service
+sudo systemctl disable --now hostwatch.service
 ```
 
 ## 升级

@@ -1,5 +1,5 @@
 [Unit]
-Description=HostWatch local admin
+Description=HostWatch admin
 After=network.target
 
 [Service]
@@ -11,8 +11,9 @@ EnvironmentFile=-/etc/vmiss-monitor.env
 EnvironmentFile=-/etc/vmiss-monitor-admin.env
 Environment=VMISS_CONFIG=/var/lib/vmiss-monitor/config.json
 Environment=VMISS_STATUS=/var/lib/vmiss-monitor/status.json
-Environment=ADMIN_HOST=127.0.0.1
-Environment=ADMIN_PORT=8765
+Environment=ADMIN_HOST=0.0.0.0
+Environment=ADMIN_PORT=25678
+Environment=ADMIN_ALLOW_REMOTE=1
 Environment=TZ=Asia/Shanghai
 ExecStart=/opt/vmiss-monitor/.venv/bin/python /opt/vmiss-monitor/admin.py
 Restart=on-failure

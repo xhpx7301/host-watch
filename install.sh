@@ -45,7 +45,7 @@ tar -xzf "$TEMP_DIR/source.tar.gz" -C "$TEMP_DIR"
 SOURCE_DIR="$(find "$TEMP_DIR" -mindepth 1 -maxdepth 1 -type d -name 'host-watch-*' -print -quit)"
 [[ -n "$SOURCE_DIR" ]] || fail "源码压缩包格式不正确。"
 
-for file in monitor.py admin.py catalog.py affiliates.py notifications.py stock_alerts.py seckill.py egress.py dmit.py bwh.py auth.py manage.py time_utils.py stockwatch.sh admin.html admin.js login.html login.js catalog.js requirements.txt config.example.json .env.example admin.env.example vmiss-monitor.service vmiss-monitor-admin.service host-watch-admin.sudoers install-flaresolverr.sh; do
+for file in monitor.py admin.py catalog.py affiliates.py notifications.py stock_alerts.py seckill.py egress.py dmit.py bwh.py auth.py manage.py time_utils.py stockwatch.sh admin.html admin.js login.html login.js catalog.js requirements.txt config.example.json .env.example admin.env.example vmiss-monitor.service hostwatch.service host-watch-admin.sudoers install-flaresolverr.sh; do
   [[ -f "$SOURCE_DIR/$file" ]] || fail "源码缺少必需文件：$file"
 done
 
@@ -64,7 +64,7 @@ install -o root -g root -m 0644 \
   "$SOURCE_DIR/monitor.py" "$SOURCE_DIR/admin.py" "$SOURCE_DIR/catalog.py" "$SOURCE_DIR/affiliates.py" "$SOURCE_DIR/notifications.py" "$SOURCE_DIR/stock_alerts.py" "$SOURCE_DIR/seckill.py" "$SOURCE_DIR/egress.py" "$SOURCE_DIR/dmit.py" "$SOURCE_DIR/bwh.py" "$SOURCE_DIR/auth.py" "$SOURCE_DIR/manage.py" "$SOURCE_DIR/time_utils.py" "$SOURCE_DIR/admin.html" \
   "$SOURCE_DIR/admin.js" "$SOURCE_DIR/login.html" "$SOURCE_DIR/login.js" "$SOURCE_DIR/catalog.js" "$SOURCE_DIR/requirements.txt" "$SOURCE_DIR/config.example.json" \
   "$SOURCE_DIR/.env.example" "$SOURCE_DIR/vmiss-monitor.service" \
-  "$SOURCE_DIR/vmiss-monitor-admin.service" "$SOURCE_DIR/admin.env.example" "$SOURCE_DIR/host-watch-admin.sudoers" "$INSTALL_DIR/"
+  "$SOURCE_DIR/hostwatch.service" "$SOURCE_DIR/admin.env.example" "$SOURCE_DIR/host-watch-admin.sudoers" "$INSTALL_DIR/"
 # Keep the login assets explicit as well as part of the bulk deployment list;
 # this makes their presence obvious and protects against future list edits.
 install -o root -g root -m 0644 "$SOURCE_DIR/login.html" "$INSTALL_DIR/login.html"
@@ -119,6 +119,28 @@ else
   chmod 0640 "$ADMIN_ENV_FILE"
 fi
 
+# Native deployments expose the management page on the project port. Rewrite
+# these settings so a preserved admin environment file cannot keep localhost
+# or an old port after an upgrade. Trim trailing blank lines to keep retries
+# byte-stable, including when an older file had no final newline.
+ADMIN_ENV_TMP="$(mktemp "${ADMIN_ENV_FILE}.tmp.XXXXXX")"
+trap 'rm -f "$ADMIN_ENV_TMP"' EXIT
+awk '
+/^[[:space:]]*ADMIN_(HOST|PORT|ALLOW_REMOTE)[[:space:]]*=/ { next }
+{ lines[++count] = $0 }
+END {
+  while (count > 0 && lines[count] == "") count--
+  for (i = 1; i <= count; i++) print lines[i]
+  print "ADMIN_HOST=0.0.0.0"
+  print "ADMIN_PORT=25678"
+  print "ADMIN_ALLOW_REMOTE=1"
+}
+' "$ADMIN_ENV_FILE" > "$ADMIN_ENV_TMP"
+mv -f "$ADMIN_ENV_TMP" "$ADMIN_ENV_FILE"
+trap - EXIT
+chown root:"$SERVICE_GROUP" "$ADMIN_ENV_FILE"
+chmod 0640 "$ADMIN_ENV_FILE"
+
 install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$INSTALL_DIR/.venv"
 chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR/.venv"
 if [[ ! -x "$INSTALL_DIR/.venv/bin/python" ]]; then
@@ -133,18 +155,21 @@ runuser -u "$SERVICE_USER" -- "$INSTALL_DIR/.venv/bin/python" -I -c \
   'import sys; sys.path.insert(0, sys.argv[1]); import admin, monitor, manage, stock_alerts, seckill, dmit, bwh' "$INSTALL_DIR" \
   || fail "已安装程序的启动依赖校验失败；请检查上方 Python 错误，修复后重新运行 hw update。"
 
+systemctl disable --now vmiss-monitor-admin.service >/dev/null 2>&1 || true
 install -o root -g root -m 0644 "$SOURCE_DIR/vmiss-monitor.service" /etc/systemd/system/vmiss-monitor.service
-install -o root -g root -m 0644 "$SOURCE_DIR/vmiss-monitor-admin.service" /etc/systemd/system/vmiss-monitor-admin.service
+install -o root -g root -m 0644 "$SOURCE_DIR/hostwatch.service" /etc/systemd/system/hostwatch.service
+rm -f /etc/systemd/system/vmiss-monitor-admin.service
+ln -s hostwatch.service /etc/systemd/system/vmiss-monitor-admin.service
 systemctl daemon-reload
 /usr/bin/python3 "$INSTALL_DIR/manage.py" backup-schedule-apply
-systemctl enable --now vmiss-monitor-admin.service
-systemctl restart vmiss-monitor-admin.service
+systemctl enable --now hostwatch.service
+systemctl restart hostwatch.service
 
 log "安装完成。监控总开关和已有配置保持原值；新安装默认关闭，安装程序不会主动启动库存监控。"
 log "Debian 管理菜单：hw（更新、服务管理、管理页用户管理；普通用户自动调用 sudo）。"
 log "Telegram、厂商、商品和人工购买入口请在管理页配置。"
 log "网页请求设置支持普通 HTTPS、FlareSolverr 和 cloudscraper；默认普通请求，可按商家覆盖。服务连接可直接在网页测试。"
-log "管理页：在本地电脑运行 ssh -N -L 8765:127.0.0.1:8765 your-user@your-server，然后打开 http://127.0.0.1:8765"
-log "管理页无需配置域名允许列表；反向代理到 http://127.0.0.1:8765 后使用管理员账号登录。"
+log "管理页：通过 http://服务器公网地址:25678 访问；请在防火墙放行 TCP 25678。"
+log "管理服务名：hostwatch.service；旧名称 vmiss-monitor-admin.service 作为兼容别名保留。"
 log "旧安装尚无管理员时可运行 hw init-admin；已有账号或密码不会被重置。"
 log "在管理页配置商品，可先单次测试；分别设置模块刷新方式后点击底部保存配置。管理员管理区提供账号、日志、备份和更新操作。"

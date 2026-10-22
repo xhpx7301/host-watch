@@ -6325,11 +6325,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    host = os.getenv("ADMIN_HOST", "127.0.0.1")
-    allow_remote = os.getenv("ADMIN_ALLOW_REMOTE", "0").strip().casefold() in {"1", "true", "yes", "on"}
+    host = os.getenv("ADMIN_HOST", "0.0.0.0")
+    allow_remote = os.getenv("ADMIN_ALLOW_REMOTE", "1").strip().casefold() in {"1", "true", "yes", "on"}
     if not allow_remote and host not in {"127.0.0.1", "localhost"}:
         raise SystemExit("管理页只允许监听 localhost")
-    port = int(os.getenv("ADMIN_PORT", "8765"))
+    port = int(os.getenv("ADMIN_PORT", "25678"))
     print(f"HostWatch admin listening on http://{host}:{port}")
     restored_sessions = load_merchant_auth_cache()
     if restored_sessions:

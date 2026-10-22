@@ -47,7 +47,8 @@ SYSTEMD_DIR = Path("/etc/systemd/system")
 BACKUP_TIMER = "hostwatch-backup.timer"
 BACKUP_SERVICE = "hostwatch-backup.service"
 MONITOR = "vmiss-monitor.service"
-ADMIN = "vmiss-monitor-admin.service"
+ADMIN = "hostwatch.service"
+LEGACY_ADMIN = "vmiss-monitor-admin.service"
 SERVICE_USER = "vmiss-monitor"
 SERVICE_GROUP = "vmiss-monitor"
 INSTALLER_URL = "https://raw.githubusercontent.com/xhpx7301/host-watch/main/install.sh"
@@ -157,7 +158,7 @@ def configure_admin_domain(domain: str | None = None) -> None:
     initialize_admin(restart=False)
     run("systemctl", "restart", ADMIN)
     print("管理页已取消域名允许列表，所有访问域名均可使用，无需逐个配置。")
-    print("已检查管理员账号并重启管理页。反向代理后端保持 http://127.0.0.1:8765，使用 HTTPS 域名访问并登录。")
+    print("已检查管理员账号并重启管理页。管理页监听 http://0.0.0.0:25678，请使用管理员账号登录。")
 
 
 def ask_password() -> str:
@@ -753,10 +754,10 @@ def uninstall() -> bool:
         return False
 
     _validate_service_account()
-    for unit in (BACKUP_TIMER, BACKUP_SERVICE, MONITOR, ADMIN):
+    for unit in (BACKUP_TIMER, BACKUP_SERVICE, MONITOR, ADMIN, LEGACY_ADMIN):
         subprocess.run(["systemctl", "disable", "--now", unit], check=False)
     still_running = [
-        unit for unit in (BACKUP_SERVICE, MONITOR, ADMIN)
+        unit for unit in (BACKUP_SERVICE, MONITOR, ADMIN, LEGACY_ADMIN)
         if subprocess.run(["systemctl", "is-active", "--quiet", unit], check=False).returncode == 0
     ]
     if still_running:
@@ -765,6 +766,7 @@ def uninstall() -> bool:
     for path in (
         Path("/etc/systemd/system") / MONITOR,
         Path("/etc/systemd/system") / ADMIN,
+        Path("/etc/systemd/system") / LEGACY_ADMIN,
         SYSTEMD_DIR / BACKUP_TIMER,
         SYSTEMD_DIR / BACKUP_SERVICE,
         BACKUP_SETTINGS,
