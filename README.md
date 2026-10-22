@@ -33,6 +33,7 @@ hw status           # 查看容器状态
 hw logs             # 查看管理页、监控和备份日志
 hw backup           # 立即备份数据
 hw restart          # 重启 HostWatch 容器
+hw reset-admin      # 将 Docker 管理员重置为 pingzi / pingzi
 ```
 
 管理页“设置 → 运维操作”中的 Docker 更新按钮会复制 `hw update`。管理页容器不控制宿主机 Docker，复制后请在部署服务器终端执行；这样即使管理页对公网开放，也不会把 Docker socket 暴露给网页进程。
@@ -45,6 +46,8 @@ hw restart          # 重启 HostWatch 容器
 cd /你的/host-watch目录
 sudo env HOSTWATCH_DIR="$PWD" sh docker/install.sh
 ```
+
+如果 `pingzi` / `pingzi` 登录失败，说明数据卷中已有旧管理员账号。执行 `hw reset-admin` 即可新增或重置 `pingzi`，不会删除其他管理员；然后重新打开登录页再试。
 
 ## 支持的监控方式
 

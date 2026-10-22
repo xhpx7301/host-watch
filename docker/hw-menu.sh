@@ -31,7 +31,8 @@ run_menu() {
         printf ' 3. 重启 HostWatch\n'
         printf ' 4. 查看 HostWatch 日志\n'
         printf ' 5. 执行数据备份\n'
-        printf ' 6. 停止项目\n'
+        printf ' 6. 重置 Docker 管理员为 pingzi / pingzi\n'
+        printf ' 7. 停止项目\n'
         printf ' 0. 退出\n'
         printf '请选择：'
         read -r choice
@@ -41,7 +42,8 @@ run_menu() {
             3) compose restart ;;
             4) show_logs ;;
             5) compose exec -T hostwatch python manage.py backup ;;
-            6) compose stop ;;
+            6) compose exec -T hostwatch python docker/reset_admin.py ;;
+            7) compose stop ;;
             0) return 0 ;;
             *) echo "请输入菜单中的编号。" ;;
         esac
@@ -55,7 +57,8 @@ case "${1:-menu}" in
     restart) compose restart ;;
     logs) show_logs ;;
     backup) compose exec -T hostwatch python manage.py backup ;;
+    reset-admin) compose exec -T hostwatch python docker/reset_admin.py ;;
     stop) compose stop ;;
     start) compose up -d ;;
-    *) echo "用法：hw [status|update|restart|logs|backup|stop|start]" >&2; exit 2 ;;
+    *) echo "用法：hw [status|update|restart|logs|backup|reset-admin|stop|start]" >&2; exit 2 ;;
 esac
