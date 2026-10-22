@@ -20,7 +20,7 @@ import test_admin
 
 def pending_node(node_id="egress-test"):
     return {"id": node_id, "name": "出口节点 1", "proxy_url": "", "health_url": "",
-            "listen_port": 8787, "enabled": True, "pending_registration": True}
+            "listen_port": 48787, "enabled": True, "pending_registration": True}
 
 
 class EgressEnrollmentTests(unittest.TestCase):
@@ -205,7 +205,7 @@ class EgressAgentTests(unittest.TestCase):
 
     def test_connection_info_formats_ipv6_and_refuses_missing_ip(self):
         with patch.object(egress_agent, "public_ip", return_value="2001:db8::1"), patch.object(egress_agent, "setting", return_value=""):
-            self.assertEqual(egress_agent.connection_info()["health_url"], "http://[2001:db8::1]:8787/health")
+            self.assertEqual(egress_agent.connection_info()["health_url"], "http://[2001:db8::1]:48787/health")
         with patch.object(egress_agent, "public_ip", return_value=""), patch.object(egress_agent, "setting", return_value=""):
             with self.assertRaises(ValueError):
                 egress_agent.connection_info()

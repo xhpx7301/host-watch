@@ -47,7 +47,7 @@ if not isinstance(node_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", node
 token = value.get("EGRESS_TOKEN", "")
 if not isinstance(token, str) or not token or len(token) > 512:
     raise SystemExit("节点令牌无效")
-port = value.get("EGRESS_LISTEN_PORT", 8787)
+port = value.get("EGRESS_LISTEN_PORT", 48787)
 if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
     raise SystemExit("节点端口无效")
 name = value.get("EGRESS_NODE_NAME", node_id)

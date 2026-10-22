@@ -43,7 +43,7 @@ def normalize(value: object) -> dict:
             raise ValueError("节点待安装状态必须是布尔值")
         proxy_url = "" if pending and not node.get("proxy_url") else _https_url(node.get("proxy_url", ""), f"出口节点 {name or node_id} 的代理地址", allow_http=True)
         health_url = "" if pending and not node.get("health_url") else _https_url(node.get("health_url", ""), f"出口节点 {name or node_id} 的健康检查地址", allow_http=True)
-        port = node.get("listen_port", urlsplit(proxy_url).port or 8787)
+        port = node.get("listen_port", urlsplit(proxy_url).port or 48787)
         if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
             raise ValueError("节点监听端口必须是 1–65535 的整数")
         token = str(node.get("token", ""))
@@ -88,7 +88,7 @@ def installation_command(node: dict, register_url: str = "") -> dict:
         raise ValueError("请先设置节点代理令牌")
     settings = {"EGRESS_NODE_ID": node["id"], "EGRESS_NODE_NAME": node["name"],
                 "EGRESS_TOKEN": node["token"], "EGRESS_LISTEN_HOST": "0.0.0.0",
-                "EGRESS_LISTEN_PORT": node.get("listen_port", 8787), "EGRESS_REGISTER_URL": register_url}
+                "EGRESS_LISTEN_PORT": node.get("listen_port", 48787), "EGRESS_REGISTER_URL": register_url}
     encoded = base64.b64encode(json.dumps(settings, ensure_ascii=False).encode()).decode()
     script_url = "https://raw.githubusercontent.com/xhpx7301/host-watch/main/install-egress.sh"
     bootstrap = (
