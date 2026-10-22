@@ -38,7 +38,13 @@ def normalize(value: object) -> dict:
             raise ValueError("出口节点必须是对象")
         node_id = str(node.get("id", "")).strip()
         name = str(node.get("name", node_id)).strip()
+        # Before one-click installation added ``pending_registration``, a node
+        # could be saved with both addresses empty while it was still being
+        # configured. Treat that legacy shape as pending so old backups remain
+        # importable; an explicit value is still validated strictly.
         pending = node.get("pending_registration", False)
+        if "pending_registration" not in node and not node.get("proxy_url") and not node.get("health_url"):
+            pending = True
         if not isinstance(pending, bool):
             raise ValueError("节点待安装状态必须是布尔值")
         proxy_url = "" if pending and not node.get("proxy_url") else _https_url(node.get("proxy_url", ""), f"出口节点 {name or node_id} 的代理地址", allow_http=True)

@@ -215,6 +215,11 @@ class EgressAgentTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "没有代理地址"):
             egress.resolve(value, "dmit")
 
+    def test_legacy_empty_node_without_pending_marker_is_importable(self):
+        value = egress.normalize({"nodes": [{"id": "legacy", "name": "旧节点", "proxy_url": "", "health_url": "", "enabled": True}], "routes": {}})
+        self.assertTrue(value["nodes"][0]["pending_registration"])
+        self.assertEqual(value["nodes"][0]["listen_port"], 33669)
+
 
 if __name__ == "__main__":
     unittest.main()

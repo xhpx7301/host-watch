@@ -289,7 +289,11 @@ def validate_restore_config(value: dict) -> dict:
          "print(json.dumps(validate_config(json.load(sys.stdin)),ensure_ascii=False))", str(INSTALL_DIR)],
         input=json.dumps(value, ensure_ascii=False), capture_output=True, text=True, timeout=30, check=False)
     if result.returncode:
-        raise ValueError("备份中的商品配置无法通过当前版本校验，请检查备份文件或先更新 HostWatch")
+        detail = next((line.strip() for line in reversed((result.stderr or result.stdout).splitlines()) if line.strip()), "")
+        if detail.startswith("ValueError:"):
+            detail = detail.removeprefix("ValueError:").strip()
+        suffix = f"：{detail[:240]}" if detail else "，请检查备份文件或先更新 HostWatch"
+        raise ValueError(f"备份中的商品配置无法通过当前版本校验{suffix}")
     return json.loads(result.stdout)
 
 
