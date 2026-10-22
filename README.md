@@ -37,6 +37,13 @@ hw restart          # 重启 HostWatch 容器
 
 管理页“设置 → 运维操作”中的 Docker 更新按钮会复制 `hw update`。管理页容器不控制宿主机 Docker，复制后请在部署服务器终端执行；这样即使管理页对公网开放，也不会把 Docker socket 暴露给网页进程。
 
+已有旧版 Compose 部署时，在项目目录执行一次下面的命令即可补装 `hw` 菜单并升级到当前配置；命名卷中的配置、账号和备份会保留：
+
+```sh
+cd /你的/host-watch目录
+sudo env HOSTWATCH_DIR="$PWD" sh docker/install.sh
+```
+
 ## 支持的监控方式
 
 - **VMISS WHMCS**：解析商品卡片和库存数量，可生成 `aff.php` 推广入口。
