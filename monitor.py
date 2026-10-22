@@ -1744,9 +1744,16 @@ def main() -> int:
 
     last_run = {}
     active_due = []
+    container_mode = os.getenv("HOSTWATCH_CONTAINER", "0").strip().casefold() in {"1", "true", "yes", "on"}
     while True:
         try:
             config = read_config(config_path)
+            if container_mode and not config.get("enabled", False):
+                # Compose keeps the monitor container alive so manual refreshes
+                # remain available, while the global switch still pauses all
+                # automatic merchant requests.
+                time.sleep(1)
+                continue
             # The systemd monitor process is the long-lived HostWatch service.
             # Manual module schedules mean "do not run an automatic check";
             # they do not stop this process or the management service.

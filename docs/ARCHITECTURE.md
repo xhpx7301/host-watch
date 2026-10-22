@@ -13,6 +13,12 @@ HostWatch 的运行入口仍保留在仓库根目录，以兼容已经安装的 
 
 根目录的 Python、静态资源和安装脚本不是临时文件：安装器会将它们作为一个版本原子更新，服务单元也按这些路径启动。新增说明和诊断工具放入 `docs/`，避免移动运行入口导致旧服务器更新后管理页无法启动。
 
+## Docker Compose 运行方式
+
+`Dockerfile` 构建同一份应用镜像，`docker-compose.yml` 分别以 `admin`、`monitor` 和 `backup` 服务运行管理页、库存监控和每日备份；FlareSolverr 是独立的 `flaresolverr` 服务。三个 HostWatch 服务共享 `/data` 和 `/backups` 命名卷，管理页在容器内监听 `0.0.0.0:25678`，只将 TCP 25678 映射到宿主机。FlareSolverr 只通过 Compose 内网的 `flaresolverr:8191` 访问。
+
+容器模式通过 `HOSTWATCH_CONTAINER=1` 禁用依赖宿主机的 `systemd`、`journalctl`、`systemd-run` 和 Docker socket 操作。网页配置、手动刷新、备份导入导出仍由管理页处理；镜像更新和容器重启由 `docker compose build/up/restart` 完成。
+
 ## 更新前检查
 
 在仓库根目录运行：

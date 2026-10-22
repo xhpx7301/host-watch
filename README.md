@@ -82,6 +82,36 @@ Telegram 补货提醒使用分段消息：商品标题、地区与线路、管�
 curl -fsSL https://raw.githubusercontent.com/xhpx7301/host-watch/main/install.sh | sudo bash
 ```
 
+## Docker Compose 部署
+
+主程序也可以使用 Docker Compose 部署。管理页、监控和自动备份使用同一个 HostWatch 镜像，FlareSolverr 使用独立容器；配置、库存状态、管理员账号和备份保存在命名卷中。此部署方式不需要在容器内运行 systemd，也不挂载宿主机的 Docker socket。
+
+```sh
+git clone https://github.com/xhpx7301/host-watch.git
+cd host-watch
+docker compose up -d --build
+docker compose logs -f admin
+```
+
+首次启动 `admin` 容器会在日志中显示一次随机管理员密码。请立即保存，然后访问：
+
+```text
+http://服务器公网地址:25678
+```
+
+Compose 部署的管理页监听 `0.0.0.0:25678` 并直接映射到宿主机，因此防火墙需允许 TCP 25678。公网访问必须使用管理员账号；生产环境建议在前面加 HTTPS 反向代理，或仅允许固定管理 IP 访问该端口。FlareSolverr 的 `8191` 只在 Compose 内网暴露，不应映射到公网。
+
+Docker 部署中的“更新程序”和“重启服务器”操作不会通过管理页控制宿主机，请在 Compose 项目目录执行：
+
+```sh
+git pull
+docker compose build --pull
+docker compose up -d
+docker compose restart
+```
+
+Docker 部署的管理日志使用 `docker compose logs --tail 100 admin monitor backup` 查看。
+
 脚本可重复执行用于升级，已有的 `/var/lib/vmiss-monitor/config.json`、`/etc/vmiss-monitor.env` 和 `/etc/vmiss-monitor-admin.env` 会保留。
 
 全新安装会自动创建管理页管理员 `admin`，使用每台服务器独立生成的随机密码，并在安装终端显示一次；认证文件仅保存密码哈希。请保存安装输出中的密码，遗失后可运行 `hw passwd` 重置。安装器保留已有账号、旧密码及自定义账号文件；旧版未配置账号的安装可运行 `hw init-admin` 补建，不会重置已有账号。

@@ -40,7 +40,7 @@ LOGIN_PAGE_PATH = ROOT / "login.html"
 LOGIN_SCRIPT_PATH = ROOT / "login.js"
 MAX_BODY = 64 * 1024
 MAX_BACKUP_UPLOAD = 20 * 1024 * 1024
-MANAGER = Path("/opt/vmiss-monitor/manage.py")
+MANAGER = Path(os.getenv("HOSTWATCH_MANAGER", str(ROOT / "manage.py")))
 MUTATION_LOCK = threading.Lock()
 RATES_LOCK = threading.Lock()
 TEST_LOCK = threading.Lock()
@@ -5565,8 +5565,10 @@ def request_body(handler: BaseHTTPRequestHandler) -> dict:
 
 def manager_action(value: dict) -> dict:
     try:
+        command = ([sys.executable, str(MANAGER), "web-action"] if os.getenv("HOSTWATCH_CONTAINER") == "1" else
+                   ["/usr/bin/sudo", "-n", "/usr/bin/python3", str(MANAGER), "web-action"])
         result = subprocess.run(
-            ["/usr/bin/sudo", "-n", "/usr/bin/python3", str(MANAGER), "web-action"],
+            command,
             input=json.dumps(value, ensure_ascii=False),
             capture_output=True,
             text=True,
@@ -5654,6 +5656,8 @@ class Handler(BaseHTTPRequestHandler):
         super().send_error(code, message, explain)
 
     def _secure(self) -> bool:
+        if os.getenv("ADMIN_ALLOW_REMOTE", "0").strip().casefold() in {"1", "true", "yes", "on"}:
+            return True
         try:
             if not ip_address(self.client_address[0]).is_loopback:
                 self.send_error(403)
@@ -6322,7 +6326,8 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     host = os.getenv("ADMIN_HOST", "127.0.0.1")
-    if host not in {"127.0.0.1", "localhost"}:
+    allow_remote = os.getenv("ADMIN_ALLOW_REMOTE", "0").strip().casefold() in {"1", "true", "yes", "on"}
+    if not allow_remote and host not in {"127.0.0.1", "localhost"}:
         raise SystemExit("管理页只允许监听 localhost")
     port = int(os.getenv("ADMIN_PORT", "8765"))
     print(f"HostWatch admin listening on http://{host}:{port}")

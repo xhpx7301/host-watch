@@ -1,0 +1,16 @@
+.git
+__pycache__
+*.pyc
+.venv
+*.tar.gz
+test_*.py
+docs
+.env
+*.env
+config.json
+state*.json
+status.json
+catalog.json
+exchange-rates.json
+merchant-auth-cache.*
+backup-schedule.json

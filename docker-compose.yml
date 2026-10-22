@@ -1,0 +1,83 @@
+services:
+  admin:
+    build: .
+    image: host-watch:local
+    command: ["python", "admin.py"]
+    environment:
+      HOSTWATCH_CONTAINER: "1"
+      ADMIN_HOST: "0.0.0.0"
+      ADMIN_PORT: "25678"
+      ADMIN_ALLOW_REMOTE: "1"
+      ADMIN_USERS_FILE: /data/stockwatch-users.json
+      VMISS_CONFIG: /data/config.json
+      VMISS_STATUS: /data/status.json
+      VMISS_RATES: /data/exchange-rates.json
+      STATE_FILE: /data/state.json
+      HOSTWATCH_DATA_DIR: /data
+      HOSTWATCH_BACKUP_DIR: /backups
+      HOSTWATCH_BACKUP_SETTINGS: /data/backup-schedule.json
+      HOSTWATCH_FLARESOLVERR_URL: http://flaresolverr:8191/v1
+      HOSTWATCH_MANAGER: /app/manage.py
+    ports:
+      - "25678:25678"
+    volumes:
+      - hostwatch-data:/data
+      - hostwatch-backups:/backups
+    depends_on:
+      flaresolverr:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1',25678),3); s.close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  monitor:
+    image: host-watch:local
+    command: ["python", "monitor.py"]
+    environment:
+      HOSTWATCH_CONTAINER: "1"
+      ADMIN_USERS_FILE: /data/stockwatch-users.json
+      VMISS_CONFIG: /data/config.json
+      VMISS_STATUS: /data/status.json
+      VMISS_RATES: /data/exchange-rates.json
+      STATE_FILE: /data/state.json
+      HOSTWATCH_DATA_DIR: /data
+      HOSTWATCH_BACKUP_DIR: /backups
+      HOSTWATCH_BACKUP_SETTINGS: /data/backup-schedule.json
+    volumes:
+      - hostwatch-data:/data
+      - hostwatch-backups:/backups
+    depends_on:
+      flaresolverr:
+        condition: service_started
+    restart: unless-stopped
+
+  backup:
+    image: host-watch:local
+    command: ["python", "docker/backup_worker.py"]
+    environment:
+      HOSTWATCH_CONTAINER: "1"
+      ADMIN_USERS_FILE: /data/stockwatch-users.json
+      VMISS_CONFIG: /data/config.json
+      HOSTWATCH_DATA_DIR: /data
+      HOSTWATCH_BACKUP_DIR: /backups
+      HOSTWATCH_BACKUP_SETTINGS: /data/backup-schedule.json
+    volumes:
+      - hostwatch-data:/data
+      - hostwatch-backups:/backups
+    restart: unless-stopped
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    environment:
+      LOG_LEVEL: info
+      TZ: Asia/Shanghai
+    expose:
+      - "8191"
+    restart: unless-stopped
+
+volumes:
+  hostwatch-data:
+  hostwatch-backups:

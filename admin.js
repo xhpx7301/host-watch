@@ -704,6 +704,15 @@ async function refreshManagement() {
   managementUsers = state.users;
   renderManagementUsers();
   document.querySelector("#manage-backup-storage").textContent = `自动备份存储位置：${state.backup_dir || "服务器备份目录未返回"}`;
+  const containerMode = state.container_mode === true;
+  for (const id of ["manage-restart-admin", "manage-restart-monitor", "manage-update"]) {
+    const button = document.querySelector(`#${id}`);
+    if (button) button.hidden = containerMode;
+  }
+  const operationsNote = document.querySelector("#manage-operations-note");
+  if (operationsNote) operationsNote.textContent = containerMode
+    ? "Docker 部署请使用 docker compose 管理容器重启和版本更新；管理页仍可执行备份、导入和配置操作。"
+    : "读取状态不会触发库存检查；更新会先创建备份。";
   const backupDirty = backupScheduleDraft && JSON.stringify(backupScheduleDraft) !== JSON.stringify(backupScheduleSaved);
   backupScheduleRuntime = state.backup_schedule || null;
   backupScheduleSaved = backupScheduleRuntime ? { enabled: backupScheduleRuntime.enabled, time: backupScheduleRuntime.time } : null;

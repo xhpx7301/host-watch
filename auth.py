@@ -14,7 +14,9 @@ from pathlib import Path
 
 
 ITERATIONS = 600_000
-DEFAULT_USERS_PATH = Path("/etc/stockwatch-users.json")
+# Container deployments provide HOSTWATCH_USERS_PATH/ADMIN_USERS_FILE so
+# credentials live in a persistent volume instead of the host's /etc.
+DEFAULT_USERS_PATH = Path(os.getenv("HOSTWATCH_USERS_PATH", "/etc/stockwatch-users.json"))
 _AUTH_CACHE_TTL = 90.0
 _AUTH_CACHE_LIMIT = 128
 _AUTH_CACHE_KEY = secrets.token_bytes(32)

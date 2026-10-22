@@ -34,12 +34,14 @@ from auth import DEFAULT_USERS_PATH, load_users, password_record, validate_usern
 from time_utils import BEIJING_TZ, format_beijing, now_beijing
 
 
-INSTALL_DIR = Path("/opt/vmiss-monitor")
-DATA_DIR = Path("/var/lib/vmiss-monitor")
-ADMIN_ENV = Path("/etc/vmiss-monitor-admin.env")
-LEGACY_ENV = Path("/etc/vmiss-monitor.env")
-BACKUP_DIR = Path("/var/backups/stockwatch")
-BACKUP_SETTINGS = Path("/etc/hostwatch-backup.json")
+CONTAINER_MODE = os.getenv("HOSTWATCH_CONTAINER", "0").strip().casefold() in {"1", "true", "yes", "on"}
+INSTALL_DIR = Path(os.getenv("HOSTWATCH_INSTALL_DIR", "/opt/vmiss-monitor"))
+DATA_DIR = Path(os.getenv("HOSTWATCH_DATA_DIR", "/var/lib/vmiss-monitor"))
+ADMIN_ENV = Path(os.getenv("HOSTWATCH_ADMIN_ENV", "/etc/vmiss-monitor-admin.env"))
+LEGACY_ENV = Path(os.getenv("HOSTWATCH_LEGACY_ENV", "/etc/vmiss-monitor.env"))
+BACKUP_DIR = Path(os.getenv("HOSTWATCH_BACKUP_DIR", "/var/backups/stockwatch"))
+BACKUP_SETTINGS = Path(os.getenv("HOSTWATCH_BACKUP_SETTINGS", "/etc/hostwatch-backup.json"))
+LOCK_PATH = Path(os.getenv("HOSTWATCH_MANAGER_LOCK", "/run/stockwatch-manager.lock"))
 SYSTEMD_DIR = Path("/etc/systemd/system")
 BACKUP_TIMER = "hostwatch-backup.timer"
 BACKUP_SERVICE = "hostwatch-backup.service"
@@ -71,7 +73,7 @@ def atomic_write(path: Path, contents: str, mode: int = 0o640, group: int | None
             stream.flush()
             os.fsync(stream.fileno())
             os.fchmod(stream.fileno(), mode)
-            if group is not None:
+            if group is not None and os.geteuid() == 0:
                 os.fchown(stream.fileno(), owner, group)
         os.replace(name, path)
     finally:
@@ -223,11 +225,14 @@ def backup() -> Path:
     fd, name = tempfile.mkstemp(prefix=f"host-watch-{timestamp}-", suffix=".tar.gz", dir=BACKUP_DIR)
     os.close(fd)
     target = Path(name)
-    paths = [DATA_DIR, Path("/etc/vmiss-monitor.env"), ADMIN_ENV, DEFAULT_USERS_PATH, BACKUP_SETTINGS,
-             SYSTEMD_DIR / BACKUP_SERVICE, SYSTEMD_DIR / BACKUP_TIMER,
-             Path("/etc/systemd/system") / MONITOR, Path("/etc/systemd/system") / ADMIN,
-             Path("/etc/sudoers.d/host-watch-admin"), Path("/etc/tmpfiles.d/host-watch.conf"),
-             Path("/usr/local/bin/host-watch"), Path("/usr/local/bin/stockwatch"), Path("/usr/local/bin/hw")]
+    if CONTAINER_MODE:
+        paths = [DATA_DIR, BACKUP_SETTINGS]
+    else:
+        paths = [DATA_DIR, Path("/etc/vmiss-monitor.env"), ADMIN_ENV, DEFAULT_USERS_PATH, BACKUP_SETTINGS,
+                 SYSTEMD_DIR / BACKUP_SERVICE, SYSTEMD_DIR / BACKUP_TIMER,
+                 Path("/etc/systemd/system") / MONITOR, Path("/etc/systemd/system") / ADMIN,
+                 Path("/etc/sudoers.d/host-watch-admin"), Path("/etc/tmpfiles.d/host-watch.conf"),
+                 Path("/usr/local/bin/host-watch"), Path("/usr/local/bin/stockwatch"), Path("/usr/local/bin/hw")]
     if INSTALL_DIR.exists():
         paths.extend(path for path in INSTALL_DIR.iterdir() if path.name not in {".venv", "__pycache__"})
     try:
@@ -238,7 +243,8 @@ def backup() -> Path:
     except Exception:
         target.unlink(missing_ok=True)
         raise
-    print(f"备份已保存：{target}（仅 root 可访问，包含凭据，请妥善保管）")
+    access = "仅容器用户可访问" if CONTAINER_MODE else "仅 root 可访问"
+    print(f"备份已保存：{target}（{access}，包含凭据，请妥善保管）")
     prune_backups()
     return target
 
@@ -276,7 +282,7 @@ def validate_restore_config(value: dict) -> dict:
     """Validate using the installed application's dependencies, never archive code."""
     value = {**value, "enabled": False}
     result = subprocess.run(
-        [str(INSTALL_DIR / ".venv/bin/python"), "-I", "-c",
+        [os.getenv("HOSTWATCH_PYTHON", sys.executable), "-I", "-c",
          "import json,sys; sys.path.insert(0,sys.argv[1]); from admin import validate_config; "
          "print(json.dumps(validate_config(json.load(sys.stdin)),ensure_ascii=False))", str(INSTALL_DIR)],
         input=json.dumps(value, ensure_ascii=False), capture_output=True, text=True, timeout=30, check=False)
@@ -350,12 +356,13 @@ def restore_backup(payload: dict) -> dict:
     for path in targets:
         if path.is_symlink() or (path.exists() and not path.is_file()):
             raise ValueError(f"拒绝恢复非普通文件：{path}")
-    owner = pwd.getpwnam(SERVICE_USER).pw_uid
-    group = grp.getgrnam(SERVICE_GROUP).gr_gid
+    owner = pwd.getpwnam(SERVICE_USER).pw_uid if not CONTAINER_MODE else os.geteuid()
+    group = grp.getgrnam(SERVICE_GROUP).gr_gid if not CONTAINER_MODE else os.getegid()
     previous_schedule = read_backup_schedule() if schedule is not None else None
-    was_active = _systemd_state(MONITOR) == "active"
+    was_active = True if CONTAINER_MODE else _systemd_state(MONITOR) == "active"
     # Quiesce the monitor before taking the rollback snapshot or changing data.
-    run("systemctl", "stop", MONITOR)
+    if not CONTAINER_MODE:
+        run("systemctl", "stop", MONITOR)
     snapshot = None
     changed = False
     try:
@@ -369,7 +376,8 @@ def restore_backup(payload: dict) -> dict:
             atomic_write(DATA_DIR / name, json.dumps(value, ensure_ascii=False) + "\n", mode=0o600, owner=owner, group=group)
         if schedule is not None:
             save_backup_schedule(schedule)
-        run("systemctl", "disable", MONITOR)
+        if not CONTAINER_MODE:
+            run("systemctl", "disable", MONITOR)
     except Exception as exc:
         try:
             if changed:
@@ -381,8 +389,8 @@ def restore_backup(payload: dict) -> dict:
                                      group=group if path.parent == DATA_DIR else None)
                 if previous_schedule is not None:
                     apply_backup_schedule(previous_schedule)
-            if was_active:
-                run("systemctl", "start", MONITOR)
+                if was_active and not CONTAINER_MODE:
+                    run("systemctl", "start", MONITOR)
         except Exception:
             raise ValueError(f"导入失败且自动回退未完成，请检查服务日志；恢复前备份：{snapshot or '未生成'}") from None
         raise ValueError(f"导入失败，已保留或恢复原数据：{exc}") from None
@@ -408,6 +416,10 @@ def read_backup_schedule() -> dict:
 
 def apply_backup_schedule(settings: dict) -> None:
     settings = normalize_backup_schedule(settings)
+    if CONTAINER_MODE:
+        # docker/backup_worker.py polls the validated schedule file.  No host
+        # systemd unit is created from inside the application container.
+        return
     # All executable paths and unit names are fixed; only validated HH:MM is interpolated.
     atomic_write(SYSTEMD_DIR / BACKUP_SERVICE, """[Unit]
 Description=HostWatch scheduled local backup
@@ -447,6 +459,20 @@ def backup_schedule_status() -> dict:
     except (OSError, ValueError) as exc:
         settings = {"enabled": False, "time": "03:00"}
         error = f"读取备份计划失败：{exc}"
+    if CONTAINER_MODE:
+        runtime = {}
+        try:
+            runtime = json.loads((DATA_DIR / "backup-runtime.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            pass
+        return {**settings, "timezone": "Asia/Shanghai (UTC+08:00)", "error": error,
+                "timer_active": "active" if settings["enabled"] else "inactive",
+                "timer_enabled": "enabled" if settings["enabled"] else "disabled",
+                "next_run": str(runtime.get("next_run", "")),
+                "last_run": str(runtime.get("last_run", "")),
+                "last_result": str(runtime.get("last_result", "")),
+                "backup_active": str(runtime.get("backup_active", "inactive"))}
+
     def properties(unit, keys):
         try:
             result = subprocess.run(["systemctl", "show", unit, *[f"--property={key}" for key in keys]],
@@ -776,7 +802,21 @@ def web_action(payload: dict) -> dict:
     action = payload.get("action")
     if not isinstance(action, str):
         raise ValueError("管理操作无效")
+    if CONTAINER_MODE and action in {"update", "update-status", "server-restart", "admin-restart", "hostwatch-restart"}:
+        raise ValueError("Docker 部署请使用 git pull、docker compose build 和 docker compose up 管理版本或重启容器")
     if action == "status":
+        if CONTAINER_MODE:
+            users = read_accounts()
+            if not users:
+                users = {"(尚未初始化管理员账号)": {}}
+            backups = [{"name": path.name, "size": path.stat().st_size, "modified": int(path.stat().st_mtime)}
+                       for path in sorted(BACKUP_DIR.glob("host-watch-*.tar.gz"), key=lambda item: item.stat().st_mtime, reverse=True)[:MAX_BACKUPS]
+                       if path.is_file() and not path.is_symlink()]
+            return {"monitor": {"active": "running", "enabled": "enabled"},
+                    "admin": {"active": "running", "enabled": "enabled"},
+                    "users": sorted(users), "backups": backups,
+                    "backup_dir": str(BACKUP_DIR), "backup_schedule": backup_schedule_status(),
+                    "container_mode": True}
         def unit_state(unit: str) -> dict:
             try:
                 result = subprocess.run(
@@ -798,11 +838,19 @@ def web_action(payload: dict) -> dict:
         return {"monitor": unit_state(MONITOR), "admin": unit_state(ADMIN), "users": sorted(users),
                 "backups": backups, "backup_dir": str(BACKUP_DIR), "backup_schedule": backup_schedule_status()}
     if action == "logs":
+        if CONTAINER_MODE:
+            return {"logs": "Docker 部署请使用 docker compose logs --tail 100 admin monitor backup"}
         result = subprocess.run(["journalctl", "--no-pager", "-o", "short-iso", "-u", MONITOR, "-u", ADMIN, "-u", BACKUP_SERVICE, "-n", "100"], text=True, capture_output=True, check=False, timeout=15, env={**os.environ, "TZ": "Asia/Shanghai"})
         if result.returncode:
             raise ValueError(result.stderr.strip()[:500] or "读取日志失败")
         return {"logs": result.stdout[-40_000:]}
     if action in {"monitor-start", "monitor-stop", "monitor-restart", "monitor-apply"}:
+        if CONTAINER_MODE:
+            if action == "monitor-start":
+                set_monitor_enabled(True)
+            elif action == "monitor-stop":
+                set_monitor_enabled(False)
+            return {"ok": True, "message": "监控配置已更新，监控容器会自动读取最新配置。"}
         if action == "monitor-start":
             set_monitor_enabled(True)
             start_monitor()
@@ -976,14 +1024,14 @@ def main() -> int:
     args = parser.parse_args()
     if args.domain is not None and args.command != "admin-domain":
         parser.error("只有 admin-domain 命令接受域名参数")
-    if os.geteuid() != 0:
+    if os.geteuid() != 0 and not CONTAINER_MODE:
         parser.error("请使用 sudo hw 或切换至 root")
     release = {}
     for line in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
         if "=" in line and not line.startswith("#"):
             key, value = line.split("=", 1)
             release[key] = value.strip("\"'")
-    if release.get("ID") != "debian" or release.get("VERSION_ID") not in {"12", "13"}:
+    if not CONTAINER_MODE and (release.get("ID") != "debian" or release.get("VERSION_ID") not in {"12", "13"}):
         parser.error("此菜单仅用于 Debian 12/13 系统")
     if not (INSTALL_DIR / "admin.py").is_file():
         parser.error("尚未安装 HostWatch，请先执行 README 中的一键安装")
@@ -997,7 +1045,8 @@ def main() -> int:
             print(f"恢复自动备份计划失败：{exc}")
             return 1
     # Avoid two terminals racing an update/account mutation or overwriting users.
-    lock_fd = os.open("/run/stockwatch-manager.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = os.open(LOCK_PATH, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(lock_fd, "w", encoding="utf-8") as lock:
         os.fchmod(lock.fileno(), 0o600)
         try:
