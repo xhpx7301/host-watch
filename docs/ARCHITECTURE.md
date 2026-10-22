@@ -15,7 +15,7 @@ HostWatch 的运行入口仍保留在仓库根目录，以兼容已经安装的 
 
 ## Docker Compose 运行方式
 
-`docker/install.sh` 是 Docker 一键部署入口，会将项目放到 `/opt/host-watch`，安装主机侧 `hw` 快捷菜单，并执行 Compose 首次构建。`Dockerfile` 构建同一份应用镜像，`docker-compose.yml` 分别以 `admin`、`monitor` 和 `backup` 服务运行管理页、库存监控和每日备份；FlareSolverr 是独立的 `flaresolverr` 服务。三个 HostWatch 服务共享 `/data` 和 `/backups` 命名卷，管理页在容器内监听 `0.0.0.0:25678`，只将 TCP 25678 映射到宿主机。FlareSolverr 只通过 Compose 内网的 `flaresolverr:8191` 访问。
+`docker/install.sh` 是 Docker 一键部署入口，会将项目放到 `/opt/host-watch`，安装主机侧 `hw` 快捷菜单，并执行 Compose 首次构建。`Dockerfile` 构建同一份应用镜像，`docker-compose.yml` 分别以 `hostwatch`、`monitor` 和 `backup` 服务运行管理页、库存监控和每日备份；FlareSolverr 是独立的 `flaresolverr` 服务。三个 HostWatch 服务共享 `/data` 和 `/backups` 命名卷，管理页在容器内监听 `0.0.0.0:25678`，只将 TCP 25678 映射到宿主机。FlareSolverr 只通过 Compose 内网的 `flaresolverr:8191` 访问。
 
 容器模式通过 `HOSTWATCH_CONTAINER=1` 禁用依赖宿主机的 `systemd`、`journalctl`、`systemd-run` 和 Docker socket 操作。网页配置、手动刷新、备份导入导出仍由管理页处理；主机侧 `hw update`、`hw restart` 和 `hw logs` 负责镜像更新、容器重启和日志查看。管理页的 Docker 更新按钮只复制 `hw update`，不会获得宿主机 Docker 控制权限。
 

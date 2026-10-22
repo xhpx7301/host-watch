@@ -12,12 +12,15 @@ update_project() {
     git -C "$PROJECT_DIR" pull --ff-only origin main
     compose pull flaresolverr
     compose build --pull
+    # The management service was renamed from ``admin`` to ``hostwatch``;
+    # remove orphaned containers before rebinding port 25678.
+    compose down --remove-orphans
     compose up -d
     echo "HostWatch Docker 项目已更新。"
 }
 
 show_logs() {
-    compose logs --tail 100 admin monitor backup
+    compose logs --tail 100 hostwatch monitor backup
 }
 
 run_menu() {
@@ -37,7 +40,7 @@ run_menu() {
             2) update_project ;;
             3) compose restart ;;
             4) show_logs ;;
-            5) compose exec -T admin python manage.py backup ;;
+            5) compose exec -T hostwatch python manage.py backup ;;
             6) compose stop ;;
             0) return 0 ;;
             *) echo "请输入菜单中的编号。" ;;
@@ -51,7 +54,7 @@ case "${1:-menu}" in
     update) update_project ;;
     restart) compose restart ;;
     logs) show_logs ;;
-    backup) compose exec -T admin python manage.py backup ;;
+    backup) compose exec -T hostwatch python manage.py backup ;;
     stop) compose stop ;;
     start) compose up -d ;;
     *) echo "用法：hw [status|update|restart|logs|backup|stop|start]" >&2; exit 2 ;;

@@ -21,7 +21,7 @@ curl -fsSL https://raw.githubusercontent.com/xhpx7301/host-watch/main/docker/ins
 安装脚本会检查 Docker Compose、克隆项目到 `/opt/host-watch`、构建并启动服务，并安装 `hw` 快捷命令。Docker 首次初始化管理员账号和密码均为 `pingzi`；登录后请立即修改密码。也可以查看启动日志确认：
 
 ```sh
-docker compose -f /opt/host-watch/docker-compose.yml logs --no-log-prefix admin | grep '初始密码'
+docker compose -f /opt/host-watch/docker-compose.yml logs --no-log-prefix hostwatch | grep '初始密码'
 ```
 
 访问 `http://服务器公网地址:25678`，使用 `pingzi` / `pingzi` 登录。以后在任意目录输入 `hw` 呼出 Docker 管理菜单；常用命令如下：
@@ -36,6 +36,8 @@ hw restart          # 重启 HostWatch 容器
 ```
 
 管理页“设置 → 运维操作”中的 Docker 更新按钮会复制 `hw update`。管理页容器不控制宿主机 Docker，复制后请在部署服务器终端执行；这样即使管理页对公网开放，也不会把 Docker socket 暴露给网页进程。
+
+管理页 Compose 服务名称为 `hostwatch`，监控和备份服务名称分别为 `monitor`、`backup`。升级脚本会自动清理旧版的 `admin` 容器，不会删除命名卷中的数据。
 
 已有旧版 Compose 部署时，在项目目录执行一次下面的命令即可补装 `hw` 菜单并升级到当前配置；命名卷中的配置、账号和备份会保留：
 

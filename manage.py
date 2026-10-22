@@ -840,7 +840,7 @@ def web_action(payload: dict) -> dict:
                 "backups": backups, "backup_dir": str(BACKUP_DIR), "backup_schedule": backup_schedule_status()}
     if action == "logs":
         if CONTAINER_MODE:
-            return {"logs": "Docker 部署请使用 docker compose logs --tail 100 admin monitor backup"}
+            return {"logs": "Docker 部署请使用 docker compose logs --tail 100 hostwatch monitor backup"}
         result = subprocess.run(["journalctl", "--no-pager", "-o", "short-iso", "-u", MONITOR, "-u", ADMIN, "-u", BACKUP_SERVICE, "-n", "100"], text=True, capture_output=True, check=False, timeout=15, env={**os.environ, "TZ": "Asia/Shanghai"})
         if result.returncode:
             raise ValueError(result.stderr.strip()[:500] or "读取日志失败")

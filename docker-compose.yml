@@ -1,5 +1,5 @@
 services:
-  admin:
+  hostwatch:
     build: .
     image: host-watch:local
     command: ["python", "admin.py"]

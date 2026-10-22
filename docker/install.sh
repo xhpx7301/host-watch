@@ -42,9 +42,10 @@ chmod 0755 "$LAUNCHER"
 
 cd "$PROJECT_DIR"
 docker compose pull flaresolverr
+docker compose down --remove-orphans
 docker compose up -d --build
 
 echo "HostWatch Docker 部署完成。"
 echo "管理页：http://服务器公网地址:25678"
 echo "快捷菜单：hw"
-echo "查看初始管理员密码：docker compose logs --no-log-prefix admin | grep '初始密码'"
+echo "查看初始管理员密码：docker compose logs --no-log-prefix hostwatch | grep '初始密码'"
