@@ -23,6 +23,29 @@ show_logs() {
     compose logs --tail 100 hostwatch monitor backup
 }
 
+uninstall_project() {
+    case "$PROJECT_DIR" in
+        ""|"/"|"/opt"|"/usr"|"/var"|"/home")
+            echo "拒绝删除异常项目目录：$PROJECT_DIR" >&2
+            return 1
+            ;;
+    esac
+    echo "此操作将删除 HostWatch 容器、镜像、命名卷、配置、账号、备份和项目目录："
+    echo "  $PROJECT_DIR"
+    echo "其他 Docker 项目不会受到影响。"
+    printf '请输入 DELETE HOSTWATCH 继续：'
+    read -r confirmation
+    if [ "$confirmation" != "DELETE HOSTWATCH" ]; then
+        echo "已取消卸载。"
+        return 0
+    fi
+    compose down --volumes --remove-orphans --rmi all
+    rm -f -- /usr/local/bin/hw
+    cd /tmp
+    rm -rf -- "$PROJECT_DIR"
+    echo "HostWatch Docker 已完全卸载。"
+}
+
 run_menu() {
     while :; do
         printf '\n──────── HostWatch Docker 管理菜单 ────────\n'
@@ -33,6 +56,7 @@ run_menu() {
         printf ' 5. 执行数据备份\n'
         printf ' 6. 重置 Docker 管理员为 pingzi / pingzi\n'
         printf ' 7. 停止项目\n'
+        printf ' 8. 完全卸载 HostWatch\n'
         printf ' 0. 退出\n'
         printf '请选择：'
         read -r choice
@@ -44,6 +68,7 @@ run_menu() {
             5) compose exec -T hostwatch python manage.py backup ;;
             6) compose exec -T hostwatch python docker/reset_admin.py ;;
             7) compose stop ;;
+            8) uninstall_project; return 0 ;;
             0) return 0 ;;
             *) echo "请输入菜单中的编号。" ;;
         esac
@@ -60,5 +85,6 @@ case "${1:-menu}" in
     reset-admin) compose exec -T hostwatch python docker/reset_admin.py ;;
     stop) compose stop ;;
     start) compose up -d ;;
-    *) echo "用法：hw [status|update|restart|logs|backup|reset-admin|stop|start]" >&2; exit 2 ;;
+    uninstall) uninstall_project ;;
+    *) echo "用法：hw [status|update|restart|logs|backup|reset-admin|stop|start|uninstall]" >&2; exit 2 ;;
 esac
