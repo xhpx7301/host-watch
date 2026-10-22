@@ -17,6 +17,8 @@ services:
       HOSTWATCH_BACKUP_DIR: /backups
       HOSTWATCH_BACKUP_SETTINGS: /data/backup-schedule.json
       HOSTWATCH_DOCKER_UPDATE_COMMAND: hw update
+      HOSTWATCH_INITIAL_ADMIN_USERNAME: pingzi
+      HOSTWATCH_INITIAL_ADMIN_PASSWORD: pingzi
       HOSTWATCH_FLARESOLVERR_URL: http://flaresolverr:8191/v1
       HOSTWATCH_MANAGER: /app/manage.py
     ports:

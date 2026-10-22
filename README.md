@@ -18,13 +18,13 @@ Docker 部署不需要 systemd，也不挂载宿主机 Docker socket。管理页
 curl -fsSL https://raw.githubusercontent.com/xhpx7301/host-watch/main/docker/install.sh | sudo sh
 ```
 
-安装脚本会检查 Docker Compose、克隆项目到 `/opt/host-watch`、构建并启动服务，并安装 `hw` 快捷命令。首次管理员密码只在容器日志中显示一次，请立即保存：
+安装脚本会检查 Docker Compose、克隆项目到 `/opt/host-watch`、构建并启动服务，并安装 `hw` 快捷命令。Docker 首次初始化管理员账号和密码均为 `pingzi`；登录后请立即修改密码。也可以查看启动日志确认：
 
 ```sh
 docker compose -f /opt/host-watch/docker-compose.yml logs --no-log-prefix admin | grep '初始密码'
 ```
 
-访问 `http://服务器公网地址:25678`，使用日志中的 `admin` 和随机密码登录。以后在任意目录输入 `hw` 呼出 Docker 管理菜单；常用命令如下：
+访问 `http://服务器公网地址:25678`，使用 `pingzi` / `pingzi` 登录。以后在任意目录输入 `hw` 呼出 Docker 管理菜单；常用命令如下：
 
 ```sh
 hw                  # 交互式菜单

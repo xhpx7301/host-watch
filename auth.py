@@ -56,8 +56,9 @@ def validate_username(username: str) -> str:
     return username
 
 
-def password_record(password: str) -> dict:
-    if not 12 <= len(password) <= 256 or any(ord(c) < 32 for c in password):
+def password_record(password: str, *, allow_short: bool = False) -> dict:
+    minimum = 1 if allow_short else 12
+    if not minimum <= len(password) <= 256 or any(ord(c) < 32 for c in password):
         raise ValueError("密码需为 12–256 个字符，不能包含控制字符")
     salt = secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt), ITERATIONS)
