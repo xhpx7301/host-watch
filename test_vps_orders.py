@@ -218,11 +218,27 @@ class OrderTaskTests(unittest.TestCase):
         self.assertEqual(send.call_args.args[:2], ('test-token', 'sendMessage'))
         payload = send.call_args.kwargs
         self.assertEqual(payload['chat_id'], '123')
-        self.assertIn('订单号：<code>order-123</code>', payload['text'])
+        self.assertIn('账户：Main', payload['text'])
+        self.assertIn('订单号：order-123', payload['text'])
+        self.assertNotIn('<code>', payload['text'])
         self.assertIn('商家：ExampleHost', payload['text'])
         self.assertIn('状态：待付款', payload['text'])
         self.assertEqual(payload['reply_markup']['inline_keyboard'][0][0]['text'], '💳 立即付款')
         self.assertEqual(payload['reply_markup']['inline_keyboard'][0][0]['url'], 'https://shop.example.com/buy')
+
+    def test_unpaid_order_notification_does_not_link_account_email_or_order_id(self):
+        self.config['vps_seckill']['accounts'][0].update(name='', username='user@example.com')
+        task = admin.SeckillTask('notification-test', self.config, 'rapid')
+        item = self.config['vps_seckill']['items'][0]
+        with patch.object(admin, 'effective_telegram', return_value=('test-token', '123')), \
+             patch.object(admin, 'telegram_call') as send:
+            result = task._notify_unpaid_order(item, 'order-123', 2, 'https://shop.example.com/buy')
+        self.assertEqual(result, 'sent')
+        message = send.call_args.kwargs['text']
+        self.assertIn('账户：user@\u200bexample.com', message)
+        self.assertIn('订单号：order-123', message)
+        self.assertNotIn('<code>', message)
+        self.assertNotIn('<a ', message)
 
     def test_seckill_test_checks_page_and_account_without_creating_order(self):
         checked = {'ok': True, 'status': 'valid', 'message': '账户认证正常', 'account_id': 'account', 'checked_at': '2026-10-16T12:00:00+08:00'}

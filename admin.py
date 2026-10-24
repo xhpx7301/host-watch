@@ -2641,10 +2641,125 @@ def akile_market_detail(session: requests.Session, product_id: str) -> dict:
         raise ValueError("Akile 交易市场商品 ID 无效")
     payload = order_json(session.get(AKILE_MARKET_DETAIL_URL, params={"id": product_id},
         timeout=(5, 20), allow_redirects=False))
-    if (str(payload.get("status_code")) not in {"0", "200"} or not isinstance(payload.get("data"), dict)
-            or str(payload["data"].get("id")) != str(product_id)):
+    if str(payload.get("status_code")) not in {"0", "200"}:
         raise ValueError("Akile 商品详情无法确认或已下架")
+    if not isinstance(payload.get("data"), dict) or str(payload["data"].get("id")) != str(product_id):
+        raise MarketListingMissing("Akile 挂单已不在市场")
     return payload["data"]
+
+
+class MarketListingMissing(ValueError):
+    """A successful marketplace response explicitly confirms a listing is absent."""
+
+
+def _market_presence_state(provider: str) -> dict:
+    path = CONFIG_PATH.parent / f"state-{provider}-market-presence.json"
+    if not path.exists():
+        return {"listings": {}}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not isinstance(data.get("listings"), dict):
+            raise ValueError()
+        if any(not isinstance(row, dict) or type(row.get("active")) is not bool
+               for row in data["listings"].values()):
+            raise ValueError()
+        return data
+    except (OSError, ValueError, TypeError):
+        raise ValueError(f"{provider.title()} 市场挂单状态文件损坏，已停止状态通知") from None
+
+
+def _save_market_presence_state(provider: str, value: dict) -> None:
+    path = CONFIG_PATH.parent / f"state-{provider}-market-presence.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=f"{provider}-market-presence-", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(value, stream, ensure_ascii=False, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(name, 0o600)
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def _market_presence_alert(config: dict, provider: str, rule: dict, item: dict, status: str) -> bool:
+    token, chat_id = effective_telegram(config)
+    if not token or not chat_id:
+        return False
+    label = "Isvoro" if provider == "isvoro" else "Akile"
+    cycle = f"{item.get('cycle', '—')}{'个月' if item.get('cycle_unit', 'month') == 'month' else '年'}"
+    hardware = hardware_text(" · ".join(filter(None, [
+        _akile_market_display_unit(item.get("cpu"), " 核"),
+        _akile_market_display_unit(item.get("memory"), "MB"),
+        _akile_market_display_unit(item.get("disk"), "GB"),
+    ])))
+    flow = _isvoro_market_display_flow(item.get("flow")) if provider == "isvoro" else _akile_market_display_unit(item.get("flow"), "GB")
+    network = network_text(" · ".join(filter(None, [flow, _akile_market_display_unit(item.get("bandwidth"), "Mbps")])) )
+    currency_code = str(item.get("currency_code") or "CNY").strip().upper()
+    currency = "¥" if currency_code == "CNY" else f"{escape(currency_code)} "
+    lines = [f"🔔 <b>HostWatch · {label} 二手市场</b>",
+        f"🌍 <b>地区：</b>{escape(telegram_region(item.get('region', '')) or '—')}",
+        f"📍 <b>节点：</b>{escape(str(item.get('node') or '—'))}",
+        f"🖥 <b>配置：</b>{escape(hardware or '—')}",
+        f"🌐 <b>网络：</b>{escape(network or '—')}"]
+    if item.get("renewal") is not None:
+        lines.append(f"🔁 <b>续费价格：</b>{currency}{float(item['renewal']):.2f}/{escape(cycle)}")
+    lines.extend([f"📦 <b>库存：</b>{'✅ ' if status != '已下架' else '❌ '}{status}",
+        f"🏷 <b>挂单 ID：</b>{escape(str(item.get('id') or rule['product_id']))}",
+        f"🕒 <b>检查时间：</b>{format_beijing(beijing_iso())}"])
+    url = f"https://akile.ai/console/pushshop?highlight={item.get('id')}" if provider == "akile" else "https://isvoro.com/marketplace"
+    telegram_call(token, "sendMessage", chat_id=chat_id, text="\n".join(lines), parse_mode="HTML",
+        disable_web_page_preview=True, reply_markup={"inline_keyboard": [[{"text": f"查看 {label} 商品", "url": url}]]})
+    return True
+
+
+def _evaluate_market_presence(config: dict, provider: str, items: list[dict], *, complete: bool = True,
+                              unknown_ids: set[str] | None = None, rule_id: str = "") -> list[dict]:
+    """Track listing-scoped rules and notify only confirmed state transitions."""
+    unknown_ids = unknown_ids or set()
+    market = config[f"{provider}_market"]
+    rules = [row for row in market["items"] if row["enabled"] and row["target"] == "listing"
+             and (not rule_id or row["id"] == rule_id)]
+    if not rules:
+        return []
+    state = _market_presence_state(provider)
+    listings = state["listings"]
+    by_id = {str(row.get("id")): row for row in items if row.get("id")}
+    results = []
+    for rule in rules:
+        product_id = rule["product_id"]
+        key = hashlib.sha256(f"{market['account_id']}:{rule['id']}:{product_id}".encode()).hexdigest()
+        record = listings.get(key)
+        if product_id in unknown_ids or (not complete and product_id not in by_id):
+            results.append({"rule_id": rule["id"], "product_id": product_id, "status": "unknown",
+                            "message": f"挂单 #{product_id} 状态未知，本轮市场数据不完整或详情无法确认"})
+            continue
+        item = by_id.get(product_id)
+        active = item is not None and item.get("status") == 0
+        if record is None:
+            listings[key] = {"active": active, "updated_at": beijing_iso()}
+        elif record["active"] != active:
+            listings[key] = {"active": active, "updated_at": beijing_iso()}
+            listings[key]["transition"] = "重新上架" if active else "已下架"
+            listings[key]["sent"] = False
+            record = listings[key]
+        if record is not None and record.get("transition") and not record.get("sent"):
+            try:
+                record["sent"] = _market_presence_alert(config, provider, rule,
+                    item or {"id": product_id, **(rule.get("market_info") or {})}, record["transition"])
+            except (TelegramAPIError, requests.RequestException, ValueError):
+                record["sent"] = False
+            record["notification"] = "已发送状态变化通知" if record["sent"] else "通知失败或 Telegram 未配置，等待重试"
+        record = listings[key]
+        label = "仍在市场" if record["active"] else "已下架"
+        results.append({"rule_id": rule["id"], "product_id": product_id,
+                        "status": "market_active" if record["active"] else "market_removed",
+                        "message": f"挂单 #{product_id}：{label}",
+                        "notification": record.get("notification", "")})
+    _save_market_presence_state(provider, state)
+    return results
 
 
 def normalize_akile_market(value: object, accounts: list[dict]) -> dict:
@@ -3888,14 +4003,19 @@ class SeckillTask:
         account = next((row for row in self.config.get("vps_seckill", {}).get("accounts", [])
                         if row.get("id") == item.get("account_id")), None)
         merchant = str(product.get("provider") or product.get("adapter") or "未知商家").strip()
+        account_label = None
+        if account:
+            account_value = str(account.get("name") or account.get("username") or account.get("id"))[:120]
+            # Keep Telegram from auto-linking email addresses in the account label.
+            account_label = escape(account_value).replace("@", "@\u200b")
         if duration_seconds is None:
             duration_seconds = self._total_duration()
         message = "\n".join([
             "✅ <b>HostWatch · VPS 补货抢购成功</b>",
             f"商家：{escape(merchant[:80])}",
             f"商品：{escape(str(label)[:160])}",
-            *([f"账户：{escape(str(account.get('name') or account.get('username') or account.get('id'))[:120])}"] if account else []),
-            f"订单号：<code>{escape(str(order_id)[:128])}</code>",
+            *([f"账户：{account_label}"] if account_label is not None else []),
+            f"订单号：{escape(str(order_id)[:128])}",
             f"数量：{quantity}",
             "状态：待付款",
             f"总耗时：{duration_seconds} 秒",
@@ -5183,6 +5303,7 @@ def _akile_market_alert(config: dict, rule: dict, item: dict, reason: str) -> bo
         f"🌐 <b>网络：</b>{escape(network)}",
         f"🔁 <b>续费价格：</b>¥{item['renewal']:.2f}/{escape(str(item['cycle']))}个月",
         f"📅 <b>到期时间：</b>{_akile_market_display_time(item.get('due_time'))}（剩余 {item['remaining_days']:.2f} 天）",
+        "📦 <b>库存：</b>✅ 仍在市场",
         f"💎 <b>剩余价值：</b>¥{item['fair_value']:.2f}",
         f"📈 <b>{kind}：</b>{abs(item['rate']):.2f}% · ¥{abs(item['delta']):.2f}",
         f"💰 <b>售价：</b><b>¥{item['price']:.2f}</b>",
@@ -5296,6 +5417,7 @@ def _isvoro_market_alert(config: dict, rule: dict, item: dict) -> bool:
         f"🌐 <b>网络：</b>{escape(network)}",
         f"🔁 <b>续费价格：</b>{currency}{item['renewal']:.2f}/{cycle}",
         f"📅 <b>到期时间：</b>{_akile_market_display_time(item.get('due_time'))}（剩余 {item['remaining_days']:.2f} 天）",
+        "📦 <b>库存：</b>✅ 仍在市场",
         f"💎 <b>剩余价值：</b>{currency}{item['fair_value']:.2f}",
         f"📈 <b>{kind}：</b>{abs(item['rate']):.2f}% · {currency}{abs(item['delta']):.2f}",
         f"💰 <b>售价：</b><b>{currency}{item['price']:.2f}</b>",
@@ -5387,6 +5509,8 @@ def refresh_isvoro_market(*, account_id: str = "", evaluate: bool = False, autom
                 if account_id != market["account_id"]:
                     raise ValueError("规则检查必须使用已保存的市场账户")
                 results = _evaluate_isvoro_market(latest, items, rule_id)
+                if not rule_id:
+                    results += _evaluate_market_presence(latest, "isvoro", items, rule_id=rule_id)
         result = {"account_id": account_id, "updated_at": beijing_iso(), "items": items, "results": results,
                   "error": "", "warning": "", "running": current_config()["isvoro_market"]["enabled"]}
         with ISVORO_MARKET_LOCK:
@@ -5488,6 +5612,8 @@ def refresh_akile_market(*, account_id: str = "", evaluate: bool = False, automa
                     else:
                         candidates.setdefault(rule["product_id"], {"id": rule["product_id"]})
                 verified = []
+                confirmed_missing = set()
+                unknown_details = set()
                 for identifier, candidate in candidates.items():
                     if not any(rule["enabled"] and ((rule["target"] == "listing" and rule["product_id"] == identifier)
                            or (rule["target"] == "plan" and all(rule[key] == candidate.get(key) for key in ("plan_name", "region", "node"))))
@@ -5495,7 +5621,10 @@ def refresh_akile_market(*, account_id: str = "", evaluate: bool = False, automa
                         continue
                     try:
                         verified.append(akile_market_valuation(akile_market_detail(session, identifier)))
+                    except MarketListingMissing:
+                        confirmed_missing.add(identifier)
                     except (ValueError, requests.RequestException):
+                        unknown_details.add(identifier)
                         failed_details.extend({"rule_id": rule["id"], "product_id": identifier, "status": "unknown", "message": "商品详情无法核验，本轮不触发"}
                             for rule in market["items"] if rule["enabled"] and ((rule["target"] == "listing" and rule["product_id"] == identifier)
                                 or (rule["target"] == "plan" and all(rule[key] == candidate.get(key) for key in ("plan_name", "region", "node")))))
@@ -5507,6 +5636,11 @@ def refresh_akile_market(*, account_id: str = "", evaluate: bool = False, automa
                 if account_id != market["account_id"]:
                     raise ValueError("规则检查必须使用已保存的市场账户")
                 results = _evaluate_akile_market(latest, verified, session, rule_id) + failed_details
+                if not rule_id:
+                    watched = {rule["product_id"] for rule in market["items"]
+                               if rule["enabled"] and rule["target"] == "listing"}
+                    results += _evaluate_market_presence(latest, "akile", verified, rule_id=rule_id,
+                        unknown_ids=unknown_details | (watched - set(candidates) - confirmed_missing))
                 items = list({row["id"]: row for row in [*items, *verified]}.values())
         result = {"account_id": account_id, "updated_at": beijing_iso(), "items": items, "results": results,
                   "error": "", "warning": warning, "running": current_config()["akile_market"]["enabled"],

@@ -27,6 +27,8 @@ def config(rules=None):
     value["vps_seckill"]["accounts"] = [dict(id="ak", name="Akile", provider="akile", username="test@example.com", password="private")]
     value["akile_market"] = dict(enabled=True, interval_seconds=60, account_id="ak", items=rules or [rule()])
     value["telegram"] = dict(bot_token="secret-token", chat_id="123", disabled=False)
+    value["telegram_bot_token"] = "secret-token"
+    value["telegram_chat_id"] = "123"
     return admin.validate_config(value)
 
 
@@ -161,7 +163,7 @@ class TriggerTests(unittest.TestCase):
         with patch.object(admin, "telegram_call") as send:
             self.assertTrue(admin._akile_market_alert(config(), rule(), item, "达到阈值"))
         message = send.call_args.kwargs["text"]
-        labels = ["地区：", "节点：", "套餐：", "配置：", "网络：", "续费价格：", "到期时间：",
+        labels = ["地区：", "节点：", "套餐：", "配置：", "网络：", "续费价格：", "到期时间：", "库存：",
                   "剩余价值：", "折价：", "售价：", "触发规则："]
         positions = [message.index(label) for label in labels]
         self.assertEqual(positions, sorted(positions))
@@ -169,6 +171,7 @@ class TriggerTests(unittest.TestCase):
                       "1C/1G/5GB", "1000GB@1000Mbps", "¥30.00/1个月"]:
             self.assertIn(value, message)
         self.assertIn("💰 <b>售价：</b><b>¥20.00</b>", message)
+        self.assertIn("📦 <b>库存：</b>✅ 仍在市场", message)
         self.assertNotIn("月付 ¥30.00", message)
         self.assertIn("2026-11-18 12:00:00 北京时间（剩余 30.00 天）", message)
         self.assertEqual(send.call_args.kwargs["parse_mode"], "HTML")
@@ -208,6 +211,35 @@ class TriggerTests(unittest.TestCase):
             with patch.object(admin,"akile_market_list",side_effect=ValueError("failed")),self.assertRaises(ValueError):admin.refresh_akile_market(evaluate=True)
             self.assertEqual(len(admin._akile_market_snapshot()["items"]),1)
             evaluate.assert_not_called()
+
+    def test_market_presence_baselines_then_notifies_only_confirmed_transitions(self):
+        value = config()
+        with patch.object(admin, "telegram_call") as send:
+            first = admin._evaluate_market_presence(value, "akile", [self.item])
+            self.assertEqual(first[0]["status"], "market_active")
+            send.assert_not_called()
+            removed = admin._evaluate_market_presence(value, "akile", [], unknown_ids={"288702"})
+            self.assertEqual(removed[0]["status"], "unknown")
+            send.assert_not_called()
+            removed = admin._evaluate_market_presence(value, "akile", [])
+            self.assertEqual(removed[0]["status"], "market_removed")
+            self.assertEqual(send.call_count, 1)
+            self.assertIn("库存：</b>❌ 已下架", send.call_args.kwargs["text"])
+            admin._evaluate_market_presence(value, "akile", [])
+            self.assertEqual(send.call_count, 1)
+            relisted = admin._evaluate_market_presence(value, "akile", [self.item])
+            self.assertEqual(relisted[0]["status"], "market_active")
+            self.assertEqual(send.call_count, 2)
+            self.assertIn("重新上架", send.call_args.kwargs["text"])
+
+    def test_akile_detail_distinguishes_confirmed_absence_from_request_failure(self):
+        session = Mock()
+        session.get.return_value = response({"status_code": 0, "data": None})
+        with self.assertRaises(admin.MarketListingMissing):
+            admin.akile_market_detail(session, "288702")
+        session.get.side_effect = admin.requests.RequestException("network")
+        with self.assertRaises(admin.requests.RequestException):
+            admin.akile_market_detail(session, "288702")
 
     def test_overlapping_refresh_is_rejected(self):
         with admin.AKILE_MARKET_RUN_LOCK, self.assertRaises(ValueError): admin.refresh_akile_market()

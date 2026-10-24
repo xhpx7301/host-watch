@@ -62,6 +62,7 @@ class IsvoroMarketTests(unittest.TestCase):
         value = admin.default_config()
         value["vps_seckill"]["accounts"] = [{"id": "iv", "name": "Isvoro", "provider": "isvoro",
             "username": "user@example.com", "password": "secret"}]
+        value["telegram"] = {"bot_token": "token", "chat_id": "123", "disabled": False}
         value["isvoro_market"] = {"enabled": True, "interval_seconds": 60, "account_id": "iv", "items": [{
             "id": "rule", "target": "listing", "product_id": "901", "direction": "discount",
             "rate_threshold": 10, "amount_threshold": None, "enabled": True,
@@ -99,7 +100,7 @@ class IsvoroMarketTests(unittest.TestCase):
         with patch.object(admin, "telegram_call") as send:
             self.assertTrue(admin._isvoro_market_alert(value, rule, item))
         message = send.call_args.kwargs["text"]
-        labels = ["地区：", "节点：", "配置：", "网络：", "续费价格：", "到期时间：",
+        labels = ["地区：", "节点：", "配置：", "网络：", "续费价格：", "到期时间：", "库存：",
                   "剩余价值：", "折价：", "售价：", "触发规则：", "挂单 ID：", "说明：", "检查时间："]
         positions = [message.index(label) for label in labels]
         self.assertEqual(positions, sorted(positions))
@@ -108,6 +109,7 @@ class IsvoroMarketTests(unittest.TestCase):
         self.assertIn("1TB@500Mbps", message)
         self.assertIn("¥30.00/1个月", message)
         self.assertIn("💰 <b>售价：</b><b>¥12.00</b>", message)
+        self.assertIn("📦 <b>库存：</b>✅ 仍在市场", message)
         self.assertIn(f"¥{item['fair_value']:.2f}", message)
         self.assertIn(f"¥{abs(item['delta']):.2f}", message)
         self.assertNotIn("套餐", message)
@@ -138,6 +140,24 @@ class IsvoroMarketTests(unittest.TestCase):
         value["isvoro_market"]["items"][0]["renewal_price"] = None
         with self.assertRaises(ValueError):
             admin.validate_config(value)
+
+    def test_market_presence_notifies_when_complete_snapshot_removes_listing(self):
+        item = admin.isvoro_market_valuation(listing(), NOW)
+        value = admin.default_config()
+        value["vps_seckill"]["accounts"] = [{"id": "iv", "name": "Isvoro", "provider": "isvoro",
+            "username": "user@example.com", "password": "secret"}]
+        value["telegram"] = {"bot_token": "token", "chat_id": "123", "disabled": False}
+        value["isvoro_market"] = {"enabled": True, "interval_seconds": 600, "account_id": "iv", "items": [{
+            "id": "watch-901", "target": "listing", "product_id": "901", "direction": "discount",
+            "rate_threshold": 10, "amount_threshold": None, "enabled": True,
+        }]}
+        value = admin.validate_config(value)
+        with tempfile.TemporaryDirectory() as folder, patch.object(admin, "CONFIG_PATH", Path(folder) / "config.json"), \
+             patch.object(admin, "telegram_call") as send:
+            self.assertEqual(admin._evaluate_market_presence(value, "isvoro", [item])[0]["status"], "market_active")
+            self.assertEqual(admin._evaluate_market_presence(value, "isvoro", [])[0]["status"], "market_removed")
+            self.assertEqual(send.call_count, 1)
+            self.assertIn("已下架", send.call_args.kwargs["text"])
 
     def test_account_status_only_probes_cached_session(self):
         value = admin.default_config()

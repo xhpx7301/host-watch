@@ -302,6 +302,11 @@ function renderMarketRuleDetails() {
     const meta = card.querySelector(".market-rule-meta");
     if (!rule || !meta) continue;
     meta.replaceChildren();
+    if (rule.target === "listing") {
+      const presence = (marketSnapshot.results || []).find(entry => entry.rule_id === rule.id && entry.product_id === rule.product_id
+        && ["market_active", "market_removed", "unknown"].includes(entry.status));
+      if (presence) meta.append(text("p", `挂单状态：${presence.message}${presence.notification ? ` · ${presence.notification}` : ""}`, "market-presence-state"));
+    }
     const current = snapshotMatches ? (marketSnapshot.items || []).filter(item => rule.target === "listing"
       ? String(item.id) === String(rule.product_id)
       : rule.target === "renewal" ? item.region === rule.region && Math.abs(Number(item.renewal) - Number(rule.renewal_price)) <= 0.01
