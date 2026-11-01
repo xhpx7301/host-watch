@@ -21,6 +21,7 @@ class InstalledRuntimeTests(unittest.TestCase):
         filenames = re.findall(r'"\$SOURCE_DIR/([^"\n]+)"', block.group(1))
         self.assertIn("admin.py", filenames)
         self.assertIn("monitor.py", filenames)
+        self.assertIn("hytron.py", filenames)
         with tempfile.TemporaryDirectory() as directory:
             for filename in filenames:
                 shutil.copy2(root / filename, Path(directory) / filename)
