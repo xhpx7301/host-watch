@@ -494,6 +494,10 @@ HYTRON_API_BASE_URL = "https://hyvps.hytron.io/api/v1"
 HYTRON_LOGIN_URL = f"{HYTRON_API_BASE_URL}/auth/login"
 HYTRON_PROFILE_URL = f"{HYTRON_API_BASE_URL}/auth/me"
 HYTRON_BALANCE_URL = f"{HYTRON_API_BASE_URL}/billing/balance"
+ACCOUNT_BALANCE_MERCHANTS = {
+    "narwhal": {"name": "独角鲸云", "url": "https://dash.fuckip.me/"},
+    "hytron": {"name": "Hytron", "url": "https://hyvps.hytron.io/"},
+}
 AKILE_DEBIAN_TEMPLATES = {
     "Debian 11": "063c07af-b200-40c0-839c-21864474saw",
     "Debian 12": "063c07af-b200-40c0-839c-1864474saw",
@@ -5597,6 +5601,17 @@ def _account_balance_triggers(previous: dict | None, balance_cents: int, setting
     return reasons
 
 
+def _account_balance_topup_keyboard(providers: list[str]) -> dict:
+    merchants = [ACCOUNT_BALANCE_MERCHANTS[provider] for provider in dict.fromkeys(providers)
+                 if provider in ACCOUNT_BALANCE_MERCHANTS]
+    if not merchants:
+        return {}
+    buttons = [{"text": ("💳 前往官网充值余额" if len(merchants) == 1
+                         else f"💳 前往{merchant['name']}官网充值余额"), "url": merchant["url"]}
+               for merchant in merchants]
+    return {"inline_keyboard": [buttons]}
+
+
 def refresh_account_balances(selected_accounts: list[dict] | None = None, manual: bool = False,
                             providers: set[str] | None = None) -> dict:
     if not ACCOUNT_BALANCE_RUN_LOCK.acquire(blocking=False):
@@ -5655,16 +5670,19 @@ def refresh_account_balances(selected_accounts: list[dict] | None = None, manual
                     if reasons and not manual:
                         token, chat_id = effective_telegram(latest, "account_balance")
                         if token and chat_id:
+                            merchant = ACCOUNT_BALANCE_MERCHANTS[provider]
                             message = "\n".join([
                                 f"💰 <b>HostWatch · {escape(provider_config.get('currency_symbol', '$'))} 账户余额提醒</b>",
-                                f"账户：{escape(str(name)[:120])} · {escape(account['username'][:160])}",
+                                f"商家：{escape(merchant['name'])}",
+                                f"账户：{escape(str(name)[:120])}",
                                 f"当前余额：{provider_config.get('currency_symbol', '$')}{balance_cents / provider_config.get('minor_factor', 100):.2f}",
                                 f"触发条件：{'、'.join(reasons)}",
                                 f"检查时间：{format_beijing(record['updated_at'])}",
                             ])
                             try:
                                 telegram_call(token, "sendMessage", chat_id=chat_id, text=message,
-                                              parse_mode="HTML", disable_web_page_preview=True)
+                                              parse_mode="HTML", disable_web_page_preview=True,
+                                              reply_markup=_account_balance_topup_keyboard([provider]))
                                 record["pending"] = []
                             except (TelegramAPIError, requests.RequestException, ValueError) as exc:
                                 notification_error = str(exc)[:200]
@@ -5732,9 +5750,12 @@ def send_account_balance_test_notification(selected_accounts: list[dict] | None 
         if not account or key[0] not in {"narwhal", "hytron"}:
             raise ValueError("测试通知账户不存在")
         name = escape(str(account.get("name") or account.get("username") or key[1])[:120])
+        merchant = ACCOUNT_BALANCE_MERCHANTS[key[0]]
         row = cached.get(key)
         balance = row.get("balance") if row else None
-        lines.append(f"{name}：${float(balance):.2f}" if balance is not None else f"{name}：尚未查询")
+        symbol = config["account_balance_notifications"]["providers"][key[0]].get("currency_symbol", "$")
+        balance_text = f"{symbol}{float(balance):.2f}" if balance is not None else "尚未查询"
+        lines.extend([f"商家：{escape(merchant['name'])}", f"账户：{name} · 当前余额：{balance_text}"])
     message = "\n".join([
         "🧪 <b>HostWatch · 账户余额通知测试</b>",
         "这是一条手动测试消息，用于确认账户余额通知机器人和接收 Chat ID 配置正常。",
@@ -5743,7 +5764,9 @@ def send_account_balance_test_notification(selected_accounts: list[dict] | None 
     ])
     try:
         telegram_call(token, "sendMessage", chat_id=chat_id, text=message,
-                      parse_mode="HTML", disable_web_page_preview=True)
+                      parse_mode="HTML", disable_web_page_preview=True,
+                      reply_markup=_account_balance_topup_keyboard([item.get("provider") for item in accounts
+                                                                    if isinstance(item, dict)]))
     except (TelegramAPIError, requests.RequestException, ValueError) as exc:
         raise TelegramAPIError(f"Telegram 测试通知发送失败：{str(exc)[:180]}") from exc
     return {"ok": True, "message": "账户余额通知测试消息已发送至 Telegram。"}

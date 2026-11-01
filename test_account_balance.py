@@ -103,6 +103,35 @@ class AccountBalanceTests(unittest.TestCase):
             {**previous, "pending": ["余额变化"]}, 800, settings), ["余额变化"])
         self.assertEqual(admin._account_balance_triggers(previous, 1200, settings), ["余额变化"])
 
+    def test_balance_alert_shows_account_name_merchant_and_official_topup_button(self):
+        current = config()
+        current["vps_seckill"]["accounts"][0]["name"] = "主用账户"
+        current["account_balance_notifications"]["providers"]["hytron"]["enabled"] = False
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(admin, "CONFIG_PATH", Path(directory) / "config.json"), \
+                patch.object(admin, "current_config", return_value=current), \
+                patch.object(admin, "_read_provider_balance", return_value=500), \
+                patch.object(admin, "effective_telegram", return_value=("token", "123")), \
+                patch.object(admin, "telegram_call") as send:
+            result = admin.refresh_account_balances()
+
+        self.assertEqual(len(result["accounts"]), 1)
+        text = send.call_args.kwargs["text"]
+        self.assertIn("商家：独角鲸云", text)
+        self.assertIn("账户：主用账户", text)
+        self.assertNotIn("narwhal@example.com", text)
+        button = send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]
+        self.assertEqual(button["text"], "💳 前往官网充值余额")
+        self.assertEqual(button["url"], "https://dash.fuckip.me/")
+
+    def test_topup_keyboard_uses_each_selected_merchant_site(self):
+        keyboard = admin._account_balance_topup_keyboard(["narwhal", "hytron", "narwhal"])
+        buttons = keyboard["inline_keyboard"][0]
+        self.assertEqual([button["url"] for button in buttons], [
+            "https://dash.fuckip.me/", "https://hyvps.hytron.io/",
+        ])
+        self.assertEqual(buttons[1]["text"], "💳 前往Hytron官网充值余额")
+
     def test_failed_account_read_keeps_saved_baseline_and_merges_provider_results(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
@@ -138,6 +167,10 @@ class AccountBalanceTests(unittest.TestCase):
         send.assert_called_once()
         self.assertIn("账户余额通知测试", send.call_args.kwargs["text"])
         self.assertIn("Narwhal", send.call_args.kwargs["text"])
+        self.assertIn("商家：独角鲸云", send.call_args.kwargs["text"])
+        self.assertNotIn("narwhal@example.com", send.call_args.kwargs["text"])
+        self.assertEqual(send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["url"],
+                         "https://dash.fuckip.me/")
 
 
 if __name__ == "__main__":
