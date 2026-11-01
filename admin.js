@@ -239,6 +239,7 @@ function renderAccountBalanceSettings() {
     const enabled = text("button", "", "option-button"); enabled.type = "button"; enabled.id = `${prefix}-enabled`;
     enabled.dataset.on = "已开启"; enabled.dataset.off = "已暂停"; enabled.dataset.balanceToggle = "enabled";
     enabled.append(text("span", "后台监控"), text("span", "", "")); enabled.lastChild.dataset.optionState = ""; setBalanceButton(enabled, current.enabled);
+    enabled.addEventListener("click", () => { setBalanceButton(enabled, !balanceButtonPressed(enabled)); updateDraftState(); });
     head.append(enabled); card.append(head);
     const grid = text("div", "", "form-grid");
     const field = (id, label, type = "number", value = "") => { const wrapper = text("label", label); const input = document.createElement("input"); input.id = id; input.type = type; input.value = value; wrapper.append(input); input.addEventListener("input", updateDraftState); grid.append(wrapper); return input; };
