@@ -58,6 +58,11 @@ ISVORO_MARKET_RUN_LOCK = threading.Lock()
 AKILE_MARKET_WAKE = threading.Event()
 AKILE_MARKET_CACHE = {"updated_at": "", "items": [], "error": "", "running": False}
 AKILE_MARKET_THREAD = None
+ACCOUNT_BALANCE_LOCK = threading.RLock()
+ACCOUNT_BALANCE_RUN_LOCK = threading.Lock()
+ACCOUNT_BALANCE_WAKE = threading.Event()
+ACCOUNT_BALANCE_CACHE = {"updated_at": "", "accounts": [], "error": "", "running": False}
+ACCOUNT_BALANCE_THREAD = None
 ISVORO_MARKET_LOCK = threading.RLock()
 ISVORO_MARKET_CACHE = {"updated_at": "", "items": [], "error": "", "running": False}
 # BandwagonHost keeps the email-code challenge in the login session. Keep only
@@ -2850,6 +2855,39 @@ def normalize_akile_market(value: object, accounts: list[dict]) -> dict:
     return {"enabled": enabled, "interval_seconds": interval, "account_id": account_id, "items": normalized}
 
 
+def normalize_account_balance_notifications(value: object, accounts: list[dict]) -> dict:
+    value = {} if value is None else value
+    if not isinstance(value, dict):
+        raise ValueError("账户余额通知配置必须是对象")
+    enabled = value.get("enabled", False)
+    low_enabled = value.get("low_balance_enabled", True)
+    change_enabled = value.get("balance_change_enabled", True)
+    if any(type(flag) is not bool for flag in (enabled, low_enabled, change_enabled)):
+        raise ValueError("账户余额通知开关必须是布尔值")
+    interval = value.get("interval_seconds", 300)
+    if type(interval) is not int or not 30 <= interval <= 3600:
+        raise ValueError("账户余额检查间隔必须是 30 到 3600 秒")
+    threshold = value.get("low_balance_threshold", 10)
+    if (isinstance(threshold, bool) or not isinstance(threshold, (int, float))
+            or not math.isfinite(threshold) or not 0 <= threshold <= 1000000):
+        raise ValueError("低余额阈值必须是 0 到 1000000 元的有效金额")
+    account_ids = value.get("account_ids", [])
+    available = {row["id"] for row in accounts if row.get("provider") == "akile"}
+    if (not isinstance(account_ids, list) or len(account_ids) > 100
+            or any(not isinstance(identifier, str) or len(identifier) > 128 for identifier in account_ids)
+            or len(set(account_ids)) != len(account_ids)):
+        raise ValueError("账户余额通知账户列表无效")
+    requested_ids = account_ids
+    account_ids = [identifier for identifier in requested_ids if identifier in available]
+    if enabled and requested_ids and not account_ids:
+        enabled = False
+    if enabled and (not account_ids or not (low_enabled or change_enabled)):
+        raise ValueError("启用账户余额通知前，请选择账户和至少一种通知条件")
+    return {"enabled": enabled, "interval_seconds": interval, "account_ids": account_ids,
+            "low_balance_enabled": low_enabled, "low_balance_threshold": round(float(threshold), 2),
+            "balance_change_enabled": change_enabled}
+
+
 def akile_market_rule_matches(rule: dict, item: dict) -> bool:
     if (item.get("valuation_error") or item.get("remaining_days", 0) <= 0
             or item.get("is_bid") is not False or type(item.get("status")) is not int or item["status"] != 0):
@@ -4314,6 +4352,8 @@ def default_config() -> dict:
         "vps_seckill": {"enabled": False, "mode": "manual", "interval_seconds": 5, "items": [], "accounts": []},
         "akile_market": {"enabled": False, "interval_seconds": 60, "account_id": "", "items": []},
         "isvoro_market": {"enabled": False, "interval_seconds": 600, "account_id": "", "items": []},
+        "account_balance_notifications": {"enabled": False, "interval_seconds": 300, "account_ids": [],
+            "low_balance_enabled": True, "low_balance_threshold": 10.0, "balance_change_enabled": True},
         "products": [],
     }
 
@@ -4918,6 +4958,8 @@ def validate_config(value: object) -> dict:
     })
     akile_market = normalize_akile_market(value.get("akile_market", {}), vps_seckill.get("accounts", []))
     isvoro_market = normalize_isvoro_market(value.get("isvoro_market", {}), vps_seckill.get("accounts", []))
+    account_balance_notifications = normalize_account_balance_notifications(
+        value.get("account_balance_notifications", {}), vps_seckill.get("accounts", []))
     product_orders = {}
     for key in ("watch_order", "notify_order"):
         order = value.get(key, [])
@@ -4948,6 +4990,7 @@ def validate_config(value: object) -> dict:
         "vps_seckill": vps_seckill,
         "akile_market": akile_market,
         "isvoro_market": isvoro_market,
+        "account_balance_notifications": account_balance_notifications,
         "products": normalized,
     }
 
@@ -5177,6 +5220,179 @@ def _akile_market_session(config: dict, account_id: str):
     except Exception:
         session.close()
         raise
+
+
+def _read_akile_balance(config: dict, account_id: str) -> int:
+    account = next((row for row in config["vps_seckill"]["accounts"]
+                    if row["id"] == account_id and row["provider"] == "akile"), None)
+    if not account:
+        raise ValueError("已选 Akile 账户不存在")
+    session = _akile_market_session(config, account_id)
+    try:
+        response = session.get(AKILE_PROFILE_URL, timeout=(5, 20), allow_redirects=False)
+        if not 200 <= response.status_code < 300:
+            raise ValueError(f"Akile 账户信息接口返回 HTTP {response.status_code}")
+        payload = response.json()
+        profile = payload.get("data") if isinstance(payload, dict) else None
+        if (not isinstance(payload, dict) or payload.get("status_code") not in {0, 200, "0", "200"}
+                or not isinstance(profile, dict)
+                or str(profile.get("email", "")).strip().casefold() != account["username"].strip().casefold()):
+            raise ValueError("Akile 账户信息未能与所选邮箱匹配")
+        money = profile.get("money")
+        if isinstance(money, bool) or not isinstance(money, (int, float)) or not math.isfinite(money) or money < 0:
+            raise ValueError("Akile 未返回有效账户余额")
+        cents = round(money)
+        if abs(money - cents) > 0.000001 or cents > 10**14:
+            raise ValueError("Akile 账户余额格式无效")
+        return cents
+    except (requests.RequestException, OSError, ValueError, TypeError, AttributeError) as exc:
+        if isinstance(exc, ValueError):
+            raise
+        raise ValueError("Akile 账户余额读取失败，请检查账户认证和商家出口") from None
+    finally:
+        session.close()
+
+
+def _account_balance_state() -> dict:
+    path = CONFIG_PATH.parent / "state-account-balance.json"
+    if not path.exists():
+        return {"accounts": {}}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not isinstance(data.get("accounts"), dict):
+            raise ValueError()
+        for row in data["accounts"].values():
+            if (not isinstance(row, dict) or (row.get("balance_cents") is not None
+                    and (type(row["balance_cents"]) is not int or row["balance_cents"] < 0))
+                    or type(row.get("below_threshold", False)) is not bool
+                    or not isinstance(row.get("pending", []), list)
+                    or any(item not in {"余额变化", "余额低于阈值"} for item in row.get("pending", []))):
+                raise ValueError()
+        return data
+    except (OSError, ValueError, TypeError):
+        raise ValueError("账户余额通知状态损坏，已停止触发，请先检查状态文件") from None
+
+
+def _save_account_balance_state(value: dict) -> None:
+    path = CONFIG_PATH.parent / "state-account-balance.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix="account-balance-", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(value, stream, ensure_ascii=False, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(name, 0o600)
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def _account_balance_triggers(previous: dict | None, balance_cents: int, settings: dict) -> list[str]:
+    reasons = list(previous.get("pending", [])) if previous else []
+    previous_balance = previous.get("balance_cents") if previous else None
+    if (settings["balance_change_enabled"] and previous_balance is not None
+            and previous_balance != balance_cents and "余额变化" not in reasons):
+        reasons.append("余额变化")
+    below = balance_cents < round(settings["low_balance_threshold"] * 100)
+    was_below = previous.get("below_threshold", False) if previous else False
+    if (settings["low_balance_enabled"] and below and (previous_balance is None or not was_below)
+            and "余额低于阈值" not in reasons):
+        reasons.append("余额低于阈值")
+    return reasons
+
+
+def refresh_account_balances() -> dict:
+    if not ACCOUNT_BALANCE_RUN_LOCK.acquire(blocking=False):
+        raise ValueError("账户余额检查正在进行，请稍后重试")
+    try:
+        config = current_config()
+        settings = config["account_balance_notifications"]
+        previous_state = _account_balance_state()
+        state_accounts = previous_state["accounts"]
+        output = []
+        errors = []
+        for account_id in settings["account_ids"]:
+            account = next(row for row in config["vps_seckill"]["accounts"] if row["id"] == account_id)
+            name = account.get("name") or account.get("username") or account_id
+            try:
+                balance_cents = _read_akile_balance(config, account_id)
+                latest = current_config()
+                if (latest["account_balance_notifications"] != settings
+                        or latest["vps_seckill"]["accounts"] != config["vps_seckill"]["accounts"]):
+                    raise ValueError("账户配置在余额读取期间发生变化，本轮未触发提醒")
+                old = state_accounts.get(account_id)
+                reasons = _account_balance_triggers(old, balance_cents, settings)
+                record = {"balance_cents": balance_cents,
+                          "below_threshold": settings["low_balance_enabled"] and balance_cents < round(settings["low_balance_threshold"] * 100),
+                          "pending": reasons, "updated_at": beijing_iso()}
+                notification_error = ""
+                if reasons:
+                    token, chat_id = effective_telegram(latest)
+                    if token and chat_id:
+                        message = "\n".join([
+                            f"💰 <b>HostWatch · Akile 账户余额提醒</b>",
+                            f"账户：{escape(str(name)[:120])} · {escape(account['username'][:160])}",
+                            f"当前余额：¥{balance_cents / 100:.2f}",
+                            f"触发条件：{'、'.join(reasons)}",
+                            f"检查时间：{format_beijing(record['updated_at'])}",
+                        ])
+                        try:
+                            telegram_call(token, "sendMessage", chat_id=chat_id, text=message,
+                                          parse_mode="HTML", disable_web_page_preview=True)
+                            record["pending"] = []
+                        except (TelegramAPIError, requests.RequestException, ValueError) as exc:
+                            notification_error = str(exc)[:200]
+                    else:
+                        notification_error = "Telegram 尚未配置，提醒将在配置完成后重试"
+                state_accounts[account_id] = record
+                output.append({"account_id": account_id, "name": name, "email": account["username"],
+                    "balance": balance_cents / 100, "balance_cents": balance_cents,
+                    "checked_at": record["updated_at"], "notification_error": notification_error})
+            except (OSError, ValueError, requests.RequestException) as exc:
+                errors.append(f"{name}：{str(exc)[:180]}")
+                old = state_accounts.get(account_id, {})
+                output.append({"account_id": account_id, "name": name, "email": account["username"],
+                    "balance": old.get("balance_cents", None) / 100 if old.get("balance_cents") is not None else None,
+                    "checked_at": old.get("updated_at", ""), "error": str(exc)[:200]})
+        _save_account_balance_state(previous_state)
+        result = {"updated_at": beijing_iso(), "accounts": output, "error": "；".join(errors),
+                  "running": settings["enabled"]}
+        with ACCOUNT_BALANCE_LOCK:
+            ACCOUNT_BALANCE_CACHE.update(result)
+        return result
+    finally:
+        ACCOUNT_BALANCE_RUN_LOCK.release()
+
+
+def _account_balance_loop() -> None:
+    deadline = 0.0
+    while True:
+        try:
+            settings = current_config()["account_balance_notifications"]
+            with ACCOUNT_BALANCE_LOCK:
+                ACCOUNT_BALANCE_CACHE["running"] = settings["enabled"]
+            if settings["enabled"] and time.monotonic() >= deadline:
+                try:
+                    refresh_account_balances()
+                finally:
+                    deadline = time.monotonic() + settings["interval_seconds"]
+        except (OSError, ValueError, requests.RequestException) as exc:
+            with ACCOUNT_BALANCE_LOCK:
+                ACCOUNT_BALANCE_CACHE["error"] = str(exc)[:300]
+            deadline = time.monotonic() + 30
+        if ACCOUNT_BALANCE_WAKE.wait(2):
+            ACCOUNT_BALANCE_WAKE.clear()
+            deadline = 0
+
+
+def start_account_balance_loop() -> None:
+    global ACCOUNT_BALANCE_THREAD
+    if not ACCOUNT_BALANCE_THREAD or not ACCOUNT_BALANCE_THREAD.is_alive():
+        ACCOUNT_BALANCE_THREAD = threading.Thread(target=_account_balance_loop,
+            name="account-balance-monitor", daemon=True)
+        ACCOUNT_BALANCE_THREAD.start()
 
 
 def _isvoro_market_session(config: dict, account_id: str):
@@ -5944,6 +6160,11 @@ class Handler(BaseHTTPRequestHandler):
                 output = _akile_market_snapshot()
                 output["running"] = current_config()["akile_market"]["enabled"]
             self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
+        elif path == "/api/account-balance":
+            with ACCOUNT_BALANCE_LOCK:
+                output = json.loads(json.dumps(ACCOUNT_BALANCE_CACHE))
+            output["running"] = current_config()["account_balance_notifications"]["enabled"]
+            self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
         elif path == "/api/egress":
             try:
                 data = json.dumps(public_config(json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else default_config()).get("egress", {"nodes": [], "routes": {}}), ensure_ascii=False).encode("utf-8")
@@ -6095,7 +6316,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(403)
             return
         # Stopping and polling tests must never wait behind config/service locks.
-        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-status", "/api/seckill/account-verification", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/egress/probe"}:
+        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-status", "/api/seckill/account-verification", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/account-balance/check", "/api/egress/probe"}:
             self._post_action()
             return
         if not MUTATION_LOCK.acquire(blocking=False):
@@ -6107,7 +6328,7 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/refresh", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-status", "/api/seckill/account-verification", "/api/seckill/account-cache-clear", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
+        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/refresh", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-status", "/api/seckill/account-verification", "/api/seckill/account-cache-clear", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/account-balance/check", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
             self.send_error(404)
             return
         try:
@@ -6121,7 +6342,8 @@ class Handler(BaseHTTPRequestHandler):
                     if (any(task.snapshot().get("pending") for task in TEST_TASKS.values())
                             or any(task.snapshot().get("pending") for task in SECKILL_TASKS.values())
                             or (CATALOG.task and CATALOG.task.get("pending"))
-                            or AKILE_MARKET_RUN_LOCK.locked() or ISVORO_MARKET_RUN_LOCK.locked()):
+                            or AKILE_MARKET_RUN_LOCK.locked() or ISVORO_MARKET_RUN_LOCK.locked()
+                            or ACCOUNT_BALANCE_RUN_LOCK.locked()):
                         raise ValueError("请先停止或等待商品测试、秒杀任务和大盘刷新完成，再导入备份")
                     raw = self.rfile.read(length)
                     if len(raw) != length or not raw.startswith(b"\x1f\x8b"):
@@ -6210,6 +6432,10 @@ class Handler(BaseHTTPRequestHandler):
                               parse_mode="HTML", disable_web_page_preview=True)
                 self._send(200, "application/json; charset=utf-8",
                     json.dumps({"ok": True, "message": f"{label}测试通知已发送至 Telegram。"}, ensure_ascii=False).encode("utf-8"))
+                return
+            if self.path == "/api/account-balance/check":
+                output = refresh_account_balances()
+                self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/refresh":
                 output = start_manual_refresh(str(submitted.get("role", "")))
@@ -6349,6 +6575,8 @@ class Handler(BaseHTTPRequestHandler):
                 submitted["akile_market"] = current["akile_market"]
             if "isvoro_market" not in submitted:
                 submitted["isvoro_market"] = current["isvoro_market"]
+            if "account_balance_notifications" not in submitted:
+                submitted["account_balance_notifications"] = current["account_balance_notifications"]
             submitted_seckill = submitted.get("vps_seckill", current["vps_seckill"])
             if not isinstance(submitted_seckill, dict):
                 raise ValueError("VPS 秒杀配置必须是对象")
@@ -6444,6 +6672,9 @@ class Handler(BaseHTTPRequestHandler):
             if (value["isvoro_market"] != current["isvoro_market"]
                     or value["vps_seckill"]["accounts"] != current["vps_seckill"]["accounts"]):
                 ISVORO_MARKET_WAKE.set()
+            if (value["account_balance_notifications"] != current["account_balance_notifications"]
+                    or value["vps_seckill"]["accounts"] != current["vps_seckill"]["accounts"]):
+                ACCOUNT_BALANCE_WAKE.set()
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             status = 502 if isinstance(exc, TelegramAPIError) else (413 if "请求体大小" in str(exc) else 400)
             self._send(status, "application/json; charset=utf-8", json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"))
@@ -6476,6 +6707,7 @@ def main() -> None:
         print(f"Restored {restored_sessions} encrypted merchant authentication sessions; each will be revalidated before reuse.")
     start_akile_market_loop()
     start_isvoro_market_loop()
+    start_account_balance_loop()
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 

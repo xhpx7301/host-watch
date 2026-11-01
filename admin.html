@@ -582,6 +582,16 @@
     .seckill-panel-actions { justify-content:flex-end; margin-top:14px; padding-top:12px; border-top:1px solid rgba(71,91,116,.16); }
     .market-settings { margin-bottom:14px; padding:16px; }
     .market-settings .market-formula { border-left:0; padding:12px 0; border-bottom:1px solid var(--line); }
+    .balance-conditions { display:flex; flex-wrap:wrap; gap:10px 24px; margin:14px 0; padding:12px; border:1px solid var(--line); border-radius:4px; }
+    .balance-conditions legend { padding:0 6px; font-weight:700; }
+    .balance-conditions label { display:flex; align-items:center; gap:8px; }
+    .balance-conditions input,.balance-account-list input { width:16px; height:16px; accent-color:var(--green); }
+    .balance-account-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:8px; }
+    .balance-account-option { display:flex; align-items:center; gap:10px; min-height:48px; padding:9px 12px; border:1px solid var(--line); border-radius:4px; background:#fff; overflow-wrap:anywhere; }
+    .balance-account-option span { min-width:0; }
+    .balance-results { display:grid; gap:8px; margin-top:12px; }
+    .balance-result { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px 16px; padding:10px 12px; border-bottom:1px solid var(--line); }
+    .balance-result.error { color:var(--red); }
     .market-rule-item { border:1px solid var(--line); background:#f8fafc; border-radius:8px; padding:14px; margin:12px 0; }
     .market-rule-meta { display:grid; gap:5px; margin-top:10px; padding:10px 12px; border-radius:6px; background:#fff; color:var(--muted); font-size:12px; line-height:1.55; }
     .market-rule-meta strong { color:var(--ink); }
@@ -777,6 +787,7 @@
       <a href="#seckill" data-page-link="seckill"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 9-12h-7l1-8Z"/></svg>VPS 补货抢购</a>
       <a href="#market" data-page-link="market"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h18l-2-5H5L3 9Zm2 0v11h14V9M9 20v-6h6v6M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0"/></svg>二手交易市场</a>
       <a href="#market-notifications" data-page-link="market-notifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>二手市场通知</a>
+      <a href="#account-balance" data-page-link="account-balance"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h3"/></svg>账户余额通知</a>
       <a href="#accounts" data-page-link="accounts"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M16 5.5a3 3 0 0 1 0 5.8M17 14c2.2.7 4 2.8 4 6"/></svg>网站账户</a>
       <a href="#products" data-page-link="products"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"/></svg>自定义商品</a>
       <a href="#requests" data-page-link="requests"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></svg>网页请求</a>
@@ -1024,6 +1035,28 @@
     <!-- market-threshold-help:end -->
     <div id="market-rule-items"></div><p id="market-rule-empty" class="hint">尚无规则，在商品操作中点击“添加监控”。</p><div id="market-rule-results" aria-live="polite"></div></div>
     <p class="market-disclaimer">估值用于规则筛选，不代表实际交易价值。未识别周期、零续费价格、到期、拍卖、下架或数据异常的商品不触发通知。持续满足条件的挂单每条规则仅通知一次；退出条件后再次达到阈值会重新提醒。通知失败会在后续检查重试。</p>
+    </div>
+  </section>
+
+  <section class="page-panel" id="page-account-balance" data-page="account-balance" aria-labelledby="page-title" hidden>
+    <div class="section-body">
+      <div class="panel-card market-settings">
+        <div class="section-head"><div><h2>账户余额通知</h2><p>监控所选 Akile 账户余额，通过 Telegram 接收低余额和余额变化提醒。</p></div><button type="button" class="card-save" data-save-card="account-balance">保存余额通知</button></div>
+        <div class="form-grid">
+          <label>后台监控<select id="account-balance-enabled"><option value="off">已暂停</option><option value="on">开启后台检查与通知</option></select></label>
+          <label>检查间隔（秒）<input id="account-balance-interval" type="number" min="30" max="3600" step="1" value="300"></label>
+          <label>低余额阈值（元）<input id="account-balance-threshold" type="number" min="0" max="1000000" step="0.01" value="10"></label>
+        </div>
+        <fieldset class="balance-conditions"><legend>通知条件</legend>
+          <label><input id="account-balance-low-enabled" type="checkbox" checked>余额低于阈值时通知</label>
+          <label><input id="account-balance-change-enabled" type="checkbox" checked>余额发生变化时通知</label>
+        </fieldset>
+        <h3>监控账户</h3>
+        <div id="account-balance-accounts" class="balance-account-list"></div>
+        <p id="account-balance-account-note" class="hint">请选择至少一个已保存的 Akile 账户。当前仅支持读取 Akile 余额。</p>
+        <div class="actions"><button id="account-balance-check" type="button">立即检查</button><span id="account-balance-status" class="hint" role="status" aria-live="polite">尚未检查余额。</span></div>
+        <div id="account-balance-results" class="balance-results" aria-live="polite"></div>
+      </div>
     </div>
   </section>
 

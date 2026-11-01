@@ -18,6 +18,7 @@ let config = {
   egress: { nodes: [], routes: {} },
   akile_market: { enabled: false, interval_seconds: 60, account_id: "", items: [] },
   isvoro_market: { enabled: false, interval_seconds: 600, account_id: "", items: [] },
+  account_balance_notifications: { enabled: false, interval_seconds: 300, account_ids: [], low_balance_enabled: true, low_balance_threshold: 10, balance_change_enabled: true },
   vps_seckill: { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] },
   products: [],
 };
@@ -83,6 +84,7 @@ const pages = {
   seckill: { title: "VPS 补货抢购", description: "从库存监控或库存通知选择商品，配置优惠码和账户后执行补货抢购。" },
   market: { title: "二手交易市场", description: "浏览 Akile 和 Isvoro 的二手挂单，查看续费价格、到期时间及估算折价或溢价。" },
   "market-notifications": { title: "二手市场通知", description: "设置二手挂单提醒条件，检查指定商品是否仍在市场，并接收 Telegram 通知。" },
+  "account-balance": { title: "账户余额通知", description: "选择 Akile 账户并设置低余额与余额变化提醒。" },
   accounts: { title: "网站账户", description: "集中管理 VPS 补货抢购使用的网站登录账户，检查账户状态并导入商家认证信息。" },
   products: { title: "自定义商品", description: "新增大盘未收录的商品，编辑手动配置，或恢复已移出的商品。" },
   monitor: { title: "VPS 库存监控", description: "集中查看你关注的 VPS，查看库存与配置、编辑备注和线路，直接购买，不发送通知。" },
@@ -165,6 +167,76 @@ let marketNotificationTestBusy = false;
 let marketPage = 0;
 function activeMarketProvider() { return document.querySelector("#market-provider")?.value || "akile"; }
 function marketConfig() { const isvoro = activeMarketProvider() === "isvoro", key = isvoro ? "isvoro_market" : "akile_market"; return config[key] ||= { enabled: false, interval_seconds: isvoro ? 600 : 60, account_id: "", items: [] }; }
+let accountBalanceSnapshot = { accounts: [], updated_at: "", error: "", running: false };
+function balanceNotificationConfig() {
+  return config.account_balance_notifications || (config.account_balance_notifications = { enabled: false,
+    interval_seconds: 300, account_ids: [], low_balance_enabled: true, low_balance_threshold: 10,
+    balance_change_enabled: true });
+}
+function collectAccountBalanceNotifications() {
+  const value = balanceNotificationConfig();
+  return { ...value, enabled: document.querySelector("#account-balance-enabled").value === "on",
+    interval_seconds: Number(document.querySelector("#account-balance-interval").value || NaN),
+    low_balance_threshold: Number(document.querySelector("#account-balance-threshold").value || NaN),
+    low_balance_enabled: document.querySelector("#account-balance-low-enabled").checked,
+    balance_change_enabled: document.querySelector("#account-balance-change-enabled").checked,
+    account_ids: [...document.querySelectorAll("[data-balance-account]:checked")].map(input => input.dataset.balanceAccount) };
+}
+function renderAccountBalanceSettings() {
+  if (!document.querySelector("#account-balance-accounts")) return;
+  const value = balanceNotificationConfig();
+  document.querySelector("#account-balance-enabled").value = value.enabled ? "on" : "off";
+  document.querySelector("#account-balance-interval").value = value.interval_seconds ?? 300;
+  document.querySelector("#account-balance-threshold").value = value.low_balance_threshold ?? 10;
+  document.querySelector("#account-balance-low-enabled").checked = value.low_balance_enabled !== false;
+  document.querySelector("#account-balance-change-enabled").checked = value.balance_change_enabled !== false;
+  const saved = new Set(value.account_ids || []), list = document.querySelector("#account-balance-accounts");
+  const accounts = (config.vps_seckill?.accounts || []).filter(account => account.provider === "akile");
+  list.replaceChildren(...accounts.map(account => {
+    const label = text("label", "", "balance-account-option"), input = document.createElement("input");
+    input.type = "checkbox"; input.dataset.balanceAccount = account.id; input.checked = saved.has(account.id);
+    input.addEventListener("change", updateDraftState);
+    label.append(input, text("span", `${account.name || account.username || account.id} · ${account.username || "Akile"}`));
+    return label;
+  }));
+  document.querySelector("#account-balance-account-note").textContent = accounts.length
+    ? "余额读取目前仅支持 Akile 账户；其他商家账户暂不显示。"
+    : "请先在“网站账户”中添加并保存 Akile 账户。";
+  renderAccountBalanceResults();
+}
+function renderAccountBalanceResults() {
+  const status = document.querySelector("#account-balance-status"), results = document.querySelector("#account-balance-results");
+  if (!status || !results) return;
+  const rows = accountBalanceSnapshot.accounts || [];
+  status.textContent = accountBalanceSnapshot.updated_at
+    ? `最近检查：${formatBeijingDate(accountBalanceSnapshot.updated_at)}${accountBalanceSnapshot.error ? ` · ${accountBalanceSnapshot.error}` : ""}`
+    : accountBalanceSnapshot.error || "尚未检查余额。";
+  status.className = accountBalanceSnapshot.error ? "hint error" : "hint";
+  results.replaceChildren(...rows.map(row => {
+    const node = text("div", "", `balance-result${row.error ? " error" : ""}`);
+    node.append(text("strong", `${row.name || row.email || row.account_id} · ${row.email || ""}`));
+    node.append(text("span", row.error ? `读取失败：${row.error}` : `余额 ¥${Number(row.balance).toFixed(2)}${row.notification_error ? ` · ${row.notification_error}` : ""}`));
+    return node;
+  }));
+  const check = document.querySelector("#account-balance-check");
+  if (check) check.disabled = actionRunning || !document.querySelector("[data-balance-account]:checked");
+}
+async function loadAccountBalanceSnapshot() {
+  try { accountBalanceSnapshot = await requestJSON("/api/account-balance"); renderAccountBalanceResults(); }
+  catch (error) { accountBalanceSnapshot.error = error.message; renderAccountBalanceResults(); }
+}
+async function checkAccountBalances() {
+  const button = document.querySelector("#account-balance-check");
+  button.disabled = true; button.textContent = "检查中…";
+  try {
+    accountBalanceSnapshot = await requestJSON("/api/account-balance/check", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: "{}", timeoutMs: 120000 });
+    renderAccountBalanceResults();
+    setMessage(accountBalanceSnapshot.error ? `余额已检查，部分账户失败：${accountBalanceSnapshot.error}` : "账户余额检查完成。",
+      accountBalanceSnapshot.error ? "error" : "success");
+  } catch (error) { setMessage(error.message, "error"); }
+  finally { button.textContent = "立即检查"; renderAccountBalanceResults(); }
+}
 function marketCurrency(value, currency = "CNY") { return Number.isFinite(value) ? `${currency === "CNY" ? "¥" : `${currency} `}${value.toFixed(2)}` : "—"; }
 function marketLink(id) { return activeMarketProvider() === "isvoro" ? "https://isvoro.com/marketplace" : `https://akile.ai/console/pushshop?highlight=${encodeURIComponent(id)}`; }
 function marketUnit(value, unit) {
@@ -500,12 +572,24 @@ document.querySelector("#market-open-notifications").addEventListener("click", (
 for (const id of ["market-search", "market-region", "market-product"]) document.getElementById(id).addEventListener("input", () => { marketPage = 0; renderMarket(); });
 document.querySelector("#market-prev").addEventListener("click", () => { marketPage--; renderMarket(); });
 document.querySelector("#market-next").addEventListener("click", () => { marketPage++; renderMarket(); });
-window.addEventListener("hostwatch-page-change", event => { if (["market", "market-notifications"].includes(event.detail)) void loadMarketSnapshot(); });
+window.addEventListener("hostwatch-page-change", event => {
+  if (["market", "market-notifications"].includes(event.detail)) void loadMarketSnapshot();
+  if (event.detail === "account-balance") void loadAccountBalanceSnapshot();
+});
 window.addEventListener("hostwatch-page-change", event => {
   if (["seckill", "accounts"].includes(event.detail)) scheduleAccountHealthCheck(500); else clearTimeout(accountHealthTimer);
   if (event.detail === "seckill") void syncVpsSeckillTask();
 });
 setInterval(() => { if (!document.hidden && ["market", "market-notifications"].includes(currentPage) && savedConfig) void loadMarketSnapshot(); }, 10000);
+setInterval(() => { if (!document.hidden && currentPage === "account-balance" && savedConfig) void loadAccountBalanceSnapshot(); }, 15000);
+document.querySelectorAll("#page-account-balance input, #page-account-balance select").forEach(input => {
+  input.addEventListener("input", updateDraftState);
+  input.addEventListener("change", updateDraftState);
+});
+document.querySelector("#account-balance-check").addEventListener("click", () => {
+  if (scopeIsDirty("account-balance")) { setMessage("请先保存余额通知配置后再检查。", "error"); return; }
+  void checkAccountBalances();
+});
 
 function setMessage(message, kind = "", notify = true, inline = true) {
   if (inline) {
@@ -3657,6 +3741,7 @@ function collectConfig(enabled = config.enabled) {
     vps_seckill: collectVpsSeckill(),
     akile_market: activeMarketProvider() === "akile" ? collectMarket() : config.akile_market,
     isvoro_market: activeMarketProvider() === "isvoro" ? collectMarket() : config.isvoro_market,
+    account_balance_notifications: collectAccountBalanceNotifications(),
     products: config.products.map((item) => ({ ...item })),
   };
 }
@@ -3727,6 +3812,7 @@ function mergeConfigScope(baseValue, draftValue, scope) {
       base.vps_seckill = { ...base.vps_seckill, accounts: [...accounts.filter(account => account.id !== accountId), cloneConfig(draftAccount)] };
     }
   } else if (scope === "market") { base.akile_market = draft.akile_market; base.isvoro_market = draft.isvoro_market; }
+  else if (scope === "account-balance") base.account_balance_notifications = draft.account_balance_notifications;
   else if (scope === "telegram") base.telegram = draft.telegram;
   else if (scope === "monitor") {
     for (const key of ["interval_seconds", "monitor_schedule", "watch_order", "merchant_order"]) base[key] = draft[key];
@@ -3976,7 +4062,9 @@ function applyConfig(value) {
   renderVpsSeckill();
   if (["seckill", "accounts"].includes(currentPage)) scheduleAccountHealthCheck(1_000);
   renderMarketSettings();
+  renderAccountBalanceSettings();
   if (["market", "market-notifications"].includes(currentPage)) void loadMarketSnapshot();
+  if (currentPage === "account-balance") void loadAccountBalanceSnapshot();
   savedConfig = JSON.stringify(collectConfig());
   updateDraftState();
   renderMonitorState();
@@ -4228,6 +4316,7 @@ async function saveConfig(scope = "all", automatic = false) {
     else if (scope === "fetcher" || scope === "provider-modes" || scope === "egress") visibleDraft.fetcher = draft.fetcher;
     else if (scope === "cloudscraper") visibleDraft.fetcher = { ...visibleDraft.fetcher, cloudscraper: draft.fetcher.cloudscraper };
     else if (scope === "market") { visibleDraft.akile_market = draft.akile_market; visibleDraft.isvoro_market = draft.isvoro_market; }
+    else if (scope === "account-balance") visibleDraft.account_balance_notifications = draft.account_balance_notifications;
     else if (scope === "telegram") visibleDraft.telegram = draft.telegram;
     else if (scope === "catalog") visibleDraft.catalog_schedule = draft.catalog_schedule;
     else if (scope === "monitor" || scope === "notifications") visibleDraft.products = draft.products;
