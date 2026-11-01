@@ -776,6 +776,7 @@
       <a href="#notifications" data-page-link="notifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>VPS 库存通知</a>
       <a href="#seckill" data-page-link="seckill"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 9-12h-7l1-8Z"/></svg>VPS 补货抢购</a>
       <a href="#market" data-page-link="market"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h18l-2-5H5L3 9Zm2 0v11h14V9M9 20v-6h6v6M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0"/></svg>二手交易市场</a>
+      <a href="#market-notifications" data-page-link="market-notifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>二手市场通知</a>
       <a href="#accounts" data-page-link="accounts"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M16 5.5a3 3 0 0 1 0 5.8M17 14c2.2.7 4 2.8 4 6"/></svg>网站账户</a>
       <a href="#products" data-page-link="products"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"/></svg>自定义商品</a>
       <a href="#requests" data-page-link="requests"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></svg>网页请求</a>
@@ -988,18 +989,27 @@
   </section>
 
   <section class="page-panel" id="page-market" data-page="market" aria-labelledby="page-title" hidden>
-    <div class="market-toolbar"><div><span class="eyebrow">VPS SECOND-HAND MARKET</span><p id="market-snapshot-state" class="state">等待读取市场</p></div><div class="actions"><label>市场<select id="market-provider"><option value="akile">Akile 交易市场</option><option value="isvoro">Isvoro 二手市场</option></select></label><button type="button" id="market-refresh" class="primary">刷新市场商品</button><a class="market-source-link" id="market-source-link" href="https://akile.ai/console/pushshop" target="_blank" rel="noopener noreferrer">打开官网 ↗</a></div></div>
+    <div class="market-toolbar"><div><span class="eyebrow">VPS SECOND-HAND MARKET</span><p id="market-snapshot-state" class="state">等待读取市场</p></div><div class="actions"><label>市场<select id="market-provider"><option value="akile">Akile 交易市场</option><option value="isvoro">Isvoro 二手市场</option></select></label><button type="button" id="market-refresh" class="primary">刷新市场商品</button><button type="button" id="market-open-notifications">管理市场通知</button><a class="market-source-link" id="market-source-link" href="https://akile.ai/console/pushshop" target="_blank" rel="noopener noreferrer">打开官网 ↗</a></div></div>
     <div class="panel-card market-settings">
-      <div class="section-head"><div><h2>交易市场监控</h2><p>从下方市场商品添加规则，保存后在服务器持续检查；关闭网页不影响后台监控。</p></div><button type="button" class="card-save" data-save-card="market">保存交易市场设置</button></div>
-      <div class="form-grid"><label><span id="market-account-label">网站账户</span><select id="market-account"><option value="">请选择已保存的账户</option></select></label><label>后台监控<select id="market-enabled"><option value="off">已暂停</option><option value="on">开启监控与 Telegram 通知</option></select></label><label>检查间隔（秒）<input id="market-interval" type="number" min="30" max="3600" step="1" value="60"></label></div>
-      <p class="hint">账户沿用“VPS 补货抢购 → 网站账户”中保存的对应商家账户与出口。刷新市场仅获取商品；“检查已保存规则”会按规则发送 Telegram。</p>
-      <div class="market-formula"><strong>剩余价值 = 周期续费金额 × 剩余天数 ÷ 周期天数</strong><span>折价/溢价金额 = 剩余价值 − 售价；比例 = 折价/溢价金额 ÷ 续费月付价。续费月付价 = 周期续费金额 ÷ 周期月数；到期时间用于计算剩余价值并过滤已到期挂单。</span></div>
-      <p class="hint" id="market-order-note">Akile 交易市场购买要求用户在官网完成 Passkey 验证；Isvoro 仅提供市场提醒。HostWatch 不会自动购买或付款。</p>
+      <div class="section-head"><div><h2>市场账户</h2><p>选择读取市场商品的已保存账户。监控规则和 Telegram 提醒在“二手市场通知”中管理。</p></div><button type="button" class="card-save" data-save-card="market">保存市场账户</button></div>
+      <div class="form-grid"><label><span id="market-account-label">网站账户</span><select id="market-account"><option value="">请选择已保存的账户</option></select></label></div>
+      <p class="hint">账户沿用“VPS 补货抢购 → 网站账户”中保存的对应商家账户与出口。刷新市场只读取商品，不发送通知。</p>
     </div>
     <div class="market-stats" aria-label="交易市场摘要"><div><span>市场商品</span><strong id="market-count">0</strong></div><div><span>折价商品</span><strong id="market-discount-count">0</strong></div><div><span>临近到期（7 天）</span><strong id="market-expiring-count">0</strong></div><div><span>最近成功读取</span><strong id="market-updated">—</strong></div></div>
     <div class="market-filters"><label>搜索商品<input id="market-search" type="search" placeholder="套餐、地区、节点或挂单 ID"></label><label>地区<select id="market-region"><option value="all">全部地区</option></select></label><label><span id="market-product-label">商品</span><select id="market-product"><option value="all">全部商品</option></select></label></div>
     <div class="market-table-wrap" role="region" aria-label="二手交易市场商品" tabindex="0"><table class="market-table"><thead><tr><th>商品 / 配置</th><th>地区 / 节点</th><th>续费价格</th><th>到期 / 剩余时间</th><th>售价</th><th>剩余价值</th><th>折价 / 溢价率（月付基准）</th><th>折价 / 溢价金额</th><th>操作</th></tr></thead><tbody id="market-rows"></tbody></table></div><p id="market-empty" class="empty">选择已保存账户，点击“刷新市场商品”读取真实挂单。</p>
     <div class="catalog-pagination"><span id="market-page-label" class="subtle"></span><div class="actions"><button id="market-prev" type="button">上一页</button><button id="market-next" type="button">下一页</button></div></div>
+  </section>
+
+  <section class="page-panel" id="page-market-notifications" data-page="market-notifications" aria-labelledby="page-title" hidden>
+    <div class="section-body">
+    <div class="panel-card market-settings">
+      <div class="section-head"><div><h2>二手市场提醒设置</h2><p>规则满足时通过 Telegram 提醒；启用后由服务器持续检查，关闭网页不影响后台监控。</p></div><button type="button" class="card-save" data-save-card="market">保存通知设置</button></div>
+      <div class="form-grid"><label>市场<select id="market-notification-provider"><option value="akile">Akile 交易市场</option><option value="isvoro">Isvoro 二手市场</option></select></label><label><span id="market-notification-account-label">网站账户</span><select id="market-notification-account"><option value="">请选择已保存的账户</option></select></label><label>后台监控<select id="market-notification-enabled"><option value="off">已暂停</option><option value="on">开启监控与 Telegram 通知</option></select></label><label>检查间隔（秒）<input id="market-notification-interval" type="number" min="30" max="3600" step="1" value="60"></label></div>
+      <p class="hint">账户沿用“VPS 补货抢购 → 网站账户”中保存的对应商家账户与出口；“检查已保存规则”会按规则发送 Telegram。</p>
+      <div class="market-formula"><strong>剩余价值 = 周期续费金额 × 剩余天数 ÷ 周期天数</strong><span>折价/溢价金额 = 剩余价值 − 售价；比例 = 折价/溢价金额 ÷ 续费月付价。续费月付价 = 周期续费金额 ÷ 周期月数；到期时间用于计算剩余价值并过滤已到期挂单。</span></div>
+      <p class="hint" id="market-order-note">Akile 交易市场购买要求用户在官网完成 Passkey 验证；Isvoro 仅提供市场提醒。HostWatch 不会自动购买或付款。</p>
+    </div>
     <div class="panel-card market-settings"><div class="section-head"><div><h2>指定商品规则</h2><p>折价设最低节省值（≥），溢价设最高额外成本（≤，折价也满足）。比例或金额留空表示不使用。</p></div><div class="actions"><button type="button" id="market-test-notification">测试通知</button><button type="button" id="market-check">检查已保存规则</button><button type="button" class="card-save" data-save-card="market">保存商品规则</button></div></div>
     <!-- market-threshold-help:start -->
     <details class="market-rule-meta" open>
@@ -1014,6 +1024,7 @@
     <!-- market-threshold-help:end -->
     <div id="market-rule-items"></div><p id="market-rule-empty" class="hint">尚无规则，在商品操作中点击“添加监控”。</p><div id="market-rule-results" aria-live="polite"></div></div>
     <p class="market-disclaimer">估值用于规则筛选，不代表实际交易价值。未识别周期、零续费价格、到期、拍卖、下架或数据异常的商品不触发通知。持续满足条件的挂单每条规则仅通知一次；退出条件后再次达到阈值会重新提醒。通知失败会在后续检查重试。</p>
+    </div>
   </section>
 
   <section class="page-panel panel-card" id="page-requests" data-page="requests" aria-labelledby="page-title" hidden>

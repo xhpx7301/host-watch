@@ -81,7 +81,8 @@ const pages = {
   overview: { title: "运行概览", description: "每分钟查看大盘、监控、通知、抢购的状态与最近刷新记录。" },
   catalog: { title: "VPS 库存大盘", description: "浏览商家全部公开套餐或地区分类，选择你关心的 VPS 加入补货提醒。" },
   seckill: { title: "VPS 补货抢购", description: "从库存监控或库存通知选择商品，配置优惠码和账户后执行补货抢购。" },
-  market: { title: "Akile 交易市场", description: "查看 Akile 交易市场快照，按续费价格和到期时间计算折价/溢价金额与比例，设置指定商品的 Telegram 提醒。" },
+  market: { title: "二手交易市场", description: "浏览 Akile 和 Isvoro 的二手挂单，查看续费价格、到期时间及估算折价或溢价。" },
+  "market-notifications": { title: "二手市场通知", description: "设置二手挂单提醒条件，检查指定商品是否仍在市场，并接收 Telegram 通知。" },
   accounts: { title: "网站账户", description: "集中管理 VPS 补货抢购使用的网站登录账户，检查账户状态并导入商家认证信息。" },
   products: { title: "自定义商品", description: "新增大盘未收录的商品，编辑手动配置，或恢复已移出的商品。" },
   monitor: { title: "VPS 库存监控", description: "集中查看你关注的 VPS，查看库存与配置、编辑备注和线路，直接购买，不发送通知。" },
@@ -208,25 +209,30 @@ function marketRuleInfo(item) {
   return Object.keys(info).length ? info : null;
 }
 function renderMarketSettings() {
-  const value = marketConfig(), account = document.querySelector("#market-account");
+  const value = marketConfig(), accountIds = ["market-account", "market-notification-account"];
   const provider = activeMarketProvider(), providerName = provider === "isvoro" ? "Isvoro" : "Akile";
   document.querySelector("#market-account-label").textContent = `${providerName} 网站账户`;
+  document.querySelector("#market-notification-account-label").textContent = `${providerName} 网站账户`;
+  document.querySelector("#market-notification-provider").value = provider;
   const source = document.querySelector("#market-source-link");
   source.href = provider === "isvoro" ? "https://isvoro.com/marketplace" : "https://akile.ai/console/pushshop";
   source.textContent = `打开 ${providerName} 市场 ↗`;
-  account.replaceChildren(new Option(`请选择已保存的 ${providerName} 账户`, ""));
-  (config.vps_seckill?.accounts || []).filter(row => row.provider === provider).forEach(row => account.append(new Option(row.name || row.username || row.id, row.id)));
-  if (value.account_id && ![...account.options].some(option => option.value === value.account_id)) account.append(new Option("已绑定账户已删除，请重新选择", value.account_id));
-  account.value = value.account_id || "";
-  document.querySelector("#market-enabled").value = value.enabled ? "on" : "off";
-  document.querySelector("#market-interval").value = value.interval_seconds ?? 60;
+  for (const id of accountIds) {
+    const account = document.getElementById(id);
+    account.replaceChildren(new Option(`请选择已保存的 ${providerName} 账户`, ""));
+    (config.vps_seckill?.accounts || []).filter(row => row.provider === provider).forEach(row => account.append(new Option(row.name || row.username || row.id, row.id)));
+    if (value.account_id && ![...account.options].some(option => option.value === value.account_id)) account.append(new Option("已绑定账户已删除，请重新选择", value.account_id));
+    account.value = value.account_id || "";
+  }
+  document.querySelector("#market-notification-enabled").value = value.enabled ? "on" : "off";
+  document.querySelector("#market-notification-interval").value = value.interval_seconds ?? 60;
   renderMarketRules();
   renderMarket();
 }
 function collectMarket() {
   return { ...marketConfig(), account_id: document.querySelector("#market-account").value,
-    enabled: document.querySelector("#market-enabled").value === "on",
-    interval_seconds: Number(document.querySelector("#market-interval").value), items: marketConfig().items.map(row => ({ ...row })) };
+    enabled: document.querySelector("#market-notification-enabled").value === "on",
+    interval_seconds: Number(document.querySelector("#market-notification-interval").value), items: marketConfig().items.map(row => ({ ...row })) };
 }
 function addMarketRule(item) {
   const marketInfo = marketRuleInfo(item);
@@ -478,21 +484,28 @@ document.querySelector("#market-test-notification").addEventListener("click", as
     });
   } finally { marketNotificationTestBusy = false; renderMarket(); }
 });
-for (const id of ["market-account", "market-enabled", "market-interval"]) document.getElementById(id).addEventListener("input", () => {
+for (const id of ["market-account", "market-notification-account", "market-notification-enabled", "market-notification-interval"]) document.getElementById(id).addEventListener("input", event => {
+  if (id === "market-account" || id === "market-notification-account") {
+    document.getElementById(id === "market-account" ? "market-notification-account" : "market-account").value = event.currentTarget.value;
+  }
   Object.assign(marketConfig(), collectMarket()); updateDraftState();
-  if (id === "market-account") renderMarketRuleDetails();
+  if (id === "market-account" || id === "market-notification-account") renderMarketRuleDetails();
   renderMarket();
 });
-document.querySelector("#market-provider").addEventListener("change", () => { marketPage = 0; renderMarketSettings(); void loadMarketSnapshot(); });
+for (const id of ["market-provider", "market-notification-provider"]) document.getElementById(id).addEventListener("change", event => {
+  document.getElementById(id === "market-provider" ? "market-notification-provider" : "market-provider").value = event.currentTarget.value;
+  marketPage = 0; renderMarketSettings(); void loadMarketSnapshot();
+});
+document.querySelector("#market-open-notifications").addEventListener("click", () => navigatePage("market-notifications"));
 for (const id of ["market-search", "market-region", "market-product"]) document.getElementById(id).addEventListener("input", () => { marketPage = 0; renderMarket(); });
 document.querySelector("#market-prev").addEventListener("click", () => { marketPage--; renderMarket(); });
 document.querySelector("#market-next").addEventListener("click", () => { marketPage++; renderMarket(); });
-window.addEventListener("hostwatch-page-change", event => { if (event.detail === "market") void loadMarketSnapshot(); });
+window.addEventListener("hostwatch-page-change", event => { if (["market", "market-notifications"].includes(event.detail)) void loadMarketSnapshot(); });
 window.addEventListener("hostwatch-page-change", event => {
   if (["seckill", "accounts"].includes(event.detail)) scheduleAccountHealthCheck(500); else clearTimeout(accountHealthTimer);
   if (event.detail === "seckill") void syncVpsSeckillTask();
 });
-setInterval(() => { if (!document.hidden && currentPage === "market" && savedConfig) void loadMarketSnapshot(); }, 10000);
+setInterval(() => { if (!document.hidden && ["market", "market-notifications"].includes(currentPage) && savedConfig) void loadMarketSnapshot(); }, 10000);
 
 function setMessage(message, kind = "", notify = true, inline = true) {
   if (inline) {
@@ -3963,7 +3976,7 @@ function applyConfig(value) {
   renderVpsSeckill();
   if (["seckill", "accounts"].includes(currentPage)) scheduleAccountHealthCheck(1_000);
   renderMarketSettings();
-  if (currentPage === "market") void loadMarketSnapshot();
+  if (["market", "market-notifications"].includes(currentPage)) void loadMarketSnapshot();
   savedConfig = JSON.stringify(collectConfig());
   updateDraftState();
   renderMonitorState();
