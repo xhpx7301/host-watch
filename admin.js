@@ -19,7 +19,7 @@ let config = {
   egress: { nodes: [], routes: {} },
   akile_market: { enabled: false, interval_seconds: 60, account_id: "", items: [] },
   isvoro_market: { enabled: false, interval_seconds: 600, account_id: "", items: [] },
-  account_balance_notifications: { enabled: false, interval_seconds: 300, account_ids: [], low_balance_enabled: true, low_balance_threshold: 10, balance_change_enabled: true },
+  account_balance_notifications: { providers: {} },
   vps_seckill: { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] },
   products: [],
 };
@@ -85,7 +85,8 @@ const pages = {
   seckill: { title: "VPS 补货抢购", description: "从库存监控或库存通知选择商品，配置优惠码和账户后执行补货抢购。" },
   market: { title: "二手交易市场", description: "浏览 Akile 和 Isvoro 的二手挂单，查看续费价格、到期时间及估算折价或溢价。" },
   "market-notifications": { title: "二手市场通知", description: "设置二手挂单提醒条件，检查指定商品是否仍在市场，并接收 Telegram 通知。" },
-  "account-balance": { title: "账户余额通知", description: "选择 Akile 账户并设置低余额与余额变化提醒。" },
+  "account-balance": { title: "账户余额通知", description: "分别配置独角鲸云和 Hytron 的账户、检查间隔、阈值与通知条件。" },
+  telegram: { title: "Telegram 通知", description: "配置默认机器人，并为不同通知类型分配独立机器人。" },
   accounts: { title: "网站账户", description: "集中管理 VPS 补货抢购使用的网站登录账户，检查账户状态并导入商家认证信息。" },
   products: { title: "自定义商品", description: "新增大盘未收录的商品，编辑手动配置，或恢复已移出的商品。" },
   monitor: { title: "VPS 库存监控", description: "集中查看你关注的 VPS，查看库存与配置、编辑备注和线路，直接购买，不发送通知。" },
@@ -128,7 +129,7 @@ window.addEventListener("resize", () => {
 
 function navigatePage(name, { history = true, focus = true } = {}) {
   if (name === "narwhal") name = "catalog";
-  if (name === "telegram" || name === "management") name = "settings";
+  if (name === "management") name = "settings";
   if (!Object.hasOwn(pages, name)) name = "overview";
   if (history && location.hash !== `#${name}`) window.history.pushState(null, "", `#${name}`);
   sessionStorage.setItem("hostwatch-current-page", name);
@@ -175,40 +176,86 @@ let marketPage = 0;
 function activeMarketProvider() { return document.querySelector("#market-provider")?.value || "akile"; }
 function marketConfig() { const isvoro = activeMarketProvider() === "isvoro", key = isvoro ? "isvoro_market" : "akile_market"; return config[key] ||= { enabled: false, interval_seconds: isvoro ? 600 : 60, account_id: "", items: [] }; }
 let accountBalanceSnapshot = { accounts: [], updated_at: "", error: "", running: false };
+const balanceProviderDefinitions = {
+  narwhal: { label: "独角鲸云", currency: "CNY", symbol: "¥", thresholdLabel: "低余额阈值（元）" },
+  hytron: { label: "Hytron", currency: "USD", symbol: "$", thresholdLabel: "低余额阈值（美元）" },
+};
 function balanceNotificationConfig() {
-  return config.account_balance_notifications || (config.account_balance_notifications = { enabled: false,
-    interval_seconds: 300, account_ids: [], low_balance_enabled: true, low_balance_threshold: 10,
-    balance_change_enabled: true });
+  const value = config.account_balance_notifications ||= {};
+  value.providers ||= {};
+  for (const [provider, definition] of Object.entries(balanceProviderDefinitions)) {
+    value.providers[provider] ||= { enabled: false, interval_seconds: 300, account_ids: [], low_balance_enabled: true,
+      low_balance_threshold: 10, balance_change_enabled: true, currency: definition.currency,
+      currency_symbol: definition.symbol };
+  }
+  return value;
+}
+function balanceProviderDraft(provider) {
+  const definition = balanceProviderDefinitions[provider];
+  return { enabled: false, interval_seconds: 300, account_ids: [], low_balance_enabled: true,
+    low_balance_threshold: 10, balance_change_enabled: true, currency: definition.currency,
+    currency_symbol: definition.symbol, ...(balanceNotificationConfig().providers[provider] || {}) };
+}
+function balanceButtonPressed(button) { return button?.getAttribute("aria-pressed") === "true"; }
+function setBalanceButton(button, pressed) {
+  if (!button) return;
+  button.setAttribute("aria-pressed", String(Boolean(pressed)));
+  const state = button.querySelector("[data-option-state]");
+  if (state) state.textContent = pressed ? (button.dataset.on || "已开启") : (button.dataset.off || "未开启");
 }
 function collectAccountBalanceNotifications() {
-  const value = balanceNotificationConfig();
-  return { ...value, enabled: document.querySelector("#account-balance-enabled").value === "on",
-    interval_seconds: Number(document.querySelector("#account-balance-interval").value || NaN),
-    low_balance_threshold: Number(document.querySelector("#account-balance-threshold").value || NaN),
-    low_balance_enabled: document.querySelector("#account-balance-low-enabled").checked,
-    balance_change_enabled: document.querySelector("#account-balance-change-enabled").checked,
-    account_ids: [...document.querySelectorAll("[data-balance-account]:checked")].map(input => input.dataset.balanceAccount) };
+  const existing = balanceNotificationConfig();
+  const providers = { ...existing.providers };
+  for (const provider of Object.keys(balanceProviderDefinitions)) {
+    const value = balanceProviderDraft(provider), prefix = `account-balance-${provider}`;
+    providers[provider] = { ...value,
+      enabled: balanceButtonPressed(document.querySelector(`#${prefix}-enabled`)),
+      interval_seconds: Number(document.querySelector(`#${prefix}-interval`)?.value || NaN),
+      low_balance_threshold: Number(document.querySelector(`#${prefix}-threshold`)?.value || NaN),
+      low_balance_enabled: balanceButtonPressed(document.querySelector(`#${prefix}-low`)),
+      balance_change_enabled: balanceButtonPressed(document.querySelector(`#${prefix}-change`)),
+      account_ids: [...document.querySelectorAll(`[data-balance-account="${provider}"]`)]
+        .filter(button => balanceButtonPressed(button)).map(button => button.dataset.balanceId),
+    };
+  }
+  return { providers, enabled: Object.values(providers).some(item => item.enabled) };
 }
 function renderAccountBalanceSettings() {
-  if (!document.querySelector("#account-balance-accounts")) return;
+  const root = document.querySelector("#account-balance-providers");
+  if (!root) return;
   const value = balanceNotificationConfig();
-  document.querySelector("#account-balance-enabled").value = value.enabled ? "on" : "off";
-  document.querySelector("#account-balance-interval").value = value.interval_seconds ?? 300;
-  document.querySelector("#account-balance-threshold").value = value.low_balance_threshold ?? 10;
-  document.querySelector("#account-balance-low-enabled").checked = value.low_balance_enabled !== false;
-  document.querySelector("#account-balance-change-enabled").checked = value.balance_change_enabled !== false;
-  const saved = new Set(value.account_ids || []), list = document.querySelector("#account-balance-accounts");
-  const accounts = (config.vps_seckill?.accounts || []).filter(account => account.provider === "akile");
-  list.replaceChildren(...accounts.map(account => {
-    const label = text("label", "", "balance-account-option"), input = document.createElement("input");
-    input.type = "checkbox"; input.dataset.balanceAccount = account.id; input.checked = saved.has(account.id);
-    input.addEventListener("change", updateDraftState);
-    label.append(input, text("span", `${account.name || account.username || account.id} · ${account.username || "Akile"}`));
-    return label;
+  root.replaceChildren(...Object.entries(balanceProviderDefinitions).map(([provider, definition]) => {
+    const current = balanceProviderDraft(provider), prefix = `account-balance-${provider}`;
+    const card = text("article", "", "balance-provider-card"); card.dataset.balanceProvider = provider;
+    const head = text("div", "", "section-head");
+    head.append(text("div", "", "balance-provider-heading"));
+    head.firstChild.append(text("h3", definition.label), text("span", `${definition.currency} · ${definition.symbol}`, "section-badge"));
+    const enabled = text("button", "", "option-button"); enabled.type = "button"; enabled.id = `${prefix}-enabled`;
+    enabled.dataset.on = "已开启"; enabled.dataset.off = "已暂停"; enabled.dataset.balanceToggle = "enabled";
+    enabled.append(text("span", "后台监控"), text("span", "", "")); enabled.lastChild.dataset.optionState = ""; setBalanceButton(enabled, current.enabled);
+    head.append(enabled); card.append(head);
+    const grid = text("div", "", "form-grid");
+    const field = (id, label, type = "number", value = "") => { const wrapper = text("label", label); const input = document.createElement("input"); input.id = id; input.type = type; input.value = value; wrapper.append(input); input.addEventListener("input", updateDraftState); grid.append(wrapper); return input; };
+    field(`${prefix}-interval`, "检查间隔（秒）", "number", current.interval_seconds ?? 300).min = "30";
+    const threshold = field(`${prefix}-threshold`, definition.thresholdLabel, "number", current.low_balance_threshold ?? 10); threshold.min = "0"; threshold.step = "0.01";
+    const conditions = text("div", "", "balance-conditions"); conditions.append(text("strong", "通知条件"));
+    for (const [suffix, label, key] of [["low", "余额低于阈值时通知", "low_balance_enabled"], ["change", "余额发生变化时通知", "balance_change_enabled"]]) {
+      const button = text("button", "", "option-button"); button.type = "button"; button.id = `${prefix}-${suffix}`; button.dataset.on = "已开启"; button.dataset.off = "已关闭";
+      button.dataset.balanceToggle = suffix; button.append(text("span", label), text("span", "", "")); button.lastChild.dataset.optionState = ""; setBalanceButton(button, current[key] !== false);
+      button.addEventListener("click", () => { setBalanceButton(button, !balanceButtonPressed(button)); updateDraftState(); }); conditions.append(button);
+    }
+    grid.append(conditions); card.append(grid, text("h4", "监控账户"));
+    const list = text("div", "", "balance-account-list"); list.id = `${prefix}-accounts`;
+    const accounts = (config.vps_seckill?.accounts || []).filter(account => account.provider === provider);
+    const saved = new Set(current.account_ids || []);
+    list.replaceChildren(...accounts.map(account => {
+      const button = text("button", "", "balance-account-option option-button"); button.type = "button"; button.dataset.balanceAccount = provider; button.dataset.balanceId = account.id;
+      button.dataset.on = "已选择"; button.dataset.off = "未选择"; button.append(text("span", `${account.name || account.username || account.id} · ${account.username || definition.label}`), text("span", "", "")); button.lastChild.dataset.optionState = "";
+      setBalanceButton(button, saved.has(account.id)); button.addEventListener("click", () => { setBalanceButton(button, !balanceButtonPressed(button)); updateDraftState(); renderAccountBalanceResults(); }); return button;
+    }));
+    card.append(list, text("p", accounts.length ? `可监控 ${definition.label} 账户；余额单位为 ${definition.symbol}。` : `请先在“网站账户”中添加并保存 ${definition.label} 账户。`, "hint"));
+    return card;
   }));
-  document.querySelector("#account-balance-account-note").textContent = accounts.length
-    ? "余额读取目前仅支持 Akile 账户；其他商家账户暂不显示。"
-    : "请先在“网站账户”中添加并保存 Akile 账户。";
   renderAccountBalanceResults();
 }
 function renderAccountBalanceResults() {
@@ -222,11 +269,11 @@ function renderAccountBalanceResults() {
   results.replaceChildren(...rows.map(row => {
     const node = text("div", "", `balance-result${row.error ? " error" : ""}`);
     node.append(text("strong", `${row.name || row.email || row.account_id} · ${row.email || ""}`));
-    node.append(text("span", row.error ? `读取失败：${row.error}` : `余额 ¥${Number(row.balance).toFixed(2)}${row.notification_error ? ` · ${row.notification_error}` : ""}`));
+    node.append(text("span", row.error ? `读取失败：${row.error}` : `余额 ${row.currency_symbol || "¥"}${Number(row.balance).toFixed(2)}${row.notification_error ? ` · ${row.notification_error}` : ""}`));
     return node;
   }));
   const check = document.querySelector("#account-balance-check");
-  if (check) check.disabled = actionRunning || !document.querySelector("[data-balance-account]:checked");
+  if (check) check.disabled = actionRunning || !document.querySelector("[data-balance-account][aria-pressed=\"true\"]");
 }
 async function loadAccountBalanceSnapshot() {
   try { accountBalanceSnapshot = await requestJSON("/api/account-balance"); renderAccountBalanceResults(); }
@@ -237,7 +284,9 @@ async function checkAccountBalances() {
   button.disabled = true; button.textContent = "检查中…";
   try {
     accountBalanceSnapshot = await requestJSON("/api/account-balance/check", { method: "POST",
-      headers: { "Content-Type": "application/json" }, body: "{}", timeoutMs: 120000 });
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accounts: [...document.querySelectorAll('[data-balance-account][aria-pressed="true"]')]
+        .map(button => ({ provider: button.dataset.balanceAccount, account_id: button.dataset.balanceId })) }), timeoutMs: 120000 });
     renderAccountBalanceResults();
     setMessage(accountBalanceSnapshot.error ? `余额已检查，部分账户失败：${accountBalanceSnapshot.error}` : "账户余额检查完成。",
       accountBalanceSnapshot.error ? "error" : "success");
@@ -2743,8 +2792,9 @@ function renderProductList() {
     const runtime = latest.get(item.id), p = productSnapshot(item, runtime), row = document.createElement("tr"); row.dataset.id = item.id;
     const cell = (value = "", cls = "") => { const td = text("td", value, cls); row.append(td); return td; };
     const compareCell = cell("", "compare-cell");
-    const compare = document.createElement("input"); compare.type = "checkbox"; compare.className = "compare-check"; compare.checked = compareSelection.has(item.id); compare.disabled = actionRunning; compare.setAttribute("aria-label", `选择 ${item.name} 进行对比`);
-    compare.addEventListener("change", () => updateCompareSelection(item.id, compare.checked)); compareCell.append(compare);
+    const compare = text("button", "", "compare-check option-button"); compare.type = "button"; compare.setAttribute("aria-pressed", String(compareSelection.has(item.id))); compare.disabled = actionRunning; compare.setAttribute("aria-label", `选择 ${item.name} 进行对比`); compare.title = compareSelection.has(item.id) ? "取消对比" : "加入对比";
+    compare.append(text("span", compareSelection.has(item.id) ? "已选" : "选择"));
+    compare.addEventListener("click", () => { const selected = !compareSelection.has(item.id); updateCompareSelection(item.id, selected); compare.setAttribute("aria-pressed", String(selected)); compare.title = selected ? "取消对比" : "加入对比"; compare.firstChild.textContent = selected ? "已选" : "选择"; }); compareCell.append(compare);
     const merchant = text("div", "", "merchant-sort"); merchant.append(productSortHandle(item, "watch", row, visible.length), text("span", item.provider)); cell().append(merchant);
     const identity = cell(); identity.append(text("strong", p.name || item.name));
     const time = item.adapter === "dmit" ? p.checked_at : runtime ? runtime.checked_at || lastStatus?.last_checked : p.checked_at;
@@ -3345,7 +3395,7 @@ function renderVpsSeckill() {
   if (!seckillAccounts().length) accountTarget.append(text("p", "尚未配置网站账户。手动抢购不需要账户。", "empty"));
   accounts.forEach(account => {
     const card = text("article", "", "seckill-account"), grid = text("div", "", "form-grid"); card.dataset.accountId = account.id;
-    const merchantIds = { vmiss: "vmiss", "vps.soy": "vps_soy", vps_soy: "vps_soy", "搬瓦工": "bwh", bwh: "bwh", bandwagonhost: "bwh", akile: "akile", isvoro: "isvoro", dmit: "dmit", narwhal: "narwhal", "独角鲸云": "narwhal" };
+    const merchantIds = { vmiss: "vmiss", "vps.soy": "vps_soy", vps_soy: "vps_soy", "搬瓦工": "bwh", bwh: "bwh", bandwagonhost: "bwh", akile: "akile", isvoro: "isvoro", dmit: "dmit", narwhal: "narwhal", "独角鲸云": "narwhal", hytron: "hytron" };
     const providerValue = () => account.provider ? (merchantIds[String(account.provider).trim().toLowerCase()] || "custom") : (account.login_url ? "custom" : "");
     const field = (label, key, placeholder, type = "text") => {
       const input = document.createElement("input"); input.type = type; input.value = account[key] || ""; input.placeholder = placeholder;
@@ -3362,18 +3412,18 @@ function renderVpsSeckill() {
     const setProviderExtra = () => {
       providerExtra.replaceChildren();
       const selected = provider.value;
-      const ids = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", narwhal: "独角鲸云", isvoro: "Isvoro", dmit: "DMIT", bwh: "搬瓦工" };
+      const ids = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", narwhal: "独角鲸云", isvoro: "Isvoro", dmit: "DMIT", bwh: "搬瓦工", hytron: "Hytron" };
       if (selected === "custom") {
         adapterNote.textContent = "其他商家需要自行提供实现 hostwatch-unpaid-v1 的账户检查 JSON 接口；普通登录页不能直接使用。";
         const name = document.createElement("input"); name.value = account.provider && !merchantIds[String(account.provider).trim().toLowerCase()] ? account.provider : ""; name.placeholder = "商家名称"; name.addEventListener("input", () => { account.provider = name.value; clearAccountSaveFeedback(account.id); updateDraftState(); updateSeckillAccountControls(account.id); });
         const nameLabel = document.createElement("label"); nameLabel.append(text("span", "商家名称"), name); providerExtra.append(nameLabel);
         const login = document.createElement("input"); login.type = "url"; login.value = account.login_url || ""; login.placeholder = "https://…（HostWatch JSON 接口）"; login.addEventListener("input", () => { account.login_url = login.value; clearAccountSaveFeedback(account.id); updateDraftState(); updateSeckillAccountControls(account.id); });
         const loginLabel = document.createElement("label"); loginLabel.append(text("span", "账户检查接口"), login); providerExtra.append(loginLabel);
-      } else if (selected === "vmiss" || selected === "vps_soy" || selected === "bwh" || selected === "akile" || selected === "narwhal" || selected === "isvoro" || selected === "dmit") {
-        const urls = { vmiss: "https://app.vmiss.com/login", vps_soy: "https://www.vps.soy/login", bwh: "https://bwh81.net/clientarea.php", akile: "https://api.akile.ai/api/v1/user/login", narwhal: "https://api.fuckip.me/api/v1/auth/login", isvoro: "https://isvoro.com/api/v1/auth/login", dmit: "https://www.dmit.io/clientarea.php" };
+      } else if (selected === "vmiss" || selected === "vps_soy" || selected === "bwh" || selected === "akile" || selected === "narwhal" || selected === "isvoro" || selected === "dmit" || selected === "hytron") {
+        const urls = { vmiss: "https://app.vmiss.com/login", vps_soy: "https://www.vps.soy/login", bwh: "https://bwh81.net/clientarea.php", akile: "https://api.akile.ai/api/v1/user/login", narwhal: "https://api.fuckip.me/api/v1/auth/login", isvoro: "https://isvoro.com/api/v1/auth/login", dmit: "https://www.dmit.io/clientarea.php", hytron: "https://hyvps.hytron.io/api/v1/auth/login" };
         account.provider = selected; account.login_url = urls[selected];
-        adapterNote.textContent = selected === "akile" ? "Akile 已内置 API 登录检查；填写邮箱和密码。若要求邮箱验证、二步验证、Passkey 或验证码，请到官网完成。检查不下单、不付款。" : selected === "narwhal" ? "独角鲸云已内置 API 登录检查；填写注册邮箱和密码。服务会核对返回账户邮箱，并在内存中缓存登录令牌最长 30 天。检查不下单、不付款。" : selected === "isvoro" ? "Isvoro 已内置 API 登录检查；首次在官网完成 hCaptcha 后导入 Cookie。服务会在内存中缓存最长 30 天，并在 access Cookie 过期时自动使用 refresh Cookie 续期；服务重启或 refresh Cookie 失效后需重新导入。" : selected === "vmiss" ? "VMISS 已内置登录与官网结算适配；填写官网登录邮箱和密码。自动抢购会预填商品配置并创建待付款发票，不会自动付款。" : selected === "bwh" ? "搬瓦工已内置登录与官网结算适配；可在官网完成邮箱验证后导入 Cookie，服务在内存中缓存最长 30 天。Cookie 不会写入配置或备份；过期或服务重启后需重新导入，密码登录仍可能要求邮箱验证码。" : selected === "dmit" ? "DMIT 已内置账号密码登录检查。也可在官网用账号密码登录并完成安全验证后导入 Cookie；验证成功后只保存在服务器内存，最长 30 天。Cookie 不会写入配置或备份；若 DMIT 将会话绑定浏览器或出口 IP，服务器可能无法验证。" : `${ids[selected]} 已内置登录检查；只需填写官网登录名和密码。检查仅登录，不下单、不付款。遇到安全验证时，请在网页请求中为该商家选择 FlareSolverr 或 cloudscraper。`;
-        const destinations = { ...urls, akile: "https://akile.ai/login", narwhal: "https://dash.fuckip.me/login", isvoro: "https://isvoro.com/login" };
+        adapterNote.textContent = selected === "akile" ? "Akile 已内置 API 登录检查；填写邮箱和密码。若要求邮箱验证、二步验证、Passkey 或验证码，请到官网完成。检查不下单、不付款。" : selected === "narwhal" ? "独角鲸云已内置 API 登录检查；填写注册邮箱和密码。服务会核对返回账户邮箱，并在内存中缓存登录令牌最长 30 天。检查不下单、不付款。" : selected === "hytron" ? "Hytron 已内置邮箱密码 API 登录检查；填写注册邮箱和密码。服务会核对返回账户邮箱，并在内存中缓存登录令牌最长 30 天。检查不下单、不付款。" : selected === "isvoro" ? "Isvoro 已内置 API 登录检查；首次在官网完成 hCaptcha 后导入 Cookie。服务会在内存中缓存最长 30 天，并在 access Cookie 过期时自动使用 refresh Cookie 续期；服务重启或 refresh Cookie 失效后需重新导入。" : selected === "vmiss" ? "VMISS 已内置登录与官网结算适配；填写官网登录邮箱和密码。自动抢购会预填商品配置并创建待付款发票，不会自动付款。" : selected === "bwh" ? "搬瓦工已内置登录与官网结算适配；可在官网完成邮箱验证后导入 Cookie，服务在内存中缓存最长 30 天。Cookie 不会写入配置或备份；过期或服务重启后需重新导入，密码登录仍可能要求邮箱验证码。" : selected === "dmit" ? "DMIT 已内置账号密码登录检查。也可在官网用账号密码登录并完成安全验证后导入 Cookie；验证成功后只保存在服务器内存，最长 30 天。Cookie 不会写入配置或备份；若 DMIT 将会话绑定浏览器或出口 IP，服务器可能无法验证。" : `${ids[selected]} 已内置登录检查；只需填写官网登录名和密码。检查仅登录，不下单、不付款。遇到安全验证时，请在网页请求中为该商家选择 FlareSolverr 或 cloudscraper。`;
+        const destinations = { ...urls, akile: "https://akile.ai/login", narwhal: "https://dash.fuckip.me/login", isvoro: "https://isvoro.com/login", hytron: "https://hyvps.hytron.io/" };
         const link = text("a", `打开 ${ids[selected]} 官网登录页`); link.href = destinations[selected]; link.target = "_blank"; link.rel = "noopener noreferrer"; link.className = "provider-login-link"; providerExtra.append(link);
         if (selected === "isvoro" || selected === "bwh" || selected === "dmit") {
           const cookie = document.createElement("input"); cookie.type = "password"; cookie.autocomplete = "off"; cookie.value = account.session_cookie || ""; cookie.placeholder = "官网手动登录后粘贴 Cookie: name=value; …";
@@ -3689,11 +3739,11 @@ function openSeckillPicker(type) {
   const selected = new Set();
   rows.forEach(item => {
     const label = document.createElement("label"); label.className = "picker-row";
-    const input = document.createElement("input"); input.type = "checkbox"; input.value = item.id; input.disabled = seckillItems().some(row => row.product_id === item.id); input.addEventListener("change", () => input.checked ? selected.add(item.id) : selected.delete(item.id));
-    label.append(input, text("span", `${item.name} · ${item.provider}${input.disabled ? "（已添加）" : ""}`)); content.append(label);
+    const input = text("button", "", "picker-option option-button"); input.type = "button"; input.value = item.id; input.disabled = seckillItems().some(row => row.product_id === item.id); input.setAttribute("aria-pressed", "false"); input.setAttribute("aria-label", `选择 ${item.name} 加入 VPS 补货抢购`); input.append(text("span", "选择"), text("span", "", "picker-option-state")); input.lastChild.textContent = input.disabled ? "已添加" : "未选择";
+    input.addEventListener("click", () => { const active = input.getAttribute("aria-pressed") !== "true"; input.setAttribute("aria-pressed", String(active)); input.lastChild.textContent = active ? "已选择" : "未选择"; active ? selected.add(item.id) : selected.delete(item.id); add.disabled = !selected.size; });
+    label.append(input, text("span", `${item.name} · ${item.provider}`)); content.append(label);
   });
   const actions = text("div", "", "actions"); const add = text("button", "添加所选", "primary"); add.type = "button"; add.disabled = !rows.some(item => selected.has(item.id));
-  content.addEventListener("change", () => { add.disabled = !selected.size; }, { once: false });
   add.addEventListener("click", () => { rows.filter(item => selected.has(item.id)).forEach(addToVpsSeckill); dialog.close(); renderVpsSeckill(); }); actions.append(add); content.append(actions);
   dialog.showModal();
 }
@@ -4054,7 +4104,7 @@ function collectTelegramRoutes() {
       mode: row.querySelector("[data-route-mode]").value,
       bot_token: row.querySelector("[data-route-token]").value.trim(),
       chat_id: row.querySelector("[data-route-chat]").value.trim(),
-      clear: row.querySelector("[data-route-clear]").checked,
+      clear: balanceButtonPressed(row.querySelector("[data-route-clear]")),
     }];
   }));
 }
@@ -4063,7 +4113,7 @@ function telegramRouteStatus(row) {
   const mode = row.querySelector("[data-route-mode]").value;
   const token = row.querySelector("[data-route-token]").value.trim();
   const chat = row.querySelector("[data-route-chat]").value.trim();
-  const configured = row.dataset.tokenConfigured === "true" && !row.querySelector("[data-route-clear]").checked;
+  const configured = row.dataset.tokenConfigured === "true" && !balanceButtonPressed(row.querySelector("[data-route-clear]"));
   const status = mode === "default" ? "沿用默认机器人"
     : mode === "off" ? "此类通知已停用"
       : token && chat || configured && chat ? "独立机器人已配置"
@@ -4096,20 +4146,22 @@ function renderTelegramRoutes(value = {}) {
     const test = text("button", "测试发送"); test.type = "button"; test.dataset.routeTest = category;
     const readChats = text("button", "读取聊天"); readChats.type = "button"; readChats.dataset.routeChats = category;
     actions.append(test, readChats);
-    const clearLabel = text("label", "清除此机器人凭据", "telegram-route-clear");
-    const clear = document.createElement("input"); clear.type = "checkbox"; clear.dataset.routeClear = ""; clearLabel.prepend(clear);
+    const clear = text("button", "", "option-button telegram-route-clear"); clear.type = "button"; clear.dataset.routeClear = "";
+    clear.dataset.on = "保存时清除"; clear.dataset.off = "不清除";
+    clear.append(text("span", "清除此机器人凭据"), text("span", "", "")); clear.lastChild.dataset.optionState = "";
+    setBalanceButton(clear, false);
     const chats = text("div", "", "telegram-route-chats"); chats.dataset.routeChatList = "";
-    row.append(heading, modeField, tokenField, chatField, actions, clearLabel, chats);
+    row.append(heading, modeField, tokenField, chatField, actions, clear, chats);
     const sync = (update = true) => {
       const custom = mode.value === "custom";
-      token.disabled = chat.disabled = clear.disabled = !custom;
+      token.disabled = chat.disabled = !custom; clear.disabled = !custom;
       test.disabled = readChats.disabled = mode.value === "off";
       telegramRouteStatus(row); if (update) updateDraftState();
     };
     mode.addEventListener("change", () => sync());
     token.addEventListener("input", () => { row.dataset.tokenConfigured = String(Boolean(token.value.trim()) || row.dataset.tokenConfigured === "true"); telegramRouteStatus(row); updateDraftState(); });
     chat.addEventListener("input", () => { telegramRouteStatus(row); updateDraftState(); });
-    clear.addEventListener("change", () => { telegramRouteStatus(row); updateDraftState(); });
+    clear.addEventListener("click", () => { setBalanceButton(clear, !balanceButtonPressed(clear)); telegramRouteStatus(row); updateDraftState(); });
     test.addEventListener("click", event => runAction(event.currentTarget, "发送中…", `正在测试 ${label} Telegram…`, async () => {
       await requestJSON("/api/telegram/test", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ category, bot_token: token.value.trim(), chat_id: chat.value.trim() }) });

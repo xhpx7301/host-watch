@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import hmac
 import hashlib
 import ipaddress
@@ -460,6 +461,7 @@ MERCHANT_LOGIN_ADAPTERS = {
     "vmiss": {"name": "VMISS", "url": "https://app.vmiss.com/login", "host": "app.vmiss.com", "username_field": "username"},
     "vps_soy": {"name": "VPS.SOY", "url": "https://www.vps.soy/login", "host": "www.vps.soy", "username_field": "email"},
     "narwhal": {"name": "独角鲸云", "url": "https://api.fuckip.me/api/v1/auth/login", "host": "api.fuckip.me", "kind": "api"},
+    "hytron": {"name": "Hytron", "url": "https://hyvps.hytron.io/api/v1/auth/login", "host": "hyvps.hytron.io", "kind": "api", "username_field": "email"},
     "bwh": {"name": "搬瓦工", "url": "https://bwh81.net/clientarea.php", "host": "bwh81.net", "username_field": "username"},
     "dmit": {"name": "DMIT", "url": "https://www.dmit.io/clientarea.php", "auth_probe_url": "https://www.dmit.io/clientarea.php?action=details", "host": "www.dmit.io", "username_field": "username"},
 }
@@ -486,6 +488,10 @@ AKILE_MARKET_DETAIL_URL = "https://api.akile.ai/api/v1/pushshop/GetPushProduct"
 NARWHAL_API_BASE_URL = "https://api.fuckip.me/api/v1"
 NARWHAL_LOGIN_URL = f"{NARWHAL_API_BASE_URL}/auth/login"
 NARWHAL_PROFILE_URL = f"{NARWHAL_API_BASE_URL}/user/me"
+HYTRON_API_BASE_URL = "https://hyvps.hytron.io/api/v1"
+HYTRON_LOGIN_URL = f"{HYTRON_API_BASE_URL}/auth/login"
+HYTRON_PROFILE_URL = f"{HYTRON_API_BASE_URL}/auth/me"
+HYTRON_BALANCE_URL = f"{HYTRON_API_BASE_URL}/billing/balance"
 AKILE_DEBIAN_TEMPLATES = {
     "Debian 11": "063c07af-b200-40c0-839c-21864474saw",
     "Debian 12": "063c07af-b200-40c0-839c-1864474saw",
@@ -505,6 +511,7 @@ MERCHANT_LOGIN_IDS = {
     "vmiss": "vmiss", "vps.soy": "vps_soy", "vps_soy": "vps_soy",
     "搬瓦工": "bwh", "bwh": "bwh", "bandwagonhost": "bwh",
     "akile": "akile", "isvoro": "isvoro", "dmit": "dmit", "narwhal": "narwhal", "独角鲸云": "narwhal",
+    "hytron": "hytron",
 }
 
 
@@ -1277,6 +1284,52 @@ def _narwhal_authenticated(session, account: dict) -> bool:
     profile = _narwhal_profile_data(payload)
     email = str(profile.get("email", "")).strip().casefold() if isinstance(profile, dict) else ""
     return bool(email and email == str(account.get("username", "")).strip().casefold())
+
+
+def _hytron_profile_data(payload: object) -> dict | None:
+    if not isinstance(payload, dict):
+        return None
+    data = payload.get("data", payload)
+    return data if isinstance(data, dict) else None
+
+
+def _hytron_authenticated(session, account: dict) -> bool:
+    token = str(getattr(session, "headers", {}).get("Authorization", "")).strip()
+    if not token.startswith("Bearer ") or len(token) > 4096 or any(ord(char) < 33 for char in token[7:]):
+        return False
+    try:
+        response = session.get(HYTRON_PROFILE_URL, headers={"Authorization": token},
+                               timeout=(5, 20), allow_redirects=False)
+        if not 200 <= response.status_code < 300:
+            return False
+        profile = _hytron_profile_data(response.json())
+    except (requests.RequestException, OSError, ValueError, TypeError, AttributeError):
+        return False
+    identity = str((profile or {}).get("email") or (profile or {}).get("username") or "").strip().casefold()
+    return bool(identity and identity == str(account.get("username", "")).strip().casefold())
+
+
+def _hytron_login(session, account: dict) -> dict:
+    try:
+        payload = {"email": account["username"], "password": account["password"]}
+        response = session.post(HYTRON_LOGIN_URL, json=payload,
+                                timeout=(5, 20), allow_redirects=False,
+                                headers={"Accept": "application/json", "Content-Type": "application/json"})
+        body = response.json()
+    except (requests.RequestException, OSError, ValueError, TypeError, AttributeError):
+        return {"status": "unknown", "message": "Hytron 登录请求失败，请检查出口节点或官网状态"}
+    if response.status_code in {401, 403}:
+        return {"status": "invalid", "message": "Hytron 账户认证失败，请检查邮箱和密码"}
+    if not 200 <= response.status_code < 300:
+        return {"status": "unknown", "message": f"Hytron 登录 API 返回 HTTP {response.status_code}"}
+    data = _hytron_profile_data(body) or {}
+    token = data.get("access_token") or data.get("token")
+    if not isinstance(token, str) or not 1 <= len(token) <= 4096 or any(ord(char) < 33 for char in token):
+        return {"status": "unknown", "message": "Hytron 未返回有效登录凭据，请到官网检查"}
+    session.headers["Authorization"] = f"Bearer {token}"
+    if not _hytron_authenticated(session, account):
+        return {"status": "unknown", "message": "Hytron 登录成功但无法确认账户身份，请到官网检查"}
+    return {"status": "valid", "message": "Hytron 账户认证正常（不代表具有购买资格或库存）"}
 
 
 def _akile_authenticated(session, account: dict) -> bool:
@@ -2865,33 +2918,57 @@ def normalize_account_balance_notifications(value: object, accounts: list[dict])
     value = {} if value is None else value
     if not isinstance(value, dict):
         raise ValueError("账户余额通知配置必须是对象")
-    enabled = value.get("enabled", False)
-    low_enabled = value.get("low_balance_enabled", True)
-    change_enabled = value.get("balance_change_enabled", True)
-    if any(type(flag) is not bool for flag in (enabled, low_enabled, change_enabled)):
-        raise ValueError("账户余额通知开关必须是布尔值")
-    interval = value.get("interval_seconds", 300)
-    if type(interval) is not int or not 30 <= interval <= 3600:
-        raise ValueError("账户余额检查间隔必须是 30 到 3600 秒")
-    threshold = value.get("low_balance_threshold", 10)
-    if (isinstance(threshold, bool) or not isinstance(threshold, (int, float))
-            or not math.isfinite(threshold) or not 0 <= threshold <= 1000000):
-        raise ValueError("低余额阈值必须是 0 到 1000000 元的有效金额")
-    account_ids = value.get("account_ids", [])
-    available = {row["id"] for row in accounts if row.get("provider") == "akile"}
-    if (not isinstance(account_ids, list) or len(account_ids) > 100
-            or any(not isinstance(identifier, str) or len(identifier) > 128 for identifier in account_ids)
-            or len(set(account_ids)) != len(account_ids)):
-        raise ValueError("账户余额通知账户列表无效")
-    requested_ids = account_ids
-    account_ids = [identifier for identifier in requested_ids if identifier in available]
-    if enabled and requested_ids and not account_ids:
-        enabled = False
-    if enabled and (not account_ids or not (low_enabled or change_enabled)):
-        raise ValueError("启用账户余额通知前，请选择账户和至少一种通知条件")
-    return {"enabled": enabled, "interval_seconds": interval, "account_ids": account_ids,
-            "low_balance_enabled": low_enabled, "low_balance_threshold": round(float(threshold), 2),
-            "balance_change_enabled": change_enabled}
+    # Ignore legacy Akile balance settings; Akile market monitoring remains separate.
+    raw_providers = value.get("providers")
+    if raw_providers is None:
+        raw_providers = {"narwhal": value}
+    if not isinstance(raw_providers, dict):
+        raise ValueError("账户余额通知商家配置必须是对象")
+    specs = {
+        "narwhal": ("独角鲸云", "CNY", "¥", 100),
+        "hytron": ("Hytron", "USD", "$", 100),
+    }
+    providers = {}
+    for provider, (label, currency, symbol, factor) in specs.items():
+        raw = raw_providers.get(provider, {})
+        if raw is None:
+            raw = {}
+        if not isinstance(raw, dict):
+            raise ValueError(f"{label}余额通知配置必须是对象")
+        enabled = raw.get("enabled", False)
+        low_enabled = raw.get("low_balance_enabled", True)
+        change_enabled = raw.get("balance_change_enabled", True)
+        if any(type(flag) is not bool for flag in (enabled, low_enabled, change_enabled)):
+            raise ValueError(f"{label}账户余额通知开关必须是布尔值")
+        interval = raw.get("interval_seconds", 300)
+        if type(interval) is not int or not 30 <= interval <= 3600:
+            raise ValueError(f"{label}账户余额检查间隔必须是 30 到 3600 秒")
+        threshold = raw.get("low_balance_threshold", 10)
+        try:
+            threshold_decimal = Decimal(str(threshold)) if not isinstance(threshold, bool) else Decimal("NaN")
+        except (InvalidOperation, ValueError):
+            threshold_decimal = Decimal("NaN")
+        if not threshold_decimal.is_finite() or not 0 <= threshold_decimal <= 1000000:
+            raise ValueError(f"{label}低余额阈值必须是 0 到 1000000 的有效金额")
+        account_ids = raw.get("account_ids", [])
+        available = {row["id"] for row in accounts if row.get("provider") == provider}
+        if (not isinstance(account_ids, list) or len(account_ids) > 100
+                or any(not isinstance(identifier, str) or len(identifier) > 128 for identifier in account_ids)
+                or len(set(account_ids)) != len(account_ids)):
+            raise ValueError(f"{label}余额通知账户列表无效")
+        requested_ids = list(account_ids)
+        account_ids = [identifier for identifier in requested_ids if identifier in available]
+        if enabled and requested_ids and not account_ids:
+            enabled = False
+        if enabled and (not account_ids or not (low_enabled or change_enabled)):
+            raise ValueError(f"启用{label}账户余额通知前，请选择账户和至少一种通知条件")
+        threshold_minor = int((threshold_decimal * factor).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        providers[provider] = {"enabled": enabled, "interval_seconds": interval, "account_ids": account_ids,
+            "low_balance_enabled": low_enabled, "low_balance_threshold": float(threshold_decimal),
+            "low_balance_threshold_minor": threshold_minor,
+            "balance_change_enabled": change_enabled, "currency": currency, "currency_symbol": symbol,
+            "minor_factor": factor}
+    return {"providers": providers, "enabled": any(item["enabled"] for item in providers.values())}
 
 
 def akile_market_rule_matches(rule: dict, item: dict) -> bool:
@@ -3280,6 +3357,19 @@ def check_order_account(session, account: dict, fetcher: dict | None = None) -> 
                 if checked["status"] == "valid":
                     _store_merchant_session(adapter_id, account, fetcher, session)
                 return {**result, "ok": checked["status"] == "valid", **checked}
+            if adapter_id == "hytron":
+                cached = _get_merchant_session(adapter_id, account, fetcher)
+                if cached and _hytron_authenticated(cached, account):
+                    _renew_merchant_session(adapter_id, account, fetcher, cached)
+                    _copy_merchant_session(cached, session)
+                    return {**result, "ok": True, "status": "valid", "session_reused": True,
+                            "message": "Hytron 已复用认证会话（内存缓存最长 30 天；不代表具有购买资格或库存）"}
+                if cached:
+                    _remove_merchant_session(adapter_id, account, fetcher)
+                checked = _hytron_login(session, account)
+                if checked["status"] == "valid":
+                    _store_merchant_session(adapter_id, account, fetcher, session)
+                return {**result, "ok": checked["status"] == "valid", **checked}
             if adapter_id == "bwh" and supplied_cookie:
                 if not _import_bwh_session_cookie(session, supplied_cookie):
                     return {**result, "message": "搬瓦工会话 Cookie 格式无效，请复制完整 Cookie 后重试"}
@@ -3377,6 +3467,8 @@ def merchant_account_status(account_id: str) -> dict:
             probe = "valid" if _akile_authenticated(session, account) else "expired"
         elif adapter_id == "narwhal":
             probe = "valid" if _narwhal_authenticated(session, account) else "expired"
+        elif adapter_id == "hytron":
+            probe = "valid" if _hytron_authenticated(session, account) else "expired"
         else:
             probe = _merchant_auth_probe(session, MERCHANT_LOGIN_ADAPTERS[adapter_id])
         if probe == "valid":
@@ -4359,8 +4451,12 @@ def default_config() -> dict:
         "vps_seckill": {"enabled": False, "mode": "manual", "interval_seconds": 5, "items": [], "accounts": []},
         "akile_market": {"enabled": False, "interval_seconds": 60, "account_id": "", "items": []},
         "isvoro_market": {"enabled": False, "interval_seconds": 600, "account_id": "", "items": []},
-        "account_balance_notifications": {"enabled": False, "interval_seconds": 300, "account_ids": [],
-            "low_balance_enabled": True, "low_balance_threshold": 10.0, "balance_change_enabled": True},
+        "account_balance_notifications": {"providers": {
+            "narwhal": {"enabled": False, "interval_seconds": 300, "account_ids": [], "low_balance_enabled": True,
+                "low_balance_threshold": 10.0, "balance_change_enabled": True, "currency": "CNY"},
+            "hytron": {"enabled": False, "interval_seconds": 300, "account_ids": [], "low_balance_enabled": True,
+                "low_balance_threshold": 10.0, "balance_change_enabled": True, "currency": "USD"},
+        }, "enabled": False},
         "products": [],
     }
 
@@ -5336,6 +5432,96 @@ def _read_akile_balance(config: dict, account_id: str) -> int:
         session.close()
 
 
+def _account_balance_session(config: dict, account_id: str, provider: str):
+    from monitor import product_fetcher
+    account = next((row for row in config["vps_seckill"]["accounts"]
+                    if row["id"] == account_id and row.get("provider") == provider), None)
+    if not account:
+        raise ValueError(f"已选{provider}账户不存在")
+    fetcher = product_fetcher(config["fetcher"], {"adapter": provider, "egress_node_id": account.get("egress_node_id", "")})
+    session = requests.Session()
+    session.trust_env = False
+    session.headers.update({"User-Agent": f"HostWatch/1.0 ({provider} balance)", "Accept": "application/json"})
+    egress.apply_session(session, fetcher)
+    try:
+        checked = public_account_check_result(check_order_account(session, account, fetcher))
+        if not checked.get("ok"):
+            raise ValueError(f"{provider}账户认证失败：" + str(checked.get("message", "无法验证"))[:180])
+        return session, account
+    except Exception:
+        session.close()
+        raise
+
+
+def _numeric_balance(payload: object, preferred: tuple[str, ...]) -> Decimal | None:
+    if not isinstance(payload, dict):
+        return None
+    for key in preferred:
+        value = payload.get(key)
+        if isinstance(value, (int, float, str)) and not isinstance(value, bool):
+            try:
+                amount = Decimal(str(value).strip())
+            except (InvalidOperation, ValueError):
+                continue
+            if amount.is_finite() and amount >= 0:
+                return amount
+    for value in payload.values():
+        if isinstance(value, dict):
+            found = _numeric_balance(value, preferred)
+            if found is not None:
+                return found
+    return None
+
+
+def _read_narwhal_balance(config: dict, account_id: str) -> int:
+    session, account = _account_balance_session(config, account_id, "narwhal")
+    try:
+        response = session.get(NARWHAL_PROFILE_URL, timeout=(5, 20), allow_redirects=False)
+        if not 200 <= response.status_code < 300:
+            raise ValueError(f"独角鲸云账户信息接口返回 HTTP {response.status_code}")
+        profile = _narwhal_profile_data(response.json())
+        email = str((profile or {}).get("email", "")).strip().casefold()
+        if not profile or email != account["username"].strip().casefold():
+            raise ValueError("独角鲸云账户信息未能与所选邮箱匹配")
+        amount = _numeric_balance(profile, ("money", "balance", "account_balance", "available_balance"))
+        if amount is None or amount > Decimal("1000000000000"):
+            raise ValueError("独角鲸云未返回有效账户余额")
+        return int((amount * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    except (requests.RequestException, OSError, ValueError, TypeError, AttributeError) as exc:
+        if isinstance(exc, ValueError):
+            raise
+        raise ValueError("独角鲸云账户余额读取失败，请检查账户认证和商家出口") from None
+    finally:
+        session.close()
+
+
+def _read_hytron_balance(config: dict, account_id: str) -> int:
+    session, account = _account_balance_session(config, account_id, "hytron")
+    try:
+        response = session.get(HYTRON_BALANCE_URL, timeout=(5, 20), allow_redirects=False)
+        if not 200 <= response.status_code < 300:
+            raise ValueError(f"Hytron 钱包接口返回 HTTP {response.status_code}")
+        payload = response.json()
+        amount = _numeric_balance(payload, ("service_balance", "real_balance", "balance", "available_balance", "withdrawable_balance"))
+        if amount is None or amount > Decimal("1000000000000"):
+            raise ValueError("Hytron 未返回有效账户余额")
+        return int((amount * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    except (requests.RequestException, OSError, ValueError, TypeError, AttributeError) as exc:
+        if isinstance(exc, ValueError):
+            raise
+        raise ValueError("Hytron 账户余额读取失败，请检查账户认证和商家出口") from None
+    finally:
+        session.close()
+
+
+def _read_provider_balance(config: dict, provider: str, account_id: str) -> int:
+    if provider == "narwhal":
+        return _read_narwhal_balance(config, account_id)
+    if provider == "hytron":
+        return _read_hytron_balance(config, account_id)
+    raise ValueError("暂不支持该商家的余额读取")
+
+
 def _account_balance_state() -> dict:
     path = CONFIG_PATH.parent / "state-account-balance.json"
     if not path.exists():
@@ -5378,7 +5564,8 @@ def _account_balance_triggers(previous: dict | None, balance_cents: int, setting
     if (settings["balance_change_enabled"] and previous_balance is not None
             and previous_balance != balance_cents and "余额变化" not in reasons):
         reasons.append("余额变化")
-    below = balance_cents < round(settings["low_balance_threshold"] * 100)
+    below = balance_cents < settings.get("low_balance_threshold_minor",
+                                         round(settings["low_balance_threshold"] * settings.get("minor_factor", 100)))
     was_below = previous.get("below_threshold", False) if previous else False
     if (settings["low_balance_enabled"] and below and (previous_balance is None or not was_below)
             and "余额低于阈值" not in reasons):
@@ -5386,88 +5573,141 @@ def _account_balance_triggers(previous: dict | None, balance_cents: int, setting
     return reasons
 
 
-def refresh_account_balances() -> dict:
+def refresh_account_balances(selected_accounts: list[dict] | None = None, manual: bool = False,
+                            providers: set[str] | None = None) -> dict:
     if not ACCOUNT_BALANCE_RUN_LOCK.acquire(blocking=False):
         raise ValueError("账户余额检查正在进行，请稍后重试")
     try:
         config = current_config()
         settings = config["account_balance_notifications"]
+        provider_settings = settings.get("providers", {})
         previous_state = _account_balance_state()
         state_accounts = previous_state["accounts"]
         output = []
         errors = []
-        for account_id in settings["account_ids"]:
-            account = next(row for row in config["vps_seckill"]["accounts"] if row["id"] == account_id)
-            name = account.get("name") or account.get("username") or account_id
-            try:
-                balance_cents = _read_akile_balance(config, account_id)
-                latest = current_config()
-                if (latest["account_balance_notifications"] != settings
-                        or latest["vps_seckill"]["accounts"] != config["vps_seckill"]["accounts"]):
-                    raise ValueError("账户配置在余额读取期间发生变化，本轮未触发提醒")
-                old = state_accounts.get(account_id)
-                reasons = _account_balance_triggers(old, balance_cents, settings)
-                record = {"balance_cents": balance_cents,
-                          "below_threshold": settings["low_balance_enabled"] and balance_cents < round(settings["low_balance_threshold"] * 100),
-                          "pending": reasons, "updated_at": beijing_iso()}
-                notification_error = ""
-                if reasons:
-                    token, chat_id = effective_telegram(latest, "account_balance")
-                    if token and chat_id:
-                        message = "\n".join([
-                            f"💰 <b>HostWatch · Akile 账户余额提醒</b>",
-                            f"账户：{escape(str(name)[:120])} · {escape(account['username'][:160])}",
-                            f"当前余额：¥{balance_cents / 100:.2f}",
-                            f"触发条件：{'、'.join(reasons)}",
-                            f"检查时间：{format_beijing(record['updated_at'])}",
-                        ])
-                        try:
-                            telegram_call(token, "sendMessage", chat_id=chat_id, text=message,
-                                          parse_mode="HTML", disable_web_page_preview=True)
-                            record["pending"] = []
-                        except (TelegramAPIError, requests.RequestException, ValueError) as exc:
-                            notification_error = str(exc)[:200]
-                    else:
-                        notification_error = "Telegram 尚未配置，提醒将在配置完成后重试"
-                state_accounts[account_id] = record
-                output.append({"account_id": account_id, "name": name, "email": account["username"],
-                    "balance": balance_cents / 100, "balance_cents": balance_cents,
-                    "checked_at": record["updated_at"], "notification_error": notification_error})
-            except (OSError, ValueError, requests.RequestException) as exc:
-                errors.append(f"{name}：{str(exc)[:180]}")
-                old = state_accounts.get(account_id, {})
-                output.append({"account_id": account_id, "name": name, "email": account["username"],
-                    "balance": old.get("balance_cents", None) / 100 if old.get("balance_cents") is not None else None,
-                    "checked_at": old.get("updated_at", ""), "error": str(exc)[:200]})
-        _save_account_balance_state(previous_state)
+        requested = None
+        if manual:
+            if not isinstance(selected_accounts, list) or not selected_accounts or len(selected_accounts) > 100:
+                raise ValueError("请选择至少一个账户后再检查余额")
+            requested = set()
+            for item in selected_accounts:
+                if not isinstance(item, dict) or item.get("provider") not in {"narwhal", "hytron"}:
+                    raise ValueError("余额检查账户无效")
+                account_id = item.get("account_id")
+                if not isinstance(account_id, str) or not account_id or len(account_id) > 128:
+                    raise ValueError("余额检查账户编号无效")
+                requested.add((item["provider"], account_id))
+        for provider, provider_config in provider_settings.items():
+            if provider not in {"narwhal", "hytron"} or (providers is not None and provider not in providers):
+                continue
+            if not manual and not provider_config.get("enabled"):
+                continue
+            account_ids = ([account_id for selected_provider, account_id in (requested or set())
+                            if selected_provider == provider] if manual
+                           else provider_config.get("account_ids", []))
+            for account_id in account_ids:
+                account = None
+                name = account_id
+                try:
+                    account = next((row for row in config["vps_seckill"]["accounts"]
+                                    if row.get("id") == account_id and row.get("provider") == provider), None)
+                    if not account:
+                        raise ValueError(f"已选{provider}账户不存在")
+                    name = account.get("name") or account.get("username") or account_id
+                    balance_cents = _read_provider_balance(config, provider, account_id)
+                    key = f"{provider}:{account_id}"
+                    latest = current_config()
+                    latest_settings = latest["account_balance_notifications"].get("providers", {}).get(provider, provider_config)
+                    if (latest_settings != provider_config
+                            or latest["vps_seckill"]["accounts"] != config["vps_seckill"]["accounts"]):
+                        raise ValueError("账户配置在余额读取期间发生变化，本轮未触发提醒")
+                    old = state_accounts.get(key)
+                    reasons = [] if manual else _account_balance_triggers(old, balance_cents, provider_config)
+                    record = {"balance_cents": balance_cents,
+                              "below_threshold": provider_config["low_balance_enabled"] and balance_cents < provider_config.get(
+                                  "low_balance_threshold_minor", round(provider_config["low_balance_threshold"] * provider_config.get("minor_factor", 100))),
+                              "pending": reasons, "updated_at": beijing_iso()}
+                    notification_error = ""
+                    if reasons and not manual:
+                        token, chat_id = effective_telegram(latest, "account_balance")
+                        if token and chat_id:
+                            message = "\n".join([
+                                f"💰 <b>HostWatch · {escape(provider_config.get('currency_symbol', '¥'))} 账户余额提醒</b>",
+                                f"账户：{escape(str(name)[:120])} · {escape(account['username'][:160])}",
+                                f"当前余额：{provider_config.get('currency_symbol', '¥')}{balance_cents / provider_config.get('minor_factor', 100):.2f}",
+                                f"触发条件：{'、'.join(reasons)}",
+                                f"检查时间：{format_beijing(record['updated_at'])}",
+                            ])
+                            try:
+                                telegram_call(token, "sendMessage", chat_id=chat_id, text=message,
+                                              parse_mode="HTML", disable_web_page_preview=True)
+                                record["pending"] = []
+                            except (TelegramAPIError, requests.RequestException, ValueError) as exc:
+                                notification_error = str(exc)[:200]
+                        else:
+                            notification_error = "Telegram 尚未配置，提醒将在配置完成后重试"
+                    if not manual:
+                        state_accounts[key] = record
+                    output.append({"provider": provider, "currency": provider_config.get("currency", "CNY"),
+                        "currency_symbol": provider_config.get("currency_symbol", "¥"), "account_id": account_id,
+                        "name": name, "email": account["username"],
+                        "balance": balance_cents / provider_config.get("minor_factor", 100),
+                        "balance_cents": balance_cents, "checked_at": record["updated_at"],
+                        "notification_error": notification_error})
+                except (OSError, ValueError, requests.RequestException) as exc:
+                    email = account.get("username", "") if account else ""
+                    errors.append(f"{name}：{str(exc)[:180]}")
+                    old = state_accounts.get(f"{provider}:{account_id}", {})
+                    output.append({"provider": provider, "currency": provider_config.get("currency", "CNY"),
+                        "currency_symbol": provider_config.get("currency_symbol", "¥"), "account_id": account_id,
+                        "name": name, "email": email,
+                        "balance": old.get("balance_cents", None) / provider_config.get("minor_factor", 100)
+                        if old.get("balance_cents") is not None else None,
+                        "checked_at": old.get("updated_at", ""), "error": str(exc)[:200]})
+        if not manual:
+            _save_account_balance_state(previous_state)
         result = {"updated_at": beijing_iso(), "accounts": output, "error": "；".join(errors),
-                  "running": settings["enabled"]}
-        with ACCOUNT_BALANCE_LOCK:
-            ACCOUNT_BALANCE_CACHE.update(result)
+                  "running": any(item.get("enabled") for item in provider_settings.values())}
+        if not manual:
+            refreshed = {provider for provider, item in provider_settings.items()
+                         if provider in {"narwhal", "hytron"} and (providers is None or provider in providers)
+                         and item.get("enabled")}
+            with ACCOUNT_BALANCE_LOCK:
+                retained = [row for row in ACCOUNT_BALANCE_CACHE.get("accounts", [])
+                            if row.get("provider") not in refreshed]
+                result["accounts"] = retained + output
+                ACCOUNT_BALANCE_CACHE.update(result)
         return result
     finally:
         ACCOUNT_BALANCE_RUN_LOCK.release()
 
 
 def _account_balance_loop() -> None:
-    deadline = 0.0
+    deadlines: dict[str, float] = {}
     while True:
         try:
             settings = current_config()["account_balance_notifications"]
+            provider_settings = settings.get("providers", {})
             with ACCOUNT_BALANCE_LOCK:
-                ACCOUNT_BALANCE_CACHE["running"] = settings["enabled"]
-            if settings["enabled"] and time.monotonic() >= deadline:
+                ACCOUNT_BALANCE_CACHE["running"] = any(item.get("enabled") for provider, item in provider_settings.items()
+                                                        if provider in {"narwhal", "hytron"})
+            now = time.monotonic()
+            active = {provider for provider, item in provider_settings.items()
+                      if provider in {"narwhal", "hytron"} and item.get("enabled")}
+            deadlines = {provider: deadline for provider, deadline in deadlines.items() if provider in active}
+            due = {provider for provider in active if now >= deadlines.get(provider, 0)}
+            for provider in due:
                 try:
-                    refresh_account_balances()
+                    refresh_account_balances(providers={provider})
                 finally:
-                    deadline = time.monotonic() + settings["interval_seconds"]
+                    deadlines[provider] = time.monotonic() + provider_settings[provider]["interval_seconds"]
         except (OSError, ValueError, requests.RequestException) as exc:
             with ACCOUNT_BALANCE_LOCK:
                 ACCOUNT_BALANCE_CACHE["error"] = str(exc)[:300]
-            deadline = time.monotonic() + 30
+            deadlines = {provider: time.monotonic() + 30 for provider in deadlines}
         if ACCOUNT_BALANCE_WAKE.wait(2):
             ACCOUNT_BALANCE_WAKE.clear()
-            deadline = 0
+            deadlines.clear()
 
 
 def start_account_balance_loop() -> None:
@@ -6240,7 +6480,7 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/account-balance":
             with ACCOUNT_BALANCE_LOCK:
                 output = json.loads(json.dumps(ACCOUNT_BALANCE_CACHE))
-            output["running"] = current_config()["account_balance_notifications"]["enabled"]
+            output["running"] = any(item.get("enabled") for item in current_config()["account_balance_notifications"].get("providers", {}).values())
             self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
         elif path == "/api/egress":
             try:
@@ -6512,7 +6752,7 @@ class Handler(BaseHTTPRequestHandler):
                     json.dumps({"ok": True, "message": f"{label}测试通知已发送至 Telegram。"}, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/account-balance/check":
-                output = refresh_account_balances()
+                output = refresh_account_balances(submitted.get("accounts"), manual=True)
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/refresh":

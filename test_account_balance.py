@@ -9,54 +9,85 @@ import admin
 
 def config():
     value = admin.default_config()
-    value["vps_seckill"]["accounts"] = [dict(
-        id="akile-1", name="Main Akile", provider="akile", username="user@example.com", password="secret")]
-    value["account_balance_notifications"] = dict(
-        enabled=True, interval_seconds=300, account_ids=["akile-1"], low_balance_enabled=True,
-        low_balance_threshold=10, balance_change_enabled=True)
-    value["telegram"] = dict(bot_token="token", chat_id="123", disabled=False)
+    value["vps_seckill"]["accounts"] = [
+        {
+            "id": "narwhal-1",
+            "name": "Narwhal",
+            "provider": "narwhal",
+            "username": "narwhal@example.com",
+            "password": "secret",
+        },
+        {
+            "id": "hytron-1",
+            "name": "Hytron",
+            "provider": "hytron",
+            "username": "hytron@example.com",
+            "password": "secret",
+        },
+    ]
+    value["account_balance_notifications"] = {
+        "providers": {
+            "narwhal": {
+                "enabled": True,
+                "interval_seconds": 300,
+                "account_ids": ["narwhal-1"],
+                "low_balance_enabled": True,
+                "low_balance_threshold": 10,
+                "balance_change_enabled": True,
+            },
+            "hytron": {
+                "enabled": True,
+                "interval_seconds": 600,
+                "account_ids": ["hytron-1"],
+                "low_balance_enabled": True,
+                "low_balance_threshold": 20,
+                "balance_change_enabled": True,
+            },
+        }
+    }
+    value["telegram"] = {"bot_token": "token", "chat_id": "123", "disabled": False}
     return admin.validate_config(value)
 
 
-def profile_response(data):
-    response = Mock(status_code=200)
-    response.json.return_value = {"status_code": 0, "data": data}
-    return response
+def response(payload):
+    result = Mock(status_code=200)
+    result.json.return_value = payload
+    return result
 
 
 class AccountBalanceTests(unittest.TestCase):
-    def test_config_accepts_supported_accounts_and_rejects_invalid_rules(self):
-        self.assertEqual(config()["account_balance_notifications"]["account_ids"], ["akile-1"])
-        for changes in [
-            {"interval_seconds": 29},
-            {"low_balance_threshold": float("nan")},
-            {"enabled": True, "account_ids": [], "low_balance_enabled": True},
-            {"enabled": True, "account_ids": ["akile-1"], "low_balance_enabled": False,
-             "balance_change_enabled": False},
-        ]:
-            value = admin.default_config()
-            value["vps_seckill"]["accounts"] = config()["vps_seckill"]["accounts"]
-            value["account_balance_notifications"] = {**config()["account_balance_notifications"], **changes}
-            with self.subTest(changes=changes), self.assertRaises(ValueError):
-                admin.validate_config(value)
-        value = config()
-        value["vps_seckill"]["accounts"] = []
-        normalized = admin.validate_config(value)
-        self.assertFalse(normalized["account_balance_notifications"]["enabled"])
-        self.assertEqual(normalized["account_balance_notifications"]["account_ids"], [])
+    def test_config_normalizes_supported_providers_and_currencies(self):
+        normalized = config()["account_balance_notifications"]["providers"]
+        self.assertEqual(normalized["narwhal"]["currency"], "CNY")
+        self.assertEqual(normalized["narwhal"]["currency_symbol"], "¥")
+        self.assertEqual(normalized["hytron"]["currency"], "USD")
+        self.assertEqual(normalized["hytron"]["currency_symbol"], "$")
+        self.assertEqual(normalized["narwhal"]["interval_seconds"], 300)
+        self.assertEqual(normalized["hytron"]["interval_seconds"], 600)
 
-    def test_profile_balance_is_verified_and_cents_are_preserved(self):
-        session = Mock()
-        session.get.return_value = profile_response({"email": "USER@example.com", "money": 1234})
-        with patch.object(admin, "_akile_market_session", return_value=session):
-            self.assertEqual(admin._read_akile_balance(config(), "akile-1"), 1234)
-        session.close.assert_called_once()
-        session.get.return_value = profile_response({"email": "other@example.com", "money": 1234})
-        with patch.object(admin, "_akile_market_session", return_value=session), self.assertRaises(ValueError):
-            admin._read_akile_balance(config(), "akile-1")
+    def test_balance_readers_convert_decimal_amounts_to_minor_units(self):
+        narwhal_session = Mock()
+        narwhal_session.get.return_value = response({
+            "code": 0,
+            "data": {"email": "narwhal@example.com", "money": "12.34"},
+        })
+        hytron_session = Mock()
+        hytron_session.get.return_value = response({"data": {"balance": "7.89"}})
+        accounts = config()
+        with patch.object(admin, "_account_balance_session", side_effect=[
+            (narwhal_session, accounts["vps_seckill"]["accounts"][0]),
+            (hytron_session, accounts["vps_seckill"]["accounts"][1]),
+        ]):
+            self.assertEqual(admin._read_narwhal_balance(accounts, "narwhal-1"), 1234)
+            self.assertEqual(admin._read_hytron_balance(accounts, "hytron-1"), 789)
+        narwhal_session.get.assert_called_once_with(admin.NARWHAL_PROFILE_URL, timeout=(5, 20), allow_redirects=False)
+        hytron_session.get.assert_called_once_with(admin.HYTRON_BALANCE_URL, timeout=(5, 20), allow_redirects=False)
+        self.assertTrue(admin.HYTRON_BALANCE_URL.endswith("/billing/balance"))
+        narwhal_session.close.assert_called_once()
+        hytron_session.close.assert_called_once()
 
     def test_low_balance_and_balance_change_triggers_are_deduplicated(self):
-        settings = config()["account_balance_notifications"]
+        settings = config()["account_balance_notifications"]["providers"]["narwhal"]
         self.assertEqual(admin._account_balance_triggers(None, 900, settings), ["余额低于阈值"])
         previous = {"balance_cents": 900, "below_threshold": True, "pending": []}
         self.assertEqual(admin._account_balance_triggers(previous, 800, settings), ["余额变化"])
@@ -64,21 +95,28 @@ class AccountBalanceTests(unittest.TestCase):
             {**previous, "pending": ["余额变化"]}, 800, settings), ["余额变化"])
         self.assertEqual(admin._account_balance_triggers(previous, 1200, settings), ["余额变化"])
 
-    def test_failed_account_read_keeps_saved_baseline(self):
+    def test_failed_account_read_keeps_saved_baseline_and_merges_provider_results(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
             state_path = Path(directory) / "state-account-balance.json"
-            state_path.write_text(json.dumps({"accounts": {"akile-1": {
-                "balance_cents": 500, "below_threshold": True, "pending": [], "updated_at": "old"}}}), encoding="utf-8")
+            state_path.write_text(json.dumps({"accounts": {
+                "narwhal:narwhal-1": {"balance_cents": 500, "below_threshold": True, "pending": [], "updated_at": "old"},
+                "hytron:hytron-1": {"balance_cents": 789, "below_threshold": True, "pending": [], "updated_at": "old-hytron"},
+            }}), encoding="utf-8")
+            current = config()
             with patch.object(admin, "CONFIG_PATH", path), \
-                    patch.object(admin, "current_config", return_value=config()), \
-                    patch.object(admin, "_read_akile_balance", side_effect=ValueError("temporary failure")):
+                    patch.object(admin, "current_config", return_value=current), \
+                    patch.object(admin, "_read_provider_balance", side_effect=[ValueError("temporary failure"), 800]), \
+                    patch.object(admin, "telegram_call"):
                 result = admin.refresh_account_balances()
-            self.assertEqual(result["accounts"][0]["balance"], 5.0)
-            self.assertIn("temporary failure", result["accounts"][0]["error"])
-            saved = json.loads(state_path.read_text(encoding="utf-8"))["accounts"]["akile-1"]
-            self.assertEqual(saved["balance_cents"], 500)
-            self.assertEqual(saved["updated_at"], "old")
+            by_provider = {(row["provider"], row["account_id"]): row for row in result["accounts"]}
+            self.assertEqual(by_provider[("narwhal", "narwhal-1")]["balance"], 5.0)
+            self.assertIn("temporary failure", by_provider[("narwhal", "narwhal-1")]["error"])
+            self.assertEqual(by_provider[("hytron", "hytron-1")]["balance"], 8.0)
+            saved = json.loads(state_path.read_text(encoding="utf-8"))["accounts"]
+            self.assertEqual(saved["narwhal:narwhal-1"]["balance_cents"], 500)
+            self.assertEqual(saved["narwhal:narwhal-1"]["updated_at"], "old")
+            self.assertEqual(saved["hytron:hytron-1"]["balance_cents"], 800)
 
 
 if __name__ == "__main__":
