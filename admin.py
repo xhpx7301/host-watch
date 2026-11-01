@@ -2925,7 +2925,7 @@ def normalize_account_balance_notifications(value: object, accounts: list[dict])
     if not isinstance(raw_providers, dict):
         raise ValueError("账户余额通知商家配置必须是对象")
     specs = {
-        "narwhal": ("独角鲸云", "CNY", "¥", 100),
+        "narwhal": ("独角鲸云", "USD", "$", 100),
         "hytron": ("Hytron", "USD", "$", 100),
     }
     providers = {}
@@ -4456,7 +4456,7 @@ def default_config() -> dict:
         "isvoro_market": {"enabled": False, "interval_seconds": 600, "account_id": "", "items": []},
         "account_balance_notifications": {"providers": {
             "narwhal": {"enabled": False, "interval_seconds": 300, "account_ids": [], "low_balance_enabled": True,
-                "low_balance_threshold": 10.0, "balance_change_enabled": True, "currency": "CNY"},
+                "low_balance_threshold": 10.0, "balance_change_enabled": True, "currency": "USD"},
             "hytron": {"enabled": False, "interval_seconds": 300, "account_ids": [], "low_balance_enabled": True,
                 "low_balance_threshold": 10.0, "balance_change_enabled": True, "currency": "USD"},
         }, "enabled": False},
@@ -5635,9 +5635,9 @@ def refresh_account_balances(selected_accounts: list[dict] | None = None, manual
                         token, chat_id = effective_telegram(latest, "account_balance")
                         if token and chat_id:
                             message = "\n".join([
-                                f"💰 <b>HostWatch · {escape(provider_config.get('currency_symbol', '¥'))} 账户余额提醒</b>",
+                                f"💰 <b>HostWatch · {escape(provider_config.get('currency_symbol', '$'))} 账户余额提醒</b>",
                                 f"账户：{escape(str(name)[:120])} · {escape(account['username'][:160])}",
-                                f"当前余额：{provider_config.get('currency_symbol', '¥')}{balance_cents / provider_config.get('minor_factor', 100):.2f}",
+                                f"当前余额：{provider_config.get('currency_symbol', '$')}{balance_cents / provider_config.get('minor_factor', 100):.2f}",
                                 f"触发条件：{'、'.join(reasons)}",
                                 f"检查时间：{format_beijing(record['updated_at'])}",
                             ])
@@ -5651,8 +5651,8 @@ def refresh_account_balances(selected_accounts: list[dict] | None = None, manual
                             notification_error = "Telegram 尚未配置，提醒将在配置完成后重试"
                     if not manual:
                         state_accounts[key] = record
-                    output.append({"provider": provider, "currency": provider_config.get("currency", "CNY"),
-                        "currency_symbol": provider_config.get("currency_symbol", "¥"), "account_id": account_id,
+                    output.append({"provider": provider, "currency": provider_config.get("currency", "USD"),
+                        "currency_symbol": provider_config.get("currency_symbol", "$"), "account_id": account_id,
                         "name": name, "email": account["username"],
                         "balance": balance_cents / provider_config.get("minor_factor", 100),
                         "balance_cents": balance_cents, "checked_at": record["updated_at"],
@@ -5661,8 +5661,8 @@ def refresh_account_balances(selected_accounts: list[dict] | None = None, manual
                     email = account.get("username", "") if account else ""
                     errors.append(f"{name}：{str(exc)[:180]}")
                     old = state_accounts.get(f"{provider}:{account_id}", {})
-                    output.append({"provider": provider, "currency": provider_config.get("currency", "CNY"),
-                        "currency_symbol": provider_config.get("currency_symbol", "¥"), "account_id": account_id,
+                    output.append({"provider": provider, "currency": provider_config.get("currency", "USD"),
+                        "currency_symbol": provider_config.get("currency_symbol", "$"), "account_id": account_id,
                         "name": name, "email": email,
                         "balance": old.get("balance_cents", None) / provider_config.get("minor_factor", 100)
                         if old.get("balance_cents") is not None else None,
@@ -5671,18 +5671,61 @@ def refresh_account_balances(selected_accounts: list[dict] | None = None, manual
             _save_account_balance_state(previous_state)
         result = {"updated_at": beijing_iso(), "accounts": output, "error": "；".join(errors),
                   "running": any(item.get("enabled") for item in provider_settings.values())}
-        if not manual:
-            refreshed = {provider for provider, item in provider_settings.items()
-                         if provider in {"narwhal", "hytron"} and (providers is None or provider in providers)
-                         and item.get("enabled")}
-            with ACCOUNT_BALANCE_LOCK:
+        with ACCOUNT_BALANCE_LOCK:
+            if manual:
+                selected_keys = {(row.get("provider"), row.get("account_id")) for row in output}
+                retained = [row for row in ACCOUNT_BALANCE_CACHE.get("accounts", [])
+                            if (row.get("provider"), row.get("account_id")) not in selected_keys]
+            else:
+                refreshed = {provider for provider, item in provider_settings.items()
+                             if provider in {"narwhal", "hytron"} and (providers is None or provider in providers)
+                             and item.get("enabled")}
                 retained = [row for row in ACCOUNT_BALANCE_CACHE.get("accounts", [])
                             if row.get("provider") not in refreshed]
-                result["accounts"] = retained + output
-                ACCOUNT_BALANCE_CACHE.update(result)
+            result["accounts"] = retained + output
+            ACCOUNT_BALANCE_CACHE.update(result)
         return result
     finally:
         ACCOUNT_BALANCE_RUN_LOCK.release()
+
+
+def send_account_balance_test_notification(selected_accounts: list[dict] | None = None) -> dict:
+    config = current_config()
+    token, chat_id = effective_telegram(config, "account_balance")
+    if not token or not chat_id:
+        raise ValueError("请先启用并保存账户余额通知对应的 Telegram 机器人和接收 Chat ID")
+    accounts = selected_accounts if selected_accounts is not None else []
+    if not isinstance(accounts, list) or len(accounts) > 100:
+        raise ValueError("测试通知账户列表无效")
+    known = {(row.get("provider"), row.get("id")): row
+             for row in config["vps_seckill"].get("accounts", [])}
+    with ACCOUNT_BALANCE_LOCK:
+        cached = {(row.get("provider"), row.get("account_id")): row
+                  for row in ACCOUNT_BALANCE_CACHE.get("accounts", [])}
+    lines = []
+    for item in accounts:
+        if not isinstance(item, dict):
+            raise ValueError("测试通知账户无效")
+        key = (item.get("provider"), item.get("account_id"))
+        account = known.get(key)
+        if not account or key[0] not in {"narwhal", "hytron"}:
+            raise ValueError("测试通知账户不存在")
+        name = escape(str(account.get("name") or account.get("username") or key[1])[:120])
+        row = cached.get(key)
+        balance = row.get("balance") if row else None
+        lines.append(f"{name}：${float(balance):.2f}" if balance is not None else f"{name}：尚未查询")
+    message = "\n".join([
+        "🧪 <b>HostWatch · 账户余额通知测试</b>",
+        "这是一条手动测试消息，用于确认账户余额通知机器人和接收 Chat ID 配置正常。",
+        *(lines or ["未选择账户；请在页面选择需要监控的账户。"]),
+        f"测试时间：{format_beijing(beijing_iso())}",
+    ])
+    try:
+        telegram_call(token, "sendMessage", chat_id=chat_id, text=message,
+                      parse_mode="HTML", disable_web_page_preview=True)
+    except (TelegramAPIError, requests.RequestException, ValueError) as exc:
+        raise ValueError(f"Telegram 测试通知发送失败：{str(exc)[:180]}") from exc
+    return {"ok": True, "message": "账户余额通知测试消息已发送至 Telegram。"}
 
 
 def _account_balance_loop() -> None:
@@ -6636,7 +6679,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(403)
             return
         # Stopping and polling tests must never wait behind config/service locks.
-        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-status", "/api/seckill/account-verification", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/account-balance/check", "/api/egress/probe"}:
+        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-status", "/api/seckill/account-verification", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/account-balance/check", "/api/account-balance/test-notification", "/api/egress/probe"}:
             self._post_action()
             return
         if not MUTATION_LOCK.acquire(blocking=False):
@@ -6648,7 +6691,7 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/refresh", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-status", "/api/seckill/account-verification", "/api/seckill/account-cache-clear", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/account-balance/check", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
+        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/refresh", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-status", "/api/seckill/account-verification", "/api/seckill/account-cache-clear", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/account-balance/check", "/api/account-balance/test-notification", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
             self.send_error(404)
             return
         try:
@@ -6756,6 +6799,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/account-balance/check":
                 output = refresh_account_balances(submitted.get("accounts"), manual=True)
+                self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
+                return
+            if self.path == "/api/account-balance/test-notification":
+                output = send_account_balance_test_notification(submitted.get("accounts"))
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/refresh":

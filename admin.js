@@ -177,7 +177,7 @@ function activeMarketProvider() { return document.querySelector("#market-provide
 function marketConfig() { const isvoro = activeMarketProvider() === "isvoro", key = isvoro ? "isvoro_market" : "akile_market"; return config[key] ||= { enabled: false, interval_seconds: isvoro ? 600 : 60, account_id: "", items: [] }; }
 let accountBalanceSnapshot = { accounts: [], updated_at: "", error: "", running: false };
 const balanceProviderDefinitions = {
-  narwhal: { label: "独角鲸云", currency: "CNY", symbol: "¥", thresholdLabel: "低余额阈值（元）" },
+  narwhal: { label: "独角鲸云", currency: "USD", symbol: "$", thresholdLabel: "低余额阈值（美元）" },
   hytron: { label: "Hytron", currency: "USD", symbol: "$", thresholdLabel: "低余额阈值（美元）" },
 };
 function balanceNotificationConfig() {
@@ -197,6 +197,7 @@ function balanceProviderDraft(provider) {
     currency_symbol: definition.symbol, ...(balanceNotificationConfig().providers[provider] || {}) };
 }
 function balanceButtonPressed(button) { return button?.getAttribute("aria-pressed") === "true"; }
+function balanceAccountChecked(input) { return Boolean(input?.checked); }
 function setBalanceButton(button, pressed) {
   if (!button) return;
   button.setAttribute("aria-pressed", String(Boolean(pressed)));
@@ -215,7 +216,7 @@ function collectAccountBalanceNotifications() {
       low_balance_enabled: balanceButtonPressed(document.querySelector(`#${prefix}-low`)),
       balance_change_enabled: balanceButtonPressed(document.querySelector(`#${prefix}-change`)),
       account_ids: [...document.querySelectorAll(`[data-balance-account="${provider}"]`)]
-        .filter(button => balanceButtonPressed(button)).map(button => button.dataset.balanceId),
+        .filter(input => balanceAccountChecked(input)).map(input => input.dataset.balanceId),
     };
   }
   return { providers, enabled: Object.values(providers).some(item => item.enabled) };
@@ -249,18 +250,53 @@ function renderAccountBalanceSettings() {
     const accounts = (config.vps_seckill?.accounts || []).filter(account => account.provider === provider);
     const saved = new Set(current.account_ids || []);
     list.replaceChildren(...accounts.map(account => {
-      const button = text("button", "", "balance-account-option option-button"); button.type = "button"; button.dataset.balanceAccount = provider; button.dataset.balanceId = account.id;
-      button.dataset.on = "已选择"; button.dataset.off = "未选择"; button.append(text("span", `${account.name || account.username || account.id} · ${account.username || definition.label}`), text("span", "", "")); button.lastChild.dataset.optionState = "";
-      setBalanceButton(button, saved.has(account.id)); button.addEventListener("click", () => { setBalanceButton(button, !balanceButtonPressed(button)); updateDraftState(); renderAccountBalanceResults(); }); return button;
+      const label = text("label", "", "balance-account-option");
+      const input = document.createElement("input"); input.type = "checkbox"; input.dataset.balanceAccount = provider; input.dataset.balanceId = account.id; input.checked = saved.has(account.id);
+      input.addEventListener("change", () => { updateDraftState(); renderAccountBalanceResults(); });
+      label.append(input, text("span", `${account.name || account.username || account.id} · ${account.username || definition.label}`)); return label;
     }));
-    card.append(list, text("p", accounts.length ? `可监控 ${definition.label} 账户；余额单位为 ${definition.symbol}。` : `请先在“网站账户”中添加并保存 ${definition.label} 账户。`, "hint"));
+    const latest = new Map((accountBalanceSnapshot.accounts || []).filter(row => row.provider === provider).map(row => [row.account_id, row]));
+    const lastCheck = text("div", "", "balance-last-check"); lastCheck.id = `${prefix}-last-check`; lastCheck.append(text("strong", "上次余额查询"));
+    if (!accounts.length) {
+      lastCheck.append(text("span", "尚未添加账户。"));
+    } else {
+      for (const account of accounts) {
+        const row = latest.get(account.id);
+        const name = account.name || account.username || account.id;
+        const detail = !row ? "尚未查询" : row.error ? `读取失败：${row.error}` : `${definition.symbol}${Number(row.balance).toFixed(2)} · ${formatBeijingDate(row.checked_at)}`;
+        lastCheck.append(text("span", `${name}：${detail}`));
+      }
+    }
+    card.append(list, lastCheck, text("p", accounts.length ? `可监控 ${definition.label} 账户；余额单位为 ${definition.symbol}。` : `请先在“网站账户”中添加并保存 ${definition.label} 账户。`, "hint"));
     return card;
   }));
+  renderAccountBalanceLastChecks();
   renderAccountBalanceResults();
+}
+function renderAccountBalanceLastChecks() {
+  for (const [provider, definition] of Object.entries(balanceProviderDefinitions)) {
+    const node = document.querySelector(`#account-balance-${provider}-last-check`);
+    if (!node) continue;
+    const accounts = (config.vps_seckill?.accounts || []).filter(account => account.provider === provider);
+    const latest = new Map((accountBalanceSnapshot.accounts || []).filter(row => row.provider === provider).map(row => [row.account_id, row]));
+    node.replaceChildren(text("strong", "上次余额查询"));
+    if (!accounts.length) {
+      node.append(text("span", "尚未添加账户。"));
+      continue;
+    }
+    for (const account of accounts) {
+      const row = latest.get(account.id);
+      const name = account.name || account.username || account.id;
+      const time = row?.checked_at ? ` · ${formatBeijingDate(row.checked_at)}` : "";
+      const detail = !row ? "尚未查询" : row.error ? `读取失败：${row.error}` : `${definition.symbol}${Number(row.balance).toFixed(2)}${time}`;
+      node.append(text("span", `${name}：${detail}`));
+    }
+  }
 }
 function renderAccountBalanceResults() {
   const status = document.querySelector("#account-balance-status"), results = document.querySelector("#account-balance-results");
   if (!status || !results) return;
+  renderAccountBalanceLastChecks();
   const rows = accountBalanceSnapshot.accounts || [];
   status.textContent = accountBalanceSnapshot.updated_at
     ? `最近检查：${formatBeijingDate(accountBalanceSnapshot.updated_at)}${accountBalanceSnapshot.error ? ` · ${accountBalanceSnapshot.error}` : ""}`
@@ -269,11 +305,11 @@ function renderAccountBalanceResults() {
   results.replaceChildren(...rows.map(row => {
     const node = text("div", "", `balance-result${row.error ? " error" : ""}`);
     node.append(text("strong", `${row.name || row.email || row.account_id} · ${row.email || ""}`));
-    node.append(text("span", row.error ? `读取失败：${row.error}` : `余额 ${row.currency_symbol || "¥"}${Number(row.balance).toFixed(2)}${row.notification_error ? ` · ${row.notification_error}` : ""}`));
+    node.append(text("span", row.error ? `读取失败：${row.error}` : `余额 ${row.currency_symbol || "$"}${Number(row.balance).toFixed(2)}${row.notification_error ? ` · ${row.notification_error}` : ""}`));
     return node;
   }));
   const check = document.querySelector("#account-balance-check");
-  if (check) check.disabled = actionRunning || !document.querySelector("[data-balance-account][aria-pressed=\"true\"]");
+  if (check) check.disabled = actionRunning || !document.querySelector("[data-balance-account]:checked");
 }
 async function loadAccountBalanceSnapshot() {
   try { accountBalanceSnapshot = await requestJSON("/api/account-balance"); renderAccountBalanceResults(); }
@@ -285,13 +321,25 @@ async function checkAccountBalances() {
   try {
     accountBalanceSnapshot = await requestJSON("/api/account-balance/check", { method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ accounts: [...document.querySelectorAll('[data-balance-account][aria-pressed="true"]')]
+      body: JSON.stringify({ accounts: [...document.querySelectorAll('[data-balance-account]:checked')]
         .map(button => ({ provider: button.dataset.balanceAccount, account_id: button.dataset.balanceId })) }), timeoutMs: 120000 });
     renderAccountBalanceResults();
     setMessage(accountBalanceSnapshot.error ? `余额已检查，部分账户失败：${accountBalanceSnapshot.error}` : "账户余额检查完成。",
       accountBalanceSnapshot.error ? "error" : "success");
   } catch (error) { setMessage(error.message, "error"); }
   finally { button.textContent = "立即检查"; renderAccountBalanceResults(); }
+}
+async function testAccountBalanceNotification() {
+  const button = document.querySelector("#account-balance-test-notification");
+  button.disabled = true; button.textContent = "发送中…";
+  try {
+    const accounts = [...document.querySelectorAll('[data-balance-account]:checked')]
+      .map(input => ({ provider: input.dataset.balanceAccount, account_id: input.dataset.balanceId }));
+    const result = await requestJSON("/api/account-balance/test-notification", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accounts }) });
+    setMessage(result.message || "余额通知测试消息已发送。", "success");
+  } catch (error) { setMessage(error.message, "error"); }
+  finally { button.disabled = false; button.textContent = "测试通知"; }
 }
 function marketCurrency(value, currency = "CNY") { return Number.isFinite(value) ? `${currency === "CNY" ? "¥" : `${currency} `}${value.toFixed(2)}` : "—"; }
 function marketLink(id) { return activeMarketProvider() === "isvoro" ? "https://isvoro.com/marketplace" : `https://akile.ai/console/pushshop?highlight=${encodeURIComponent(id)}`; }
@@ -645,6 +693,10 @@ document.querySelectorAll("#page-account-balance input, #page-account-balance se
 document.querySelector("#account-balance-check").addEventListener("click", () => {
   if (scopeIsDirty("account-balance")) { setMessage("请先保存余额通知配置后再检查。", "error"); return; }
   void checkAccountBalances();
+});
+document.querySelector("#account-balance-test-notification").addEventListener("click", () => {
+  if (scopeIsDirty("account-balance")) { setMessage("请先保存余额通知配置后再测试。", "error"); return; }
+  void testAccountBalanceNotification();
 });
 
 function setMessage(message, kind = "", notify = true, inline = true) {

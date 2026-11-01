@@ -594,19 +594,22 @@
     .seckill-account-save-status.error { color:var(--red); }
     .seckill-panel-actions { justify-content:flex-end; margin-top:14px; padding-top:12px; border-top:1px solid rgba(71,91,116,.16); }
     .market-settings { margin-bottom:14px; padding:16px; }
-    .balance-provider-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; align-items:stretch; }
-    .balance-provider-card { padding:14px; border:1px solid var(--line); border-radius:10px; background:#fbfcfe; }
-    .balance-provider-card .section-head { margin-bottom:10px; }
-    .balance-provider-heading { display:flex; align-items:center; gap:10px; min-width:0; }
+    .balance-provider-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; align-items:start; }
+    .balance-provider-card { padding:11px; border:1px solid var(--line); border-radius:8px; background:#fbfcfe; }
+    .balance-provider-card .section-head { margin-bottom:7px; }
+    .balance-provider-heading { display:flex; align-items:center; gap:7px; min-width:0; }
     .balance-provider-heading h3 { margin:0; font-size:15px; }
-    .balance-provider-card h4 { margin:12px 0 8px; font-size:13px; }
-    .balance-provider-card .hint { margin-top:8px; }
+    .balance-provider-card h4 { margin:9px 0 6px; font-size:13px; }
+    .balance-provider-card .hint { margin-top:6px; }
     .market-settings .market-formula { border-left:0; padding:12px 0; border-bottom:1px solid var(--line); }
-    .balance-conditions { display:flex; flex-wrap:wrap; gap:10px 24px; margin:14px 0; padding:12px; border:1px solid var(--line); border-radius:4px; }
+    .balance-conditions { display:flex; flex-wrap:wrap; gap:6px 12px; margin:9px 0; padding:8px; border:1px solid var(--line); border-radius:4px; }
     .balance-conditions strong { display:block; width:100%; font-weight:700; }
-    .balance-account-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:8px; }
-    .balance-account-option { display:flex; align-items:center; gap:10px; min-height:48px; padding:9px 12px; border:1px solid var(--line); border-radius:4px; background:#fff; overflow-wrap:anywhere; }
+    .balance-account-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:5px; }
+    .balance-account-option { display:flex; align-items:center; gap:7px; min-height:32px; padding:5px 7px; border:1px solid var(--line); border-radius:4px; background:#fff; overflow-wrap:anywhere; font-size:12px; cursor:pointer; }
+    .balance-account-option input { flex:0 0 auto; width:15px; height:15px; margin:0; accent-color:var(--blue); }
     .balance-account-option span { min-width:0; }
+    .balance-last-check { display:grid; gap:2px; margin-top:7px; padding:6px 8px; border-left:2px solid #9db7e8; background:#f5f8fc; color:var(--muted); font-size:11px; line-height:1.45; }
+    .balance-last-check strong { color:var(--ink); font-size:12px; }
     .balance-results { display:grid; gap:8px; margin-top:12px; }
     .balance-result { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px 16px; padding:10px 12px; border-bottom:1px solid var(--line); }
     .balance-result.error { color:var(--red); }
@@ -1062,7 +1065,7 @@
       <div class="panel-card market-settings">
         <div class="section-head"><div><h2>账户余额通知</h2><p>独立监控独角鲸云和 Hytron 账户余额，按商家设置检查间隔、低余额阈值和通知条件。</p></div><button type="button" class="card-save" data-save-card="account-balance">保存余额通知</button></div>
         <div id="account-balance-providers" class="balance-provider-grid"></div>
-        <div class="actions"><button id="account-balance-check" type="button">立即检查</button><span id="account-balance-status" class="hint" role="status" aria-live="polite">尚未检查余额。</span></div>
+        <div class="actions"><button id="account-balance-check" type="button">立即检查</button><button id="account-balance-test-notification" type="button">测试通知</button><span id="account-balance-status" class="hint" role="status" aria-live="polite">尚未检查余额。</span></div>
         <div id="account-balance-results" class="balance-results" aria-live="polite"></div>
       </div>
     </div>

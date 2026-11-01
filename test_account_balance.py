@@ -58,8 +58,8 @@ def response(payload):
 class AccountBalanceTests(unittest.TestCase):
     def test_config_normalizes_supported_providers_and_currencies(self):
         normalized = config()["account_balance_notifications"]["providers"]
-        self.assertEqual(normalized["narwhal"]["currency"], "CNY")
-        self.assertEqual(normalized["narwhal"]["currency_symbol"], "¥")
+        self.assertEqual(normalized["narwhal"]["currency"], "USD")
+        self.assertEqual(normalized["narwhal"]["currency_symbol"], "$")
         self.assertEqual(normalized["hytron"]["currency"], "USD")
         self.assertEqual(normalized["hytron"]["currency_symbol"], "$")
         self.assertEqual(normalized["narwhal"]["interval_seconds"], 300)
@@ -117,6 +117,19 @@ class AccountBalanceTests(unittest.TestCase):
             self.assertEqual(saved["narwhal:narwhal-1"]["balance_cents"], 500)
             self.assertEqual(saved["narwhal:narwhal-1"]["updated_at"], "old")
             self.assertEqual(saved["hytron:hytron-1"]["balance_cents"], 800)
+
+    def test_balance_test_notification_uses_account_balance_route_without_changing_state(self):
+        current = config()
+        with patch.object(admin, "current_config", return_value=current), \
+                patch.object(admin, "effective_telegram", return_value=("token", "123")), \
+                patch.object(admin, "telegram_call") as send:
+            result = admin.send_account_balance_test_notification([
+                {"provider": "narwhal", "account_id": "narwhal-1"},
+            ])
+        self.assertTrue(result["ok"])
+        send.assert_called_once()
+        self.assertIn("账户余额通知测试", send.call_args.kwargs["text"])
+        self.assertIn("Narwhal", send.call_args.kwargs["text"])
 
 
 if __name__ == "__main__":
