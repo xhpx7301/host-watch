@@ -1608,13 +1608,9 @@ function productEditor(item, index) {
   const planFields = text("div", "", "form-grid span-2"); planFields.dataset.hytronPlan = "";
   planFields.append(hytronCpu, hytronRam, hytronDisk, hytronIpv4, hytronIpv6, hytronCopy);
   planFields.hidden = hytronMode !== "plan";
-  const notifyResourceChoices = [
-    ["stock", "有货状态"], ["cpu", "CPU"], ["ram_mb", "内存"], ["disk_gb", "硬盘"],
-    ["ipv4", "IPv4"], ["ipv6", "IPv6"], ["vm_slots", "VM 数量"],
-  ];
-  const selectedNotifyResources = new Set(item.notify_resources || notifyResourceChoices.map(([key]) => key));
+  const selectedNotifyResources = new Set(item.notify_resources || hytronNotifyResourceChoices.map(([key]) => key));
   const resourcePicker = text("div", "", "choice-group span-2"); resourcePicker.dataset.hytronNotifyResources = "";
-  for (const [key, label] of notifyResourceChoices) {
+  for (const [key, label] of hytronNotifyResourceChoices) {
     const button = text("button", label, "option-button"); button.type = "button"; button.dataset.resource = key;
     button.setAttribute("aria-pressed", String(selectedNotifyResources.has(key)));
     button.addEventListener("click", () => {
@@ -1743,6 +1739,7 @@ function renderProductTest(article, id) {
   if (result.route) node.append(text("div", `本次读取：${requestRouteLabel(result.route)}。出口使用已保存配置。`, "test-notification"));
   if (result.matched_product) {
     const matched = result.matched_product;
+    const item = config.products.find(product => product.id === id) || {};
     if (item.adapter === "hytron") {
       const capacity = matched.node_capacity || {};
       const values = [["CPU", capacity.cpu, "核"], ["内存", capacity.ram_mb, " MB"], ["硬盘", capacity.disk_gb, " GB"], ["IPv4", capacity.ipv4, ""], ["IPv6", capacity.ipv6, ""], ["VM", capacity.vm_slots, ""]]
@@ -2035,9 +2032,16 @@ function productMonitorLabel(item, saved) {
 }
 
 const merchantNames = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", narwhal: "独角鲸云", isvoro: "Isvoro", dmit: "DMIT", bwh: "搬瓦工", hytron: "Hytron" };
+const hytronNotifyResourceChoices = [
+  ["stock", "有货状态"], ["cpu", "CPU"], ["ram_mb", "内存"], ["disk_gb", "硬盘"],
+  ["ipv4", "IPv4"], ["ipv6", "IPv6"], ["vm_slots", "VM 数量"],
+];
 const customMerchantEntry = ["html", "其他商家 / 自定义网页"];
 const providerScheduleModules = { monitor: "monitor", notifications: "notify", "seckill-settings": "seckill" };
-function scheduleProviderOptions() { return [...Object.entries(merchantNames), customMerchantEntry]; }
+function scheduleProviderOptions(scope) {
+  const merchants = Object.entries(merchantNames).filter(([provider]) => scope !== "notifications" || provider !== "hytron");
+  return [...merchants, customMerchantEntry];
+}
 function providerSchedule(module, provider) {
   if (config.provider_schedules?.[module]?.[provider]) return config.provider_schedules[module][provider];
   if (module === "seckill") return { mode: config.vps_seckill?.mode || "manual", interval_seconds: config.vps_seckill?.interval_seconds || 5 };
@@ -2047,7 +2051,8 @@ function renderProviderScheduleSummary() {
   for (const module of ["monitor", "notify", "seckill"]) {
     const target = document.getElementById(module + "-provider-summary");
     if (!target) continue;
-    target.replaceChildren(...orderedMerchantEntries().map(([provider, name]) => {
+    const entries = orderedMerchantEntries().filter(([provider]) => module !== "notify" || provider !== "hytron");
+    target.replaceChildren(...entries.map(([provider, name]) => {
       const schedule = providerSchedule(module, provider);
       const modeLabel = module === "seckill"
         ? ({ rapid: "极速抢购（自动）", precise: "精准抢购（自动）", manual: "手动抢购" })[schedule.mode] || schedule.mode
@@ -2064,7 +2069,7 @@ function renderProviderSchedule(scope) {
   const providerId = scope === "monitor" ? "monitor-schedule-provider" : scope === "notifications" ? "notify-schedule-provider" : "vps-seckill-schedule-provider";
   const providerSelect = document.querySelector(`#${providerId}`);
   if (!providerSelect) return;
-  if (!providerSelect.options.length) providerSelect.replaceChildren(...scheduleProviderOptions().map(([value, label]) => new Option(label, value)));
+  if (!providerSelect.options.length) providerSelect.replaceChildren(...scheduleProviderOptions(scope).map(([value, label]) => new Option(label, value)));
   const provider = providerSelect.value || "vmiss", schedule = providerSchedule(module, provider);
   const modeId = scope === "monitor" ? "monitor-schedule-mode" : scope === "notifications" ? "notify-schedule-mode" : "vps-seckill-mode";
   const intervalId = scope === "monitor" ? "interval" : scope === "notifications" ? "notify-interval" : "vps-seckill-interval";
@@ -2086,6 +2091,55 @@ function updateProviderSchedule(scope) {
   if (module !== "seckill") config[`${module}_schedule`] = config.provider_schedules[module][provider];
   if (module === "seckill") { config.vps_seckill.mode = mode; config.vps_seckill.interval_seconds = interval; }
   renderProviderScheduleSummary(); updateDraftState(); renderOverview(); scheduleAutoSave(scope, INTERVAL_AUTOSAVE_DELAY_MS);
+}
+function renderHytronNotificationSettings() {
+  const schedule = providerSchedule("notify", "hytron");
+  document.querySelector("#hytron-notify-mode").value = schedule.mode || "manual";
+  document.querySelector("#hytron-notify-interval").value = schedule.interval_seconds ?? 600;
+  const summary = document.querySelector("#hytron-notify-schedule-summary");
+  summary.textContent = `${schedule.mode === "auto" ? "自动刷新" : "仅手动刷新"} · ${schedule.interval_seconds ?? 600} 秒`;
+  summary.className = `state ${schedule.mode === "auto" ? "success" : "pending"}`;
+
+  const target = document.querySelector("#hytron-notify-nodes");
+  const items = orderedProducts("notify").filter(item => item.adapter === "hytron");
+  if (!items.length) {
+    const empty = text("div", "尚未选择 Hytron 通知节点。可从大盘将 Hytron 节点加入库存通知。", "empty");
+    const browse = text("button", "从大盘添加 Hytron 节点"); browse.type = "button";
+    browse.addEventListener("click", () => document.querySelector("#notification-browse").click());
+    empty.append(browse); target.replaceChildren(empty); return;
+  }
+  target.replaceChildren(...items.map(item => {
+    const card = text("div", "", "hytron-notify-node");
+    card.append(text("strong", item.name || "未命名 Hytron 节点"), text("small", `节点 ID：${item.node_id || "未设置"}`));
+    const selected = new Set(item.notify_resources || hytronNotifyResourceChoices.map(([key]) => key));
+    const choices = text("div", "", "choice-group");
+    for (const [key, label] of hytronNotifyResourceChoices) {
+      const button = text("button", label, "option-button"); button.type = "button"; button.setAttribute("aria-pressed", String(selected.has(key)));
+      button.addEventListener("click", () => {
+        const next = new Set(item.notify_resources || hytronNotifyResourceChoices.map(([resource]) => resource));
+        if (next.has(key)) next.delete(key); else next.add(key);
+        item.notify_resources = hytronNotifyResourceChoices.filter(([resource]) => next.has(resource)).map(([resource]) => resource);
+        button.setAttribute("aria-pressed", String(next.has(key)));
+        updateDraftState(); scheduleAutoSave(`product:${item.id}`);
+      });
+      choices.append(button);
+    }
+    card.append(text("small", "通知关注项"), choices);
+    return card;
+  }));
+}
+function updateHytronNotificationSchedule() {
+  const mode = document.querySelector("#hytron-notify-mode").value;
+  const interval = Number(document.querySelector("#hytron-notify-interval").value || NaN);
+  config.provider_schedules ||= {};
+  config.provider_schedules.notify ||= {};
+  config.provider_schedules.notify.hytron = { mode, interval_seconds: interval };
+  config.notify_schedule = config.provider_schedules.notify.hytron;
+  const summary = document.querySelector("#hytron-notify-schedule-summary");
+  summary.textContent = `${mode === "auto" ? "自动刷新" : "仅手动刷新"} · ${Number.isInteger(interval) ? interval : "未设置"} 秒`;
+  summary.className = `state ${mode === "auto" ? "success" : "pending"}`;
+  renderProviderScheduleSummary(); updateDraftState();
+  scheduleAutoSave("notifications", INTERVAL_AUTOSAVE_DELAY_MS);
 }
 function orderedMerchantEntries({ includeCustom = true } = {}) {
   const entries = merchantOrder().map(key => [key, merchantNames[key]]);
@@ -2933,6 +2987,7 @@ window.addEventListener("hostwatch-page-change", event => {
 function renderNotificationList() {
   if (productDrag) return;
   syncProductEditorOrder();
+  renderHytronNotificationSettings();
   if (document.querySelector("#notification-list .action-popover:popover-open")) return;
   const focusedSortId = document.querySelector("#notification-list .sort-handle:focus")?.dataset.sortId;
   const expanded = expandedPrices(document.querySelector("#notification-list"));
@@ -3903,7 +3958,7 @@ function collectConfig(enabled = config.enabled) {
     enabled,
     interval_seconds: Number(document.querySelector("#interval").value || NaN),
     monitor_schedule: { mode: document.querySelector("#monitor-schedule-mode").value, interval_seconds: Number(document.querySelector("#interval").value || NaN) },
-    notify_schedule: { mode: document.querySelector("#notify-schedule-mode").value, interval_seconds: Number(document.querySelector("#notify-interval").value || NaN) },
+    notify_schedule: config.notify_schedule || { mode: document.querySelector("#notify-schedule-mode").value, interval_seconds: Number(document.querySelector("#notify-interval").value || NaN) },
     catalog_schedule: config.catalog_schedule || { mode: "manual", interval_seconds: 300 },
     provider_schedules: cloneConfig(config.provider_schedules || {}),
     // VPS 抢购由页面上的启动/暂停按钮独立控制；执行模式（极速/精准/手动）
@@ -4104,7 +4159,8 @@ function scheduleAutoSave(scope, delay = AUTOSAVE_DELAY_MS) {
     }
     if (scope === "notifications") {
       const seconds = Number(document.querySelector("#notify-interval")?.value || NaN);
-      if (!Number.isInteger(seconds) || seconds < 0 || seconds > 86400) return;
+      const hytronSeconds = Number(document.querySelector("#hytron-notify-interval")?.value || NaN);
+      if (!Number.isInteger(seconds) || seconds < 0 || seconds > 86400 || !Number.isInteger(hytronSeconds) || hytronSeconds < 0 || hytronSeconds > 86400) return;
     }
     if (actionRunning) { scheduleAutoSave(scope, AUTOSAVE_RETRY_DELAY_MS); return; }
     if (automaticSaveRunning) { automaticSavePending.add(scope); return; }
@@ -4298,6 +4354,7 @@ function applyConfig(value) {
   document.querySelector("#notify-interval").value = notifySchedule.interval_seconds ?? config.interval_seconds ?? 600;
   renderProviderSchedule("monitor");
   renderProviderSchedule("notifications");
+  renderHytronNotificationSettings();
   renderProviderSchedule("seckill-settings");
   for (const input of document.querySelectorAll("[data-affiliate]")) input.value = config.affiliates?.[input.dataset.affiliate] ?? (input.dataset.affiliate === "vmiss" ? config.affiliate_id || "" : "");
   for (const input of document.querySelectorAll("[data-affiliate-account]")) input.value = config.affiliate_accounts?.[input.dataset.affiliateAccount] ?? "";
@@ -4533,6 +4590,9 @@ document.querySelector("#interval").addEventListener("input", () => updateProvid
 document.querySelector("#notify-interval").addEventListener("input", () => updateProviderSchedule("notifications"));
 document.querySelector("#monitor-schedule-mode").addEventListener("change", () => updateProviderSchedule("monitor"));
 document.querySelector("#notify-schedule-mode").addEventListener("change", () => updateProviderSchedule("notifications"));
+document.querySelector("#hytron-notify-mode").addEventListener("change", updateHytronNotificationSchedule);
+document.querySelector("#hytron-notify-interval").addEventListener("input", updateHytronNotificationSchedule);
+document.querySelector("#hytron-notify-refresh").addEventListener("click", event => triggerManualRefresh("notify", event.currentTarget));
 document.querySelector(".shell").addEventListener("input", (event) => {
   if (!event.target.closest("#page-catalog, .watchlist-filters")) updateDraftState();
 });

@@ -740,6 +740,16 @@
     .notification-settings-extra { display:flex; align-items:center; flex-wrap:wrap; gap:8px 10px; margin-top:8px; }
     .notification-settings-extra .option-button { min-height:30px; padding:5px 9px; font-size:11px; }
     .notification-settings-extra .hint { margin:0; font-size:11px; }
+    .hytron-notify-settings { margin:12px 0; border-left-color:var(--green); }
+    .hytron-notify-controls { display:grid; grid-template-columns:repeat(2,minmax(150px,220px)) auto; align-items:end; gap:8px; margin:10px 0 12px; }
+    .hytron-notify-controls label { width:auto; min-width:0; }
+    .hytron-notify-nodes { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:10px; }
+    .hytron-notify-node { min-width:0; padding:9px 10px; border:1px solid var(--line); border-radius:6px; background:#fff; }
+    .hytron-notify-node > strong { display:block; overflow-wrap:anywhere; font-size:12px; }
+    .hytron-notify-node > small { display:block; margin-top:2px; color:var(--muted); }
+    .hytron-notify-node .choice-group { margin-top:7px; gap:5px; }
+    .hytron-notify-node .option-button { min-height:28px; padding:4px 8px; font-size:11px; }
+    @media(max-width:620px) { .hytron-notify-controls,.hytron-notify-nodes { grid-template-columns:1fr; } .hytron-notify-controls button { width:100%; } }
     @media(max-width:1100px) { .watchlist-filters { grid-template-columns:1fr; } }
     @media(max-width:760px) { .watchlist-filter-fields { grid-template-columns:minmax(0,1fr) minmax(130px,.65fr) minmax(130px,.65fr); } .watchlist-refresh-controls { grid-template-columns:repeat(2,minmax(0,1fr)); } .watchlist-refresh-controls button { width:max-content; } }
     @media(max-width:520px) { .watchlist-filter-fields { grid-template-columns:1fr; } .watchlist-refresh-controls { grid-template-columns:1fr; } .watchlist-refresh-controls button { width:100%; } .watchlist-refresh-heading { align-items:flex-start; flex-direction:column; gap:4px; } }
@@ -981,6 +991,15 @@
         </div>
       </div>
     </div>
+    <section class="module-settings hytron-notify-settings" aria-labelledby="hytron-notify-title">
+      <div class="module-settings-head"><div><h3 id="hytron-notify-title">Hytron 专属通知设置</h3><p>独立设置 Hytron 节点通知检查频率，并为每个关注节点选择要提醒的资源变化。</p></div><strong id="hytron-notify-schedule-summary" class="state">读取设置中</strong></div>
+      <div class="hytron-notify-controls">
+        <label>刷新模式<select id="hytron-notify-mode"><option value="manual">仅手动刷新</option><option value="auto">自动刷新</option></select></label>
+        <label>检查间隔（秒）<input id="hytron-notify-interval" type="number" min="0" max="86400" step="1" value="600"></label>
+        <button id="hytron-notify-refresh" type="button">手动刷新 Hytron 通知</button>
+      </div>
+      <div id="hytron-notify-nodes" class="hytron-notify-nodes"></div>
+    </section>
     <details class="help-note"><summary>库存通知说明</summary><p id="notification-note" class="hint"></p></details>
     <div id="notification-list"></div>
     <p class="table-footnote">拖动商家旁的 ⠿ 调整顺序，保存后保留；与库存监控分别排序</p>
@@ -1218,7 +1237,7 @@
   <dialog id="watch-compare-dialog" class="watch-compare-dialog" aria-labelledby="watch-compare-title"><div class="watch-compare-dialog-head"><div><span class="eyebrow">PRODUCT COMPARE</span><h2 id="watch-compare-title">产品参数对比</h2><p>对比当前库存监控中的商品，直接购买入口会保留 AFF。</p></div><button id="watch-compare-close" type="button" class="icon-button" aria-label="关闭产品参数对比">×</button></div><div id="watch-compare-content"></div></dialog>
   <dialog id="overview-log-dialog" class="watch-compare-dialog" aria-labelledby="overview-log-title"><div class="watch-compare-dialog-head"><div><span class="eyebrow">MODULE LOG</span><h2 id="overview-log-title">模块详细日志</h2><p>显示该模块保存的完整近期日志。</p></div><button id="overview-log-close" type="button" class="icon-button" aria-label="关闭模块详细日志">×</button></div><pre id="overview-log-detail-content" class="manage-logs">暂无日志</pre></dialog>
   <dialog id="seckill-picker-dialog" class="watch-compare-dialog" aria-labelledby="seckill-picker-title"><div class="watch-compare-dialog-head"><div><span class="eyebrow">SECKILL PICKER</span><h2 id="seckill-picker-title">选择补货抢购商品</h2><p>选择后加入 VPS 补货抢购，已加入的商品不会重复添加。</p></div><button id="seckill-picker-close" type="button" class="icon-button" aria-label="关闭商品选择">×</button></div><div id="seckill-picker-content"></div></dialog>
-<script src="/admin.js?v=hytron-resource-watch-20261102"></script>
+<script src="/admin.js?v=hytron-notification-settings-20261102"></script>
 <script src="/catalog.js?v=hytron-resource-watch-20261102"></script>
 </body>
 </html>
