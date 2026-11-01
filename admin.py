@@ -4529,12 +4529,12 @@ def flaresolverr_health(endpoint: str) -> dict:
     return {"ok": True, "version": str(payload.get("version", "未知"))[:80], "message": "FlareSolverr 服务已就绪；此测试不会访问商品网站，不代表目标网页一定能通过验证。"}
 
 
-def effective_telegram(value: object, category: str = "") -> tuple[str, str]:
+def effective_telegram(value: object, category: str = "", ignore_disabled: bool = False) -> tuple[str, str]:
     if not isinstance(value, dict):
         value = {}
     telegram = normalize_telegram(value.get("telegram", {}))
     telegram_routes = normalize_telegram_routes(value.get("telegram_routes", {}))
-    if telegram["disabled"]:
+    if telegram["disabled"] and not ignore_disabled:
         return "", ""
     if category:
         if category not in TELEGRAM_ROUTES:
@@ -4880,6 +4880,18 @@ def validate_config(value: object) -> dict:
             if not re.fullmatch(r"[0-9a-fA-F-]{20,80}", node_id) or len(name) > 120:
                 raise ValueError(f"产品 {name} 需要从 Hytron 目录选择有效的节点")
             normalized_item = {"id": product_id, "name": name, "provider": "Hytron", "adapter": adapter, "node_id": node_id.lower(), "enabled": item.get("enabled", False)}
+            resources = item.get("resources")
+            if resources is not None:
+                keys = {"cpu", "ram_mb", "disk_gb", "ipv4", "ipv6"}
+                if not isinstance(resources, dict) or set(resources) != keys or any(type(resources[key]) is not int for key in keys):
+                    raise ValueError(f"产品 {name} 的 Hytron 资源配置无效")
+                limits = {"cpu": (1, 128), "ram_mb": (512, 1048576), "disk_gb": (3, 2000), "ipv4": (0, 10), "ipv6": (0, 64)}
+                for key, (minimum, maximum) in limits.items():
+                    if not minimum <= resources[key] <= maximum:
+                        raise ValueError(f"产品 {name} 的 Hytron {key} 必须在 {minimum} 到 {maximum} 之间")
+                if not resources["ipv4"] and not resources["ipv6"]:
+                    raise ValueError(f"产品 {name} 的 Hytron 配置至少需要一个 IPv4 或 IPv6 地址")
+                normalized_item["resources"] = {key: resources[key] for key in keys}
         elif adapter == "vps_soy":
             catalog_url = normalize_vps_soy_url(item.get("url", "https://www.vps.soy/cart"))
             selector = str(item.get("selector", name)).strip()
@@ -5159,14 +5171,18 @@ def register_egress_node(payload: dict, authorization: str = "") -> dict:
     return {"ok": True, "node_id": node_id, "public_ip": node["public_ip"]}
 
 
-def telegram_credentials(token_override: str = "", chat_id_override: str = "", category: str = "") -> tuple[str, str]:
+def telegram_credentials(token_override: str = "", chat_id_override: str = "", category: str = "",
+                        ignore_disabled: bool = False) -> tuple[str, str]:
     config = current_config()
     telegram = config["telegram"]
     if category and category not in TELEGRAM_ROUTES:
         raise ValueError("Telegram 通知类型无效")
-    if telegram["disabled"] or (category and config["telegram_routes"][category]["mode"] == "off"):
+    if (telegram["disabled"] and not ignore_disabled) or (category and config["telegram_routes"][category]["mode"] == "off"):
         return "", ""
-    token, chat_id = effective_telegram(config, category)
+    if ignore_disabled:
+        token, chat_id = effective_telegram(config, category, ignore_disabled=True)
+    else:
+        token, chat_id = effective_telegram(config, category)
     token = token_override.strip() or token
     chat_id = chat_id_override.strip() or chat_id
     if len(token) > 256 or any(char.isspace() for char in token):
@@ -5180,7 +5196,7 @@ def send_stock_test_result(product: dict, result: dict) -> dict:
     """Explicit manual delivery, like /api/telegram/test, independent of monitoring."""
     try:
         category = "seckill" if product.get("_seckill") else "stock"
-        token, chat_id = telegram_credentials(category=category)
+        token, chat_id = telegram_credentials(category=category, ignore_disabled=True)
         if not token or not chat_id:
             return {"status": "unconfigured", "message": "未发送 Telegram：请先保存机器人 Token 和 Chat ID"}
         matched = result.get("matched_product")

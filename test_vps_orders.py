@@ -214,7 +214,7 @@ class OrderTaskTests(unittest.TestCase):
              patch.object(admin, 'telegram_call') as send:
             result = self.run_task()
         self.assertEqual(result['items'][0]['telegram_status'], 'sent')
-        credentials.assert_called_once_with(self.config)
+        credentials.assert_called_once_with(self.config, "seckill")
         self.assertEqual(send.call_args.args[:2], ('test-token', 'sendMessage'))
         payload = send.call_args.kwargs
         self.assertEqual(payload['chat_id'], '123')

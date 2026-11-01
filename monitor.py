@@ -1527,7 +1527,7 @@ def collect_inventory(session, config, selected, found, unavailable, cache_path:
     dmit_catalogs = {}
     bwh_catalogs = {}
     hytron_catalog = None
-    hytron_caps = None
+    hytron_caps = {}
     for item in selected:
         try:
             if item["adapter"] == "html":
@@ -1549,8 +1549,11 @@ def collect_inventory(session, config, selected, found, unavailable, cache_path:
                 fetcher = product_fetcher(config.get("fetcher"), item)
                 if hytron_catalog is None:
                     hytron_catalog = fetch_catalog(session, fetcher)
-                    hytron_caps = fetch_resource_caps(session, fetcher)
-                found[item["id"]] = inspect(session, item, fetcher, hytron_catalog, hytron_caps)
+                resources = item.get("resources") or {}
+                caps_key = (resources.get("cpu", 1), resources.get("ram_mb", 1024), fetcher.get("mode", "requests"))
+                if caps_key not in hytron_caps:
+                    hytron_caps[caps_key] = fetch_resource_caps(session, fetcher, caps_key[0], caps_key[1])
+                found[item["id"]] = inspect(session, item, fetcher, hytron_catalog, hytron_caps[caps_key])
                 write_inventory_cache(cache_path, item, fetcher, found[item["id"]])
             elif item["adapter"] == "vps_soy":
                 fetcher = product_fetcher(config.get("fetcher"), item)

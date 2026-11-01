@@ -1460,9 +1460,31 @@ function productEditor(item, index) {
   );
   const hytronFields = text("div", "", "form-grid span-2");
   hytronFields.dataset.adapterFields = "hytron";
+  const hytronResources = item.resources || { cpu: 1, ram_mb: 1024, disk_gb: 3, ipv4: 1, ipv6: 0 };
+  const hytronCpu = inputField("CPU 核数", hytronResources.cpu, "hytron_cpu", "number");
+  const hytronRam = inputField("内存（GB）", hytronResources.ram_mb / 1024, "hytron_ram_gb", "number");
+  const hytronDisk = inputField("硬盘（GB）", hytronResources.disk_gb, "hytron_disk_gb", "number");
+  const hytronIpv4 = inputField("IPv4 数量", hytronResources.ipv4, "hytron_ipv4", "number");
+  const hytronIpv6 = inputField("IPv6 /64 数量", hytronResources.ipv6, "hytron_ipv6", "number");
+  for (const [field, min, max, step] of [[hytronCpu, 1, 128, 1], [hytronRam, 0.5, 1024, 0.5], [hytronDisk, 3, 2000, 1], [hytronIpv4, 0, 10, 1], [hytronIpv6, 0, 64, 1]]) {
+    const input = field.querySelector("input");
+    input.min = String(min); input.max = String(max); input.step = String(step);
+  }
+  const hytronCopy = text("button", "复制为另一组配置"); hytronCopy.type = "button";
+  hytronCopy.disabled = config.products.length >= 100;
+  hytronCopy.title = "复制此节点监控项，然后调整资源组合";
+  hytronCopy.addEventListener("click", () => {
+    if (config.products.length >= 100) { setMessage("最多保存 100 个商品，请先移除不需要的配置。", "error"); return; }
+    syncEditor(article);
+    const copy = { ...structuredClone(item), id: crypto.randomUUID(), name: `${item.name.slice(0, 100)} · 另一配置`, enabled: false, watch_enabled: false, notify_enabled: false };
+    delete copy.snapshot;
+    config.products.push(copy); openProducts.add(copy.id); renderProducts(); updateDraftState();
+    setMessage("已复制该 Hytron 节点配置，请调整资源组合并选择监控或通知。", "pending");
+  });
   hytronFields.append(
     inputField("Hytron 节点 ID", item.adapter === "hytron" ? item.node_id : "", "hytron_node_id", "text", "从 Hytron 库存大盘选择节点"),
-    text("p", "Hytron 通过公开节点目录读取容量和按小时价格，库存按当前节点可部署的入门配置数量计算。建议从库存大盘添加；购买入口会打开 Hytron 官网下单页，最终资源和价格以官网结账为准。", "hint span-2"),
+    hytronCpu, hytronRam, hytronDisk, hytronIpv4, hytronIpv6, hytronCopy,
+    text("p", "按此节点可用 CPU、内存、硬盘和公网地址计算所选组合可创建数量；资源相同才会合并为同一监控项。至少选择 IPv4 或 IPv6。复制此节点配置可监控同一节点的另一组资源；最终可选项和价格以 Hytron 结账页为准。", "hint span-2"),
   );
   modeWrap.append(vmissFields, htmlFields, soyFields, akileFields, narwhalFields, isvoroFields, dmitFields, bwhFields, hytronFields);
   const result = text("div", "", "product-test-result");
@@ -1520,6 +1542,14 @@ function syncEditor(article) {
     item.pid = get("bwh_pid").value.trim();
   } else if (item.adapter === "hytron") {
     item.node_id = get("hytron_node_id").value.trim();
+    const ramGb = Number(get("hytron_ram_gb").value);
+    item.resources = {
+      cpu: Number(get("hytron_cpu").value),
+      ram_mb: Math.round(ramGb * 1024),
+      disk_gb: Number(get("hytron_disk_gb").value),
+      ipv4: Number(get("hytron_ipv4").value),
+      ipv6: Number(get("hytron_ipv6").value),
+    };
   } else if (item.adapter === "vps_soy") {
     item.url = get("soy_url").value.trim();
     item.selector = get("soy_selector").value.trim();
@@ -4217,7 +4247,7 @@ const merchantPresets = {
   isvoro: { label: "Isvoro", hint: "按类型、地区/线路、套餐分别选择，默认中国香港 → HK PROD → HK PROD MiNi。", product: { adapter: "isvoro", provider: "Isvoro", name: "HK PROD MiNi", type_id: "24", type_name: "中国香港", category_id: "27", category_name: "HK PROD", product_id: "188", product_name: "HK PROD MiNi", request_mode: "inherit" } },
   dmit: { label: "DMIT", hint: "优先从库存大盘选择套餐；也可填写官网分类页与购买链接中的 PID。AFF 默认 22544，可在 AFF 管理中修改。", product: { adapter: "dmit", provider: "DMIT", name: "", category_url: "https://www.dmit.io/pages/pricing", pid: "", request_mode: "inherit" } },
   bwh: { label: "搬瓦工", hint: "读取公开 catalog.json，默认洛杉矶 USCA_9 电商 VPS；地区和套餐会自动显示中文。AFF 默认 84938，可在 AFF 管理中修改。", product: { adapter: "bwh", provider: "搬瓦工", name: "", category_url: "https://bwh81.net/order/ecommerce/Los%20Angeles/USCA_9", bwh_offer_key: "", selector: "", pid: "", request_mode: "inherit" } },
-  hytron: { label: "Hytron", hint: "读取 HytronVPS 公开节点目录，按节点展示容量和入门配置的按小时价格。", product: { adapter: "hytron", provider: "Hytron", name: "", node_id: "", request_mode: "inherit" } },
+  hytron: { label: "Hytron", hint: "按香港节点监控指定 CPU、内存、硬盘和 IP 组合的可创建数量。", product: { adapter: "hytron", provider: "Hytron", name: "", node_id: "", request_mode: "inherit" } },
 };
 const merchantSelect = document.querySelector("#add-merchant");
 for (const [key, preset] of Object.entries(merchantPresets)) {

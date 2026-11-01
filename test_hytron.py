@@ -49,6 +49,9 @@ CAPS = {
     "ratio_ipv4_min": 1,
     "max_disk_gb": 50,
     "max_ipv4": 2,
+    "hard_max_cpu": 128,
+    "hard_max_ram_mb": 1048576,
+    "hard_max_ipv6_prefix64": 64,
 }
 
 
@@ -83,10 +86,37 @@ class HytronTests(unittest.TestCase):
 
     def test_valid_hytron_product_config_normalizes(self):
         config = admin.default_config()
-        config["products"] = [{"id": "hytron-node", "name": "Hytron node", "adapter": "hytron", "node_id": NODE_ID, "enabled": True}]
+        resources = {"cpu": 2, "ram_mb": 4096, "disk_gb": 20, "ipv4": 1, "ipv6": 2}
+        config["products"] = [{"id": "hytron-node", "name": "Hytron node", "adapter": "hytron", "node_id": NODE_ID, "resources": resources, "enabled": True}]
         normalized = admin.validate_config(config)["products"][0]
         self.assertEqual(normalized["provider"], "Hytron")
         self.assertEqual(normalized["node_id"], NODE_ID)
+        self.assertEqual(normalized["resources"], resources)
+
+    def test_custom_resource_combination_checks_all_node_capacities(self):
+        selected = {"cpu": 2, "ram_mb": 4096, "disk_gb": 20, "ipv4": 1, "ipv6": 1}
+        current_node = node()
+        current_node["capacity"]["ipv6"]["available"] = 2
+        result = hytron.inspect(None, {"node_id": NODE_ID, "resources": selected},
+            catalog=[current_node], caps={**CAPS, "max_disk_gb": 100, "max_ipv4": 4})
+        self.assertEqual(result.available, 2)
+        self.assertTrue(result.specs.startswith("2 核 · 4 GB · 20 GB"))
+        self.assertEqual(result.match_details["resources"], selected)
+
+    def test_custom_resource_combination_requires_public_address(self):
+        config = admin.default_config()
+        config["products"] = [{"id": "hytron-node", "name": "Hytron node", "adapter": "hytron", "node_id": NODE_ID,
+            "resources": {"cpu": 1, "ram_mb": 1024, "disk_gb": 3, "ipv4": 0, "ipv6": 0}}]
+        with self.assertRaisesRegex(ValueError, "至少需要一个 IPv4 或 IPv6"):
+            admin.validate_config(config)
+
+    def test_resource_caps_are_fetched_for_selected_cpu_and_memory(self):
+        from urllib.parse import parse_qs, urlsplit
+
+        with patch("monitor.fetch_page", return_value=(__import__("json").dumps(CAPS), hytron.RESOURCE_CAPS_URL + "?cpu=2&ram_mb=4096")) as fetch:
+            result = hytron.fetch_resource_caps(None, cpu=2, ram_mb=4096)
+        self.assertEqual(result, CAPS)
+        self.assertEqual(parse_qs(urlsplit(fetch.call_args.args[1]).query), {"cpu": ["2"], "ram_mb": ["4096"]})
 
 
 if __name__ == "__main__":

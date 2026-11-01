@@ -97,7 +97,7 @@
     if (watch.adapter === "bwh") return equal(item.bwh_offer_key || item.selector, watch.bwh_offer_key || watch.selector);
     if (watch.adapter === "akile") return (item.area_mode !== "manual" || equal(item.area_id, watch.area_id)) && equal(item.node_name, watch.node_name) && equal(item.selector, watch.selector);
     if (watch.adapter === "narwhal") return equal(item.machine_id, watch.machine_id) && equal(item.plan_id, watch.plan_id);
-    if (watch.adapter === "hytron") return equal(item.node_id, watch.node_id);
+    if (watch.adapter === "hytron") return equal(item.node_id, watch.node_id) && (!item.resources || !watch.resources || ["cpu", "ram_mb", "disk_gb", "ipv4", "ipv6"].every(key => Number(item.resources[key]) === Number(watch.resources[key])));
     if (watch.adapter === "isvoro") return ["type_id", "category_id", "product_id"].every((key) => equal(item[key], watch[key]));
     if (watch.adapter === "vps_soy") {
       try {
@@ -197,7 +197,7 @@
     }
     if (provider === "hytron") {
       get("catalog-search").placeholder = "节点名称、地区、机房或配置，例如 HKG、WPC";
-      get("catalog-help").textContent = "Hytron 一次读取全部公开节点，按节点展示可部署的入门配置、容量和按小时价格；地区筛选使用同一份节点快照，支持全目录自动刷新。大盘自动刷新仅在此栏目打开且页面可见时运行，库存通知会按服务器设置继续检查。最终资源和价格以 Hytron 官网下单页为准。";
+      get("catalog-help").textContent = "Hytron 按香港节点展示剩余 CPU、内存、硬盘和 IP 配额；加入监控后可在商品设置中填写目标资源组合，同一节点可复制多组配置分别监控补货。数量按当前各项可用配额计算，最终可选资源和价格以 Hytron 官网结账页为准。";
     }
     if (!active) return;
     const rows = data?.rows || [], regions = new Map(), machines = new Map();
