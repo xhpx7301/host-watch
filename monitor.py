@@ -1750,7 +1750,7 @@ def main() -> int:
     if args.show_chat_ids:
         try:
             config = read_config(config_path)
-            bot_token, _ = effective_telegram(config)
+            bot_token, _ = effective_telegram(config, "stock")
             if not bot_token:
                 parser.error("先在管理页或环境变量中设置 TELEGRAM_BOT_TOKEN")
             show_chat_ids(session, bot_token)
@@ -1779,8 +1779,13 @@ def main() -> int:
                 # use the old aggregate switch as an explicit stop marker.
                 logging.info("旧版监控总开关关闭，不访问商品网站")
                 return 0
-            bot_token, chat_id = effective_telegram(config)
+            bot_token, chat_id = effective_telegram(config, "stock")
             telegram_config = config.get("telegram", {})
+            stock_route = config.get("telegram_routes", {}).get("stock", {})
+            stock_route_disabled = (stock_route.get("mode") == "off"
+                or (stock_route.get("mode") == "custom" and not (bot_token and chat_id)))
+            telegram_config = {**telegram_config,
+                "disabled": telegram_config.get("disabled", False) or stock_route_disabled}
             if not any(product_membership(p, "notify") for p in config.get("products", [])) and not config.get("isvoro_seckill", False):
                 bot_token, chat_id = "", ""
                 telegram_config = {"disabled": True}

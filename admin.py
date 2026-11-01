@@ -63,6 +63,12 @@ ACCOUNT_BALANCE_RUN_LOCK = threading.Lock()
 ACCOUNT_BALANCE_WAKE = threading.Event()
 ACCOUNT_BALANCE_CACHE = {"updated_at": "", "accounts": [], "error": "", "running": False}
 ACCOUNT_BALANCE_THREAD = None
+TELEGRAM_ROUTES = {
+    "stock": "库存通知",
+    "seckill": "补货抢购",
+    "market": "二手市场通知",
+    "account_balance": "账户余额通知",
+}
 ISVORO_MARKET_LOCK = threading.RLock()
 ISVORO_MARKET_CACHE = {"updated_at": "", "items": [], "error": "", "running": False}
 # BandwagonHost keeps the email-code challenge in the login session. Keep only
@@ -2691,7 +2697,7 @@ def _save_market_presence_state(provider: str, value: dict) -> None:
 
 
 def _market_presence_alert(config: dict, provider: str, rule: dict, item: dict, status: str) -> bool:
-    token, chat_id = effective_telegram(config)
+    token, chat_id = effective_telegram(config, "market")
     if not token or not chat_id:
         return False
     label = "Isvoro" if provider == "isvoro" else "Akile"
@@ -4033,7 +4039,7 @@ class SeckillTask:
 
     def _notify_unpaid_order(self, item: dict, order_id: str, quantity: int, url: str,
                              duration_seconds: float | None = None) -> str:
-        token, chat_id = effective_telegram(self.config)
+        token, chat_id = effective_telegram(self.config, "seckill")
         if not token or not chat_id:
             self.log("待付款订单已创建，但未发送 Telegram：机器人未配置或通知已关闭。", "warning", item)
             return "unconfigured"
@@ -4300,7 +4306,7 @@ def start_manual_refresh(role: str) -> dict:
         try:
             from monitor import check_once, effective_telegram, read_config
             current = read_config(CONFIG_PATH)
-            token, chat_id = effective_telegram(current)
+            token, chat_id = effective_telegram(current, "stock")
             check_once(requests.Session(), current, CONFIG_PATH.parent / "state.json", STATUS_PATH, token, chat_id, role, "manual")
             result.update(ok=True, message="刷新完成")
         except Exception as exc:  # noqa: BLE001 - expose a safe user-facing task result
@@ -4348,6 +4354,7 @@ def default_config() -> dict:
             "cloudscraper": normalize_cloudscraper(None),
         },
         "telegram": {"bot_token": "", "chat_id": "", "disabled": False},
+        "telegram_routes": normalize_telegram_routes({}),
         "egress": {"nodes": [], "routes": {}},
         "vps_seckill": {"enabled": False, "mode": "manual", "interval_seconds": 5, "items": [], "accounts": []},
         "akile_market": {"enabled": False, "interval_seconds": 60, "account_id": "", "items": []},
@@ -4381,6 +4388,31 @@ def normalize_telegram(value: object) -> dict:
     if chat_id and (len(chat_id) > 128 or not re.fullmatch(r"(?:-?\d{1,32}|@[A-Za-z0-9_]{5,64})", chat_id)):
         raise ValueError("Telegram chat_id 格式无效")
     return {"bot_token": token, "chat_id": chat_id, "disabled": disabled}
+
+
+def normalize_telegram_routes(value: object) -> dict:
+    if value is None:
+        value = {}
+    if not isinstance(value, dict):
+        raise ValueError("Telegram 通知分配必须是对象")
+    routes = {}
+    for key in TELEGRAM_ROUTES:
+        raw = value.get(key, {})
+        if not isinstance(raw, dict):
+            raise ValueError("Telegram 通知分配项必须是对象")
+        mode = str(raw.get("mode", "default"))
+        if mode not in {"default", "custom", "off"}:
+            raise ValueError("Telegram 通知分配方式无效")
+        token = str(raw.get("bot_token", "")).strip()
+        chat_id = str(raw.get("chat_id", "")).strip()
+        if len(token) > 256 or any(char.isspace() for char in token):
+            raise ValueError(f"{TELEGRAM_ROUTES[key]} Bot Token 格式无效")
+        if chat_id and (len(chat_id) > 128 or not re.fullmatch(r"(?:-?\d{1,32}|@[A-Za-z0-9_]{5,64})", chat_id)):
+            raise ValueError(f"{TELEGRAM_ROUTES[key]} Chat ID 格式无效")
+        if bool(token) != bool(chat_id):
+            raise ValueError(f"{TELEGRAM_ROUTES[key]}需要同时填写 Bot Token 和 Chat ID")
+        routes[key] = {"mode": mode, "bot_token": token, "chat_id": chat_id}
+    return routes
 
 
 def normalize_cloudscraper(value: object) -> dict:
@@ -4497,15 +4529,37 @@ def flaresolverr_health(endpoint: str) -> dict:
     return {"ok": True, "version": str(payload.get("version", "未知"))[:80], "message": "FlareSolverr 服务已就绪；此测试不会访问商品网站，不代表目标网页一定能通过验证。"}
 
 
-def effective_telegram(value: object) -> tuple[str, str]:
+def effective_telegram(value: object, category: str = "") -> tuple[str, str]:
     if not isinstance(value, dict):
         value = {}
     telegram = normalize_telegram(value.get("telegram", {}))
+    telegram_routes = normalize_telegram_routes(value.get("telegram_routes", {}))
     if telegram["disabled"]:
         return "", ""
+    if category:
+        if category not in TELEGRAM_ROUTES:
+            raise ValueError("Telegram 通知类型无效")
+        route = telegram_routes[category]
+        if route["mode"] == "off":
+            return "", ""
+        if route["mode"] == "custom":
+            return route["bot_token"], route["chat_id"]
     token = telegram["bot_token"] or os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = telegram["chat_id"] or os.getenv("TELEGRAM_CHAT_ID", "").strip()
     return token, chat_id
+
+
+def telegram_target_hash(value: dict, category: str) -> str:
+    route = normalize_telegram_routes(value.get("telegram_routes", {}))[category]
+    telegram = normalize_telegram(value.get("telegram", {}))
+    if route["mode"] == "off":
+        token = chat_id = ""
+    elif route["mode"] == "custom":
+        token, chat_id = route["bot_token"], route["chat_id"]
+    else:
+        token = telegram["bot_token"] or os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+        chat_id = telegram["chat_id"] or os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    return hashlib.sha256((token + ":" + chat_id).encode()).hexdigest()
 
 
 def public_config(value: dict) -> dict:
@@ -4519,6 +4573,11 @@ def public_config(value: dict) -> dict:
         "bot_token_configured": bool(token),
         "chat_id": stored_chat_id,
         "disabled": normalized["telegram"]["disabled"],
+    }
+    normalized["telegram_routes"] = {
+        key: {"mode": route["mode"], "bot_token_configured": bool(route["bot_token"]),
+              "chat_id": route["chat_id"]}
+        for key, route in normalized["telegram_routes"].items()
     }
     for account in normalized["vps_seckill"]["accounts"]:
         account["password"] = ""
@@ -4950,6 +5009,7 @@ def validate_config(value: object) -> dict:
         raise ValueError("启用监控前至少启用一个产品")
     fetcher = normalize_fetcher(value.get("fetcher", {}))
     telegram = normalize_telegram(value.get("telegram", {}))
+    telegram_routes = normalize_telegram_routes(value.get("telegram_routes", {}))
     egress_config = egress.normalize(value.get("egress", {}))
     vps_seckill = normalize_seckill(value.get("vps_seckill", {}), seen_ids)
     provider_schedules = normalize_provider_schedules(value.get("provider_schedules"), {
@@ -4986,6 +5046,7 @@ def validate_config(value: object) -> dict:
         **product_orders,
         "fetcher": {**fetcher, "egress": egress_config},
         "telegram": telegram,
+        "telegram_routes": telegram_routes,
         "egress": egress_config,
         "vps_seckill": vps_seckill,
         "akile_market": akile_market,
@@ -5098,11 +5159,16 @@ def register_egress_node(payload: dict, authorization: str = "") -> dict:
     return {"ok": True, "node_id": node_id, "public_ip": node["public_ip"]}
 
 
-def telegram_credentials(token_override: str = "", chat_id_override: str = "") -> tuple[str, str]:
+def telegram_credentials(token_override: str = "", chat_id_override: str = "", category: str = "") -> tuple[str, str]:
     config = current_config()
     telegram = config["telegram"]
-    token = token_override.strip() or telegram["bot_token"] or os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = chat_id_override.strip() or telegram["chat_id"] or os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    if category and category not in TELEGRAM_ROUTES:
+        raise ValueError("Telegram 通知类型无效")
+    if telegram["disabled"] or (category and config["telegram_routes"][category]["mode"] == "off"):
+        return "", ""
+    token, chat_id = effective_telegram(config, category)
+    token = token_override.strip() or token
+    chat_id = chat_id_override.strip() or chat_id
     if len(token) > 256 or any(char.isspace() for char in token):
         raise ValueError("Telegram bot token 格式无效")
     if chat_id and (len(chat_id) > 128 or not re.fullmatch(r"(?:-?\d{1,32}|@[A-Za-z0-9_]{5,64})", chat_id)):
@@ -5113,7 +5179,8 @@ def telegram_credentials(token_override: str = "", chat_id_override: str = "") -
 def send_stock_test_result(product: dict, result: dict) -> dict:
     """Explicit manual delivery, like /api/telegram/test, independent of monitoring."""
     try:
-        token, chat_id = telegram_credentials()
+        category = "seckill" if product.get("_seckill") else "stock"
+        token, chat_id = telegram_credentials(category=category)
         if not token or not chat_id:
             return {"status": "unconfigured", "message": "未发送 Telegram：请先保存机器人 Token 和 Chat ID"}
         matched = result.get("matched_product")
@@ -5329,7 +5396,7 @@ def refresh_account_balances() -> dict:
                           "pending": reasons, "updated_at": beijing_iso()}
                 notification_error = ""
                 if reasons:
-                    token, chat_id = effective_telegram(latest)
+                    token, chat_id = effective_telegram(latest, "account_balance")
                     if token and chat_id:
                         message = "\n".join([
                             f"💰 <b>HostWatch · Akile 账户余额提醒</b>",
@@ -5503,7 +5570,7 @@ def _isvoro_market_display_flow(value: object) -> str:
 
 
 def _akile_market_alert(config: dict, rule: dict, item: dict, reason: str) -> bool:
-    token, chat_id = effective_telegram(config)
+    token, chat_id = effective_telegram(config, "market")
     if not token or not chat_id:
         return False
     kind = "折价" if item["delta"] >= 0 else "溢价"
@@ -5548,10 +5615,7 @@ def _evaluate_akile_market(config: dict, items: list[dict], session, rule_id: st
     records, results = state["records"], []
     # Pausing Telegram must not change the destination identity and discard
     # successfully delivered notifications when Telegram is resumed.
-    telegram = config.get("telegram", {})
-    token = telegram.get("bot_token") or os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat_id = telegram.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID", "")
-    target = hashlib.sha256((token + ":" + chat_id).encode()).hexdigest()
+    target = telegram_target_hash(config, "market")
     valid_prefixes = set()
     for rule in rules:
         signature = hashlib.sha256(json.dumps([rule, market["account_id"], target], sort_keys=True).encode()).hexdigest()
@@ -5615,7 +5679,7 @@ def _isvoro_market_rule_matches(rule: dict, item: dict) -> bool:
 
 
 def _isvoro_market_alert(config: dict, rule: dict, item: dict) -> bool:
-    token, chat_id = effective_telegram(config)
+    token, chat_id = effective_telegram(config, "market")
     if not token or not chat_id:
         return False
     kind = "折价" if item["delta"] >= 0 else "溢价"
@@ -5658,10 +5722,7 @@ def _evaluate_isvoro_market(config: dict, items: list[dict], rule_id: str = "") 
     rules = [row for row in market["items"] if row["enabled"] and (not rule_id or row["id"] == rule_id)]
     state = _isvoro_market_alert_state()
     records, results = state["records"], []
-    telegram = config.get("telegram", {})
-    token = telegram.get("bot_token") or os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat_id = telegram.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID", "")
-    target = hashlib.sha256((token + ":" + chat_id).encode()).hexdigest()
+    target = telegram_target_hash(config, "market")
     valid_prefixes = set()
     for rule in rules:
         signature = hashlib.sha256(json.dumps([rule, market["account_id"], target], sort_keys=True).encode()).hexdigest()
@@ -6258,7 +6319,7 @@ class Handler(BaseHTTPRequestHandler):
         elif urlsplit(self.path).path == "/api/telegram/chats":
             try:
                 query = dict(parse_qsl(urlsplit(self.path).query, keep_blank_values=True))
-                token, _ = telegram_credentials(query.get("token", ""))
+                token, _ = telegram_credentials(query.get("token", ""), category=query.get("category", ""))
                 if not token:
                     raise ValueError("请先在管理页保存 Telegram bot token")
                 chats = telegram_chats(token)
@@ -6353,7 +6414,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             submitted = request_body(self)
             if urlsplit(self.path).path == "/api/telegram/chats":
-                token, _ = telegram_credentials(str(submitted.get("bot_token", "")).strip())
+                token, _ = telegram_credentials(str(submitted.get("bot_token", "")).strip(),
+                                                category=str(submitted.get("category", "")))
                 if not token:
                     raise ValueError("请先在管理页填写或保存 Telegram bot token")
                 result = {"ok": True, "chats": telegram_chats(token)}
@@ -6414,7 +6476,7 @@ class Handler(BaseHTTPRequestHandler):
                 if provider not in {"akile", "isvoro"}:
                     raise ValueError("交易市场商家无效")
                 label = "Isvoro 二手市场" if provider == "isvoro" else "Akile 交易市场"
-                token, chat_id = effective_telegram(current_config())
+                token, chat_id = effective_telegram(current_config(), "market")
                 if not token or not chat_id:
                     raise ValueError("请先启用并保存 Telegram 机器人和接收 Chat ID")
                 message = "\n".join([
@@ -6545,6 +6607,7 @@ class Handler(BaseHTTPRequestHandler):
                 token, chat_id = telegram_credentials(
                     str(submitted.get("bot_token", "")),
                     str(submitted.get("chat_id", "")),
+                    category=str(submitted.get("category", "")),
                 )
                 if not token or not chat_id:
                     raise ValueError("请填写 Telegram bot token 和 chat ID")
@@ -6613,6 +6676,26 @@ class Handler(BaseHTTPRequestHandler):
                     "chat_id": submitted_chat_id or current_chat_id,
                     "disabled": submitted_disabled,
                 }
+            submitted_routes = submitted.get("telegram_routes", current["telegram_routes"])
+            if not isinstance(submitted_routes, dict):
+                raise ValueError("Telegram 通知分配必须是对象")
+            merged_routes = {}
+            for key in TELEGRAM_ROUTES:
+                raw_route = submitted_routes.get(key, current["telegram_routes"][key])
+                if not isinstance(raw_route, dict):
+                    raise ValueError("Telegram 通知分配项必须是对象")
+                clear_route = raw_route.get("clear", False)
+                if not isinstance(clear_route, bool):
+                    raise ValueError("Telegram 通知机器人清除开关必须是布尔值")
+                saved_route = current["telegram_routes"][key]
+                route_token = str(raw_route.get("bot_token", "")).strip()
+                route_chat = str(raw_route.get("chat_id", "")).strip()
+                merged_routes[key] = {
+                    "mode": raw_route.get("mode", saved_route["mode"]),
+                    "bot_token": route_token or ("" if clear_route else saved_route["bot_token"]),
+                    "chat_id": route_chat or ("" if clear_route else saved_route["chat_id"]),
+                }
+            submitted["telegram_routes"] = merged_routes
             if "fetcher" not in submitted:
                 submitted["fetcher"] = current["fetcher"]
             elif isinstance(submitted["fetcher"], dict):

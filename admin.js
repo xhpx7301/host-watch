@@ -15,6 +15,7 @@ let config = {
   notify_order: [],
   fetcher: { mode: "requests", flaresolverr_url: "http://127.0.0.1:8191/v1", timeout_seconds: 60 },
   telegram: {},
+  telegram_routes: {},
   egress: { nodes: [], routes: {} },
   akile_market: { enabled: false, interval_seconds: 60, account_id: "", items: [] },
   isvoro_market: { enabled: false, interval_seconds: 600, account_id: "", items: [] },
@@ -92,6 +93,12 @@ const pages = {
   affiliates: { title: "AFF 管理", description: "统一管理各商家推广码，保存后应用到新的购买入口。" },
   requests: { title: "网页请求", description: "设置各商家请求方式，配置轻量请求与浏览器请求，测试访问效果。" },
   settings: { title: "设置", description: "集中管理服务、通知、备份和管理员账号。" },
+};
+const telegramRouteLabels = {
+  stock: "VPS 库存通知",
+  seckill: "VPS 补货抢购",
+  market: "二手市场通知",
+  account_balance: "账户余额通知",
 };
 let currentPage = null;
 const mobileNavToggle = document.querySelector("#mobile-nav-toggle");
@@ -3737,6 +3744,7 @@ function collectConfig(enabled = config.enabled) {
     isvoro_seckill: optionPressed("isvoro-seckill"),
     fetcher: { provider_modes: collectProviderModes(), provider_flaresolverr: Object.fromEntries([...providerFlareDraft].map(([provider, options]) => [provider, { ...options }])), mode: document.querySelector("#fetcher-mode").value, flaresolverr_url: document.querySelector("#flaresolverr-url").value.trim(), timeout_seconds: Number(document.querySelector("#flaresolverr-timeout").value), wait_seconds: Number(document.querySelector("#fetcher-wait").value), disable_media: optionPressed("flaresolverr-light"), cloudscraper: { connect_timeout_seconds: Number(document.querySelector("#cloudscraper-connect-timeout").value), read_timeout_seconds: Number(document.querySelector("#cloudscraper-read-timeout").value), challenge_delay_seconds: Number(document.querySelector("#cloudscraper-challenge-delay").value) } },
     telegram: { bot_token: document.querySelector("#telegram-token").value.trim(), chat_id: document.querySelector("#telegram-chat-id").value.trim(), disabled: optionPressed("telegram-disabled"), clear: optionPressed("telegram-clear") },
+    telegram_routes: collectTelegramRoutes(),
     egress: collectEgress(),
     vps_seckill: collectVpsSeckill(),
     akile_market: activeMarketProvider() === "akile" ? collectMarket() : config.akile_market,
@@ -3813,7 +3821,7 @@ function mergeConfigScope(baseValue, draftValue, scope) {
     }
   } else if (scope === "market") { base.akile_market = draft.akile_market; base.isvoro_market = draft.isvoro_market; }
   else if (scope === "account-balance") base.account_balance_notifications = draft.account_balance_notifications;
-  else if (scope === "telegram") base.telegram = draft.telegram;
+  else if (scope === "telegram") { base.telegram = draft.telegram; base.telegram_routes = draft.telegram_routes; }
   else if (scope === "monitor") {
     for (const key of ["interval_seconds", "monitor_schedule", "watch_order", "merchant_order"]) base[key] = draft[key];
     base.provider_schedules = { ...base.provider_schedules, monitor: draft.provider_schedules.monitor };
@@ -4009,6 +4017,90 @@ function openAdvancedProducts() {
   navigatePage("products");
 }
 
+function collectTelegramRoutes() {
+  return Object.fromEntries(Object.keys(telegramRouteLabels).map(category => {
+    const row = document.querySelector(`[data-telegram-route="${category}"]`);
+    return [category, {
+      mode: row.querySelector("[data-route-mode]").value,
+      bot_token: row.querySelector("[data-route-token]").value.trim(),
+      chat_id: row.querySelector("[data-route-chat]").value.trim(),
+      clear: row.querySelector("[data-route-clear]").checked,
+    }];
+  }));
+}
+
+function telegramRouteStatus(row) {
+  const mode = row.querySelector("[data-route-mode]").value;
+  const token = row.querySelector("[data-route-token]").value.trim();
+  const chat = row.querySelector("[data-route-chat]").value.trim();
+  const configured = row.dataset.tokenConfigured === "true" && !row.querySelector("[data-route-clear]").checked;
+  const status = mode === "default" ? "沿用默认机器人"
+    : mode === "off" ? "此类通知已停用"
+      : token && chat || configured && chat ? "独立机器人已配置"
+        : "请填写独立 Bot Token 和 Chat ID";
+  row.querySelector("[data-route-status]").textContent = status;
+}
+
+function renderTelegramRoutes(value = {}) {
+  const root = document.querySelector("#telegram-routes");
+  if (!root) return;
+  root.replaceChildren(...Object.entries(telegramRouteLabels).map(([category, label]) => {
+    const saved = value[category] || {}, row = text("div", "", "telegram-route-row");
+    row.dataset.telegramRoute = category;
+    row.dataset.tokenConfigured = String(Boolean(saved.bot_token_configured || saved.bot_token));
+    const heading = text("div", "", "telegram-route-heading");
+    heading.append(text("strong", label), text("span", "", "hint"));
+    heading.lastChild.dataset.routeStatus = "";
+    const modeField = text("label", "通知使用");
+    const mode = document.createElement("select"); mode.dataset.routeMode = "";
+    mode.append(new Option("默认机器人", "default"), new Option("独立机器人", "custom"), new Option("停用此类通知", "off"));
+    mode.value = saved.mode || "default"; modeField.append(mode);
+    const tokenField = text("label", "独立 Bot Token");
+    const token = document.createElement("input"); token.type = "password"; token.autocomplete = "new-password";
+    token.placeholder = row.dataset.tokenConfigured === "true" ? "留空保持已保存 Token" : "粘贴此类通知专用 Bot Token";
+    token.dataset.routeToken = ""; tokenField.append(token);
+    const chatField = text("label", "Chat ID 或频道用户名");
+    const chat = document.createElement("input"); chat.autocomplete = "off"; chat.dataset.routeChat = "";
+    chat.placeholder = "例如 -1001234567890 或 @my_channel"; chat.value = saved.chat_id || ""; chatField.append(chat);
+    const actions = text("div", "", "telegram-route-actions");
+    const test = text("button", "测试发送"); test.type = "button"; test.dataset.routeTest = category;
+    const readChats = text("button", "读取聊天"); readChats.type = "button"; readChats.dataset.routeChats = category;
+    actions.append(test, readChats);
+    const clearLabel = text("label", "清除此机器人凭据", "telegram-route-clear");
+    const clear = document.createElement("input"); clear.type = "checkbox"; clear.dataset.routeClear = ""; clearLabel.prepend(clear);
+    const chats = text("div", "", "telegram-route-chats"); chats.dataset.routeChatList = "";
+    row.append(heading, modeField, tokenField, chatField, actions, clearLabel, chats);
+    const sync = (update = true) => {
+      const custom = mode.value === "custom";
+      token.disabled = chat.disabled = clear.disabled = !custom;
+      test.disabled = readChats.disabled = mode.value === "off";
+      telegramRouteStatus(row); if (update) updateDraftState();
+    };
+    mode.addEventListener("change", () => sync());
+    token.addEventListener("input", () => { row.dataset.tokenConfigured = String(Boolean(token.value.trim()) || row.dataset.tokenConfigured === "true"); telegramRouteStatus(row); updateDraftState(); });
+    chat.addEventListener("input", () => { telegramRouteStatus(row); updateDraftState(); });
+    clear.addEventListener("change", () => { telegramRouteStatus(row); updateDraftState(); });
+    test.addEventListener("click", event => runAction(event.currentTarget, "发送中…", `正在测试 ${label} Telegram…`, async () => {
+      await requestJSON("/api/telegram/test", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category, bot_token: token.value.trim(), chat_id: chat.value.trim() }) });
+      setMessage(`${label}机器人测试消息已发送。`, "success");
+    }));
+    readChats.addEventListener("click", event => runAction(event.currentTarget, "读取中…", `正在读取 ${label} 机器人的聊天…`, async () => {
+      const result = await requestJSON("/api/telegram/chats", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category, bot_token: token.value.trim() }) });
+      chats.replaceChildren(...(result.chats || []).map(item => {
+        const option = text("button", `${item.name}（${item.type}） · ${item.id}`); option.type = "button";
+        option.addEventListener("click", () => { chat.value = item.id; telegramRouteStatus(row); updateDraftState(); });
+        return option;
+      }));
+      if (!result.chats?.length) chats.append(text("span", "暂无聊天；请先打开此 Bot 并发送 /start。", "hint"));
+      setMessage(`${label}机器人读取到 ${result.chats?.length || 0} 个聊天。`, "success");
+    }));
+    sync(false);
+    return row;
+  }));
+}
+
 async function loadConfig() {
   applyConfig(await requestJSON("/api/config"));
 }
@@ -4056,6 +4148,7 @@ function applyConfig(value) {
   setOptionPressed("telegram-clear", false);
   document.querySelector("#telegram-status").textContent = telegram.configured ? "Telegram 已配置（token 不会回显）。" : (telegram.disabled ? "Telegram 已停用。" : "Telegram 尚未完整配置。");
   document.querySelector("#telegram-chats").replaceChildren();
+  renderTelegramRoutes(config.telegram_routes || {});
   renderProducts();
   renderEgress();
   scheduleEgressHealthCheck(1_000);
@@ -4317,7 +4410,7 @@ async function saveConfig(scope = "all", automatic = false) {
     else if (scope === "cloudscraper") visibleDraft.fetcher = { ...visibleDraft.fetcher, cloudscraper: draft.fetcher.cloudscraper };
     else if (scope === "market") { visibleDraft.akile_market = draft.akile_market; visibleDraft.isvoro_market = draft.isvoro_market; }
     else if (scope === "account-balance") visibleDraft.account_balance_notifications = draft.account_balance_notifications;
-    else if (scope === "telegram") visibleDraft.telegram = draft.telegram;
+    else if (scope === "telegram") { visibleDraft.telegram = result.config.telegram; visibleDraft.telegram_routes = result.config.telegram_routes; }
     else if (scope === "catalog") visibleDraft.catalog_schedule = draft.catalog_schedule;
     else if (scope === "monitor" || scope === "notifications") visibleDraft.products = draft.products;
     else if (scope === "seckill") visibleDraft.vps_seckill = draft.vps_seckill;

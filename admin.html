@@ -232,8 +232,18 @@
     .settings-card .form-grid { margin-top:12px; }
     .settings-card .manage-form { margin:12px 0; }
     .settings-card.telegram-card { background:#f7fbff; border-color:#cbd9f5; }
+    .settings-card.telegram-card { grid-column:1/-1; }
     .settings-card.telegram-card .form-grid { align-items:end; }
     .settings-card.telegram-card .chat-list { max-height:220px; overflow:auto; }
+    .telegram-routes { display:grid; gap:0; margin-top:14px; border-top:1px solid var(--line); }
+    .telegram-route-row { display:grid; grid-template-columns:minmax(150px,.8fr) minmax(180px,1fr) minmax(180px,1fr) auto; align-items:end; gap:8px 12px; padding:12px 0; border-bottom:1px solid var(--line); }
+    .telegram-route-heading { grid-column:1/-1; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px 12px; }
+    .telegram-route-heading strong { color:var(--ink); }
+    .telegram-route-row label { min-width:0; }
+    .telegram-route-actions { display:flex; flex-wrap:wrap; gap:6px; }
+    .telegram-route-chats { grid-column:1/-1; display:flex; flex-wrap:wrap; gap:6px; }
+    .telegram-route-clear { display:flex; align-items:center; gap:6px; font-size:12px; }
+    @media(max-width:780px) { .telegram-route-row { grid-template-columns:1fr; } .telegram-route-heading,.telegram-route-chats { grid-column:auto; } }
     .settings-card.backup-card { background:#fffdf8; border-color:#eadfbe; }
     .settings-card.backup-card .manage-users { margin-bottom:0; }
     .backup-recent .manage-users { max-height:220px; overflow:auto; align-content:flex-start; }
@@ -1148,11 +1158,14 @@
         <label>Bot token（保存后不会回显）<input id="telegram-token" type="password" autocomplete="new-password" placeholder="留空表示保持已保存的 token"></label>
         <label>Chat ID 或频道用户名<input id="telegram-chat-id" autocomplete="off" placeholder="例如 -1001234567890 或 @my_channel"></label>
         <button id="telegram-disabled" class="option-button" type="button" data-config-option data-on="已选择停用" data-off="未停用" aria-pressed="false" aria-label="暂时停用通知"><span>暂时停用通知</span><span data-option-state>未停用</span></button>
-        <button id="telegram-clear" class="option-button" type="button" data-config-option data-tone="danger" data-on="保存时清除" data-off="不清除" aria-pressed="false" aria-label="清除已保存的凭据" aria-describedby="telegram-options-note"><span>清除已保存的凭据</span><span data-option-state>不清除</span></button>
+        <button id="telegram-clear" class="option-button" type="button" data-config-option data-tone="danger" data-on="保存时清除" data-off="不清除" aria-pressed="false" aria-label="清除默认机器人的凭据" aria-describedby="telegram-options-note"><span>清除默认机器人凭据</span><span data-option-state>不清除</span></button>
       </div>
-      <p id="telegram-options-note" class="hint">点击按钮切换选择，再次点击取消；保存 Telegram 卡片后生效。“清除已保存的凭据”仅在保存时执行。</p>
+      <p id="telegram-options-note" class="hint">点击按钮切换选择，再次点击取消；保存 Telegram 卡片后生效。清除默认机器人不会删除各类独立机器人凭据。</p>
       <div class="actions"><button id="telegram-test" type="button">测试发送</button><button id="telegram-load-chats" type="button">读取最近聊天</button></div>
       <div id="telegram-chats" class="chat-list" aria-live="polite"></div>
+      <h4>通知机器人分配</h4>
+      <p class="hint">每类可沿用上方默认机器人、指定独立机器人，或停用该类提醒。全局暂停会停止所有 Telegram 通知。</p>
+      <div id="telegram-routes" class="telegram-routes"></div>
     </div>
     </div>
     <p class="hint manage-global-note">库存监控和库存通知分别选择“仅手动刷新”或“自动刷新”；保存对应卡片后 HostWatch 服务会按设置自动运行或停止。</p>
