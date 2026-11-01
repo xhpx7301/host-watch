@@ -235,15 +235,15 @@
     .settings-card.telegram-card { grid-column:1/-1; }
     .settings-card.telegram-card .form-grid { align-items:end; }
     .settings-card.telegram-card .chat-list { max-height:220px; overflow:auto; }
-    .telegram-routes { display:grid; gap:0; margin-top:14px; border-top:1px solid var(--line); }
-    .telegram-route-row { display:grid; grid-template-columns:minmax(150px,.8fr) minmax(180px,1fr) minmax(180px,1fr) auto; align-items:end; gap:8px 12px; padding:12px 0; border-bottom:1px solid var(--line); }
+    .telegram-routes { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:14px; }
+    .telegram-route-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-items:end; gap:10px 12px; padding:14px; border:1px solid var(--line); border-radius:10px; background:#fbfcfe; }
     .telegram-route-heading { grid-column:1/-1; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px 12px; }
     .telegram-route-heading strong { color:var(--ink); }
     .telegram-route-row label { min-width:0; }
     .telegram-route-actions { display:flex; flex-wrap:wrap; gap:6px; }
     .telegram-route-chats { grid-column:1/-1; display:flex; flex-wrap:wrap; gap:6px; }
     .telegram-route-clear { display:flex; align-items:center; gap:6px; font-size:12px; }
-    @media(max-width:780px) { .telegram-route-row { grid-template-columns:1fr; } .telegram-route-heading,.telegram-route-chats { grid-column:auto; } }
+    @media(max-width:780px) { .balance-provider-grid,.telegram-routes { grid-template-columns:1fr; } .telegram-route-row { grid-template-columns:1fr; } .telegram-route-heading,.telegram-route-chats { grid-column:auto; } }
     .settings-card.backup-card { background:#fffdf8; border-color:#eadfbe; }
     .settings-card.backup-card .manage-users { margin-bottom:0; }
     .backup-recent .manage-users { max-height:220px; overflow:auto; align-content:flex-start; }
@@ -594,7 +594,7 @@
     .seckill-account-save-status.error { color:var(--red); }
     .seckill-panel-actions { justify-content:flex-end; margin-top:14px; padding-top:12px; border-top:1px solid rgba(71,91,116,.16); }
     .market-settings { margin-bottom:14px; padding:16px; }
-    .balance-provider-grid { display:grid; gap:14px; }
+    .balance-provider-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; align-items:stretch; }
     .balance-provider-card { padding:14px; border:1px solid var(--line); border-radius:10px; background:#fbfcfe; }
     .balance-provider-card .section-head { margin-bottom:10px; }
     .balance-provider-heading { display:flex; align-items:center; gap:10px; min-width:0; }
