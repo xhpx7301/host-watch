@@ -117,9 +117,11 @@ class AccountBalanceTests(unittest.TestCase):
 
         self.assertEqual(len(result["accounts"]), 1)
         text = send.call_args.kwargs["text"]
-        self.assertIn("商家：独角鲸云", text)
-        self.assertIn("账户：主用账户", text)
+        self.assertIn("🏪 <b>商家：</b>独角鲸云", text)
+        self.assertIn("👤 <b>账户：</b>主用账户", text)
         self.assertNotIn("narwhal@example.com", text)
+        self.assertIn("👤 <b>账户：</b>主用账户\n💰 <b>当前余额：</b>$5.00", text)
+        self.assertIn("🕒 <b>检查时间：</b>", text)
         button = send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]
         self.assertEqual(button["text"], "💳 前往官网充值余额")
         self.assertEqual(button["url"], "https://dash.fuckip.me/")
@@ -157,7 +159,8 @@ class AccountBalanceTests(unittest.TestCase):
 
     def test_balance_test_notification_uses_account_balance_route_without_changing_state(self):
         current = config()
-        with patch.object(admin, "current_config", return_value=current), \
+        with patch.object(admin, "ACCOUNT_BALANCE_CACHE", {"accounts": []}), \
+                patch.object(admin, "current_config", return_value=current), \
                 patch.object(admin, "effective_telegram", return_value=("token", "123")), \
                 patch.object(admin, "telegram_call") as send:
             result = admin.send_account_balance_test_notification([
@@ -167,10 +170,18 @@ class AccountBalanceTests(unittest.TestCase):
         send.assert_called_once()
         self.assertIn("账户余额通知测试", send.call_args.kwargs["text"])
         self.assertIn("Narwhal", send.call_args.kwargs["text"])
-        self.assertIn("商家：独角鲸云", send.call_args.kwargs["text"])
+        self.assertIn("🏪 <b>商家：</b>独角鲸云", send.call_args.kwargs["text"])
         self.assertNotIn("narwhal@example.com", send.call_args.kwargs["text"])
+        text = send.call_args.kwargs["text"]
+        self.assertIn("👤 <b>账户：</b>Narwhal\n💰 <b>当前余额：</b>尚未查询", text)
+        self.assertIn("🕒 <b>测试时间：</b>", text)
         self.assertEqual(send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["url"],
                          "https://dash.fuckip.me/")
+
+    def test_email_account_label_is_not_auto_linkable_in_telegram(self):
+        label = admin._telegram_account_label("user@example.com")
+        self.assertIn("user&#8203;@example.com", label)
+        self.assertNotIn("user@example.com", label)
 
 
 if __name__ == "__main__":

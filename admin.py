@@ -5612,6 +5612,12 @@ def _account_balance_topup_keyboard(providers: list[str]) -> dict:
     return {"inline_keyboard": [buttons]}
 
 
+def _telegram_account_label(value: object) -> str:
+    """Escape an account label and prevent Telegram from auto-linking emails."""
+    label = escape(str(value or "—")[:120])
+    return label.replace("@", "&#8203;@")
+
+
 def refresh_account_balances(selected_accounts: list[dict] | None = None, manual: bool = False,
                             providers: set[str] | None = None) -> dict:
     if not ACCOUNT_BALANCE_RUN_LOCK.acquire(blocking=False):
@@ -5673,11 +5679,11 @@ def refresh_account_balances(selected_accounts: list[dict] | None = None, manual
                             merchant = ACCOUNT_BALANCE_MERCHANTS[provider]
                             message = "\n".join([
                                 f"💰 <b>HostWatch · {escape(provider_config.get('currency_symbol', '$'))} 账户余额提醒</b>",
-                                f"商家：{escape(merchant['name'])}",
-                                f"账户：{escape(str(name)[:120])}",
-                                f"当前余额：{provider_config.get('currency_symbol', '$')}{balance_cents / provider_config.get('minor_factor', 100):.2f}",
+                                f"🏪 <b>商家：</b>{escape(merchant['name'])}",
+                                f"👤 <b>账户：</b>{_telegram_account_label(name)}",
+                                f"💰 <b>当前余额：</b>{provider_config.get('currency_symbol', '$')}{balance_cents / provider_config.get('minor_factor', 100):.2f}",
                                 f"触发条件：{'、'.join(reasons)}",
-                                f"检查时间：{format_beijing(record['updated_at'])}",
+                                f"🕒 <b>检查时间：</b>{format_beijing(record['updated_at'])}",
                             ])
                             try:
                                 telegram_call(token, "sendMessage", chat_id=chat_id, text=message,
@@ -5749,18 +5755,22 @@ def send_account_balance_test_notification(selected_accounts: list[dict] | None 
         account = known.get(key)
         if not account or key[0] not in {"narwhal", "hytron"}:
             raise ValueError("测试通知账户不存在")
-        name = escape(str(account.get("name") or account.get("username") or key[1])[:120])
+        name = str(account.get("name") or account.get("username") or key[1])[:120]
         merchant = ACCOUNT_BALANCE_MERCHANTS[key[0]]
         row = cached.get(key)
         balance = row.get("balance") if row else None
         symbol = config["account_balance_notifications"]["providers"][key[0]].get("currency_symbol", "$")
         balance_text = f"{symbol}{float(balance):.2f}" if balance is not None else "尚未查询"
-        lines.extend([f"商家：{escape(merchant['name'])}", f"账户：{name} · 当前余额：{balance_text}"])
+        lines.extend([
+            f"🏪 <b>商家：</b>{escape(merchant['name'])}",
+            f"👤 <b>账户：</b>{_telegram_account_label(name)}",
+            f"💰 <b>当前余额：</b>{balance_text}",
+        ])
     message = "\n".join([
         "🧪 <b>HostWatch · 账户余额通知测试</b>",
         "这是一条手动测试消息，用于确认账户余额通知机器人和接收 Chat ID 配置正常。",
         *(lines or ["未选择账户；请在页面选择需要监控的账户。"]),
-        f"测试时间：{format_beijing(beijing_iso())}",
+        f"🕒 <b>测试时间：</b>{format_beijing(beijing_iso())}",
     ])
     try:
         telegram_call(token, "sendMessage", chat_id=chat_id, text=message,
