@@ -5724,7 +5724,7 @@ def send_account_balance_test_notification(selected_accounts: list[dict] | None 
         telegram_call(token, "sendMessage", chat_id=chat_id, text=message,
                       parse_mode="HTML", disable_web_page_preview=True)
     except (TelegramAPIError, requests.RequestException, ValueError) as exc:
-        raise ValueError(f"Telegram 测试通知发送失败：{str(exc)[:180]}") from exc
+        raise TelegramAPIError(f"Telegram 测试通知发送失败：{str(exc)[:180]}") from exc
     return {"ok": True, "message": "账户余额通知测试消息已发送至 Telegram。"}
 
 

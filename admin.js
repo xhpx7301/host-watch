@@ -187,14 +187,19 @@ function balanceNotificationConfig() {
     value.providers[provider] ||= { enabled: false, interval_seconds: 300, account_ids: [], low_balance_enabled: true,
       low_balance_threshold: 10, balance_change_enabled: true, currency: definition.currency,
       currency_symbol: definition.symbol };
+    // Currency is determined by the merchant. Migrate older saved drafts so
+    // legacy CNY/¥ values cannot keep the account-balance card dirty.
+    value.providers[provider].currency = definition.currency;
+    value.providers[provider].currency_symbol = definition.symbol;
   }
   return value;
 }
 function balanceProviderDraft(provider) {
   const definition = balanceProviderDefinitions[provider];
   return { enabled: false, interval_seconds: 300, account_ids: [], low_balance_enabled: true,
-    low_balance_threshold: 10, balance_change_enabled: true, currency: definition.currency,
-    currency_symbol: definition.symbol, ...(balanceNotificationConfig().providers[provider] || {}) };
+    low_balance_threshold: 10, balance_change_enabled: true,
+    ...(balanceNotificationConfig().providers[provider] || {}),
+    currency: definition.currency, currency_symbol: definition.symbol };
 }
 function balanceButtonPressed(button) { return button?.getAttribute("aria-pressed") === "true"; }
 function balanceAccountChecked(input) { return Boolean(input?.checked); }
@@ -305,7 +310,8 @@ function renderAccountBalanceResults() {
   results.replaceChildren(...rows.map(row => {
     const node = text("div", "", `balance-result${row.error ? " error" : ""}`);
     node.append(text("strong", `${row.name || row.email || row.account_id} · ${row.email || ""}`));
-    node.append(text("span", row.error ? `读取失败：${row.error}` : `余额 ${row.currency_symbol || "$"}${Number(row.balance).toFixed(2)}${row.notification_error ? ` · ${row.notification_error}` : ""}`));
+    const symbol = balanceProviderDefinitions[row.provider]?.symbol || "$";
+    node.append(text("span", row.error ? `读取失败：${row.error}` : `余额 ${symbol}${Number(row.balance).toFixed(2)}${row.notification_error ? ` · ${row.notification_error}` : ""}`));
     return node;
   }));
   const check = document.querySelector("#account-balance-check");

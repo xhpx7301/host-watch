@@ -65,6 +65,14 @@ class AccountBalanceTests(unittest.TestCase):
         self.assertEqual(normalized["narwhal"]["interval_seconds"], 300)
         self.assertEqual(normalized["hytron"]["interval_seconds"], 600)
 
+    def test_legacy_narwhal_currency_is_migrated_to_usd(self):
+        value = config()
+        value["account_balance_notifications"]["providers"]["narwhal"]["currency"] = "CNY"
+        value["account_balance_notifications"]["providers"]["narwhal"]["currency_symbol"] = "¥"
+        normalized = admin.validate_config(value)["account_balance_notifications"]["providers"]["narwhal"]
+        self.assertEqual(normalized["currency"], "USD")
+        self.assertEqual(normalized["currency_symbol"], "$")
+
     def test_balance_readers_convert_decimal_amounts_to_minor_units(self):
         narwhal_session = Mock()
         narwhal_session.get.return_value = response({

@@ -101,6 +101,31 @@ class AdminAPITests(unittest.TestCase):
         self.assertEqual(code, 502)
         self.assertIn("sendMessage", json.loads(body)["error"])
 
+    def test_account_balance_test_notification_reaches_telegram(self):
+        current = admin.default_config()
+        current["vps_seckill"]["accounts"] = [{
+            "id": "narwhal-1", "name": "Narwhal", "provider": "narwhal", "username": "narwhal@example.com",
+        }]
+        with patch.object(admin, "current_config", return_value=current), \
+                patch.object(admin, "effective_telegram", return_value=("test-token", "123")), \
+                patch.object(admin, "telegram_call") as send:
+            code, body = self.request("/api/account-balance/test-notification", {
+                "accounts": [{"provider": "narwhal", "account_id": "narwhal-1"}],
+            })
+        self.assertEqual(code, 200)
+        self.assertTrue(json.loads(body)["ok"])
+        send.assert_called_once()
+        self.assertEqual(send.call_args.args, ("test-token", "sendMessage"))
+        self.assertEqual(send.call_args.kwargs["chat_id"], "123")
+        self.assertIn("账户余额通知测试", send.call_args.kwargs["text"])
+
+    def test_account_balance_test_notification_reports_telegram_failure(self):
+        with patch.object(admin, "effective_telegram", return_value=("test-token", "123")), \
+                patch.object(admin, "telegram_call", side_effect=admin.TelegramAPIError("Telegram sendMessage 失败")):
+            code, body = self.request("/api/account-balance/test-notification", {"accounts": []})
+        self.assertEqual(code, 502)
+        self.assertIn("Telegram 测试通知发送失败", json.loads(body)["error"])
+
     def test_current_seckill_task_reports_no_task_without_exposing_configuration(self):
         with patch.dict(admin.SECKILL_TASKS, {}, clear=True):
             status, body = self.get_request("/api/seckill/current")
