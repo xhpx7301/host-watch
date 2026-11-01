@@ -346,14 +346,28 @@ class HytronResourceNotificationTests(unittest.TestCase):
         self.alerts.resource_update(self.item, self.product(cpu=10, ram=2048))
         self.assertEqual(self.backend.calls, [])
         self.alerts.resource_update(self.item, self.product(cpu=10, ram=1024))
+        self.assertEqual(self.backend.calls, [])
+        self.alerts.resource_update(self.item, self.product(cpu=10, ram=2048))
         self.assertEqual(len(self.backend.calls), 1)
-        self.assertIn("内存：</b>1024 MB（-1024）", self.backend.calls[0][1]["text"])
+        self.assertIn("内存：</b>2048 MB（+1024）", self.backend.calls[0][1]["text"])
 
-    def test_stock_state_change_is_reported_when_selected(self):
+    def test_resource_decreases_do_not_notify_but_increases_do(self):
+        self.item["notify_resources"] = ["cpu", "ram_mb"]
+        self.alerts.resource_update(self.item, self.product())
+        self.alerts.resource_update(self.item, self.product(cpu=8, ram=4096))
+        self.assertEqual(self.backend.calls, [])
+        self.alerts.resource_update(self.item, self.product(cpu=12, ram=4096))
+        self.assertEqual(len(self.backend.calls), 1)
+        self.assertIn("CPU：</b>12 核（+4）", self.backend.calls[0][1]["text"])
+        self.assertNotIn("内存：</b>", self.backend.calls[0][1]["text"])
+
+    def test_stock_recovery_is_reported_when_selected_but_sellout_is_quiet(self):
         self.alerts.resource_update(self.item, self.product(has_capacity=True))
         self.alerts.resource_update(self.item, self.product(has_capacity=False))
+        self.assertEqual(self.backend.calls, [])
+        self.alerts.resource_update(self.item, self.product(has_capacity=True))
         self.assertEqual(len(self.backend.calls), 1)
-        self.assertIn("状态：</b>缺货", self.backend.calls[0][1]["text"])
+        self.assertIn("状态：</b>有货", self.backend.calls[0][1]["text"])
 
 
 class TelegramEditAPITests(unittest.TestCase):

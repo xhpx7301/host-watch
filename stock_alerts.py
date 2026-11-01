@@ -157,8 +157,8 @@ class StockAlerts:
         common = set(selected) & set(previous_selected)
         changes = {key: capacity[key] - previous_capacity[key] for key in common
                    if key != "stock" and type(capacity.get(key)) is int and type(previous_capacity.get(key)) is int
-                   and capacity[key] != previous_capacity[key]}
-        stock_changed = "stock" in common and previous_stock is not None and stock_state != previous_stock
+                   and capacity[key] > previous_capacity[key]}
+        stock_changed = "stock" in common and previous_stock is False and stock_state is True
         if not changes and not stock_changed:
             self.save()
             return
@@ -168,7 +168,8 @@ class StockAlerts:
             return
         self.backend.telegram_request(self.session, self.token, "sendMessage", chat_id=self.chat_id,
             text=hytron_resource_message(name=product.name, region=product.region, available=product.available,
-                capacity=capacity, changes=selected_changes, resources=selected,
+                capacity=capacity, changes=selected_changes,
+                resources=[key for key in selected if key == "stock" and stock_changed or key in selected_changes],
                 checked_at=now_beijing().strftime("%Y-%m-%d %H:%M:%S 北京时间")),
             parse_mode="HTML", disable_web_page_preview=True)
         self.save()

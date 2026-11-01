@@ -1627,7 +1627,7 @@ function productEditor(item, index) {
     inputField("Hytron 节点 ID", item.adapter === "hytron" ? item.node_id : "", "hytron_node_id", "text", "从 Hytron 库存大盘选择节点"),
     hytronModes, planFields,
     text("label", "通知关注项", "span-2"), resourcePicker,
-    text("p", "节点余量模式直接监控节点当前 CPU、内存、硬盘、IP 和 VM 配额；套餐组合保留按资源组合计算可创建数量。通知仅推送所选关注项的变化。", "hint span-2"),
+    text("p", "节点余量模式直接监控节点当前 CPU、内存、硬盘、IP 和 VM 配额；套餐组合保留按资源组合计算可创建数量。可同时选择多项；所选资源余量增加或节点从无货恢复有货时通知，余量减少不通知。首次检查只建立基线。", "hint span-2"),
   );
   modeWrap.append(vmissFields, htmlFields, soyFields, akileFields, narwhalFields, isvoroFields, dmitFields, bwhFields, hytronFields);
   const result = text("div", "", "product-test-result");
