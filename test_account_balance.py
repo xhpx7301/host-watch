@@ -65,6 +65,20 @@ class AccountBalanceTests(unittest.TestCase):
         self.assertEqual(normalized["narwhal"]["interval_seconds"], 300)
         self.assertEqual(normalized["hytron"]["interval_seconds"], 600)
 
+    def test_account_balance_interval_allows_daily_checks_and_rejects_out_of_range(self):
+        value = config()
+        value["account_balance_notifications"]["providers"]["hytron"]["interval_seconds"] = 86400
+        normalized = admin.validate_config(value)
+        self.assertEqual(
+            normalized["account_balance_notifications"]["providers"]["hytron"]["interval_seconds"],
+            86400,
+        )
+        for interval in (29, 86401):
+            value = config()
+            value["account_balance_notifications"]["providers"]["narwhal"]["interval_seconds"] = interval
+            with self.subTest(interval=interval), self.assertRaisesRegex(ValueError, "账户余额检查间隔"):
+                admin.validate_config(value)
+
     def test_legacy_narwhal_currency_is_migrated_to_usd(self):
         value = config()
         value["account_balance_notifications"]["providers"]["narwhal"]["currency"] = "CNY"

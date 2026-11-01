@@ -2947,8 +2947,8 @@ def normalize_account_balance_notifications(value: object, accounts: list[dict])
         if any(type(flag) is not bool for flag in (enabled, low_enabled, change_enabled)):
             raise ValueError(f"{label}账户余额通知开关必须是布尔值")
         interval = raw.get("interval_seconds", 300)
-        if type(interval) is not int or not 30 <= interval <= 3600:
-            raise ValueError(f"{label}账户余额检查间隔必须是 30 到 3600 秒")
+        if type(interval) is not int or not 30 <= interval <= 86400:
+            raise ValueError(f"{label}账户余额检查间隔必须是 30 到 86400 秒（最多一天）")
         threshold = raw.get("low_balance_threshold", 10)
         try:
             threshold_decimal = Decimal(str(threshold)) if not isinstance(threshold, bool) else Decimal("NaN")

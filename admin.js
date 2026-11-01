@@ -243,7 +243,8 @@ function renderAccountBalanceSettings() {
     head.append(enabled); card.append(head);
     const grid = text("div", "", "form-grid");
     const field = (id, label, type = "number", value = "") => { const wrapper = text("label", label); const input = document.createElement("input"); input.id = id; input.type = type; input.value = value; wrapper.append(input); input.addEventListener("input", updateDraftState); grid.append(wrapper); return input; };
-    field(`${prefix}-interval`, "检查间隔（秒）", "number", current.interval_seconds ?? 300).min = "30";
+    const interval = field(`${prefix}-interval`, "检查间隔（秒，最长 24 小时）", "number", current.interval_seconds ?? 300);
+    interval.min = "30"; interval.max = "86400"; interval.step = "1";
     const threshold = field(`${prefix}-threshold`, definition.thresholdLabel, "number", current.low_balance_threshold ?? 10); threshold.min = "0"; threshold.step = "0.01";
     const conditions = text("div", "", "balance-conditions"); conditions.append(text("strong", "通知条件"));
     for (const [suffix, label, key] of [["low", "余额低于阈值时通知", "low_balance_enabled"], ["change", "余额发生变化时通知", "balance_change_enabled"]]) {
