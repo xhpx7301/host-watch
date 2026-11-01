@@ -6,7 +6,7 @@ import json
 import logging
 import time
 from affiliates import effective_coupon
-from notifications import purchase_button, stock_message
+from notifications import hytron_resource_message, purchase_button, stock_message
 from time_utils import now_beijing
 
 
@@ -79,6 +79,8 @@ class StockAlerts:
             return
         if not self.enabled:
             return
+        if item.get("adapter") == "hytron":
+            self.resource_update(item, product)
         record = self.record(item)
         if record is None:
             entry.pop("telegram", None)
@@ -131,3 +133,42 @@ class StockAlerts:
         record["signature"] = hashlib.sha256(json.dumps([content, False], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         self.save()
         logging.info("已发送本轮补货通知：%s，目前 %s 台", product.name, product.available)
+
+    def resource_update(self, item, product):
+        details = product.match_details or {}
+        capacity = details.get("node_capacity")
+        if not isinstance(capacity, dict):
+            return
+        entry = self.current[item["id"]]
+        selected = item.get("notify_resources", ["stock", "cpu", "ram_mb", "disk_gb", "ipv4", "ipv6", "vm_slots"])
+        selected = [key for key in selected if key in {"stock", "cpu", "ram_mb", "disk_gb", "ipv4", "ipv6", "vm_slots"}]
+        previous_capacity = entry.get("hytron_notified_capacity")
+        previous_selected = entry.get("hytron_notified_resources")
+        stock_state = details.get("node_has_capacity") if type(details.get("node_has_capacity")) is bool else None
+        previous_stock = entry.get("hytron_notified_stock")
+        entry["hytron_notified_capacity"] = capacity
+        entry["hytron_notified_resources"] = selected
+        entry["hytron_notified_stock"] = stock_state
+        # A first observation, or a changed selection, establishes a fresh
+        # baseline and must not emit a notification for the old configuration.
+        if not isinstance(previous_capacity, dict) or not isinstance(previous_selected, list) or previous_selected != selected:
+            self.save()
+            return
+        common = set(selected) & set(previous_selected)
+        changes = {key: capacity[key] - previous_capacity[key] for key in common
+                   if key != "stock" and type(capacity.get(key)) is int and type(previous_capacity.get(key)) is int
+                   and capacity[key] != previous_capacity[key]}
+        stock_changed = "stock" in common and previous_stock is not None and stock_state != previous_stock
+        if not changes and not stock_changed:
+            self.save()
+            return
+        selected_changes = {key: value for key, value in changes.items() if key in selected}
+        if not selected_changes and not stock_changed:
+            self.save()
+            return
+        self.backend.telegram_request(self.session, self.token, "sendMessage", chat_id=self.chat_id,
+            text=hytron_resource_message(name=product.name, region=product.region, available=product.available,
+                capacity=capacity, changes=selected_changes, resources=selected,
+                checked_at=now_beijing().strftime("%Y-%m-%d %H:%M:%S 北京时间")),
+            parse_mode="HTML", disable_web_page_preview=True)
+        self.save()

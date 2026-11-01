@@ -56,29 +56,35 @@ CAPS = {
 
 
 class HytronTests(unittest.TestCase):
-    def test_directory_exposes_node_stock_and_hourly_price(self):
-        with patch.object(hytron, "fetch_catalog", return_value=[node()]), patch.object(hytron, "fetch_resource_caps", return_value=CAPS):
+    def test_directory_exposes_node_capacity_without_resource_caps_request(self):
+        with patch.object(hytron, "fetch_catalog", return_value=[node()]), patch.object(hytron, "fetch_resource_caps") as fetch_caps:
             scopes, selected, rows = hytron.directory(None)
         self.assertEqual(selected, "all")
         self.assertEqual([row["id"] for row in scopes], ["all", "HKG"])
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(row["available"], 2)
-        self.assertEqual(row["stock_mode"], "quantity")
+        self.assertEqual(row["available"], 1)
+        self.assertEqual(row["stock_mode"], "availability")
+        self.assertEqual(row["node_capacity"], {"cpu": 10, "ram_mb": 10240, "disk_gb": 100, "ipv4": 2, "ipv6": 0, "vm_slots": 10})
+        self.assertIn("CPU 10 核", row["specs"])
+        self.assertEqual(row["watch"]["notify_resources"], ["stock", "cpu", "ram_mb", "disk_gb", "ipv4", "ipv6", "vm_slots"])
         self.assertEqual(row["watch"]["adapter"], "hytron")
         self.assertEqual(row["watch"]["node_id"], NODE_ID)
-        self.assertIn("/小时", row["price"])
+        fetch_caps.assert_not_called()
         self.assertEqual(row["purchase_url"], "https://hyvps.hytron.io/order")
 
-    def test_nodes_without_capacity_are_sold_out(self):
+    def test_node_capacity_flag_controls_availability_and_sync_is_unknown(self):
         item = {"node_id": NODE_ID}
         found = hytron.inspect(None, item, catalog=[node(has_capacity=False)], caps=CAPS)
         self.assertEqual(found.available, 0)
+        found = hytron.inspect(None, item, catalog=[node(needs_sync=True)], caps=CAPS)
+        self.assertIsNone(found.available)
 
-    def test_unorderable_node_is_unknown_and_cannot_be_added_to_watch_config(self):
-        with patch.object(hytron, "fetch_catalog", return_value=[node(templates=[])]), patch.object(hytron, "fetch_resource_caps", return_value=CAPS):
+    def test_node_directory_does_not_require_orderable_template(self):
+        with patch.object(hytron, "fetch_catalog", return_value=[node(templates=[])]), patch.object(hytron, "fetch_resource_caps") as fetch_caps:
             _, _, rows = hytron.directory(None)
-        self.assertIsNone(rows[0]["available"])
+        self.assertEqual(rows[0]["available"], 1)
+        fetch_caps.assert_not_called()
         config = admin.default_config()
         config["products"] = [{"id": "hytron-node", "name": "Hytron node", "adapter": "hytron", "node_id": "invalid", "enabled": True}]
         with self.assertRaisesRegex(ValueError, "Hytron 目录选择"):

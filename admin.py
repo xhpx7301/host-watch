@@ -28,7 +28,7 @@ from auth import DEFAULT_USERS_PATH, authentication_required, authorized, creden
 from catalog import CatalogBusy, CatalogService
 from affiliates import AFFILIATE_PROVIDERS, DEFAULT_AFFILIATES, PROVIDERS, affiliate_purchase_url, effective_coupon, normalize_affiliate_accounts, normalize_affiliate_coupons, normalize_affiliate_notes, normalize_affiliate_rates, normalize_affiliates, normalize_merchant_order
 from time_utils import beijing_iso, format_beijing
-from notifications import hardware_text, network_text, purchase_button, stock_message, telegram_region
+from notifications import hardware_text, hytron_resource_message, network_text, purchase_button, stock_message, telegram_region
 import egress
 
 
@@ -244,6 +244,8 @@ def stock_test_worker() -> None:
             output["stock_version"] = result.match_details["stock_version"]
         if result.vendor == "Isvoro":
             output["matched_product"] = result.match_details
+        if result.vendor == "Hytron":
+            output["matched_product"] = result.match_details or {}
     except MonitorError as exc:
         output = {"ok": False, "error": str(exc)}
     print(json.dumps(output))
@@ -4979,6 +4981,11 @@ def validate_config(value: object) -> dict:
             if not re.fullmatch(r"[0-9a-fA-F-]{20,80}", node_id) or len(name) > 120:
                 raise ValueError(f"产品 {name} 需要从 Hytron 目录选择有效的节点")
             normalized_item = {"id": product_id, "name": name, "provider": "Hytron", "adapter": adapter, "node_id": node_id.lower(), "enabled": item.get("enabled", False)}
+            notify_resources = item.get("notify_resources", ["stock", "cpu", "ram_mb", "disk_gb", "ipv4", "ipv6", "vm_slots"])
+            allowed_notify_resources = {"stock", "cpu", "ram_mb", "disk_gb", "ipv4", "ipv6", "vm_slots"}
+            if not isinstance(notify_resources, list) or any(resource not in allowed_notify_resources for resource in notify_resources):
+                raise ValueError(f"产品 {name} 的 Hytron 通知资源选择无效")
+            normalized_item["notify_resources"] = list(dict.fromkeys(notify_resources))
             resources = item.get("resources")
             if resources is not None:
                 keys = {"cpu", "ram_mb", "disk_gb", "ipv4", "ipv6"}
@@ -5322,6 +5329,20 @@ def send_stock_test_result(product: dict, result: dict) -> dict:
                     region=result.get("region", ""), specs=result.get("specs", ""), traffic=result.get("traffic", ""), price=result.get("price", ""),
                     match_details=matched)
                 message = notification_text(test_product, None, link, product, checked_at=result["checked_at"], test=True, duration=result["duration_seconds"])
+            elif product.get("adapter") == "hytron":
+                resources = product.get("notify_resources")
+                if not isinstance(resources, list):
+                    resources = ["stock", "cpu", "ram_mb", "disk_gb", "ipv4", "ipv6", "vm_slots"]
+                capacity = matched.get("node_capacity") if isinstance(matched.get("node_capacity"), dict) else {}
+                message = hytron_resource_message(
+                    name=display_name,
+                    region=result.get("region") or matched.get("location_code") or "",
+                    available=result.get("available"),
+                    capacity=capacity,
+                    changes={},
+                    resources=resources,
+                    checked_at=result["checked_at"],
+                ) + "\n\n单次测试，不改变自动监控状态。"
             else:
                 message = stock_message(vendor=product.get("provider") or product.get("adapter", ""),
                 name=display_name, available=result["available"], stock_mode=result.get("stock_mode", "quantity"),

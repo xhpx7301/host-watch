@@ -278,3 +278,25 @@ def stock_message(*, vendor: str, name: str, available: int, stock_mode: str, re
     if purchase_button(purchase_url):
         lines.append(f'\n🛒 <b>购买链接：</b><a href="{escape(purchase_url, quote=True)}">点击直达购买</a>')
     return "\n".join(lines)
+
+
+def hytron_resource_message(*, name: str, region: str, available: int | None, capacity: dict, changes: dict,
+                            resources: list[str], checked_at: str = "") -> str:
+    labels = {"cpu": ("CPU", " 核"), "ram_mb": ("内存", " MB"), "disk_gb": ("硬盘", " GB"),
+              "ipv4": ("IPv4", " 个"), "ipv6": ("IPv6", " 个"), "vm_slots": ("VM", " 个")}
+    status = "有货" if type(available) is int and available > 0 else "缺货" if type(available) is int else "未知"
+    lines = ["<b>🔔 Hytron 节点资源变化</b>", f"<b>{escape(str(name)[:160])}</b>",
+             f"🌏 <b>地区：</b>{escape(str(region or '—')[:100])}", f"📦 <b>状态：</b>{status}"]
+    selected = [key for key in resources if key in labels]
+    if "stock" in resources:
+        lines.append("🧾 <b>节点库存：</b>有可用资源" if type(available) is int and available > 0 else "🧾 <b>节点库存：</b>暂无可用资源" if type(available) is int else "🧾 <b>节点库存：</b>暂未确认")
+    for key in selected:
+        value = capacity.get(key)
+        if type(value) is not int:
+            continue
+        label, suffix = labels[key]
+        change = changes.get(key)
+        delta = f"（{change:+d}）" if type(change) is int else ""
+        lines.append(f"⚙️ <b>{label}：</b>{value}{suffix}{delta}")
+    lines.append(f"🕒 <b>检查时间：</b>{escape(format_beijing(checked_at))}")
+    return "\n".join(lines)

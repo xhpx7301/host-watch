@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 
 import admin
 import monitor
+from stock_alerts import StockAlerts
 from test_monitor import html_product
 
 
@@ -292,6 +293,67 @@ class RestockMessageTests(unittest.TestCase):
         self.assertEqual(self.methods(), ["sendMessage", "editMessageText"])
         self.assertEqual(self.calls[-1][1]["reply_markup"]["inline_keyboard"][0][0]["url"], "https://shop.example.com/new-order")
         self.assertIn("&lt;b&gt;自用&lt;/b&gt;", self.calls[-1][1]["text"])
+
+
+class HytronResourceNotificationTests(unittest.TestCase):
+    class Backend:
+        class TelegramMessageUnavailable(Exception):
+            pass
+
+        class MonitorError(Exception):
+            pass
+
+        def __init__(self):
+            self.calls = []
+
+        def write_state(self, path, current):
+            pass
+
+        def telegram_request(self, session, token, method, **payload):
+            self.calls.append((method, payload))
+            return {"ok": True}
+
+    def setUp(self):
+        self.backend = self.Backend()
+        self.item = {"id": "hytron-node", "adapter": "hytron", "name": "HK Node", "notify_resources": ["stock", "cpu"]}
+        self.current = {"hytron-node": {}}
+        self.alerts = StockAlerts(self.backend, Mock(), {"telegram": {}}, Path("state.json"), self.current, "123:secret", "456")
+
+    @staticmethod
+    def product(*, cpu=10, has_capacity=True, ram=8192):
+        return monitor.Product("node", "HK Node", int(has_capacity), "https://hyvps.hytron.io/order", vendor="Hytron",
+            stock_mode="availability", region="Hong Kong", specs=f"可用 CPU {cpu} 核 · 内存 {ram} MB",
+            match_details={"node_capacity": {"cpu": cpu, "ram_mb": ram, "disk_gb": 100, "ipv4": 2, "ipv6": 1, "vm_slots": 8},
+                "node_has_capacity": has_capacity})
+
+    def test_first_check_sets_baseline_and_selected_change_sends_resource_details(self):
+        self.alerts.resource_update(self.item, self.product())
+        self.assertEqual(self.backend.calls, [])
+        self.alerts.resource_update(self.item, self.product(cpu=12, ram=4096))
+        self.assertEqual([call[0] for call in self.backend.calls], ["sendMessage"])
+        message = self.backend.calls[0][1]["text"]
+        self.assertIn("Hytron 节点资源变化", message)
+        self.assertIn("HK Node", message)
+        self.assertIn("地区：", message)
+        self.assertIn("CPU：</b>12 核（+2）", message)
+        self.assertNotIn("内存：</b>", message)
+
+    def test_unselected_changes_and_resource_selection_changes_do_not_notify(self):
+        self.alerts.resource_update(self.item, self.product())
+        self.alerts.resource_update(self.item, self.product(cpu=10, ram=4096))
+        self.assertEqual(self.backend.calls, [])
+        self.item["notify_resources"] = ["stock", "ram_mb"]
+        self.alerts.resource_update(self.item, self.product(cpu=10, ram=2048))
+        self.assertEqual(self.backend.calls, [])
+        self.alerts.resource_update(self.item, self.product(cpu=10, ram=1024))
+        self.assertEqual(len(self.backend.calls), 1)
+        self.assertIn("内存：</b>1024 MB（-1024）", self.backend.calls[0][1]["text"])
+
+    def test_stock_state_change_is_reported_when_selected(self):
+        self.alerts.resource_update(self.item, self.product(has_capacity=True))
+        self.alerts.resource_update(self.item, self.product(has_capacity=False))
+        self.assertEqual(len(self.backend.calls), 1)
+        self.assertIn("状态：</b>缺货", self.backend.calls[0][1]["text"])
 
 
 class TelegramEditAPITests(unittest.TestCase):

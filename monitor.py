@@ -1549,11 +1549,17 @@ def collect_inventory(session, config, selected, found, unavailable, cache_path:
                 fetcher = product_fetcher(config.get("fetcher"), item)
                 if hytron_catalog is None:
                     hytron_catalog = fetch_catalog(session, fetcher)
-                resources = item.get("resources") or {}
-                caps_key = (resources.get("cpu", 1), resources.get("ram_mb", 1024), fetcher.get("mode", "requests"))
-                if caps_key not in hytron_caps:
-                    hytron_caps[caps_key] = fetch_resource_caps(session, fetcher, caps_key[0], caps_key[1])
-                found[item["id"]] = inspect(session, item, fetcher, hytron_catalog, hytron_caps[caps_key])
+                caps = None
+                # Node余量模式 is fully described by the public catalog. The
+                # resource-caps endpoint is only needed for a configured
+                # CPU/RAM/disk combination.
+                if item.get("resources") is not None:
+                    resources = item["resources"]
+                    caps_key = (resources.get("cpu", 1), resources.get("ram_mb", 1024), fetcher.get("mode", "requests"))
+                    if caps_key not in hytron_caps:
+                        hytron_caps[caps_key] = fetch_resource_caps(session, fetcher, caps_key[0], caps_key[1])
+                    caps = hytron_caps[caps_key]
+                found[item["id"]] = inspect(session, item, fetcher, hytron_catalog, caps)
                 write_inventory_cache(cache_path, item, fetcher, found[item["id"]])
             elif item["adapter"] == "vps_soy":
                 fetcher = product_fetcher(config.get("fetcher"), item)
@@ -1678,6 +1684,10 @@ def check_once(
             "available": product.available,
             "url": product.url,
             "notify_enabled": subscribed,
+            **({
+                "node_capacity": product.match_details.get("node_capacity"),
+                "node_has_capacity": product.match_details.get("node_has_capacity"),
+            } if item["adapter"] == "hytron" and isinstance(product.match_details, dict) else {}),
         }
         if role in {"both", "notify"} and subscribed:
             try:
@@ -1707,10 +1717,12 @@ def check_once(
             logging.warning("商品待核对：%s / %s", item["name"], unavailable[item["id"]])
             continue
         product = found[item["id"]]
+        details = product.match_details if isinstance(product.match_details, dict) else {}
         rows.append({"id": item["id"], "name": product.name, "vendor": item["provider"],
                      "available": product.available, "stock_mode": product.stock_mode, "url": product.url,
                      "purchase_url": purchase_link(product, item, config), "checked_at": checked_at,
                      **({"stock_version": product.match_details["stock_version"]} if item["adapter"] == "dmit" else {}),
+                     **({"node_capacity": details.get("node_capacity"), "node_has_capacity": details.get("node_has_capacity")} if item["adapter"] == "hytron" else {}),
                      **{field: getattr(product, field) for field in ("region", "specs", "traffic", "price")}})
     write_status(status_path, {
         "last_checked": checked_at, "state": "partial" if unavailable or notification_errors or alerts.warnings or seckill_status and not seckill_status["ok"] else "ok",

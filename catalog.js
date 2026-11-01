@@ -197,7 +197,7 @@
     }
     if (provider === "hytron") {
       get("catalog-search").placeholder = "节点名称、地区、机房或配置，例如 HKG、WPC";
-      get("catalog-help").textContent = "Hytron 按香港节点展示剩余 CPU、内存、硬盘和 IP 配额；加入监控后可在商品设置中填写目标资源组合，同一节点可复制多组配置分别监控补货。数量按当前各项可用配额计算，最终可选资源和价格以 Hytron 官网结账页为准。";
+      get("catalog-help").textContent = "Hytron 直接按香港节点展示当前 CPU、内存、硬盘、IPv4、IPv6 和 VM 配额；加入监控后可在商品设置中选择关注的节点资源，资源发生变化时按所选项目发送 Telegram 通知。节点余量模式不依赖资源组合接口，价格和最终可选配置以官网下单页为准。";
     }
     if (!active) return;
     const rows = data?.rows || [], regions = new Map(), machines = new Map();
@@ -434,7 +434,7 @@
         config.products.push(item);
       }
       if (!item) continue;
-      item.snapshot = { name: row.name, region: row.region, specs: row.specs, traffic: row.traffic || "", price: row.price, available: row.available, stock_mode: row.stock_mode, url: row.purchase_url, checked_at: data?.fetched_at || "" };
+      item.snapshot = { name: row.name, region: row.region, specs: row.specs, traffic: row.traffic || "", price: row.price, available: row.available, stock_mode: row.stock_mode, url: row.purchase_url, node_capacity: row.node_capacity || null, checked_at: data?.fetched_at || "" };
       if (row.watch.adapter === "dmit") item.snapshot.stock_version = data?.stock_version || 0;
       if (membership(item, type) !== enabled) { setMembership(item, type, enabled); changed++; }
     }

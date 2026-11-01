@@ -139,6 +139,19 @@ def _quantity(node: dict, resources: dict) -> int:
     return max(0, min(values))
 
 
+def node_resources(node: dict) -> dict:
+    """Return the public per-node capacity snapshot without deriving a starter plan."""
+    capacity = node.get("capacity") if isinstance(node.get("capacity"), dict) else {}
+    available = node.get("available") if isinstance(node.get("available"), dict) else {}
+    aliases = {"cpu": "cpu", "ram_mb": "ram_mb", "disk_gb": "disk_gb", "ipv4": "ipv4", "ipv6": "ipv6", "vm_slots": "vm_slots"}
+    result = {}
+    for key, fallback in aliases.items():
+        entry = capacity.get(key) if isinstance(capacity.get(key), dict) else {}
+        value = entry.get("available", available.get(fallback, available.get("ips", 0)))
+        result[key] = value if type(value) is int and value >= 0 else 0
+    return result
+
+
 def _product(node: dict, caps: dict, item: dict | None = None):
     from monitor import MonitorError, Product
 
@@ -146,6 +159,18 @@ def _product(node: dict, caps: dict, item: dict | None = None):
     if not node_id:
         raise MonitorError("Hytron 节点缺少稳定 ID")
     custom_resources = bool(item and item.get("resources") is not None)
+    capacity = node_resources(node)
+    if not custom_resources:
+        name = clean(node.get("name"), 120) or node_id
+        location = clean(node.get("location"), 80) or clean(node.get("location_code"), 20) or "未知地区"
+        specs = f"可用 CPU {capacity['cpu']} 核 · 内存 {capacity['ram_mb']} MB · 磁盘 {capacity['disk_gb']} GB · IPv4 {capacity['ipv4']} · IPv6 {capacity['ipv6']} · VM {capacity['vm_slots']}"
+        has_capacity = node.get("has_capacity") if isinstance(node.get("has_capacity"), bool) and node.get("needs_sync") is not True else None
+        available = None if has_capacity is None else int(has_capacity)
+        return Product(node_id, name, available, ORDER_URL,
+            vendor=PROVIDER_NAME, stock_mode="availability", region=location, node_name=name, specs=specs,
+            price="以 Hytron 官网为准", catalog_url=CATALOG_URL,
+            match_details={"node_id": node_id, "location_code": clean(node.get("location_code"), 20), "node_capacity": capacity,
+                           "node_has_capacity": has_capacity})
     resources = _configured_resources(node, caps, item) if custom_resources else _starter(node, caps)
     if resources is None:
         raise MonitorError("Hytron 节点当前没有可验证的入门配置或公网地址")
@@ -167,7 +192,7 @@ def _product(node: dict, caps: dict, item: dict | None = None):
     price = f"${hourly.quantize(Decimal('0.000001'), rounding=ROUND_CEILING):f}/小时 · 开通费 ${_decimal(pricing.get('setup_fee', 0), '开通费').quantize(Decimal('0.01')):f}"
     specs = f"{resources['cpu']} 核 · {resources['ram_mb'] // 1024} GB · {resources['disk_gb']} GB · {'自定义配置' if custom_resources else '入门配置'}"
     traffic = f"IPv4 {resources['ipv4']} · IPv6 {resources['ipv6']} · 流量 ${_decimal(pricing.get('price_per_gb_traffic', 0), '流量价格'):f}/GB"
-    return Product(node_id, name, quantity, purchase_url, vendor=PROVIDER_NAME, stock_mode="quantity", region=location, node_name=name, specs=specs, traffic=traffic, price=price, catalog_url=CATALOG_URL, match_details={"node_id": node_id, "location_code": clean(node.get("location_code"), 20), "resources": resources, **({} if custom_resources else {"starter": resources})})
+    return Product(node_id, name, quantity, purchase_url, vendor=PROVIDER_NAME, stock_mode="quantity", region=location, node_name=name, specs=specs, traffic=traffic, price=price, catalog_url=CATALOG_URL, match_details={"node_id": node_id, "location_code": clean(node.get("location_code"), 20), "resources": resources, "node_capacity": capacity})
 
 
 def inspect(session, item: dict, fetcher: dict | None = None, catalog: list[dict] | None = None, caps: dict | None = None):
@@ -179,7 +204,9 @@ def inspect(session, item: dict, fetcher: dict | None = None, catalog: list[dict
     if len(matches) != 1:
         raise MonitorError("Hytron 节点已下线或标识不唯一，保留配置等待恢复")
     resources = item.get("resources") or {}
-    resource_caps = caps or fetch_resource_caps(session, fetcher, resources.get("cpu", 1), resources.get("ram_mb", 1024))
+    resource_caps = caps
+    if item.get("resources") is not None and resource_caps is None:
+        resource_caps = fetch_resource_caps(session, fetcher, resources.get("cpu", 1), resources.get("ram_mb", 1024))
     try:
         return _product(matches[0], resource_caps, item)
     except ValueError as exc:
@@ -191,7 +218,6 @@ def directory(session, scope: str = "", fetcher: dict | None = None):
     from catalog import make_row, scoped
 
     nodes = fetch_catalog(session, fetcher)
-    caps = fetch_resource_caps(session, fetcher)
     scopes = [{"id": "all", "name": "全部节点"}]
     locations = {}
     for node in nodes:
@@ -205,15 +231,17 @@ def directory(session, scope: str = "", fetcher: dict | None = None):
         if selected["id"] != "all" and code != selected["id"]:
             continue
         node_id = str(node.get("id", "")).strip()
-        resources = _starter(node, caps)
+        resources = node_resources(node)
         watch = {"adapter": "hytron", "provider": PROVIDER_NAME, "name": clean(node.get("name"), 120) or node_id, "node_id": node_id, "category_url": CATALOG_URL, "selector": node_id}
-        if resources:
-            watch["resources"] = resources
+        watch["notify_resources"] = ["stock", "cpu", "ram_mb", "disk_gb", "ipv4", "ipv6", "vm_slots"]
         error, product = "", None
         try:
-            product = _product(node, caps)
+            # The default node view is based on the public capacity snapshot;
+            # it must remain available even when the optional resource-cap
+            # endpoint cannot be reached.
+            product = _product(node, None)
         except MonitorError as exc:
             error = str(exc)
-        specs = f"{resources['cpu']} 核 · {resources['ram_mb'] // 1024} GB · {resources['disk_gb']} GB · 入门配置" if resources else "入门配置暂不可用"
+        specs = f"可用 CPU {resources['cpu']} 核 · 内存 {resources['ram_mb']} MB · 磁盘 {resources['disk_gb']} GB · IPv4 {resources['ipv4']} · IPv6 {resources['ipv6']} · VM {resources['vm_slots']}"
         rows.append(make_row(f"hytron:{node_id}", watch, node.get("location", code), clean(node.get("name"), 120), specs, product.price if product else "—", product, error, traffic=product.traffic if product else ""))
     return scopes, selected["id"], rows

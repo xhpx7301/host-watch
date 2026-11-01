@@ -1567,6 +1567,7 @@ function productEditor(item, index) {
   );
   const hytronFields = text("div", "", "form-grid span-2");
   hytronFields.dataset.adapterFields = "hytron";
+  const hytronMode = item.resources ? "plan" : "node";
   const hytronResources = item.resources || { cpu: 1, ram_mb: 1024, disk_gb: 3, ipv4: 1, ipv6: 0 };
   const hytronCpu = inputField("CPU 核数", hytronResources.cpu, "hytron_cpu", "number");
   const hytronRam = inputField("内存（GB）", hytronResources.ram_mb / 1024, "hytron_ram_gb", "number");
@@ -1588,10 +1589,44 @@ function productEditor(item, index) {
     config.products.push(copy); openProducts.add(copy.id); renderProducts(); updateDraftState();
     setMessage("已复制该 Hytron 节点配置，请调整资源组合并选择监控或通知。", "pending");
   });
+  const hytronModes = text("div", "", "segmented-control span-2");
+  hytronModes.dataset.hytronMode = "";
+  for (const [value, label] of [["node", "节点余量"], ["plan", "套餐组合"]]) {
+    const button = text("button", label); button.type = "button"; button.dataset.mode = value;
+    button.setAttribute("aria-pressed", String(hytronMode === value));
+    button.addEventListener("click", () => {
+      const fields = article.querySelector('[data-adapter-fields="hytron"]');
+      fields.dataset.hytronSelectedMode = value;
+      for (const option of fields.querySelectorAll("[data-mode]")) option.setAttribute("aria-pressed", String(option.dataset.mode === value));
+      fields.querySelectorAll("[data-hytron-plan]").forEach(node => { node.hidden = value !== "plan"; });
+      syncEditor(article); updateDraftState(); scheduleAutoSave(`product:${item.id}`);
+    });
+    hytronModes.append(button);
+  }
+  hytronFields.dataset.hytronSelectedMode = hytronMode;
+  const planFields = text("div", "", "form-grid span-2"); planFields.dataset.hytronPlan = "";
+  planFields.append(hytronCpu, hytronRam, hytronDisk, hytronIpv4, hytronIpv6, hytronCopy);
+  planFields.hidden = hytronMode !== "plan";
+  const notifyResourceChoices = [
+    ["stock", "有货状态"], ["cpu", "CPU"], ["ram_mb", "内存"], ["disk_gb", "硬盘"],
+    ["ipv4", "IPv4"], ["ipv6", "IPv6"], ["vm_slots", "VM 数量"],
+  ];
+  const selectedNotifyResources = new Set(item.notify_resources || notifyResourceChoices.map(([key]) => key));
+  const resourcePicker = text("div", "", "choice-group span-2"); resourcePicker.dataset.hytronNotifyResources = "";
+  for (const [key, label] of notifyResourceChoices) {
+    const button = text("button", label, "option-button"); button.type = "button"; button.dataset.resource = key;
+    button.setAttribute("aria-pressed", String(selectedNotifyResources.has(key)));
+    button.addEventListener("click", () => {
+      button.setAttribute("aria-pressed", String(button.getAttribute("aria-pressed") !== "true"));
+      syncEditor(article); updateDraftState(); scheduleAutoSave(`product:${item.id}`);
+    });
+    resourcePicker.append(button);
+  }
   hytronFields.append(
     inputField("Hytron 节点 ID", item.adapter === "hytron" ? item.node_id : "", "hytron_node_id", "text", "从 Hytron 库存大盘选择节点"),
-    hytronCpu, hytronRam, hytronDisk, hytronIpv4, hytronIpv6, hytronCopy,
-    text("p", "按此节点可用 CPU、内存、硬盘和公网地址计算所选组合可创建数量；资源相同才会合并为同一监控项。至少选择 IPv4 或 IPv6。复制此节点配置可监控同一节点的另一组资源；最终可选项和价格以 Hytron 结账页为准。", "hint span-2"),
+    hytronModes, planFields,
+    text("label", "通知关注项", "span-2"), resourcePicker,
+    text("p", "节点余量模式直接监控节点当前 CPU、内存、硬盘、IP 和 VM 配额；套餐组合保留按资源组合计算可创建数量。通知仅推送所选关注项的变化。", "hint span-2"),
   );
   modeWrap.append(vmissFields, htmlFields, soyFields, akileFields, narwhalFields, isvoroFields, dmitFields, bwhFields, hytronFields);
   const result = text("div", "", "product-test-result");
@@ -1649,14 +1684,11 @@ function syncEditor(article) {
     item.pid = get("bwh_pid").value.trim();
   } else if (item.adapter === "hytron") {
     item.node_id = get("hytron_node_id").value.trim();
-    const ramGb = Number(get("hytron_ram_gb").value);
-    item.resources = {
-      cpu: Number(get("hytron_cpu").value),
-      ram_mb: Math.round(ramGb * 1024),
-      disk_gb: Number(get("hytron_disk_gb").value),
-      ipv4: Number(get("hytron_ipv4").value),
-      ipv6: Number(get("hytron_ipv6").value),
-    };
+    item.notify_resources = [...article.querySelectorAll("[data-hytron-notify-resources] [data-resource][aria-pressed='true']")].map(button => button.dataset.resource);
+    if (article.querySelector('[data-adapter-fields="hytron"]')?.dataset.hytronSelectedMode === "plan") {
+      const ramGb = Number(get("hytron_ram_gb").value);
+      item.resources = { cpu: Number(get("hytron_cpu").value), ram_mb: Math.round(ramGb * 1024), disk_gb: Number(get("hytron_disk_gb").value), ipv4: Number(get("hytron_ipv4").value), ipv6: Number(get("hytron_ipv6").value) };
+    } else delete item.resources;
   } else if (item.adapter === "vps_soy") {
     item.url = get("soy_url").value.trim();
     item.selector = get("soy_selector").value.trim();
@@ -1710,9 +1742,16 @@ function renderProductTest(article, id) {
   if (result.route) node.append(text("div", `本次读取：${requestRouteLabel(result.route)}。出口使用已保存配置。`, "test-notification"));
   if (result.matched_product) {
     const matched = result.matched_product;
-    node.append(text("span", matched.type_name
-      ? `实际匹配：${matched.type_name}（${matched.type_id}） → ${matched.category_name}（${matched.category_id}） → ${matched.plan_name}（${matched.product_id}）`
-      : `实际匹配：${matched.area_name}（地区 ID=${matched.area_id}） · ${matched.node_name} · ${matched.plan_name}`, "test-notification"));
+    if (item.adapter === "hytron") {
+      const capacity = matched.node_capacity || {};
+      const values = [["CPU", capacity.cpu, "核"], ["内存", capacity.ram_mb, " MB"], ["硬盘", capacity.disk_gb, " GB"], ["IPv4", capacity.ipv4, ""], ["IPv6", capacity.ipv6, ""], ["VM", capacity.vm_slots, ""]]
+        .filter(([, value]) => Number.isInteger(value)).map(([label, value, suffix]) => `${label} ${value}${suffix}`);
+      node.append(text("span", `节点：${matched.node_id || item.node_id || item.name}${matched.location_code ? ` · 地区 ${matched.location_code}` : ""}${values.length ? ` · ${values.join(" / ")}` : ""}`, "test-notification"));
+    } else {
+      node.append(text("span", matched.type_name
+        ? `实际匹配：${matched.type_name}（${matched.type_id}） → ${matched.category_name}（${matched.category_id}） → ${matched.plan_name}（${matched.product_id}）`
+        : `实际匹配：${matched.area_name}（地区 ID=${matched.area_id}） · ${matched.node_name} · ${matched.plan_name}`, "test-notification"));
+    }
   }
   if (result.catalog_url) node.append(text("span", `检查分类：${result.catalog_url}`, "test-notification"));
   if (result.notification) node.append(text("span", result.notification.message, `test-notification ${result.notification.status === "sent" ? "success" : "error"}`));
