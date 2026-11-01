@@ -1517,6 +1517,21 @@ class MerchantAccountHealthTests(unittest.TestCase):
         self.assertTrue(admin.merchant_account_status('account')['ok'])
         self.assertEqual(cached.get.call_args.args[0], private_url)
 
+    def test_akile_cached_session_status_uses_specialized_adapter_name(self):
+        account = self.config['vps_seckill']['accounts'][0]
+        account.update(provider='akile', login_url=admin.AKILE_LOGIN_URL)
+        admin.CONFIG_PATH.write_text(json.dumps(self.config), encoding='utf-8')
+        session = requests.Session()
+        with patch('monitor.product_fetcher', return_value=object()), \
+             patch.object(admin, '_get_merchant_session', return_value=session), \
+             patch.object(admin, '_akile_authenticated', return_value=True), \
+             patch.object(admin, '_renew_merchant_session') as renew:
+            result = admin.merchant_account_status(account['id'])
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['status'], 'valid')
+        self.assertEqual(result['message'], 'Akile 登录缓存正常')
+        renew.assert_called_once()
+
     def test_uncertain_health_preserves_cache_but_explicit_expiration_removes_it(self):
         admin._store_merchant_session('vps_soy', self.account, None, requests.Session())
         cached = admin._get_merchant_session('vps_soy', self.account)

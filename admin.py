@@ -3473,8 +3473,11 @@ def merchant_account_status(account_id: str) -> dict:
             probe = _merchant_auth_probe(session, MERCHANT_LOGIN_ADAPTERS[adapter_id])
         if probe == "valid":
             _renew_merchant_session(adapter_id, account, fetcher, session)
+            adapter_name = MERCHANT_LOGIN_ADAPTERS.get(adapter_id, {}).get("name")
+            if not adapter_name:
+                adapter_name = {"akile": "Akile", "narwhal": "独角鲸云", "hytron": "Hytron"}.get(adapter_id, adapter_id)
             return {**result, "status": "valid", "ok": True, "session_reused": True,
-                    "message": f"{MERCHANT_LOGIN_ADAPTERS[adapter_id]['name']} 登录缓存正常"}
+                    "message": f"{adapter_name} 登录缓存正常"}
         if probe == "unknown":
             return {**result, "message": "官网暂时无法确认登录状态；已保留上次认证结果和缓存，请稍后重试"}
         if not _remove_merchant_session(adapter_id, account, fetcher, expected_session=session):
