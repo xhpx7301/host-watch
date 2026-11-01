@@ -27,7 +27,8 @@
       "isvoro": "inherit",
       "html": "inherit",
       "dmit": "inherit",
-      "bwh": "inherit"
+      "bwh": "inherit",
+      "hytron": "inherit"
     }
   },
   "telegram": {
@@ -67,6 +68,7 @@
     "akile",
     "isvoro",
     "dmit",
-    "bwh"
+    "bwh",
+    "hytron"
   ]
 }

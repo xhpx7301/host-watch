@@ -10,7 +10,7 @@ let config = {
   isvoro_seckill: false,
   affiliate_id: "",
   affiliates: {},
-  merchant_order: ["vmiss", "vps_soy", "akile", "isvoro", "dmit", "bwh"],
+  merchant_order: ["vmiss", "vps_soy", "akile", "isvoro", "dmit", "bwh", "hytron"],
   watch_order: [],
   notify_order: [],
   fetcher: { mode: "requests", flaresolverr_url: "http://127.0.0.1:8191/v1", timeout_seconds: 60 },
@@ -1354,7 +1354,13 @@ function productEditor(item, index) {
     inputField("商品 PID（购买入口）", item.adapter === "bwh" ? item.pid : "", "bwh_pid", "text", "例如 87"),
     text("p", "搬瓦工使用公开 catalog.json 精确匹配商品、机房和计费周期；地区会自动显示中文。建议从 VPS 库存大盘添加，缺货商品也会保留套餐标识等待恢复。AFF 管理中的推广码会应用到带机房配置的购买入口。", "hint span-2"),
   );
-  modeWrap.append(vmissFields, htmlFields, soyFields, akileFields, narwhalFields, isvoroFields, dmitFields, bwhFields);
+  const hytronFields = text("div", "", "form-grid span-2");
+  hytronFields.dataset.adapterFields = "hytron";
+  hytronFields.append(
+    inputField("Hytron 节点 ID", item.adapter === "hytron" ? item.node_id : "", "hytron_node_id", "text", "从 Hytron 库存大盘选择节点"),
+    text("p", "Hytron 通过公开节点目录读取容量和按小时价格，库存按当前节点可部署的入门配置数量计算。建议从库存大盘添加；购买入口会打开 Hytron 官网下单页，最终资源和价格以官网结账为准。", "hint span-2"),
+  );
+  modeWrap.append(vmissFields, htmlFields, soyFields, akileFields, narwhalFields, isvoroFields, dmitFields, bwhFields, hytronFields);
   const result = text("div", "", "product-test-result");
   result.setAttribute("role", "status");
   result.setAttribute("aria-live", "polite");
@@ -1408,6 +1414,8 @@ function syncEditor(article) {
     item.bwh_offer_key = get("bwh_offer_key").value.trim();
     item.selector = item.bwh_offer_key;
     item.pid = get("bwh_pid").value.trim();
+  } else if (item.adapter === "hytron") {
+    item.node_id = get("hytron_node_id").value.trim();
   } else if (item.adapter === "vps_soy") {
     item.url = get("soy_url").value.trim();
     item.selector = get("soy_selector").value.trim();
@@ -1745,7 +1753,7 @@ function productMonitorLabel(item, saved) {
   return ({ failed: "监控服务运行失败", activating: "监控服务启动中", deactivating: "监控服务停止中" })[active] || "监控服务状态未知";
 }
 
-const merchantNames = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", narwhal: "独角鲸云", isvoro: "Isvoro", dmit: "DMIT", bwh: "搬瓦工" };
+const merchantNames = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", narwhal: "独角鲸云", isvoro: "Isvoro", dmit: "DMIT", bwh: "搬瓦工", hytron: "Hytron" };
 const customMerchantEntry = ["html", "其他商家 / 自定义网页"];
 const providerScheduleModules = { monitor: "monitor", notifications: "notify", "seckill-settings": "seckill" };
 function scheduleProviderOptions() { return [...Object.entries(merchantNames), customMerchantEntry]; }
@@ -1829,7 +1837,7 @@ function merchantRequestChanged(provider) {
   };
   return JSON.stringify(relevant(collectConfig())) !== JSON.stringify(relevant(JSON.parse(savedConfig)));
 }
-const merchantHosts = { vmiss: "app.vmiss.com", vps_soy: "www.vps.soy", akile: "akile.ai", narwhal: "dash.fuckip.me", isvoro: "isvoro.com", dmit: "www.dmit.io", bwh: "bwh81.net" };
+const merchantHosts = { vmiss: "app.vmiss.com", vps_soy: "www.vps.soy", akile: "akile.ai", narwhal: "dash.fuckip.me", isvoro: "isvoro.com", dmit: "www.dmit.io", bwh: "bwh81.net", hytron: "hyvps.hytron.io" };
 function merchantOrder() {
   return [...new Set([...(config.merchant_order || []), ...Object.keys(merchantNames)])].filter((key) => Object.hasOwn(merchantNames, key));
 }
@@ -3034,7 +3042,7 @@ function seckillItemId() { return `seckill-${Date.now()}-${Math.random().toStrin
 function seckillItems() { return config.vps_seckill?.items || (config.vps_seckill = { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] }).items; }
 function seckillAccounts() { return config.vps_seckill?.accounts || (config.vps_seckill.accounts = []); }
 function seckillProviderKey(value) {
-  const aliases = { vmiss: "vmiss", "vps.soy": "vps_soy", vps_soy: "vps_soy", "搬瓦工": "bwh", bwh: "bwh", bandwagonhost: "bwh", akile: "akile", narwhal: "narwhal", "独角鲸云": "narwhal", isvoro: "isvoro", dmit: "dmit" };
+  const aliases = { vmiss: "vmiss", "vps.soy": "vps_soy", vps_soy: "vps_soy", "搬瓦工": "bwh", bwh: "bwh", bandwagonhost: "bwh", akile: "akile", narwhal: "narwhal", "独角鲸云": "narwhal", isvoro: "isvoro", dmit: "dmit", hytron: "hytron" };
   const raw = String(value || "").trim();
   return aliases[raw.toLowerCase()] || (Object.prototype.hasOwnProperty.call(merchantNames, raw) ? raw : "");
 }
@@ -4015,6 +4023,7 @@ const merchantPresets = {
   isvoro: { label: "Isvoro", hint: "按类型、地区/线路、套餐分别选择，默认中国香港 → HK PROD → HK PROD MiNi。", product: { adapter: "isvoro", provider: "Isvoro", name: "HK PROD MiNi", type_id: "24", type_name: "中国香港", category_id: "27", category_name: "HK PROD", product_id: "188", product_name: "HK PROD MiNi", request_mode: "inherit" } },
   dmit: { label: "DMIT", hint: "优先从库存大盘选择套餐；也可填写官网分类页与购买链接中的 PID。AFF 默认 22544，可在 AFF 管理中修改。", product: { adapter: "dmit", provider: "DMIT", name: "", category_url: "https://www.dmit.io/pages/pricing", pid: "", request_mode: "inherit" } },
   bwh: { label: "搬瓦工", hint: "读取公开 catalog.json，默认洛杉矶 USCA_9 电商 VPS；地区和套餐会自动显示中文。AFF 默认 84938，可在 AFF 管理中修改。", product: { adapter: "bwh", provider: "搬瓦工", name: "", category_url: "https://bwh81.net/order/ecommerce/Los%20Angeles/USCA_9", bwh_offer_key: "", selector: "", pid: "", request_mode: "inherit" } },
+  hytron: { label: "Hytron", hint: "读取 HytronVPS 公开节点目录，按节点展示容量和入门配置的按小时价格。", product: { adapter: "hytron", provider: "Hytron", name: "", node_id: "", request_mode: "inherit" } },
 };
 const merchantSelect = document.querySelector("#add-merchant");
 for (const [key, preset] of Object.entries(merchantPresets)) {

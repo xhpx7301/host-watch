@@ -1134,6 +1134,9 @@ def inspect_product(session: requests.Session, item: dict, fetcher: dict) -> Pro
     if item["adapter"] == "bwh":
         from bwh import inspect
         return inspect(session, item, product_fetcher(fetcher, item))
+    if item["adapter"] == "hytron":
+        from hytron import inspect
+        return inspect(session, item, product_fetcher(fetcher, item))
     if item["adapter"] == "vmiss":
         products = fetch_products(session, item["category_url"], [item["selector"]], product_fetcher(fetcher, item))
         if len(products) != 1:
@@ -1284,6 +1287,10 @@ def selected_products(config: dict, role: str | None = None) -> list[dict]:
                 raise MonitorError(f"商品 {name} 的搬瓦工配置无效：{exc}") from exc
             if not re.fullmatch(r"[0-9]+:[A-Za-z0-9_-]{1,40}:[A-Za-z0-9_-]{1,40}:[0-9]+", str(item.get("bwh_offer_key", item.get("selector", "")))):
                 raise MonitorError(f"商品 {name} 缺少有效的搬瓦工套餐标识")
+        elif item.get("adapter") == "hytron":
+            node_id = str(item.get("node_id", "")).strip()
+            if not re.fullmatch(r"[0-9a-fA-F-]{20,80}", node_id):
+                raise MonitorError(f"商品 {name} 缺少有效的 Hytron 节点标识")
         elif item.get("adapter") == "vps_soy":
             if urlsplit(str(item.get("url", ""))).hostname != "www.vps.soy" or not item.get("selector"):
                 raise MonitorError(f"商品 {name} 的 VPS.SOY 配置不完整")
@@ -1338,7 +1345,7 @@ def inventory_cache_identity(item: dict, fetcher: dict) -> dict:
     """Return only request-affecting product fields for shared stock caching."""
     fields = ("url", "category_url", "selector", "stock_selector", "stock_mode", "stock_pattern",
               "available_pattern", "unavailable_pattern", "request_mode", "gid", "pid", "plan_key",
-              "bwh_offer_key", "type_id", "category_id", "product_id", "node_name", "area_id", "machine_id", "plan_id")
+              "bwh_offer_key", "type_id", "category_id", "product_id", "node_name", "area_id", "machine_id", "plan_id", "node_id")
     return {
         "id": str(item.get("id", "")),
         "adapter": str(item.get("adapter", "")),
@@ -1519,6 +1526,8 @@ def collect_inventory(session, config, selected, found, unavailable, cache_path:
     isvoro_catalogs = {}
     dmit_catalogs = {}
     bwh_catalogs = {}
+    hytron_catalog = None
+    hytron_caps = None
     for item in selected:
         try:
             if item["adapter"] == "html":
@@ -1534,6 +1543,14 @@ def collect_inventory(session, config, selected, found, unavailable, cache_path:
                 from bwh import inspect
                 fetcher = product_fetcher(config.get("fetcher"), item)
                 found[item["id"]] = inspect(session, item, fetcher, bwh_catalogs)
+                write_inventory_cache(cache_path, item, fetcher, found[item["id"]])
+            elif item["adapter"] == "hytron":
+                from hytron import fetch_catalog, fetch_resource_caps, inspect
+                fetcher = product_fetcher(config.get("fetcher"), item)
+                if hytron_catalog is None:
+                    hytron_catalog = fetch_catalog(session, fetcher)
+                    hytron_caps = fetch_resource_caps(session, fetcher)
+                found[item["id"]] = inspect(session, item, fetcher, hytron_catalog, hytron_caps)
                 write_inventory_cache(cache_path, item, fetcher, found[item["id"]])
             elif item["adapter"] == "vps_soy":
                 fetcher = product_fetcher(config.get("fetcher"), item)

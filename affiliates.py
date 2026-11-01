@@ -2,15 +2,15 @@
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import re
 
-PROVIDERS = ("vmiss", "vps_soy", "akile", "narwhal", "isvoro", "dmit", "bwh")
-AFFILIATE_PROVIDERS = tuple(provider for provider in PROVIDERS if provider != "vps_soy")
+PROVIDERS = ("vmiss", "vps_soy", "akile", "narwhal", "isvoro", "dmit", "bwh", "hytron")
+AFFILIATE_PROVIDERS = tuple(provider for provider in PROVIDERS if provider not in {"vps_soy", "hytron"})
 DEFAULT_AFFILIATES = {
     "vmiss": "5340",
     "akile": "eb2ff10d-f57f-485f-9621-ed873b36c2c0",
     "isvoro": "c57baee34737",
     "dmit": "22544", "bwh": "84938",
 }
-HOSTS = {"vmiss": "app.vmiss.com", "akile": "akile.ai", "narwhal": "dash.fuckip.me", "isvoro": "isvoro.com", "dmit": "www.dmit.io", "bwh": "bwh81.net"}
+HOSTS = {"vmiss": "app.vmiss.com", "akile": "akile.ai", "narwhal": "dash.fuckip.me", "isvoro": "isvoro.com", "dmit": "www.dmit.io", "bwh": "bwh81.net", "hytron": "hyvps.hytron.io"}
 
 
 def _affiliate_settings(value: object) -> dict:
@@ -128,7 +128,7 @@ def normalize_merchant_order(value: object) -> list:
     # Keep the order written by pre-BandwagonHost configurations stable until
     # the admin page saves its expanded provider list. New/default configs
     # include ``bwh`` explicitly and therefore receive it here as well.
-    providers = PROVIDERS if "bwh" in value else PROVIDERS[:-1]
+    providers = PROVIDERS if "bwh" in value else PROVIDERS[:-2]
     return value + [key for key in providers if key not in value]
 
 

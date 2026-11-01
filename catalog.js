@@ -1,10 +1,10 @@
 /* VPS browsing uses cached read-only snapshots; only explicit selection edits config. */
 (() => {
-  const providers = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", narwhal: "独角鲸云", isvoro: "Isvoro", dmit: "DMIT", bwh: "搬瓦工" };
+  const providers = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", narwhal: "独角鲸云", isvoro: "Isvoro", dmit: "DMIT", bwh: "搬瓦工", hytron: "Hytron" };
   const get = (id) => document.getElementById(id);
   let provider = sessionStorage.getItem("hostwatch-catalog-provider") || "akile";
   if (!Object.hasOwn(providers, provider)) provider = "akile";
-  const fullDirectory = () => ["akile", "narwhal", "bwh"].includes(provider);
+  const fullDirectory = () => ["akile", "narwhal", "bwh", "hytron"].includes(provider);
   const hierarchicalDirectory = () => fullDirectory() || provider === "dmit";
   const defaultRegionPending = new Set([provider]);
   let scope = fullDirectory() ? "all" : "", data = null, task = null, route = null, page = 0, generation = 0, loading = false, metadataOutdated = false;
@@ -97,6 +97,7 @@
     if (watch.adapter === "bwh") return equal(item.bwh_offer_key || item.selector, watch.bwh_offer_key || watch.selector);
     if (watch.adapter === "akile") return (item.area_mode !== "manual" || equal(item.area_id, watch.area_id)) && equal(item.node_name, watch.node_name) && equal(item.selector, watch.selector);
     if (watch.adapter === "narwhal") return equal(item.machine_id, watch.machine_id) && equal(item.plan_id, watch.plan_id);
+    if (watch.adapter === "hytron") return equal(item.node_id, watch.node_id);
     if (watch.adapter === "isvoro") return ["type_id", "category_id", "product_id"].every((key) => equal(item[key], watch[key]));
     if (watch.adapter === "vps_soy") {
       try {
@@ -173,7 +174,7 @@
     };
     for (const [id, visible] of Object.entries(visibleFilters)) get(id).closest("label").hidden = !visible;
     document.querySelector(".catalog-table").classList.toggle("narwhal-table", active);
-    document.querySelector(".catalog-table th:nth-child(2)").textContent = active ? "实例 / 套餐" : "套餐";
+    document.querySelector(".catalog-table th:nth-child(2)").textContent = active ? "实例 / 套餐" : provider === "hytron" ? "节点" : "套餐";
     document.querySelector(".catalog-table th:nth-child(3)").textContent = active ? "地区" : provider === "akile" ? "地区 / 节点" : provider === "bwh" ? "地区 / 机房" : provider === "dmit" ? "地区 / 网络 / 处理器" : "地区 / 线路";
     document.querySelector(".catalog-merchants").parentElement.hidden = false;
     document.querySelector(".catalog-intro h2").textContent = active ? "发现 NAT 实例，关注套餐补货" : "发现套餐，关注补货";
@@ -193,6 +194,10 @@
       get("catalog-search").placeholder = "地区、网络、处理器平台或配置，例如 Eyeball、AN5、TINY";
       get("catalog-help").textContent = "DMIT 按地区、网络类型和处理器平台筛选，完整配置套餐显示在下方列表；AS3、AN4、AN5 等标识沿用官网命名，未提供的平台单独标注。筛选使用当前地区快照。全地区仅手动刷新，选择单地区后可自动刷新；有货仍须校验购买页，校验失败显示未知。已保存的库存通知按服务器的通知刷新设置检查补货。";
       renderDmitFilters();
+    }
+    if (provider === "hytron") {
+      get("catalog-search").placeholder = "节点名称、地区、机房或配置，例如 HKG、WPC";
+      get("catalog-help").textContent = "Hytron 一次读取全部公开节点，按节点展示可部署的入门配置、容量和按小时价格；地区筛选使用同一份节点快照，支持全目录自动刷新。大盘自动刷新仅在此栏目打开且页面可见时运行，库存通知会按服务器设置继续检查。最终资源和价格以 Hytron 官网下单页为准。";
     }
     if (!active) return;
     const rows = data?.rows || [], regions = new Map(), machines = new Map();
@@ -335,7 +340,7 @@
       actions.append(text("small", reminderLabel(row)));
       if (row.purchase_url) {
         const url = new URL(row.purchase_url);
-        if (url.protocol === "https:" && ["app.vmiss.com", "www.vps.soy", "akile.ai", "dash.fuckip.me", "isvoro.com", "www.dmit.io", "bwh81.net", "www.bwh81.net", "bandwagonhost.com", "www.bandwagonhost.com"].includes(url.hostname) && !url.username && !url.password) {
+        if (url.protocol === "https:" && ["app.vmiss.com", "www.vps.soy", "akile.ai", "dash.fuckip.me", "isvoro.com", "www.dmit.io", "bwh81.net", "www.bwh81.net", "bandwagonhost.com", "www.bandwagonhost.com", "hyvps.hytron.io"].includes(url.hostname) && !url.username && !url.password) {
           const link = text("a", "直接购买", "buy-link"); link.href = affiliatePurchaseURL(url.href, row.watch.adapter, row.watch); link.target = "_blank"; link.rel = "noopener noreferrer"; actions.append(link);
         }
       }
@@ -385,7 +390,7 @@
     get("catalog-stop").hidden = !busy;
     get("catalog-stop").disabled = actionRunning || Boolean(task?.cancelled);
     get("catalog-stop").textContent = task?.cancelled ? "停止中…" : "停止刷新";
-    get("catalog-summary").textContent = data?.fetched_at ? `${providers[provider]} · ${data.rows.length} 个套餐 · ${data.rows.filter((row) => row.available > 0).length} 个有货` : `${providers[provider]} · 尚未取得库存结果`;
+    get("catalog-summary").textContent = data?.fetched_at ? `${providers[provider]} · ${data.rows.length} 个${provider === "hytron" ? "节点" : "套餐"} · ${data.rows.filter((row) => row.available > 0).length} 个有货` : `${providers[provider]} · 尚未取得库存结果`;
     get("catalog-updated").textContent = data?.fetched_at ? `数据更新时间：${new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", dateStyle: "medium", timeStyle: "medium" }).format(new Date(data.fetched_at))}` : "尚无库存快照";
     const status = get("catalog-status");
     const savedRoute = merchantRequestPolicy(savedConfig ? JSON.parse(savedConfig) : config, provider);
@@ -406,12 +411,12 @@
     routeHint.className = `hint${effectiveRoute.error ? " error" : changed ? " stale" : ""}`;
     const stale = data && Date.now() - Date.parse(data.fetched_at) > 300000;
     status.className = "hint";
-    if (busy) { status.classList.add("pending"); status.textContent = task.cancelled ? "正在终止目录刷新，保留上次快照…" : `正在刷新 ${providers[task.provider] || "商家"}${task.provider === "narwhal" ? "全部实例与套餐" : task.provider === "akile" ? "全部地区、节点与套餐" : task.provider === "bwh" ? "全部地区、机房与套餐" : task.scope === "all" ? "全部公开套餐（会读取多个分类）" : "目录"}，页面仍可操作；可点击“停止刷新”。`; }
+    if (busy) { status.classList.add("pending"); status.textContent = task.cancelled ? "正在终止目录刷新，保留上次快照…" : `正在刷新 ${providers[task.provider] || "商家"}${task.provider === "narwhal" ? "全部实例与套餐" : task.provider === "akile" ? "全部地区、节点与套餐" : task.provider === "bwh" ? "全部地区、机房与套餐" : task.provider === "hytron" ? "全部公开节点" : task.scope === "all" ? "全部公开套餐（会读取多个分类）" : "目录"}，页面仍可操作；可点击“停止刷新”。`; }
     else if (task?.provider === provider && task.error) { status.classList.add("error"); status.textContent = task.error; }
     else if (task?.provider === provider && task.cancelled) status.textContent = "刷新已停止，保留上次快照。";
     else if (loading) status.textContent = "正在读取目录缓存…";
     else if (metadataOutdated) { status.classList.add("stale"); status.textContent = provider === "narwhal" ? "此目录为旧版快照，请刷新以读取全部地区、实例与套餐。" : provider === "dmit" ? "此分类为旧版快照，有货记录尚未校验购买页，请刷新目录库存。" : "此分类为旧版快照，带宽信息尚未更新，请刷新分类库存。"; }
-    else { status.textContent = data ? `已读取${provider === "narwhal" ? "全部实例与套餐" : provider === "akile" ? "全部地区、节点与套餐" : provider === "bwh" ? "全部地区、机房与套餐" : scope === "all" ? "全部公开套餐（仅手动刷新）" : "此分类"}。${data.unknown ? `${data.unknown} 个套餐库存未知，未当作缺货或现货。` : ""}${stale ? "当前为历史快照，请刷新后核对。" : "库存以此快照的检查时间为准。"}` : "选择商家后刷新公开套餐目录，无需先开启自动监控。"; if (stale) status.classList.add("stale"); }
+    else { status.textContent = data ? `已读取${provider === "narwhal" ? "全部实例与套餐" : provider === "akile" ? "全部地区、节点与套餐" : provider === "bwh" ? "全部地区、机房与套餐" : provider === "hytron" ? "全部公开节点" : scope === "all" ? "全部公开套餐（仅手动刷新）" : "此分类"}。${data.unknown ? `${data.unknown} 个${provider === "hytron" ? "节点" : "套餐"}库存未知，未当作缺货或现货。` : ""}${stale ? "当前为历史快照，请刷新后核对。" : "库存以此快照的检查时间为准。"}` : "选择商家后刷新公开套餐目录，无需先开启自动监控。"; if (stale) status.classList.add("stale"); }
     const filterArrived = filterGeneration === generation && !loading && (data?.fetched_at || !task?.pending);
     renderTable(Boolean(filterArrived));
     if (filterArrived) filterGeneration = null;

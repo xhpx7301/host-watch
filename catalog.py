@@ -19,7 +19,7 @@ from bs4 import BeautifulSoup
 from time_utils import beijing_iso
 
 
-PROVIDERS = {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "narwhal": "独角鲸云", "isvoro": "Isvoro", "dmit": "DMIT", "bwh": "搬瓦工"}
+PROVIDERS = {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "narwhal": "独角鲸云", "isvoro": "Isvoro", "dmit": "DMIT", "bwh": "搬瓦工", "hytron": "Hytron"}
 MAX_ROWS = 600
 NARWHAL_MAX_ROWS = 5000
 BWH_MAX_ROWS = 5000
@@ -270,6 +270,9 @@ def load_catalog(provider: str, scope: str = "", fetcher: dict | None = None) ->
             scopes, actual, rows = directory(session, scope, fetcher)
         elif provider == "bwh":
             from bwh import directory
+            scopes, actual, rows = directory(session, scope, fetcher)
+        elif provider == "hytron":
+            from hytron import directory
             scopes, actual, rows = directory(session, scope, fetcher)
         else:
             scopes, actual, rows = {"vmiss": vmiss_catalog, "vps_soy": soy_catalog, "akile": akile_catalog, "narwhal": narwhal_catalog, "isvoro": isvoro_catalog}[provider](session, scope, fetcher)

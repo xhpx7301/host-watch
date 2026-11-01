@@ -93,6 +93,7 @@ CLOUDSCRAPER_TEST_TARGETS = {
     "isvoro": ("Isvoro", "https://isvoro.com/buy"),
     "dmit": ("DMIT", "https://www.dmit.io/pages/pricing"),
     "bwh": ("搬瓦工", "https://bwh81.net/order/ecommerce/Los%20Angeles/USCA_9"),
+    "hytron": ("Hytron", "https://hyvps.hytron.io/api/v1/nodes/catalog"),
     "baseline": ("公共 HTTPS 基准", "https://example.com/"),
 }
 EXCHANGE_RATES_URL = "https://api.frankfurter.app/latest?base=CNY"
@@ -4717,7 +4718,7 @@ def validate_config(value: object) -> dict:
         product_id = str(item.get("id", "")).strip()
         name = str(item.get("name", "")).strip()
         adapter = str(item.get("adapter", "vmiss" if any(key in item for key in ("category_url", "selector", "gid", "pid")) else "html")).strip().casefold()
-        provider = str(item.get("provider", {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "narwhal": "独角鲸云", "isvoro": "Isvoro", "dmit": "DMIT", "bwh": "搬瓦工"}.get(adapter, "自定义网站"))).strip()
+        provider = str(item.get("provider", {"vmiss": "VMISS", "vps_soy": "VPS.SOY", "akile": "Akile", "narwhal": "独角鲸云", "isvoro": "Isvoro", "dmit": "DMIT", "bwh": "搬瓦工", "hytron": "Hytron"}.get(adapter, "自定义网站"))).strip()
         gid = str(item.get("gid", "")).strip()
         pid = str(item.get("pid", "")).strip()
         if "enabled" in item and not isinstance(item["enabled"], bool):
@@ -4725,7 +4726,7 @@ def validate_config(value: object) -> dict:
         if not product_id or product_id in seen_ids:
             raise ValueError("每个产品都需要唯一 ID")
         if adapter not in {*PROVIDERS, "html"}:
-            raise ValueError(f"产品 {name or product_id} 的适配器必须是 vmiss、vps_soy、akile、narwhal、isvoro、dmit、bwh 或 html")
+            raise ValueError(f"产品 {name or product_id} 的适配器必须是 vmiss、vps_soy、akile、narwhal、isvoro、dmit、bwh、hytron 或 html")
         if not name:
             raise ValueError(f"产品 {product_id} 需要填写商品名称")
         if not provider or len(provider) > 80:
@@ -4775,6 +4776,11 @@ def validate_config(value: object) -> dict:
             if not re.fullmatch(r"[0-9]+:[A-Za-z0-9_-]{1,40}:[A-Za-z0-9_-]{1,40}:[0-9]+", offer_key) or pid and not re.fullmatch(r"[1-9][0-9]{0,9}", pid):
                 raise ValueError(f"产品 {name} 的搬瓦工套餐标识无效，请从库存大盘重新添加")
             normalized_item = {"id": product_id, "name": name, "provider": provider, "adapter": adapter, "category_url": category_url, "selector": offer_key, "bwh_offer_key": offer_key, "pid": pid, "enabled": item.get("enabled", False)}
+        elif adapter == "hytron":
+            node_id = str(item.get("node_id", "")).strip()
+            if not re.fullmatch(r"[0-9a-fA-F-]{20,80}", node_id) or len(name) > 120:
+                raise ValueError(f"产品 {name} 需要从 Hytron 目录选择有效的节点")
+            normalized_item = {"id": product_id, "name": name, "provider": "Hytron", "adapter": adapter, "node_id": node_id.lower(), "enabled": item.get("enabled", False)}
         elif adapter == "vps_soy":
             catalog_url = normalize_vps_soy_url(item.get("url", "https://www.vps.soy/cart"))
             selector = str(item.get("selector", name)).strip()
