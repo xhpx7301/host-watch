@@ -3815,7 +3815,7 @@ def seckill_test(submitted: dict) -> dict:
                                                             if adapter_id == "bwh" else
                                                             "已启用 Isvoro 原生待付款适配，固定使用 Debian12 和支付宝"
                                                             if adapter_id == "isvoro" else
-                                                            "已启用 DMIT 原生待付款适配，使用月付、PZ、DMIT 表单默认系统（当前为 Debian 13）、结算页默认付款方式、订单后自动生成 SSH Key 和 0GB 额外硬盘"
+                                                            "DMIT 下单适配尚未完成，实际自动下单暂不可用；配置或账户检查通过不代表能成功下单，请使用手动模式在官网下单"
                                                             if adapter_id == "dmit" else
                                                             "已配置统一 hostwatch-unpaid-v1 待付款接口，启动时还会校验接口能力")}
         try:
