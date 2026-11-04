@@ -22,8 +22,15 @@ function load(context, names) {
 test('saving one account adopts server normalization and preserves other drafts', async () => {
   const first = { id: 'one', name: 'Main', username: 'user', password: '', password_configured: false };
   const second = { id: 'two', name: 'Other', password: '', password_configured: true };
-  const saved = { vps_seckill: { accounts: [first, second] }, products: [] };
+  const saved = {
+    vps_seckill: { accounts: [first, second] }, products: [],
+    telegram: { configured: true, bot_token_configured: true, chat_id: '100', disabled: false },
+    telegram_routes: { stock: { mode: 'custom', bot_token_configured: true, chat_id: '200' } },
+  };
   const draft = copy(saved);
+  // collectConfig() returns input values, without server-only credential metadata.
+  draft.telegram = { bot_token: '', chat_id: '101', disabled: false, clear: false };
+  draft.telegram_routes.stock = { mode: 'custom', bot_token: '', chat_id: '201', clear: false };
   Object.assign(draft.vps_seckill.accounts[0], { username: ' user ', password: 'new-password' });
   draft.vps_seckill.accounts[1].name = 'Other unsaved draft';
   const response = { config: copy(saved), service: { ok: true } };
@@ -47,6 +54,13 @@ test('saving one account adopts server normalization and preserves other drafts'
   assert.equal(context.hasUnsavedSeckillAccount('one'), false);
   assert.equal(context.hasUnsavedSeckillAccount('two'), true);
   assert.equal(context.config.vps_seckill.accounts[1].name, 'Other unsaved draft');
+  assert.equal(context.config.telegram.configured, true);
+  assert.equal(context.config.telegram.bot_token_configured, true);
+  assert.equal(context.config.telegram.chat_id, '101');
+  assert.equal(context.config.telegram_routes.stock.bot_token_configured, true);
+  assert.equal(context.config.telegram_routes.stock.chat_id, '201');
+  assert.equal(submitted.telegram.chat_id, '100');
+  assert.equal(submitted.telegram_routes.stock.chat_id, '200');
 });
 
 test('account save keeps explicit success, apply failure and request failure feedback', async () => {

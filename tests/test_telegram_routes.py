@@ -53,6 +53,35 @@ class TelegramRouteTests(unittest.TestCase):
             self.assertEqual(admin.telegram_credentials(category="market"), ("market-token", "200"))
             self.assertEqual(admin.telegram_credentials(category="stock"), ("default-token", "100"))
 
+    def test_action_draft_can_replace_tokens_without_changing_saved_config(self):
+        saved = config()
+        before = json.dumps(saved, sort_keys=True)
+        draft = admin.public_config(saved)
+        draft["telegram"]["bot_token"] = "replacement-default-token"
+        draft["telegram_routes"]["market"]["bot_token"] = "replacement-market-token"
+        submitted_before = json.dumps(draft, sort_keys=True)
+        with patch.object(admin, "current_config", return_value=saved):
+            value = admin._seckill_action_config({"config": draft})
+        self.assertEqual(admin.effective_telegram(value, "stock"), ("replacement-default-token", "100"))
+        self.assertEqual(admin.effective_telegram(value, "market"), ("replacement-market-token", "200"))
+        self.assertEqual(json.dumps(saved, sort_keys=True), before)
+        self.assertEqual(json.dumps(draft, sort_keys=True), submitted_before)
+
+    def test_action_draft_honors_explicit_credential_clear(self):
+        draft = admin.public_config(config())
+        draft["telegram"]["clear"] = True
+        draft["telegram_routes"]["market"] = {"mode": "off", "clear": True}
+        with patch.object(admin, "current_config", return_value=config()):
+            value = admin._seckill_action_config({"config": draft})
+        self.assertEqual(value["telegram"], {"bot_token": "", "chat_id": "", "disabled": True})
+        self.assertEqual(value["telegram_routes"]["market"], {"mode": "off", "bot_token": "", "chat_id": ""})
+
+    def test_action_draft_still_rejects_incomplete_new_route(self):
+        draft = admin.public_config(config())
+        draft["telegram_routes"]["stock"] = {"mode": "custom", "bot_token": "", "chat_id": "300"}
+        with patch.object(admin, "current_config", return_value=config()), self.assertRaises(ValueError):
+            admin._seckill_action_config({"config": draft})
+
     def test_config_save_preserves_masked_route_token(self):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "config.json"

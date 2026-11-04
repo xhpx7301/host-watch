@@ -3582,6 +3582,51 @@ def public_account_check_result(value: dict) -> dict:
     return {key: item for key, item in value.items() if not str(key).startswith("_")}
 
 
+def _merge_telegram_secrets(submitted: dict, current: dict) -> dict:
+    """Restore write-only tokens before validating saves or transient drafts."""
+    submitted_telegram = submitted.get("telegram", {})
+    if not isinstance(submitted_telegram, dict):
+        raise ValueError("Telegram 配置必须是对象")
+    submitted_token = str(submitted_telegram.get("bot_token", "")).strip()
+    submitted_chat_id = str(submitted_telegram.get("chat_id", "")).strip()
+    clear_telegram = submitted_telegram.get("clear", False)
+    if not isinstance(clear_telegram, bool):
+        raise ValueError("Telegram clear 必须是布尔值")
+    submitted_disabled = submitted_telegram.get("disabled", current["telegram"]["disabled"])
+    if not isinstance(submitted_disabled, bool):
+        raise ValueError("Telegram disabled 必须是布尔值")
+    if clear_telegram:
+        telegram = {"bot_token": "", "chat_id": "", "disabled": True}
+    else:
+        current_token = current["telegram"]["bot_token"] or os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+        current_chat_id = current["telegram"]["chat_id"] or os.getenv("TELEGRAM_CHAT_ID", "").strip()
+        telegram = {
+            "bot_token": submitted_token or current_token,
+            "chat_id": submitted_chat_id or current_chat_id,
+            "disabled": submitted_disabled,
+        }
+    submitted_routes = submitted.get("telegram_routes", current["telegram_routes"])
+    if not isinstance(submitted_routes, dict):
+        raise ValueError("Telegram 通知分配必须是对象")
+    merged_routes = {}
+    for key in TELEGRAM_ROUTES:
+        raw_route = submitted_routes.get(key, current["telegram_routes"][key])
+        if not isinstance(raw_route, dict):
+            raise ValueError("Telegram 通知分配项必须是对象")
+        clear_route = raw_route.get("clear", False)
+        if not isinstance(clear_route, bool):
+            raise ValueError("Telegram 通知机器人清除开关必须是布尔值")
+        saved_route = current["telegram_routes"][key]
+        route_token = str(raw_route.get("bot_token", "")).strip()
+        route_chat = str(raw_route.get("chat_id", "")).strip()
+        merged_routes[key] = {
+            "mode": raw_route.get("mode", saved_route["mode"]),
+            "bot_token": route_token or ("" if clear_route else saved_route["bot_token"]),
+            "chat_id": route_chat or ("" if clear_route else saved_route["chat_id"]),
+        }
+    return {"telegram": telegram, "telegram_routes": merged_routes}
+
+
 def _seckill_action_config(submitted: dict) -> dict:
     """Validate a transient browser draft while retaining server-only secrets."""
     current = current_config()
@@ -3618,12 +3663,11 @@ def _seckill_action_config(submitted: dict) -> dict:
                 nodes.append(node)
         egress_value["nodes"] = nodes
         draft["egress"] = egress_value
+    draft.update(_merge_telegram_secrets(draft, current))
     value = validate_config(draft)
     # Proxy credentials are server-only and must not be supplied by the browser.
     value["egress"] = current.get("egress", value["egress"])
     value["fetcher"]["egress"] = value["egress"]
-    if not value["telegram"].get("bot_token"):
-        value["telegram"]["bot_token"] = current.get("telegram", {}).get("bot_token", "")
     return value
 
 
@@ -7018,47 +7062,7 @@ class Handler(BaseHTTPRequestHandler):
                 merged_accounts.append(account)
             submitted_seckill["accounts"] = merged_accounts
             submitted["vps_seckill"] = submitted_seckill
-            submitted_telegram = submitted.get("telegram", {})
-            if not isinstance(submitted_telegram, dict):
-                raise ValueError("Telegram 配置必须是对象")
-            submitted_token = str(submitted_telegram.get("bot_token", "")).strip()
-            submitted_chat_id = str(submitted_telegram.get("chat_id", "")).strip()
-            clear_telegram = submitted_telegram.get("clear", False)
-            if not isinstance(clear_telegram, bool):
-                raise ValueError("Telegram clear 必须是布尔值")
-            submitted_disabled = submitted_telegram.get("disabled", current["telegram"]["disabled"])
-            if not isinstance(submitted_disabled, bool):
-                raise ValueError("Telegram disabled 必须是布尔值")
-            if clear_telegram:
-                submitted["telegram"] = {"bot_token": "", "chat_id": "", "disabled": True}
-            else:
-                current_token = current["telegram"]["bot_token"] or os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-                current_chat_id = current["telegram"]["chat_id"] or os.getenv("TELEGRAM_CHAT_ID", "").strip()
-                submitted["telegram"] = {
-                    "bot_token": submitted_token or current_token,
-                    "chat_id": submitted_chat_id or current_chat_id,
-                    "disabled": submitted_disabled,
-                }
-            submitted_routes = submitted.get("telegram_routes", current["telegram_routes"])
-            if not isinstance(submitted_routes, dict):
-                raise ValueError("Telegram 通知分配必须是对象")
-            merged_routes = {}
-            for key in TELEGRAM_ROUTES:
-                raw_route = submitted_routes.get(key, current["telegram_routes"][key])
-                if not isinstance(raw_route, dict):
-                    raise ValueError("Telegram 通知分配项必须是对象")
-                clear_route = raw_route.get("clear", False)
-                if not isinstance(clear_route, bool):
-                    raise ValueError("Telegram 通知机器人清除开关必须是布尔值")
-                saved_route = current["telegram_routes"][key]
-                route_token = str(raw_route.get("bot_token", "")).strip()
-                route_chat = str(raw_route.get("chat_id", "")).strip()
-                merged_routes[key] = {
-                    "mode": raw_route.get("mode", saved_route["mode"]),
-                    "bot_token": route_token or ("" if clear_route else saved_route["bot_token"]),
-                    "chat_id": route_chat or ("" if clear_route else saved_route["chat_id"]),
-                }
-            submitted["telegram_routes"] = merged_routes
+            submitted.update(_merge_telegram_secrets(submitted, current))
             if "fetcher" not in submitted:
                 submitted["fetcher"] = current["fetcher"]
             elif isinstance(submitted["fetcher"], dict):

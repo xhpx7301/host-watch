@@ -1649,6 +1649,30 @@ class AccountCheckAPITests(unittest.TestCase):
         self.assertEqual(json.loads(self.config.read_text())['vps_seckill']['accounts'][0]['username'], 'user')
         self.assertNotIn(b'private-password', body)
 
+    def test_account_check_restores_masked_telegram_tokens_before_validation(self):
+        config = configuration()
+        config['telegram'] = {'bot_token': 'saved-default-token', 'chat_id': '100', 'disabled': False}
+        config['telegram_routes'] = {
+            key: {'mode': 'custom', 'bot_token': f'saved-{key}-token', 'chat_id': '200'}
+            for key in admin.TELEGRAM_ROUTES
+        }
+        self.config.write_text(json.dumps(config), encoding='utf-8')
+        draft = admin.public_config(config)
+        draft['telegram']['bot_token'] = ''
+        for route in draft['telegram_routes'].values():
+            route['bot_token'] = ''
+        checked = {'ok': True, 'status': 'valid', 'message': '账户认证正常'}
+        with patch.object(admin, 'check_order_account', return_value=checked) as check, patch.object(admin.egress, 'apply_session'):
+            status, body = self.request('/api/seckill/account-check', {
+                'config': draft, 'account_id': 'account', 'account': draft['vps_seckill']['accounts'][0]
+            })
+        self.assertEqual(status, 200, body.decode('utf-8'))
+        self.assertTrue(json.loads(body)['ok'])
+        self.assertEqual(check.call_args.args[1]['password'], 'private-password')
+        self.assertEqual(json.loads(self.config.read_text()), config)
+        for token in ['saved-default-token', *(row['bot_token'] for row in config['telegram_routes'].values())]:
+            self.assertNotIn(token.encode(), body)
+
 
 # Do not discover the borrowed API fixture as a second copy of its entire suite.
 del _AdminAPIBase

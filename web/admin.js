@@ -4665,6 +4665,18 @@ async function saveConfig(scope = "all", automatic = false) {
     else if (scope.startsWith("product:")) visibleDraft.products = draft.products;
     else if (scope.startsWith("seckill-")) visibleDraft.vps_seckill = draft.vps_seckill;
   }
+  if (scope !== "all" && scope !== "telegram") {
+    // Input drafts omit write-only token metadata. Retain the saved status
+    // when rebuilding unrelated cards after a scoped save.
+    visibleDraft.telegram = {
+      ...visibleDraft.telegram,
+      configured: result.config.telegram?.configured,
+      bot_token_configured: result.config.telegram?.bot_token_configured,
+    };
+    for (const [category, route] of Object.entries(visibleDraft.telegram_routes || {})) {
+      route.bot_token_configured = Boolean(result.config.telegram_routes?.[category]?.bot_token_configured);
+    }
+  }
   // Password fields are write-only. Do not restore a submitted password into
   // the local draft after saving, or the account card remains falsely dirty.
   if (scope === "seckill") {
