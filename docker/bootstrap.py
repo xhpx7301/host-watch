@@ -17,15 +17,15 @@ if (ROOT / "app" / "admin.py").is_file():
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from auth import password_record
+from auth import DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD, password_record
 
 
 DATA = Path(os.getenv("HOSTWATCH_DATA_DIR", "/data"))
 USERS = Path(os.getenv("ADMIN_USERS_FILE", str(DATA / "stockwatch-users.json")))
 CONFIG = DATA / "config.json"
 SOURCE_CONFIG = Path(os.getenv("HOSTWATCH_SOURCE_CONFIG", "/app/config.example.json"))
-INITIAL_ADMIN_USERNAME = os.getenv("HOSTWATCH_INITIAL_ADMIN_USERNAME", "pingzi").strip() or "pingzi"
-INITIAL_ADMIN_PASSWORD = os.getenv("HOSTWATCH_INITIAL_ADMIN_PASSWORD", "pingzi")
+INITIAL_ADMIN_USERNAME = os.getenv("HOSTWATCH_INITIAL_ADMIN_USERNAME", DEFAULT_ADMIN_USERNAME).strip() or DEFAULT_ADMIN_USERNAME
+INITIAL_ADMIN_PASSWORD = os.getenv("HOSTWATCH_INITIAL_ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)
 
 
 def write_json(path: Path, value: dict, mode: int = 0o600) -> None:
@@ -79,9 +79,7 @@ def main() -> None:
                 pass
         if not USERS.exists():
             password = INITIAL_ADMIN_PASSWORD or secrets.token_urlsafe(24)
-            # The requested Docker bootstrap credential is intentionally the
-            # short, well-known ``pingzi`` pair.  Normal password creation and
-            # changes continue to enforce the 12-character minimum.
+            # Keep explicit environment overrides compatible with older installs.
             write_json(USERS, {"version": 1, "users": {INITIAL_ADMIN_USERNAME: password_record(password, allow_short=True)}})
             print(f"HostWatch Docker 初始管理员：用户名：{INITIAL_ADMIN_USERNAME}", flush=True)
             print(f"HostWatch Docker 初始密码（仅首次显示）：{password}", flush=True)

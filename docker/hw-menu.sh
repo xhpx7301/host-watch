@@ -54,7 +54,7 @@ run_menu() {
         printf ' 3. 重启 HostWatch\n'
         printf ' 4. 查看 HostWatch 日志\n'
         printf ' 5. 执行数据备份\n'
-        printf ' 6. 重置 Docker 管理员为 pingzi / pingzi\n'
+        printf ' 6. 重置 Docker 管理员为 admin / admin123456789\n'
         printf ' 7. 停止项目\n'
         printf ' 8. 完全卸载 HostWatch\n'
         printf ' 0. 退出\n'

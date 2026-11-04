@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from urllib.request import urlopen
 from urllib.error import HTTPError, URLError
 
-from auth import DEFAULT_USERS_PATH, load_users, password_record, validate_username
+from auth import DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD, DEFAULT_USERS_PATH, load_users, password_record, validate_username
 from time_utils import BEIJING_TZ, format_beijing, now_beijing
 
 
@@ -128,7 +128,7 @@ def admin_environment() -> dict:
 
 
 def initialize_admin(restart: bool = True) -> bool:
-    """Create unique initial credentials only when no authentication exists."""
+    """Create the initial account only when no authentication exists."""
     environment = admin_environment()
     configured_path = environment.get("ADMIN_USERS_FILE", "").strip()
     if configured_path:
@@ -141,13 +141,13 @@ def initialize_admin(restart: bool = True) -> bool:
     if environment.get("ADMIN_PASSWORD"):
         print("已有管理页密码，保持原认证设置。")
         return False
-    password = secrets.token_urlsafe(24)
-    save_accounts({"admin": password_record(password)})
+    password = DEFAULT_ADMIN_PASSWORD
+    save_accounts({DEFAULT_ADMIN_USERNAME: password_record(password)})
     activate_accounts(restart=False)
     print("已创建初始管理页管理员（密码仅显示本次，不以明文保存）：")
-    print("  用户名：admin")
-    print(f"  随机密码：{password}")
-    print("请保存上述密码；遗失可运行 hw passwd 重置 admin 的密码。")
+    print(f"  用户名：{DEFAULT_ADMIN_USERNAME}")
+    print(f"  初始密码：{password}")
+    print("首次登录后请修改密码；遗失可运行 hw passwd 重置 admin 的密码。")
     if restart:
         run("systemctl", "restart", ADMIN)
     return True

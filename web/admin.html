@@ -919,17 +919,17 @@
           <article><strong>手动抢购</strong><p>只检查一轮，准备购买链接和数量提示；由你到官网完成下单与付款。</p></article>
         </div>
         <p class="hint">自动模式按商家使用各自检查间隔（每轮结束后的等待时间），每个商品每次任务最多发送一次下单请求。数量库存不足时继续等待；商家只提供有货状态时，由下单接口最终核验数量，不自动减少数量。</p>
-        <p class="hint">自动模式会在库存满足、账户检查通过且商家有内置待付款下单适配时提交订单；付款仍需你到商家官网手动完成。未适配的商家只提供购买链接。商品和网站账号分别保存后长期生效。</p>
+        <p class="hint">自动模式会在库存满足、账户检查通过且商家有内置待付款下单适配时提交订单；付款仍需你到商家官网手动完成。已内置自动下单的商家：VMISS、Akile、搬瓦工、Isvoro 普通商品、DMIT。VPS.SOY、独角鲸云、Hytron 和通用网页尚未内置适配，请使用手动模式；自动模式会提示未适配。商品和网站账号分别保存后长期生效。</p>
       </div>
       <div class="seckill-panel seckill-log-panel"><div class="section-head"><div><h3>执行日志</h3><p id="vps-seckill-log-note">尚未启动补货抢购任务。</p></div><div class="actions"><button id="vps-seckill-clear-log" type="button">清空显示</button><button id="vps-seckill-log-detail" type="button">详细日志</button></div></div><div id="vps-seckill-results" aria-live="polite"></div><pre id="vps-seckill-logs" class="seckill-logs" aria-live="polite">暂无日志</pre></div>
       </div>
-      <div class="seckill-panel"><div class="section-head"><div><h3>补货抢购商品</h3><p>在库存监控 / 通知商品的“更多”中点击“加入 VPS 补货抢购”；同一商品可通过每条商品卡片的“添加其他账号抢购”绑定多个网站账户。数量、优惠码、系统、付款周期、付款方式、账户和出口按商品配置。修改会自动保存并应用。自动模式会按商家内置下单适配提交待付款订单；未适配商家只提供购买链接。</p></div><div class="actions"><button id="vps-seckill-open-monitor" type="button">从库存监控添加</button><button id="vps-seckill-open-notifications" type="button">从库存通知添加</button><button id="vps-seckill-delete-all" type="button" class="danger" disabled>删除全部商品</button></div></div><div id="vps-seckill-items" class="seckill-items"></div></div>
+      <div class="seckill-panel"><div class="section-head"><div><h3>补货抢购商品</h3><p>在库存监控 / 通知商品的“更多”中点击“加入 VPS 补货抢购”；同一商品可通过每条商品卡片的“添加其他账号抢购”绑定多个网站账户。数量、优惠码、系统、付款周期、付款方式、账户和出口按商品配置。修改会自动保存并应用。自动模式会按商家内置下单适配提交待付款订单；未适配商家请选择手动模式使用购买链接；自动模式会提示未适配。</p></div><div class="actions"><button id="vps-seckill-open-monitor" type="button">从库存监控添加</button><button id="vps-seckill-open-notifications" type="button">从库存通知添加</button><button id="vps-seckill-delete-all" type="button" class="danger" disabled>删除全部商品</button></div></div><div id="vps-seckill-items" class="seckill-items"></div></div>
     </div>
   </section>
 
   <section class="page-panel panel-card" id="page-accounts" data-page="accounts" aria-labelledby="page-title" hidden>
     <div class="section-body">
-      <div class="section-head"><div><h2>网站账户</h2><p>供 VPS 补货抢购绑定使用。每个账户独立保存；Cookie 和 API 令牌仅在服务器内存中使用，服务重启后需按需重新验证。</p></div><div class="actions"><button id="vps-seckill-add-account" type="button">添加账户</button><button id="vps-seckill-delete-all-accounts" type="button" class="danger" disabled>删除全部账户</button></div></div>
+      <div class="section-head"><div><h2>网站账户</h2><p>用于抢购、二手市场及余额通知。每个账户独立保存；认证会话本地加密缓存，重启后复核有效性。账户检查成功不代表已适配自动抢购，详见下表。</p></div><div class="actions"><button id="vps-seckill-add-account" type="button">添加账户</button><button id="vps-seckill-delete-all-accounts" type="button" class="danger" disabled>删除全部账户</button></div></div>
       <div class="seckill-panel" id="account-settings-panel"><div id="vps-seckill-accounts" class="seckill-accounts"></div></div>
     </div>
   </section>
@@ -1237,7 +1237,7 @@
   <dialog id="watch-compare-dialog" class="watch-compare-dialog" aria-labelledby="watch-compare-title"><div class="watch-compare-dialog-head"><div><span class="eyebrow">PRODUCT COMPARE</span><h2 id="watch-compare-title">产品参数对比</h2><p>对比当前库存监控中的商品，直接购买入口会保留 AFF。</p></div><button id="watch-compare-close" type="button" class="icon-button" aria-label="关闭产品参数对比">×</button></div><div id="watch-compare-content"></div></dialog>
   <dialog id="overview-log-dialog" class="watch-compare-dialog" aria-labelledby="overview-log-title"><div class="watch-compare-dialog-head"><div><span class="eyebrow">MODULE LOG</span><h2 id="overview-log-title">模块详细日志</h2><p>显示该模块保存的完整近期日志。</p></div><button id="overview-log-close" type="button" class="icon-button" aria-label="关闭模块详细日志">×</button></div><pre id="overview-log-detail-content" class="manage-logs">暂无日志</pre></dialog>
   <dialog id="seckill-picker-dialog" class="watch-compare-dialog" aria-labelledby="seckill-picker-title"><div class="watch-compare-dialog-head"><div><span class="eyebrow">SECKILL PICKER</span><h2 id="seckill-picker-title">选择补货抢购商品</h2><p>选择后加入 VPS 补货抢购，已加入的商品不会重复添加。</p></div><button id="seckill-picker-close" type="button" class="icon-button" aria-label="关闭商品选择">×</button></div><div id="seckill-picker-content"></div></dialog>
-<script src="/admin.js?v=hytron-notification-settings-20261102"></script>
+<script src="/admin.js?v=account-capabilities-20261104"></script>
 <script src="/catalog.js?v=hytron-resource-watch-20261102"></script>
 </body>
 </html>

@@ -6,9 +6,9 @@
 
 ## 安装
 
-两种方式任选其一，管理页均通过 `http://服务器公网地址:25678` 访问，防火墙需放行 TCP `25678`。
+**推荐 Debian 原生部署**，网页更新、服务管理和日志查看的运维功能更完整。Docker 可用于容器化运行，但更新、重启和日志等操作需在主机终端执行，详见[部署差异](docs/DEPLOYMENT.md#如何选择部署方式)。两种方式的管理页均通过 `http://服务器公网地址:25678` 访问，防火墙需放行 TCP `25678`。
 
-### 1. Debian 原生安装
+### 1. Debian 原生安装（推荐）
 
 适用于 **Debian 12 / 13 + systemd**，使用 root 或 sudo 执行：
 
@@ -16,7 +16,7 @@
 curl -fsSL https://raw.githubusercontent.com/xhpx7301/host-watch/main/install.sh | sudo bash
 ```
 
-安装器部署 Python 应用和 systemd 服务，默认同时安装 Docker 及 FlareSolverr 容器（仅监听本机 `8191`，可[选择跳过](docs/CONFIGURATION.md#网页请求与-flaresolverr)）。首次安装会显示管理员 `admin` 的随机密码；忘记密码可执行 `hw passwd`。已有账号和配置会保留，库存自动监控默认关闭。
+安装器部署 Python 应用和 systemd 服务，默认同时安装 Docker 及 FlareSolverr 容器（仅监听本机 `8191`，可[选择跳过](docs/CONFIGURATION.md#网页请求与-flaresolverr)）。首次安装的管理员为 `admin` / `admin123456789`，登录后请修改密码；忘记密码可执行 `hw passwd`。已有账号和配置会保留，库存自动监控默认关闭。
 
 ### 2. Docker Compose 安装
 
@@ -26,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/xhpx7301/host-watch/main/install.sh
 curl -fsSL https://raw.githubusercontent.com/xhpx7301/host-watch/main/docker/install.sh | sudo sh
 ```
 
-自动启动管理页、监控、备份及 FlareSolverr 服务。首次账号和密码为 `pingzi` / `pingzi`，登录后立即修改；已有数据卷沿用原账号，无法登录时执行 `hw reset-admin`。FlareSolverr 仅在容器内网开放。
+自动启动管理页、监控、备份及 FlareSolverr 服务。首次账号和密码为 `admin` / `admin123456789`，登录后立即修改；已有数据卷沿用原账号，无法登录时执行 `hw reset-admin`。FlareSolverr 仅在容器内网开放。
 
 两种安装均提供 `hw` 管理菜单；安装路径、旧版升级、账号与访问设置见[部署与管理](docs/DEPLOYMENT.md)。
 
@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/xhpx7301/host-watch/main/docker/ins
 
 补货时发送一条新消息，持续有货或售罄时更新原消息。首次检查默认只建立基线，可单独开启首次有货提醒。遇到 HTTP 403、429 或验证页时，先暂停并确认商家允许的访问方式与频率。
 
-自动下单目前仅适配 VMISS、Akile 和搬瓦工，**只创建待付款订单，付款需在官网手动完成**。结果待核对时先到官网检查，避免重复下单。
+自动下单已内置适配 VMISS、Akile、搬瓦工、Isvoro 普通商品和 DMIT；VPS.SOY、独角鲸云、Hytron 及通用网页尚未内置适配，请选手动模式。**自动模式只创建待付款订单，付款需在官网手动完成**。详见[商家能力表](docs/ACCOUNTS-AND-ORDERS.md#商家登录与抢购能力)。结果待核对时先到官网检查，避免重复下单。
 
 ## 常用管理
 

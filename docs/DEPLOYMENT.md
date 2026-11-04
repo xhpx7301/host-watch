@@ -2,7 +2,25 @@
 
 [返回首页](../README.md)
 
-## Debian 原生部署（非 Docker）
+## 如何选择部署方式
+
+**当前优先推荐 Debian 12/13 原生部署**，适合需要完整网页运维和 `hw` 管理菜单的服务器。Docker 使用同一份库存、账户和抢购代码，但容器内的系统管理能力有限；切换部署方式不会为尚未适配的商家增加自动抢购能力。
+
+| 功能 | Debian 原生 | Docker Compose |
+| --- | --- | --- |
+| 库存大盘、监控、Telegram、商家登录和已适配抢购 | 使用同一套业务代码 | 使用同一套业务代码，仍需保证商家及出口网络可达 |
+| 网页更新 | 网页直接启动更新任务 | 网页复制命令，在部署主机执行 `hw update` |
+| 管理页 / 服务重启 | 网页和 `hw` 菜单管理 systemd 服务 | 主机终端执行 `hw restart`；网页不能重启容器或服务器 |
+| 运行日志 | 网页读取 journal 日志 | 在主机执行 `hw logs`；网页日志只显示终端命令提示 |
+| 服务状态 | 读取 systemd 实际状态 | 网页返回容器模式状态，实际容器健康请用 `hw status` 查看 |
+| 自动备份 | systemd 定时任务 | 独立 backup 容器；需保持该容器运行 |
+| 备份、商品配置与通知设置 | 网页及菜单操作 | 可使用网页及对应 `hw` 命令；主机级管理功能不等同原生部署 |
+
+Docker 的上述限制不能通过切换商家登录方式解决。需要定位某个无法使用的业务功能时，先运行 `hw status`、`hw logs`，再核对该商家的登录与抢购能力。原生安装也默认使用独立 FlareSolverr 容器，只将 HostWatch 主程序交给 systemd 管理。
+
+两种方式**首次部署的默认管理员均为 `admin` / `admin123456789`**。已有账号和旧密码在更新时保留；登录后在“设置 → 管理员账号”修改密码。
+
+## Debian 原生部署（非 Docker，推荐）
 
 适用于 Debian 12/13，要求 systemd 和 root/sudo 权限。脚本会安装依赖、创建 `vmiss-monitor` 系统用户、自动部署 Docker 和官方 FlareSolverr 容器、安装程序和 systemd 单元，并启动监听 `0.0.0.0:25678` 的公网管理页。防火墙需允许 TCP `25678`；FlareSolverr 仍仅监听本机 `127.0.0.1:8191`。库存监控默认关闭，安装脚本不会启用或启动它。首次部署需要下载浏览器镜像，请预留内存、磁盘和到 ghcr.io 的网络连接；浏览器请求按商品顺序执行。
 
@@ -12,7 +30,7 @@ curl -fsSL https://raw.githubusercontent.com/xhpx7301/host-watch/main/install.sh
 
 脚本可重复执行用于升级，已有的 `/var/lib/vmiss-monitor/config.json`、`/etc/vmiss-monitor.env` 和 `/etc/vmiss-monitor-admin.env` 会保留；管理页服务名为 `hostwatch.service`，旧的 `vmiss-monitor-admin.service` 仅作为兼容别名。
 
-全新安装会自动创建管理页管理员 `admin`，使用每台服务器独立生成的随机密码，并在安装终端显示一次；认证文件仅保存密码哈希。请保存安装输出中的密码，遗失后可运行 `hw passwd` 重置。安装器保留已有账号、旧密码及自定义账号文件；旧版未配置账号的安装可运行 `hw init-admin` 补建，不会重置已有账号。
+全新安装会自动创建管理页管理员 `admin`，初始密码为 `admin123456789`，在首次安装终端显示；认证文件仅保存密码哈希。首次登录后请修改密码，遗失后可运行 `hw passwd` 重置。安装器保留已有账号、旧密码及自定义账号文件；旧版未配置账号的安装可运行 `hw init-admin` 补建，不会重置已有账号。
 
 项目已更名为 HostWatch，仓库名为 `host-watch`。为兼容已部署版本，继续沿用 `vmiss-monitor` 安装目录、系统用户和监控服务名，以及 `/etc/stockwatch-users.json`、`/var/backups/stockwatch/` 等数据路径；管理页服务名使用 `hostwatch.service`，菜单快捷命令为 `hw`。
 
@@ -26,13 +44,13 @@ Docker 部署不需要 systemd，也不挂载宿主机 Docker socket。管理页
 curl -fsSL https://raw.githubusercontent.com/xhpx7301/host-watch/main/docker/install.sh | sudo sh
 ```
 
-安装脚本会检查 Docker Compose、克隆项目到 `/opt/host-watch`、构建并启动服务，并安装 `hw` 快捷命令。Docker 首次初始化管理员账号和密码均为 `pingzi`；登录后请立即修改密码。也可以查看启动日志确认：
+安装脚本会检查 Docker Compose、克隆项目到 `/opt/host-watch`、构建并启动服务，并安装 `hw` 快捷命令。Docker 首次初始化管理员为 `admin` / `admin123456789`；登录后请立即修改密码。也可以查看启动日志确认：
 
 ```sh
 docker compose -f /opt/host-watch/docker-compose.yml logs --no-log-prefix hostwatch | grep '初始密码'
 ```
 
-访问 `http://服务器公网地址:25678`，使用 `pingzi` / `pingzi` 登录。以后在任意目录输入 `hw` 呼出 Docker 管理菜单；常用命令如下：
+访问 `http://服务器公网地址:25678`，使用 `admin` / `admin123456789` 登录。以后在任意目录输入 `hw` 呼出 Docker 管理菜单；常用命令如下：
 
 ```sh
 hw                  # 交互式菜单
@@ -41,7 +59,7 @@ hw status           # 查看容器状态
 hw logs             # 查看管理页、监控和备份日志
 hw backup           # 立即备份数据
 hw restart          # 重启 HostWatch 容器
-hw reset-admin      # 将 Docker 管理员重置为 pingzi / pingzi
+hw reset-admin      # 将 Docker 管理员重置为 admin / admin123456789
 hw uninstall        # 二次确认后完全卸载 Docker 部署
 ```
 
@@ -56,7 +74,7 @@ cd /你的/host-watch目录
 sudo env HOSTWATCH_DIR="$PWD" sh docker/install.sh
 ```
 
-如果 `pingzi` / `pingzi` 登录失败，说明数据卷中已有旧管理员账号。执行 `hw reset-admin` 即可新增或重置 `pingzi`，不会删除其他管理员；然后重新打开登录页再试。
+如果 `admin` / `admin123456789` 登录失败，说明数据卷中已有旧管理员账号。执行 `hw reset-admin` 即可新增或重置 `admin`，不会删除其他管理员；然后重新打开登录页再试。
 
 `hw uninstall` 需要输入 `DELETE HOSTWATCH` 确认，会删除 HostWatch 容器、项目镜像、命名卷、配置、管理员账号、备份、项目目录和 `hw` 命令；其他 Docker 项目和宿主机 Docker 本身不受影响。
 
@@ -80,7 +98,7 @@ hw users        # 列出管理页用户
 hw add-user     # 交互式添加用户
 hw passwd       # 交互式修改密码
 hw delete-user  # 交互式删除用户
-hw init-admin   # 尚无认证时创建 admin 和随机密码，已有账号保持不变
+hw init-admin   # 尚无认证时创建 admin 和默认初始密码，已有账号保持不变
 hw admin-domain              # 兼容旧命令：检查账号并重启，已无需设置域名
 hw uninstall   # 二次确认后从服务器完全删除 HostWatch
 ```
@@ -119,7 +137,7 @@ ssh -N -L 25678:127.0.0.1:25678 your-user@your-server
 
 使用 Nginx、Caddy 或面板将 HTTPS 域名转发到 `http://127.0.0.1:25678`，并传递原始 `Host`，即可用管理员账号登录。管理页不限制访问域名，无需逐个添加允许列表；旧配置中的 `ADMIN_ALLOWED_HOSTS`（包括 `*`）不再生效，也不会阻止启动。
 
-新安装自动创建管理员并在终端显示一次随机密码。旧安装如果尚无账号，先执行：
+新安装自动创建 `admin`，初始密码为 `admin123456789`，并在终端显示。旧安装如果尚无账号，先执行：
 
 ```sh
 hw init-admin

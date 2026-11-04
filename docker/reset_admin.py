@@ -14,13 +14,13 @@ if (ROOT / "app" / "admin.py").is_file():
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from auth import load_users, password_record, validate_username
+from auth import DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD, load_users, password_record, validate_username
 
 
 DATA = Path(os.getenv("HOSTWATCH_DATA_DIR", "/data"))
 USERS = Path(os.getenv("ADMIN_USERS_FILE", str(DATA / "stockwatch-users.json")))
-USERNAME = os.getenv("HOSTWATCH_INITIAL_ADMIN_USERNAME", "pingzi").strip() or "pingzi"
-PASSWORD = os.getenv("HOSTWATCH_INITIAL_ADMIN_PASSWORD", "pingzi") or "pingzi"
+USERNAME = os.getenv("HOSTWATCH_INITIAL_ADMIN_USERNAME", DEFAULT_ADMIN_USERNAME).strip() or DEFAULT_ADMIN_USERNAME
+PASSWORD = os.getenv("HOSTWATCH_INITIAL_ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD) or DEFAULT_ADMIN_PASSWORD
 
 
 def save_users(users: dict) -> None:
@@ -49,7 +49,7 @@ def main() -> None:
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         raise SystemExit(f"管理员账号文件无效：{exc}") from None
     if username not in users and len(users) >= 50:
-        raise SystemExit("管理员账号已达到 50 个，无法添加 pingzi")
+        raise SystemExit(f"管理员账号已达到 50 个，无法添加 {username}")
     users[username] = password_record(PASSWORD, allow_short=True)
     save_users(users)
     print(f"Docker 管理员已重置：用户名：{username}，密码：{PASSWORD}")

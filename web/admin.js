@@ -3513,7 +3513,11 @@ function renderVpsSeckill() {
         ? "Akile 使用内置待付款适配：固定 Debian 12 和 1 个月周期创建订单；不会自动付款。"
         : providerKey === "bwh"
           ? "搬瓦工使用内置官网结算适配：密码登录时自动启用官网 Remember Me，以请求更持久的登录 Cookie；认证会话在内存中缓存最长 30 天，验证仍有效时会续延本地缓存。官网未提供可用的 refresh Cookie 接口，手动导入的普通 Cookie 过期后仍需重新登录。"
-        : "自动模式仅对已配置商家待付款适配的商品创建订单；未适配商家只提供购买链接。", "hint span-2");
+        : providerKey === "isvoro"
+            ? "Isvoro 已适配普通商品待付款下单，使用 Debian12 和支付宝；首次在官网完成 hCaptcha 后导入 Cookie。二手市场仅提醒，不自动购买。"
+          : providerKey === "dmit"
+            ? "DMIT 已适配官网结算，只创建待付款发票；系统、付款方式等以商品设置及结算页可用选项为准。遇到安全验证请先在官网处理。"
+          : "该商家尚未内置自动抢购适配。请使用手动模式打开购买链接；选择自动模式会提示未适配，账户检查通过也不会创建订单。", "hint span-2");
     [["下单数量（台，1–100）", quantity], ["优惠码", coupon], ["系统", operatingSystem], ["付款周期", billingCycle], ["付款方式", paymentMethod], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
     const enabled = settingButton("商品状态", item.enabled !== false, value => { item.enabled = value; renderVpsSeckillTask(); updateDraftState(); scheduleAutoSave("seckill"); }, ["已停用", "已启用"]);
     const flags = text("div", "", "actions"); flags.append(enabled);
@@ -3533,16 +3537,18 @@ function renderVpsSeckill() {
   if (accountPanel && !authDesign) {
     authDesign = document.createElement("div"); authDesign.className = "merchant-auth-design";
     const title = text("h4", "商家登录方式设计");
-    const note = text("p", "认证会话按商家、账户和出口节点隔离，最长缓存 30 天。缓存失效后只尝试正常登录或官方 refresh；遇到验证码、Passkey 或 hCaptcha 时需要人工完成。", "hint");
+    const note = text("p", "认证会话按商家、账户和出口节点隔离，最长缓存 30 天，并在服务器本地加密保存；重启后先复核有效性。登录检查通过不代表已适配自动抢购；未适配商家请使用手动模式，自动模式会提示未适配。遇到验证码、Passkey 或 hCaptcha 时需要人工完成。", "hint");
     const table = document.createElement("table"); table.className = "merchant-auth-table";
-    table.innerHTML = `<thead><tr><th>商家</th><th>主方案</th><th>Cookie 备用</th><th>浏览器增强</th></tr></thead><tbody>
-      <tr><th>Akile</th><td>官方 API + 令牌校验</td><td>不作为常规方案</td><td>API 异常时人工恢复</td></tr>
-      <tr><th>独角鲸云</th><td>邮箱密码登录 API + Bearer 令牌，核对账户邮箱</td><td>暂不支持导入，令牌最长缓存 30 天</td><td>API 异常或安全验证时到官网人工处理</td></tr>
-      <tr><th>Isvoro</th><td>Cookie 主方案 + refresh Cookie</td><td>主方案</td><td>refresh 失败后人工 hCaptcha 恢复</td></tr>
-      <tr><th>VMISS</th><td>账号密码 + Remember Me</td><td>支持导入后验证</td><td>Cloudflare 或安全验证时使用</td></tr>
-      <tr><th>DMIT</th><td>账号密码 + Remember Me</td><td>支持 Cookie + User-Agent</td><td>浏览器/IP 绑定时人工恢复</td></tr>
-      <tr><th>搬瓦工</th><td>账号密码 + Remember Me</td><td>支持 Cookie，减少邮箱验证</td><td>邮箱验证或会话失效时使用</td></tr>
-      <tr><th>VPS.SOY / 其他</th><td>按官网实际流程</td><td>仅在商家会话可确认时启用</td><td>逐商家适配</td></tr>
+    table.innerHTML = `<thead><tr><th>商家</th><th>主方案</th><th>Cookie 备用</th><th>浏览器增强 / 恢复</th><th>自动抢购适配</th></tr></thead><tbody>
+      <tr><th>Akile</th><td>官方 API + 令牌校验</td><td>不作为常规方案</td><td>API 异常时人工恢复</td><td>已适配：普通商店待付款订单；二手市场仅提醒</td></tr>
+      <tr><th>独角鲸云</th><td>邮箱密码登录 API + Bearer 令牌，核对账户邮箱</td><td>暂不支持导入，令牌最长缓存 30 天</td><td>API 异常或安全验证时到官网人工处理</td><td>未适配：支持账户检查与余额通知</td></tr>
+      <tr><th>Hytron</th><td>邮箱密码登录 API + Bearer 令牌，核对账户邮箱</td><td>暂不支持手动导入；认证会话本地加密保存，最长缓存 30 天</td><td>令牌失效后正常重新登录；安全验证或 API 异常时到官网人工处理</td><td>未适配：支持节点监控、账户检查与余额通知</td></tr>
+      <tr><th>Isvoro</th><td>Cookie 主方案 + refresh Cookie</td><td>主方案</td><td>refresh 失败后人工 hCaptcha 恢复</td><td>已适配：普通商品待付款订单；二手市场仅提醒</td></tr>
+      <tr><th>VMISS</th><td>账号密码 + Remember Me</td><td>支持导入后验证</td><td>Cloudflare 或安全验证时使用</td><td>已适配：待付款发票</td></tr>
+      <tr><th>DMIT</th><td>账号密码 + Remember Me</td><td>支持 Cookie + User-Agent</td><td>浏览器/IP 绑定时人工恢复</td><td>已适配：待付款发票</td></tr>
+      <tr><th>搬瓦工</th><td>账号密码 + Remember Me</td><td>支持 Cookie，减少邮箱验证</td><td>邮箱验证或会话失效时使用</td><td>已适配：待付款账单</td></tr>
+      <tr><th>VPS.SOY</th><td>官网账号密码登录检查</td><td>以官网会话有效性为准</td><td>安全验证时到官网人工处理</td><td>未适配：库存监控、提醒和手动购买</td></tr>
+      <tr><th>其他 / 通用网页</th><td>账户检查接口需单独适配</td><td>仅在商家会话可确认时启用</td><td>逐商家适配</td><td>未内置适配：使用手动购买；自定义下单接口需单独适配</td></tr>
     </tbody>`;
     authDesign.append(title, note, table); accountPanel.insertBefore(authDesign, accountTarget);
   }
@@ -3576,7 +3582,7 @@ function renderVpsSeckill() {
       } else if (selected === "vmiss" || selected === "vps_soy" || selected === "bwh" || selected === "akile" || selected === "narwhal" || selected === "isvoro" || selected === "dmit" || selected === "hytron") {
         const urls = { vmiss: "https://app.vmiss.com/login", vps_soy: "https://www.vps.soy/login", bwh: "https://bwh81.net/clientarea.php", akile: "https://api.akile.ai/api/v1/user/login", narwhal: "https://api.fuckip.me/api/v1/auth/login", isvoro: "https://isvoro.com/api/v1/auth/login", dmit: "https://www.dmit.io/clientarea.php", hytron: "https://hyvps.hytron.io/api/v1/auth/login" };
         account.provider = selected; account.login_url = urls[selected];
-        adapterNote.textContent = selected === "akile" ? "Akile 已内置 API 登录检查；填写邮箱和密码。若要求邮箱验证、二步验证、Passkey 或验证码，请到官网完成。检查不下单、不付款。" : selected === "narwhal" ? "独角鲸云已内置 API 登录检查；填写注册邮箱和密码。服务会核对返回账户邮箱，并在内存中缓存登录令牌最长 30 天。检查不下单、不付款。" : selected === "hytron" ? "Hytron 已内置邮箱密码 API 登录检查；填写注册邮箱和密码。服务会核对返回账户邮箱，并在内存中缓存登录令牌最长 30 天。检查不下单、不付款。" : selected === "isvoro" ? "Isvoro 已内置 API 登录检查；首次在官网完成 hCaptcha 后导入 Cookie。服务会在内存中缓存最长 30 天，并在 access Cookie 过期时自动使用 refresh Cookie 续期；服务重启或 refresh Cookie 失效后需重新导入。" : selected === "vmiss" ? "VMISS 已内置登录与官网结算适配；填写官网登录邮箱和密码。自动抢购会预填商品配置并创建待付款发票，不会自动付款。" : selected === "bwh" ? "搬瓦工已内置登录与官网结算适配；可在官网完成邮箱验证后导入 Cookie，服务在内存中缓存最长 30 天。Cookie 不会写入配置或备份；过期或服务重启后需重新导入，密码登录仍可能要求邮箱验证码。" : selected === "dmit" ? "DMIT 已内置账号密码登录检查。也可在官网用账号密码登录并完成安全验证后导入 Cookie；验证成功后只保存在服务器内存，最长 30 天。Cookie 不会写入配置或备份；若 DMIT 将会话绑定浏览器或出口 IP，服务器可能无法验证。" : `${ids[selected]} 已内置登录检查；只需填写官网登录名和密码。检查仅登录，不下单、不付款。遇到安全验证时，请在网页请求中为该商家选择 FlareSolverr 或 cloudscraper。`;
+        adapterNote.textContent = selected === "akile" ? "Akile 已内置 API 登录检查；填写邮箱和密码。若要求邮箱验证、二步验证、Passkey 或验证码，请到官网完成。检查不下单、不付款。" : selected === "narwhal" ? "独角鲸云已内置 API 登录检查；填写注册邮箱和密码。服务会核对返回账户邮箱，并在内存中缓存登录令牌最长 30 天。检查不下单、不付款。" : selected === "hytron" ? "Hytron 使用注册邮箱和密码登录官方 API，以 Bearer 令牌读取账户资料并核对邮箱。认证会话按账户和出口隔离，本地加密保存，最长缓存 30 天；重启后先复核，失效后正常重新登录。暂不支持 Cookie 或令牌手动导入；安全验证需到官网完成。支持账户检查和余额通知，尚未适配自动抢购。" : selected === "isvoro" ? "Isvoro 已内置 API 登录检查；首次在官网完成 hCaptcha 后导入 Cookie。服务会在内存中缓存最长 30 天，并在 access Cookie 过期时自动使用 refresh Cookie 续期；重启后恢复本地加密缓存并复核；refresh Cookie 失效后需重新导入。" : selected === "vmiss" ? "VMISS 已内置登录与官网结算适配；填写官网登录邮箱和密码。自动抢购会预填商品配置并创建待付款发票，不会自动付款。" : selected === "bwh" ? "搬瓦工已内置登录与官网结算适配；可在官网完成邮箱验证后导入 Cookie，服务在内存中缓存最长 30 天。Cookie 本地加密保存，不写入业务配置或普通业务备份；重启后复核，过期后需重新导入，密码登录仍可能要求邮箱验证码。" : selected === "dmit" ? "DMIT 已内置账号密码登录检查。也可在官网用账号密码登录并完成安全验证后导入 Cookie；验证成功后只保存在服务器内存，最长 30 天。Cookie 本地加密保存，不写入业务配置或普通业务备份；若 DMIT 将会话绑定浏览器或出口 IP，服务器可能无法验证。" : `${ids[selected]} 已内置登录检查；只需填写官网登录名和密码。检查仅登录，不下单、不付款。遇到安全验证时，请在网页请求中为该商家选择 FlareSolverr 或 cloudscraper。`;
         const destinations = { ...urls, akile: "https://akile.ai/login", narwhal: "https://dash.fuckip.me/login", isvoro: "https://isvoro.com/login", hytron: "https://hyvps.hytron.io/" };
         const link = text("a", `打开 ${ids[selected]} 官网登录页`); link.href = destinations[selected]; link.target = "_blank"; link.rel = "noopener noreferrer"; link.className = "provider-login-link"; providerExtra.append(link);
         if (selected === "isvoro" || selected === "bwh" || selected === "dmit") {
@@ -3591,7 +3597,7 @@ function renderVpsSeckill() {
           const instructions = selected === "isvoro"
             ? "导入步骤：打开登录页 → 完成 hCaptcha 并登录 → F12 打开 Network → 刷新 → 找到 /api/v1/auth/me → Headers → Request Headers → Cookie，复制整行粘贴到上方。验证通过后只保存在服务器内存，最长 30 天；access Cookie 过期时会尝试使用 refresh Cookie 续期。"
             : selected === "bwh"
-              ? "导入步骤：打开搬瓦工官网登录页并完成邮箱验证码 → F12 打开 Network → 刷新 → 找到 clientarea.php 请求 → Headers → Request Headers → Cookie，复制整行粘贴到上方。验证通过后只保存在服务器内存，最长 30 天；Cookie 本身过期、被撤销或服务重启后需重新导入。密码登录时 HostWatch 会自动启用官网 Remember Me；它请求商家签发更持久的 Cookie，但不是 refresh Cookie 自动续期。"
+              ? "导入步骤：打开搬瓦工官网登录页并完成邮箱验证码 → F12 打开 Network → 刷新 → 找到 clientarea.php 请求 → Headers → Request Headers → Cookie，复制整行粘贴到上方。验证通过后只保存在服务器内存，最长 30 天；服务重启后恢复并复核，Cookie 本身过期或被撤销后需重新导入。密码登录时 HostWatch 会自动启用官网 Remember Me；它请求商家签发更持久的 Cookie，但不是 refresh Cookie 自动续期。"
               : "导入步骤：打开 DMIT 官网，用账户邮箱和密码正常登录（如果官网要求安全验证，请先完成）→ 登录后打开 F12 的 Network → 刷新账户页面 → 找到 clientarea.php 请求 → Headers → Request Headers → Cookie，复制整行粘贴到上方。若仍失败，再复制该请求的 User-Agent 填入下方。验证通过后只保存在服务器内存，最长 30 天；过期、被撤销或服务重启后需重新登录并导入。Cookie 可能受浏览器/IP 绑定，服务器出口验证不一定成功。";
           providerExtra.append(text("p", instructions, "merchant-cookie-help"));
         }

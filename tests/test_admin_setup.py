@@ -38,8 +38,8 @@ class AdminSetupTests(unittest.TestCase):
 
     def test_new_install_creates_working_hashed_admin_without_early_restart(self):
         self.assertTrue(self.manage.initialize_admin(restart=False))
-        password = re.search(r"随机密码：(\S+)", self.output.getvalue())[1]
-        self.assertGreaterEqual(len(password), 24)
+        password = re.search(r"初始密码：(\S+)", self.output.getvalue())[1]
+        self.assertEqual(password, "admin123456789")
         records = auth.load_users(self.users)
         self.assertEqual(set(records), {"admin"})
         self.assertNotIn(password, self.users.read_text())
@@ -59,16 +59,20 @@ class AdminSetupTests(unittest.TestCase):
         self.output.truncate()
         self.assertFalse(self.manage.initialize_admin())
         self.assertEqual((self.users.read_bytes(), self.env.read_bytes()), old)
-        self.assertNotIn("随机密码：", self.output.getvalue())
+        self.assertNotIn("初始密码：", self.output.getvalue())
         self.run.assert_not_called()
 
-    def test_initial_password_is_unique_per_install(self):
+    def test_initial_password_is_shared_but_hashes_have_independent_salts(self):
         for name in ("one", "two"):
             with patch.object(self.manage, "DEFAULT_USERS_PATH", self.root / (name + ".json")), patch.object(self.manage, "ADMIN_ENV", self.root / (name + ".env")):
                 self.manage.initialize_admin(restart=False)
-        passwords = re.findall(r"随机密码：(\S+)", self.output.getvalue())
+        passwords = re.findall(r"初始密码：(\S+)", self.output.getvalue())
         self.assertEqual(len(passwords), 2)
-        self.assertNotEqual(*passwords)
+        self.assertEqual(passwords, ["admin123456789", "admin123456789"])
+        first = auth.load_users(self.root / "one.json")["admin"]
+        second = auth.load_users(self.root / "two.json")["admin"]
+        self.assertNotEqual(first["salt"], second["salt"])
+        self.assertNotEqual(first["hash"], second["hash"])
 
     def test_old_password_in_either_environment_file_is_preserved(self):
         for path in (self.env, self.legacy):
@@ -170,11 +174,11 @@ install() {
         environment = {**os.environ, "ADMIN_ENV_FILE": str(self.env), "INSTALL_DIR": str(installed), "SOURCE_DIR": str(template), "SERVICE_GROUP": "unused"}
         first = subprocess.run(["bash", "-c", script], env=environment, text=True, capture_output=True, timeout=10)
         self.assertEqual(first.returncode, 0, first.stderr)
-        self.assertIn("随机密码：", first.stdout)
+        self.assertIn("初始密码：", first.stdout)
         old = self.users.read_bytes(), self.env.read_bytes()
         second = subprocess.run(["bash", "-c", script], env=environment, text=True, capture_output=True, timeout=10)
         self.assertEqual(second.returncode, 0, second.stderr)
-        self.assertNotIn("随机密码：", second.stdout)
+        self.assertNotIn("初始密码：", second.stdout)
         self.assertEqual((self.users.read_bytes(), self.env.read_bytes()), old)
 
 

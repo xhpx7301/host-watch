@@ -13,6 +13,8 @@ import time
 from pathlib import Path
 
 
+DEFAULT_ADMIN_USERNAME = "admin"
+DEFAULT_ADMIN_PASSWORD = "admin123456789"
 ITERATIONS = 600_000
 # Container deployments provide HOSTWATCH_USERS_PATH/ADMIN_USERS_FILE so
 # credentials live in a persistent volume instead of the host's /etc.
