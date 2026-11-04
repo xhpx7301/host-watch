@@ -84,6 +84,69 @@ test('account save keeps explicit success, apply failure and request failure fee
   }
 });
 
+test('checking an account reports only the final outcome after saving', async () => {
+  for (const outcome of ['success', 'invalid', 'check-error', 'save-error', 'apply-error', 'verification']) {
+    const account = { id: 'one', name: 'Main', username: 'user', password: '', session_cookie: 'transient-cookie' };
+    const saved = { vps_seckill: { accounts: [{ id: 'one', name: 'Main', username: 'user', password_configured: true }] }, products: [] };
+    const messages = [], requests = [];
+    let finishCheck, receivedCookie;
+    const context = load({
+      config: { ...copy(saved), vps_seckill: { accounts: [account] } }, savedConfig: JSON.stringify(saved),
+      actionDepth: 0, actionRunning: false,
+      standaloneAccountChecks: new Map(), accountHealthChecks: new Map(),
+      document: { querySelector: () => ({ value: '' }) },
+      collectConfig: () => copy(context.config), seckillAccounts: () => context.config.vps_seckill.accounts,
+      applyConfig: value => { context.config = copy(value); },
+      requestJSON: async (url, options) => {
+        requests.push(url);
+        if (url === '/api/config') {
+          if (outcome === 'save-error') throw new Error('Save failed');
+          return { config: copy(saved), service: { ok: outcome !== 'apply-error', error: 'Apply failed' } };
+        }
+        assert.equal(url, '/api/seckill/account-check');
+        receivedCookie = JSON.parse(options.body).account.session_cookie;
+        // Saving must not announce success while the actual check is pending.
+        assert.equal(messages.some(message => message.kind === 'success'), false);
+        return new Promise((resolve, reject) => {
+          finishCheck = () => outcome === 'check-error' ? reject(new Error('Login failed'))
+            : resolve({ account_id: 'one', ok: outcome === 'success', verification_required: outcome === 'verification',
+                message: outcome === 'verification' ? 'Verification needed' : outcome === 'invalid' ? 'Login invalid' : 'Login succeeded' });
+        });
+      },
+      setMessage: (message, kind) => messages.push({ message, kind }),
+      updateDraftState() {}, invalidateAccountCheck() {}, renderVpsSeckill() {},
+      storeAccountCheck: (target, value) => target.set(value.account_id, value),
+      cancelProductDrag() {}, syncUpdateControl() {}, renderMerchantOrder() {}, renderProductList() {},
+      syncTestControls() {}, updateCardSaveStates() {}, Event: class {}, window: { dispatchEvent() {} },
+    }, ['cloneConfig', 'mergeConfigScope', 'savedConfigSnapshot', 'saveConfig', 'runAction', 'checkSeckillAccount']);
+    const pending = context.checkSeckillAccount(account, null);
+    // Flush the save request and its continuation before resolving the check.
+    await new Promise(resolve => setImmediate(resolve));
+    if (finishCheck) finishCheck();
+    await pending;
+    const terminal = messages.filter(message => ['success', 'error'].includes(message.kind));
+    if (outcome === 'verification') {
+      assert.equal(terminal.length, 0);
+      assert.equal(messages.at(-1).message, 'Verification needed');
+    } else {
+      assert.equal(terminal.length, 1, outcome);
+      assert.equal(terminal[0].kind, outcome === 'success' ? 'success' : 'error', outcome);
+      const expected = { success: 'Login succeeded', invalid: 'Login invalid', 'save-error': 'Save failed',
+        'apply-error': 'Apply failed', 'check-error': 'Login failed' }[outcome];
+      assert.ok(terminal[0].message.includes(expected), outcome);
+      if (outcome === 'check-error') assert.ok(terminal[0].message.includes('账户已保存'));
+    }
+    assert.equal(Object.hasOwn(account, 'session_cookie'), false, outcome);
+    assert.equal(context.actionRunning, false, outcome);
+    if (['save-error', 'apply-error'].includes(outcome)) {
+      assert.deepEqual(requests, ['/api/config']);
+    } else {
+      assert.deepEqual(requests, ['/api/config', '/api/seckill/account-check']);
+      assert.equal(receivedCookie, 'transient-cookie');
+    }
+  }
+});
+
 test('a delayed background response cannot replace a completed manual check', async () => {
   let finishProbe;
   const success = { account_id: 'one', status: 'valid', ok: true, checked_at: '2026-10-20T12:00:01+08:00' };

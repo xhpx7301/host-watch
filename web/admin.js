@@ -3629,27 +3629,7 @@ function renderVpsSeckill() {
     const password = document.createElement("input"); password.type = "password"; password.autocomplete = "new-password"; password.placeholder = account.password_configured ? "已保存，留空保持不变" : "登录密码"; password.addEventListener("input", () => { account.password = password.value; account.password_configured = Boolean(password.value) || account.password_configured; clearAccountSaveFeedback(account.id); updateDraftState(); updateSeckillAccountControls(account.id); }); const passwordLabel = document.createElement("label"); passwordLabel.append(text("span", "密码"), password); grid.append(passwordLabel);
     const check = text("button", "检查账户", "seckill-check-account"); check.type = "button"; check.dataset.accountId = account.id; check.disabled = actionRunning;
     check.setAttribute("aria-label", `检查网站账户 ${account.name || account.username || account.id}`);
-    check.addEventListener("click", () => {
-      runAction(check, "检查中…", "正在检查账户，不创建订单、不付款…", async () => {
-        invalidateAccountCheck(account.id);
-        let result;
-        const transientCredentials = Object.fromEntries(["session_cookie", "session_user_agent", "captcha_token", "captcha_provider"].filter(key => account[key]).map(key => [key, account[key]]));
-        try {
-          await saveConfig(`seckill-account:${account.id}`);
-          const savedAccount = seckillAccounts().find(row => row.id === account.id) || account;
-          result = await requestJSON("/api/seckill/account-check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: collectConfig(), account_id: savedAccount.id, account: { ...savedAccount, ...transientCredentials } }) });
-        } finally {
-          // Manually imported merchant cookies are transient credentials; never
-          // leave them in the browser draft after the check request completes.
-          delete account.session_cookie;
-          delete account.session_user_agent;
-          delete account.captcha_token;
-          delete account.captcha_provider;
-        }
-        invalidateAccountCheck(account.id);
-        storeAccountCheck(standaloneAccountChecks, result); storeAccountCheck(accountHealthChecks, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : result.verification_required ? "pending" : "error");
-      });
-    });
+    check.addEventListener("click", () => checkSeckillAccount(account, check));
     const remove = text("button", "删除账户", "danger"); remove.type = "button"; remove.disabled = actionRunning;
     remove.setAttribute("aria-label", `删除补货抢购账户 ${account.name || account.id}`);
     remove.addEventListener("click", () => deleteSeckillAccounts([account.id]));
@@ -3697,12 +3677,39 @@ function renderVpsSeckill() {
   renderVpsSeckillTask();
 }
 
+async function checkSeckillAccount(account, button) {
+  return runAction(button, "检查中…", "正在检查账户，不创建订单、不付款…", async () => {
+    invalidateAccountCheck(account.id);
+    let result;
+    const transientCredentials = Object.fromEntries(["session_cookie", "session_user_agent", "captcha_token", "captcha_provider"].filter(key => account[key]).map(key => [key, account[key]]));
+    try {
+      const saved = await saveConfig(`seckill-account:${account.id}`, false, { feedback: false });
+      if (!saved.service?.ok) throw new Error(`账户已保存，但服务应用失败：${saved.service?.error || "请在设置中重试"}`);
+      const savedAccount = seckillAccounts().find(row => row.id === account.id) || account;
+      try {
+        result = await requestJSON("/api/seckill/account-check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: collectConfig(), account_id: savedAccount.id, account: { ...savedAccount, ...transientCredentials } }) });
+      } catch (error) {
+        throw new Error(`账户已保存，但登录检查失败：${error.message}`);
+      }
+    } finally {
+      // Manually imported merchant cookies are transient credentials; never
+      // leave them in the browser draft after the check request completes.
+      delete account.session_cookie;
+      delete account.session_user_agent;
+      delete account.captcha_token;
+      delete account.captcha_provider;
+    }
+    invalidateAccountCheck(account.id);
+    storeAccountCheck(standaloneAccountChecks, result); storeAccountCheck(accountHealthChecks, result); renderVpsSeckill(); setMessage(result.message, result.ok ? "success" : result.verification_required ? "pending" : "error");
+  });
+}
+
 async function saveSeckillAccount(account, button) {
   if (!account || !hasUnsavedSeckillAccount(account.id)) return;
   await runAction(button, "保存中…", "正在保存当前网站账户…", async () => {
     try {
       invalidateAccountCheck(account.id);
-      const result = await saveConfig("seckill-account:" + account.id);
+      const result = await saveConfig("seckill-account:" + account.id, false, { feedback: false });
       const name = account.name || account.username || account.id;
       const ok = result.service?.ok;
       const message = ok ? name + " 已保存，可点击“检查账户”验证登录。" : name + " 已保存，但服务应用失败：" + (result.service?.error || "请在设置中重试");
@@ -4635,7 +4642,7 @@ document.querySelector("#telegram-load-chats").addEventListener("click", (event)
   setMessage(`已读取 ${result.chats.length} 个聊天。`, "success");
 }));
 
-async function saveConfig(scope = "all", automatic = false) {
+async function saveConfig(scope = "all", automatic = false, { feedback = true } = {}) {
   const draft = collectConfig();
   const saved = savedConfigSnapshot() || draft;
   const next = mergeConfigScope(saved, draft, scope);
@@ -4697,9 +4704,9 @@ async function saveConfig(scope = "all", automatic = false) {
     const savedBaseline = savedConfigSnapshot() || collectConfig();
     savedConfig = JSON.stringify(mergeConfigScope(savedBaseline, result.config, scope));
     updateDraftState();
-    if (result.service?.ok) {
+    if (feedback && result.service?.ok) {
       setMessage(`${autoSaveScopeNames[scope] || "配置"}已自动保存，服务正在后台应用。`, "success", true, false);
-    } else {
+    } else if (feedback) {
       setMessage(`配置已保存，但自动应用服务失败：${result.service?.error || "请在设置中重试"}`, "error", true, false);
     }
     return;
@@ -4713,9 +4720,9 @@ async function saveConfig(scope = "all", automatic = false) {
     }
   }
   updateDraftState();
-  if (result.service?.ok) {
+  if (feedback && result.service?.ok) {
     setMessage(automatic ? `${autoSaveScopeNames[scope] || "配置"}已自动保存，服务正在后台应用。` : scope === "all" ? "配置已保存并应用。" : "本卡片配置已保存并应用。", "success", true, automatic ? false : true);
-  } else {
+  } else if (feedback) {
     setMessage(`配置已保存，但自动应用服务失败：${result.service?.error || "请在设置中重试"}`, "error", true, automatic ? false : true);
   }
   // Show account feedback immediately; regular polling refreshes runtime state.
