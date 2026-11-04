@@ -1,33 +1,52 @@
-# 项目结构
+# 项目结构与开发
 
-HostWatch 的运行入口仍保留在仓库根目录，以兼容已经安装的 `/opt/vmiss-monitor`、systemd 单元和升级脚本。
+[返回首页](../README.md)
 
-| 目录/文件 | 作用 |
+## 源码目录
+
+| 路径 | 内容 |
 | --- | --- |
-| `admin.py`、`monitor.py`、`catalog.py` | 管理页、后台监控和库存大盘入口 |
-| `dmit.py`、`bwh.py`、`egress.py` 等 | 商家适配器与出口节点组件 |
-| `admin.html`、`admin.js`、`catalog.js` | 管理页静态资源 |
-| `docs/` | 部署、配置和维护说明 |
-| `test_*.py` | 与根入口同目录运行的回归测试 |
-| `*.service`、`*.openrc`、`*.sh` | 安装、升级、服务和节点部署入口 |
+| `app/` | Python 管理页、监控、商家适配与运维模块 |
+| `web/` | 管理页及登录页 HTML、JavaScript |
+| `config/` | 商品、环境变量与管理页配置示例 |
+| `tests/` | Python 回归测试；`fixtures/akile/` 保存商家页面样本 |
+| `deploy/native/` | Debian systemd、sudoers、管理菜单与 FlareSolverr 部署辅助脚本 |
+| `deploy/egress/` | 出口节点的 systemd 与 OpenRC 服务模板 |
+| `docker/` | Dockerfile、安装菜单、容器初始化和备份程序 |
+| `scripts/` | 开发辅助工具与前端回归测试 |
+| `docs/` | 按主题拆分的使用文档 |
 
-根目录的 Python、静态资源和安装脚本不是临时文件：安装器会将它们作为一个版本原子更新，服务单元也按这些路径启动。新增说明和诊断工具放入 `docs/`，避免移动运行入口导致旧服务器更新后管理页无法启动。
+根目录保留 README、依赖清单、Compose 配置及三个已公开的一键安装/卸载入口。`.dockerignore` 和 Git 配置留在根目录，便于工具自动识别。运行时配置、缓存、密钥及日志由 `.gitignore` 排除，不提交到仓库。
 
-## Docker Compose 运行方式
+## 部署与升级兼容
 
-`docker/install.sh` 是 Docker 一键部署入口，会将项目放到 `/opt/host-watch`，安装主机侧 `hw` 快捷菜单，并执行 Compose 首次构建。`Dockerfile` 构建同一份应用镜像，`docker-compose.yml` 分别以 `hostwatch`、`monitor` 和 `backup` 服务运行管理页、库存监控和每日备份；FlareSolverr 是独立的 `flaresolverr` 服务。三个 HostWatch 服务共享 `/data` 和 `/backups` 命名卷，管理页在容器内监听 `0.0.0.0:25678`，只将 TCP 25678 映射到宿主机。FlareSolverr 只通过 Compose 内网的 `flaresolverr:8191` 访问。
+Debian 安装器从上述目录读取源码，部署时仍将 Python、网页和配置示例放到 `/opt/vmiss-monitor/`，systemd、sudoers、`hw` 与旧版更新入口继续使用原路径。业务数据仍位于 `/var/lib/vmiss-monitor/`，已有服务器无需手动搬迁文件。
 
-容器模式通过 `HOSTWATCH_CONTAINER=1` 禁用依赖宿主机的 `systemd`、`journalctl`、`systemd-run` 和 Docker socket 操作。网页配置、手动刷新、备份导入导出仍由管理页处理；主机侧 `hw update`、`hw restart` 和 `hw logs` 负责镜像更新、容器重启和日志查看。管理页的 Docker 更新按钮只复制 `hw update`，不会获得宿主机 Docker 控制权限。
+Compose 从仓库根目录构建，使用 `docker/Dockerfile`，镜像中的应用仍位于 `/app/`。管理页、监控和备份分别运行在 `hostwatch`、`monitor`、`backup` 服务中，共享 `/data` 和 `/backups` 命名卷。仅映射管理页端口 `25678`；FlareSolverr 通过内网 `flaresolverr:8191` 访问。容器不挂载宿主机 Docker socket，更新通过主机侧 `hw update` 执行。
 
-## 更新前检查
+## 本地开发
 
-在仓库根目录运行：
+要求 Python 3.10+，先在仓库根目录创建虚拟环境并安装依赖：
 
 ```sh
-python3 -m unittest discover -q
-python3 -m py_compile admin.py monitor.py catalog.py
-node --check admin.js
-node --check catalog.js
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+cp config/config.example.json config.json
+python3 app/admin.py
 ```
 
-安装器会保留配置、库存状态、Telegram 设置和管理员账号；升级失败时使用管理员菜单生成的备份恢复数据，再重新执行安装脚本。
+Windows 可使用 `.venv\Scripts\Activate.ps1` 激活环境。源代码模式使用根目录的本地配置和状态，静态资源从 `web/` 加载；真实凭据、缓存及状态文件不要提交。
+
+在仓库根目录检查：
+
+```sh
+python3 -m compileall -q app docker tests
+python3 -m unittest discover -v
+node --check web/admin.js
+node --check web/catalog.js
+node --check web/login.js
+node --test scripts/test-admin-accounts.cjs
+```
+
+默认 unittest discovery 会加载 `tests/__init__.py`，为应用和共享测试样本设置导入路径；定向运行可用 `python3 -m unittest tests.test_admin -v`。systemd 和部分安装测试仅在 Linux 执行，Windows 会按现有平台条件跳过。

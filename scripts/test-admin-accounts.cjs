@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { test } = require('node:test');
-const source = fs.readFileSync(path.join(__dirname, '..', 'admin.js'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'admin.js'), 'utf8');
 const copy = value => JSON.parse(JSON.stringify(value));
 
 // Exercise the shipped functions with browser/network boundaries stubbed.

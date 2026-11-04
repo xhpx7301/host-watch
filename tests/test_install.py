@@ -11,7 +11,7 @@ import unittest
 
 class InstalledRuntimeTests(unittest.TestCase):
     def test_installed_modules_import_without_repository_files(self):
-        root = Path(__file__).resolve().parent
+        root = Path(__file__).resolve().parent.parent
         installer = (root / "install.sh").read_text(encoding="utf-8")
         block = re.search(
             r'^install -o root -g root -m 0644 \\\n(.*?)"\$INSTALL_DIR/"',
@@ -19,14 +19,14 @@ class InstalledRuntimeTests(unittest.TestCase):
         )
         self.assertIsNotNone(block, "Cannot find application installation command")
         filenames = re.findall(r'"\$SOURCE_DIR/([^"\n]+)"', block.group(1))
-        self.assertIn("admin.py", filenames)
-        self.assertIn("monitor.py", filenames)
-        self.assertIn("hytron.py", filenames)
+        self.assertIn("app/admin.py", filenames)
+        self.assertIn("app/monitor.py", filenames)
+        self.assertIn("app/hytron.py", filenames)
         with tempfile.TemporaryDirectory() as directory:
             for filename in filenames:
-                shutil.copy2(root / filename, Path(directory) / filename)
+                shutil.copy2(root / filename, Path(directory) / Path(filename).name)
             modules = [Path(name).stem for name in filenames if name.endswith(".py")
-                       and (name != "manage.py" or sys.platform == "linux")]
+                       and (Path(name).name != "manage.py" or sys.platform == "linux")]
             # Isolated mode excludes PYTHONPATH and the checkout; only deployed
             # files and installed third-party dependencies can satisfy imports.
             result = subprocess.run(
@@ -34,7 +34,14 @@ class InstalledRuntimeTests(unittest.TestCase):
                  "import importlib, pathlib, sys; "
                  "root = pathlib.Path(sys.argv[1]); sys.path.insert(0, str(root)); "
                  "modules = [importlib.import_module(name) for name in sys.argv[2:]]; "
-                 "assert all(pathlib.Path(module.__file__).parent == root for module in modules)",
+                 "assert all(pathlib.Path(module.__file__).parent == root for module in modules); "
+                 "import admin; "
+                 "assert admin.PAGE_PATH.read_bytes(); "
+                 "assert admin.LOGIN_PAGE_PATH.read_bytes(); "
+                 "assert admin.LOGIN_SCRIPT_PATH.read_bytes(); "
+                 "assert (admin.WEB_ROOT / 'admin.js').is_file(); "
+                 "assert (admin.WEB_ROOT / 'catalog.js').is_file(); "
+                 "assert admin.MANAGER.is_file()",
                  directory, *modules],
                 cwd=directory, capture_output=True, text=True, timeout=30,
             )
@@ -82,7 +89,7 @@ curl() {
 source "$HELPER"
 deploy_flaresolverr
 '''
-            env = {**os.environ, "TEMP_DIR": directory, "SCENARIO": scenario, "HOSTWATCH_INSTALL_FLARESOLVERR": enabled, "HELPER": str(Path(__file__).with_name("install-flaresolverr.sh"))}
+            env = {**os.environ, "TEMP_DIR": directory, "SCENARIO": scenario, "HOSTWATCH_INSTALL_FLARESOLVERR": enabled, "HELPER": str(Path(__file__).resolve().parent.parent / "deploy/native/install-flaresolverr.sh")}
             result = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, timeout=10)
             log = Path(directory, "actions")
             return result, log.read_text() if log.exists() else ""

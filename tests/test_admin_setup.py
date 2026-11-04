@@ -134,7 +134,7 @@ class AdminSetupTests(unittest.TestCase):
 
     def test_real_installer_block_initializes_once_without_starting_service(self):
         # Execute the actual installer branch with filesystem/service isolation.
-        repository = Path(__file__).resolve().parent
+        repository = Path(__file__).resolve().parent.parent
         source = (repository / "install.sh").read_text()
         start = source.index('[[ ! -L "$ADMIN_ENV_FILE" ]]')
         end = source.index('install -d -o "$SERVICE_USER"', start)
@@ -143,11 +143,12 @@ class AdminSetupTests(unittest.TestCase):
         installed.mkdir()
         template = self.root / "source"
         template.mkdir()
-        (template / "admin.env.example").write_text('ADMIN_ALLOWED_HOSTS=127.0.0.1,localhost\nADMIN_PASSWORD=\n')
+        (template / "config").mkdir()
+        (template / "config/admin.env.example").write_text('ADMIN_ALLOWED_HOSTS=127.0.0.1,localhost\nADMIN_PASSWORD=\n')
         (installed / "manage.py").write_text(
             "import importlib.util, os, sys\nfrom pathlib import Path\nfrom types import SimpleNamespace\n"
-            f"sys.path.insert(0, {str(repository)!r})\n"
-            f"spec=importlib.util.spec_from_file_location('real_manage', {str(repository / 'manage.py')!r})\n"
+            f"sys.path.insert(0, {str(repository / 'app')!r})\n"
+            f"spec=importlib.util.spec_from_file_location('real_manage', {str(repository / 'app/manage.py')!r})\n"
             "module=importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\n"
             f"module.ADMIN_ENV=Path({str(self.env)!r})\nmodule.LEGACY_ENV=Path({str(self.legacy)!r})\n"
             f"module.DEFAULT_USERS_PATH=Path({str(self.users)!r})\n"

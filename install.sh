@@ -45,14 +45,14 @@ tar -xzf "$TEMP_DIR/source.tar.gz" -C "$TEMP_DIR"
 SOURCE_DIR="$(find "$TEMP_DIR" -mindepth 1 -maxdepth 1 -type d -name 'host-watch-*' -print -quit)"
 [[ -n "$SOURCE_DIR" ]] || fail "源码压缩包格式不正确。"
 
-for file in monitor.py admin.py catalog.py hytron.py affiliates.py notifications.py stock_alerts.py seckill.py egress.py dmit.py bwh.py auth.py manage.py time_utils.py stockwatch.sh admin.html admin.js login.html login.js catalog.js requirements.txt config.example.json .env.example admin.env.example vmiss-monitor.service hostwatch.service host-watch-admin.sudoers install-flaresolverr.sh; do
+for file in app/monitor.py app/admin.py app/catalog.py app/hytron.py app/affiliates.py app/notifications.py app/stock_alerts.py app/seckill.py app/egress.py app/dmit.py app/bwh.py app/auth.py app/manage.py app/time_utils.py deploy/native/stockwatch.sh web/admin.html web/admin.js web/login.html web/login.js web/catalog.js requirements.txt config/config.example.json config/.env.example config/admin.env.example deploy/native/vmiss-monitor.service deploy/native/hostwatch.service deploy/native/host-watch-admin.sudoers deploy/native/install-flaresolverr.sh; do
   [[ -f "$SOURCE_DIR/$file" ]] || fail "源码缺少必需文件：$file"
 done
 
 # Deploy before replacing the application, so dependency failures do not leave
 # a partially updated web application. Repeated installs reuse existing services.
-# shellcheck source=install-flaresolverr.sh
-. "$SOURCE_DIR/install-flaresolverr.sh"
+# shellcheck source=deploy/native/install-flaresolverr.sh
+. "$SOURCE_DIR/deploy/native/install-flaresolverr.sh"
 deploy_flaresolverr
 
 install -d -o root -g root -m 0755 "$INSTALL_DIR"
@@ -61,23 +61,23 @@ install -d -o root -g root -m 0755 "$INSTALL_DIR"
 install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$DATA_DIR"
 [[ ! -L "$DATA_DIR/config.json" ]] || fail "$DATA_DIR/config.json 不能是符号链接。"
 install -o root -g root -m 0644 \
-  "$SOURCE_DIR/monitor.py" "$SOURCE_DIR/admin.py" "$SOURCE_DIR/catalog.py" "$SOURCE_DIR/hytron.py" "$SOURCE_DIR/affiliates.py" "$SOURCE_DIR/notifications.py" "$SOURCE_DIR/stock_alerts.py" "$SOURCE_DIR/seckill.py" "$SOURCE_DIR/egress.py" "$SOURCE_DIR/dmit.py" "$SOURCE_DIR/bwh.py" "$SOURCE_DIR/auth.py" "$SOURCE_DIR/manage.py" "$SOURCE_DIR/time_utils.py" "$SOURCE_DIR/admin.html" \
-  "$SOURCE_DIR/admin.js" "$SOURCE_DIR/login.html" "$SOURCE_DIR/login.js" "$SOURCE_DIR/catalog.js" "$SOURCE_DIR/requirements.txt" "$SOURCE_DIR/config.example.json" \
-  "$SOURCE_DIR/.env.example" "$SOURCE_DIR/vmiss-monitor.service" \
-  "$SOURCE_DIR/hostwatch.service" "$SOURCE_DIR/admin.env.example" "$SOURCE_DIR/host-watch-admin.sudoers" "$INSTALL_DIR/"
+  "$SOURCE_DIR/app/monitor.py" "$SOURCE_DIR/app/admin.py" "$SOURCE_DIR/app/catalog.py" "$SOURCE_DIR/app/hytron.py" "$SOURCE_DIR/app/affiliates.py" "$SOURCE_DIR/app/notifications.py" "$SOURCE_DIR/app/stock_alerts.py" "$SOURCE_DIR/app/seckill.py" "$SOURCE_DIR/app/egress.py" "$SOURCE_DIR/app/dmit.py" "$SOURCE_DIR/app/bwh.py" "$SOURCE_DIR/app/auth.py" "$SOURCE_DIR/app/manage.py" "$SOURCE_DIR/app/time_utils.py" "$SOURCE_DIR/web/admin.html" \
+  "$SOURCE_DIR/web/admin.js" "$SOURCE_DIR/web/login.html" "$SOURCE_DIR/web/login.js" "$SOURCE_DIR/web/catalog.js" "$SOURCE_DIR/requirements.txt" "$SOURCE_DIR/config/config.example.json" \
+  "$SOURCE_DIR/config/.env.example" "$SOURCE_DIR/deploy/native/vmiss-monitor.service" \
+  "$SOURCE_DIR/deploy/native/hostwatch.service" "$SOURCE_DIR/config/admin.env.example" "$SOURCE_DIR/deploy/native/host-watch-admin.sudoers" "$INSTALL_DIR/"
 # Keep the login assets explicit as well as part of the bulk deployment list;
 # this makes their presence obvious and protects against future list edits.
-install -o root -g root -m 0644 "$SOURCE_DIR/login.html" "$INSTALL_DIR/login.html"
-install -o root -g root -m 0644 "$SOURCE_DIR/login.js" "$INSTALL_DIR/login.js"
+install -o root -g root -m 0644 "$SOURCE_DIR/web/login.html" "$INSTALL_DIR/login.html"
+install -o root -g root -m 0644 "$SOURCE_DIR/web/login.js" "$INSTALL_DIR/login.js"
 install -d -o root -g root -m 0755 /usr/local/bin
 if [[ -f /usr/local/bin/jk && ! -L /usr/local/bin/jk ]] && \
-  cmp -s /usr/local/bin/jk <(sed 's/运行 hw/运行 jk/g' "$SOURCE_DIR/stockwatch.sh"); then
+  cmp -s /usr/local/bin/jk <(sed 's/运行 hw/运行 jk/g' "$SOURCE_DIR/deploy/native/stockwatch.sh"); then
   rm -- /usr/local/bin/jk
 fi
-install -o root -g root -m 0755 "$SOURCE_DIR/stockwatch.sh" /usr/local/bin/host-watch
-install -o root -g root -m 0755 "$SOURCE_DIR/stockwatch.sh" /usr/local/bin/stockwatch
-install -o root -g root -m 0755 "$SOURCE_DIR/stockwatch.sh" /usr/local/bin/hw
-install -o root -g root -m 0440 "$SOURCE_DIR/host-watch-admin.sudoers" /etc/sudoers.d/host-watch-admin
+install -o root -g root -m 0755 "$SOURCE_DIR/deploy/native/stockwatch.sh" /usr/local/bin/host-watch
+install -o root -g root -m 0755 "$SOURCE_DIR/deploy/native/stockwatch.sh" /usr/local/bin/stockwatch
+install -o root -g root -m 0755 "$SOURCE_DIR/deploy/native/stockwatch.sh" /usr/local/bin/hw
+install -o root -g root -m 0440 "$SOURCE_DIR/deploy/native/host-watch-admin.sudoers" /etc/sudoers.d/host-watch-admin
 visudo -cf /etc/sudoers.d/host-watch-admin >/dev/null || fail "HostWatch 管理权限配置校验失败。"
 install -d -o root -g root -m 0700 /var/backups/stockwatch
 [[ ! -L /run/stockwatch-manager.lock ]] || fail "管理锁不能是符号链接。"
@@ -89,7 +89,7 @@ printf 'f /run/stockwatch-manager.lock 0600 root root -\n' > /etc/tmpfiles.d/hos
 
 if [[ ! -e "$DATA_DIR/config.json" ]]; then
   install -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0600 \
-    "$SOURCE_DIR/config.example.json" "$DATA_DIR/config.json"
+    "$SOURCE_DIR/config/config.example.json" "$DATA_DIR/config.json"
 else
   [[ -f "$DATA_DIR/config.json" && ! -L "$DATA_DIR/config.json" ]] || fail "$DATA_DIR/config.json 必须是普通文件。"
   chown "$SERVICE_USER:$SERVICE_GROUP" "$DATA_DIR/config.json"
@@ -98,7 +98,7 @@ fi
 
 [[ ! -L "$ENV_FILE" ]] || fail "$ENV_FILE 不能是符号链接。"
 if [[ ! -e "$ENV_FILE" ]]; then
-  install -o root -g "$SERVICE_GROUP" -m 0640 "$SOURCE_DIR/.env.example" "$ENV_FILE"
+  install -o root -g "$SERVICE_GROUP" -m 0640 "$SOURCE_DIR/config/.env.example" "$ENV_FILE"
   log "已创建兼容用空环境文件 $ENV_FILE；Telegram 凭据可在管理页配置。"
 else
   [[ -f "$ENV_FILE" && ! -L "$ENV_FILE" ]] || fail "$ENV_FILE 必须是普通文件。"
@@ -108,7 +108,7 @@ fi
 
 [[ ! -L "$ADMIN_ENV_FILE" ]] || fail "$ADMIN_ENV_FILE 不能是符号链接。"
 if [[ ! -e "$ADMIN_ENV_FILE" ]]; then
-  install -o root -g "$SERVICE_GROUP" -m 0640 "$SOURCE_DIR/admin.env.example" "$ADMIN_ENV_FILE"
+  install -o root -g "$SERVICE_GROUP" -m 0640 "$SOURCE_DIR/config/admin.env.example" "$ADMIN_ENV_FILE"
   # Standard-library-only setup runs before dependency installation, so retrying
   # a later pip failure preserves the credentials already displayed here.
   # Do not restart units or reacquire an update parent's manager lock.
@@ -156,8 +156,8 @@ runuser -u "$SERVICE_USER" -- "$INSTALL_DIR/.venv/bin/python" -I -c \
   || fail "已安装程序的启动依赖校验失败；请检查上方 Python 错误，修复后重新运行 hw update。"
 
 systemctl disable --now vmiss-monitor-admin.service >/dev/null 2>&1 || true
-install -o root -g root -m 0644 "$SOURCE_DIR/vmiss-monitor.service" /etc/systemd/system/vmiss-monitor.service
-install -o root -g root -m 0644 "$SOURCE_DIR/hostwatch.service" /etc/systemd/system/hostwatch.service
+install -o root -g root -m 0644 "$SOURCE_DIR/deploy/native/vmiss-monitor.service" /etc/systemd/system/vmiss-monitor.service
+install -o root -g root -m 0644 "$SOURCE_DIR/deploy/native/hostwatch.service" /etc/systemd/system/hostwatch.service
 rm -f /etc/systemd/system/vmiss-monitor-admin.service
 ln -s hostwatch.service /etc/systemd/system/vmiss-monitor-admin.service
 systemctl daemon-reload

@@ -12,6 +12,8 @@ import tempfile
 # ``/app/docker`` on sys.path instead of the application root.  Add the root
 # explicitly so the bootstrap can import the same modules as the services.
 ROOT = Path(__file__).resolve().parent.parent
+if (ROOT / "app" / "admin.py").is_file():
+    ROOT = ROOT / "app"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 

@@ -28,6 +28,8 @@ from time_utils import BEIJING_TZ, beijing_iso, beijing_logging_converter, now_b
 
 
 ROOT = Path(__file__).resolve().parent
+if ROOT.name == "app" and (ROOT.parent / "web").is_dir():
+    ROOT = ROOT.parent
 STATE_PATH = ROOT / "state.json"
 CONFIG_PATH = ROOT / "config.json"
 STATUS_PATH = ROOT / "status.json"

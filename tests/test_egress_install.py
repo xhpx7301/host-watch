@@ -26,7 +26,7 @@ def bash_path():
 @unittest.skipUnless(bash_path(), "需要 Bash 执行隔离安装测试")
 class EgressInstallerTests(unittest.TestCase):
     def install(self, distro):
-        root = Path(__file__).resolve().parent
+        root = Path(__file__).resolve().parent.parent
         with tempfile.TemporaryDirectory() as directory:
             sandbox = Path(directory)
             release = sandbox / "os-release"
@@ -45,7 +45,7 @@ class EgressInstallerTests(unittest.TestCase):
             installer.write_bytes(text.encode())
             archive = sandbox / "source.tar.gz"
             with tarfile.open(archive, "w:gz") as tar:
-                for filename in ["egress_agent.py", "hostwatch-egress-agent.service", "hostwatch-egress-agent.openrc", "uninstall-egress.sh"]:
+                for filename in ["app/egress_agent.py", "deploy/egress/hostwatch-egress-agent.service", "deploy/egress/hostwatch-egress-agent.openrc", "uninstall-egress.sh"]:
                     body = (root / filename).read_text(encoding="utf-8").encode()
                     info = tarfile.TarInfo("host-watch-main/" + filename)
                     info.size = len(body)

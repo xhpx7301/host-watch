@@ -33,12 +33,15 @@ import egress
 
 
 ROOT = Path(__file__).resolve().parent
-CONFIG_PATH = Path(os.getenv("VMISS_CONFIG", str(ROOT / "config.json")))
+# Source files are grouped in app/; installers retain the existing flat runtime.
+DATA_ROOT = ROOT.parent if ROOT.name == "app" and (ROOT.parent / "web").is_dir() else ROOT
+WEB_ROOT = DATA_ROOT / "web" if DATA_ROOT != ROOT else ROOT
+CONFIG_PATH = Path(os.getenv("VMISS_CONFIG", str(DATA_ROOT / "config.json")))
 STATUS_PATH = Path(os.getenv("VMISS_STATUS", str(CONFIG_PATH.parent / "status.json")))
 RATES_PATH = Path(os.getenv("VMISS_RATES", str(CONFIG_PATH.parent / "exchange-rates.json")))
-PAGE_PATH = ROOT / "admin.html"
-LOGIN_PAGE_PATH = ROOT / "login.html"
-LOGIN_SCRIPT_PATH = ROOT / "login.js"
+PAGE_PATH = WEB_ROOT / "admin.html"
+LOGIN_PAGE_PATH = WEB_ROOT / "login.html"
+LOGIN_SCRIPT_PATH = WEB_ROOT / "login.js"
 MAX_BODY = 64 * 1024
 MAX_BACKUP_UPLOAD = 20 * 1024 * 1024
 MANAGER = Path(os.getenv("HOSTWATCH_MANAGER", str(ROOT / "manage.py")))
@@ -6559,7 +6562,7 @@ class Handler(BaseHTTPRequestHandler):
         if path in {"/", "/admin.html"}:
             self._send(200, "text/html; charset=utf-8", PAGE_PATH.read_bytes())
         elif path in {"/admin.js", "/catalog.js"}:
-            self._send(200, "text/javascript; charset=utf-8", (ROOT / path[1:]).read_bytes())
+            self._send(200, "text/javascript; charset=utf-8", (WEB_ROOT / path[1:]).read_bytes())
         elif path == "/api/config":
             try:
                 raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else default_config()

@@ -168,7 +168,7 @@ class AdminAPITests(unittest.TestCase):
             with self.subTest(asset=asset):
                 status, body = self.get_request(f"/{asset}?v=card-save-test")
                 self.assertEqual(status, 200)
-                self.assertEqual(body, (Path(admin.ROOT) / asset).read_bytes())
+                self.assertEqual(body, (Path(admin.WEB_ROOT) / asset).read_bytes())
 
     def test_save_applies_service_and_returns_redacted_config(self):
         value = admin.default_config()

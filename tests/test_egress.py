@@ -168,7 +168,7 @@ class EgressEnrollmentTests(unittest.TestCase):
         config.write_text(json.dumps(settings), encoding="utf-8")
         env = {key: value for key, value in os.environ.items() if not key.startswith("EGRESS_")}
         env["EGRESS_CONFIG"] = str(config)
-        process = subprocess.Popen([sys.executable, str(Path(__file__).with_name("egress_agent.py"))], env=env,
+        process = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parent.parent / "app/egress_agent.py")], env=env,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             deadline = time.monotonic() + 8

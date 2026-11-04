@@ -10,6 +10,8 @@ import time
 # This worker is launched by Compose as ``python docker/backup_worker.py``;
 # make the application root importable before loading manage.py.
 ROOT = Path(__file__).resolve().parent.parent
+if (ROOT / "app" / "admin.py").is_file():
+    ROOT = ROOT / "app"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 

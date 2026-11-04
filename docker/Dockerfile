@@ -26,7 +26,10 @@ RUN groupadd --system vmiss-monitor && useradd --system --gid vmiss-monitor --ho
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
+COPY app/ ./
+COPY web/ ./
+COPY config/ ./
+COPY docker/ ./docker/
 RUN mkdir -p /data /backups && chown -R vmiss-monitor:vmiss-monitor /app /data /backups && chmod 700 /data /backups && chmod 755 docker/entrypoint.sh
 USER vmiss-monitor
 ENTRYPOINT ["/app/docker/entrypoint.sh"]

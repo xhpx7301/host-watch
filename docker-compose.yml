@@ -1,6 +1,8 @@
 services:
   hostwatch:
-    build: .
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
     image: host-watch:local
     command: ["python", "admin.py"]
     environment:

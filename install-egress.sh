@@ -29,7 +29,7 @@ curl -fsSL --connect-timeout 20 --max-time 120 --retry 2 \
   https://codeload.github.com/xhpx7301/host-watch/tar.gz/refs/heads/main -o "$task_tmp/source.tar.gz"
 tar -xzf "$task_tmp/source.tar.gz" -C "$task_tmp"
 source_dir="$task_tmp/host-watch-main"
-for file in egress_agent.py hostwatch-egress-agent.service hostwatch-egress-agent.openrc uninstall-egress.sh; do
+for file in app/egress_agent.py deploy/egress/hostwatch-egress-agent.service deploy/egress/hostwatch-egress-agent.openrc uninstall-egress.sh; do
   [ -f "$source_dir/$file" ] || fail "源码缺少 $file，尚未替换已安装的程序。"
 done
 python3 - "$1" "$task_tmp/config.json" <<'PY'
@@ -76,18 +76,18 @@ for target in /opt/hostwatch-egress /etc/hostwatch-egress.json /etc/hostwatch-eg
   [ ! -L "$target" ] || fail "$target 不能是符号链接。"
 done
 install -d -o root -g root -m 0755 /opt/hostwatch-egress
-install -o root -g root -m 0644 "$source_dir/egress_agent.py" /opt/hostwatch-egress/egress_agent.py
+install -o root -g root -m 0644 "$source_dir/app/egress_agent.py" /opt/hostwatch-egress/egress_agent.py
 install -o root -g root -m 0755 "$source_dir/uninstall-egress.sh" /opt/hostwatch-egress/uninstall.sh
 install -o root -g hostwatch-egress -m 0640 "$task_tmp/config.json" /etc/hostwatch-egress.json
 printf 'EGRESS_CONFIG=/etc/hostwatch-egress.json\n' > "$task_tmp/agent.env"
 install -o root -g hostwatch-egress -m 0640 "$task_tmp/agent.env" /etc/hostwatch-egress.env
 if [ "$ID" = alpine ]; then
   install -o hostwatch-egress -g hostwatch-egress -m 0640 /dev/null /var/log/hostwatch-egress.log
-  install -o root -g root -m 0755 "$source_dir/hostwatch-egress-agent.openrc" /etc/init.d/hostwatch-egress-agent
+  install -o root -g root -m 0755 "$source_dir/deploy/egress/hostwatch-egress-agent.openrc" /etc/init.d/hostwatch-egress-agent
   rc-update add hostwatch-egress-agent default
   rc-service hostwatch-egress-agent restart
 else
-  install -o root -g root -m 0644 "$source_dir/hostwatch-egress-agent.service" /etc/systemd/system/hostwatch-egress-agent.service
+  install -o root -g root -m 0644 "$source_dir/deploy/egress/hostwatch-egress-agent.service" /etc/systemd/system/hostwatch-egress-agent.service
   systemctl daemon-reload
   systemctl enable hostwatch-egress-agent.service
   systemctl restart hostwatch-egress-agent.service

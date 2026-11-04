@@ -3,7 +3,10 @@ __pycache__
 *.pyc
 .venv
 *.tar.gz
-test_*.py
+tests
+scripts
+deploy
+AGENTS.md
 docs
 .env
 *.env

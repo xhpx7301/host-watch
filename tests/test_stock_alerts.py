@@ -397,7 +397,7 @@ with patch.object(sys,'argv',['monitor.py','--once']), patch('requests.Session')
     response.json.return_value={'ok':True,'result':{'message_id':99}}
     page=session.get.return_value
     page.status_code=200;page.url='https://shop.example.com/item';page.headers={};page.text='<p class="stock">2</p>'
-    runpy.run_path('monitor.py',run_name='__main__')
+    runpy.run_path('app/monitor.py',run_name='__main__')
 '''
         with tempfile.TemporaryDirectory() as temp:
             import os

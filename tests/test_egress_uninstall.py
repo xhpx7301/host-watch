@@ -11,7 +11,7 @@ from test_egress_install import bash_path
 @unittest.skipUnless(bash_path(), "需要 Bash 执行隔离卸载测试")
 class EgressUninstallerTests(unittest.TestCase):
     def uninstall(self, distro, fail_stop=False, symlink=False):
-        source = Path(__file__).with_name("uninstall-egress.sh").read_text(encoding="utf-8")
+        source = (Path(__file__).resolve().parent.parent / "uninstall-egress.sh").read_text(encoding="utf-8")
         with tempfile.TemporaryDirectory() as directory:
             sandbox = Path(directory)
             targets = ["/opt/hostwatch-egress", "/etc/hostwatch-egress.json", "/etc/hostwatch-egress.env",
