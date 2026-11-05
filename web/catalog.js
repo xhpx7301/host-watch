@@ -346,7 +346,7 @@
       seckillButton.type = "button";
       seckillButton.disabled = actionRunning || Boolean(seckill);
       seckillButton.setAttribute("aria-pressed", String(Boolean(seckill)));
-      seckillButton.title = seckill ? "已加入 VPS 补货抢购" : "加入 VPS 补货抢购";
+      seckillButton.title = seckill ? "已加入补货抢购" : "加入补货抢购";
       seckillButton.addEventListener("click", () => {
         if (!actionRunning && !seckill) window.dispatchEvent(new CustomEvent("hostwatch-catalog-seckill", {
           detail: [{ row, product_id: item?.id || "", checked_at: data?.fetched_at || "" }],
