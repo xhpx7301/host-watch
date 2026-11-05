@@ -113,6 +113,10 @@
   }
 
   function existing(row) { return config.products.find((item) => matches(row, item)); }
+  function seckillItem(row) {
+    const product = existing(row);
+    return product && (config.vps_seckill?.items || []).find(item => item.product_id === product.id);
+  }
   function narwhalRows() {
     const query = get("narwhal-machine-search").value.trim().toLowerCase();
     return (data?.rows || []).filter(row => (!narwhalRegion || (row.region || "unknown") === narwhalRegion) &&
@@ -337,6 +341,18 @@
         button.addEventListener("click", () => setReminders([row], !active, type));
         actions.append(button);
       }
+      const seckill = seckillItem(row);
+      const seckillButton = text("button", seckill ? "✓ 已加入补货抢购" : "＋ 加入补货抢购", "reminder-action reminder-seckill");
+      seckillButton.type = "button";
+      seckillButton.disabled = actionRunning || Boolean(seckill);
+      seckillButton.setAttribute("aria-pressed", String(Boolean(seckill)));
+      seckillButton.title = seckill ? "已加入 VPS 补货抢购" : "加入 VPS 补货抢购";
+      seckillButton.addEventListener("click", () => {
+        if (!actionRunning && !seckill) window.dispatchEvent(new CustomEvent("hostwatch-catalog-seckill", {
+          detail: [{ row, product_id: item?.id || "", checked_at: data?.fetched_at || "" }],
+        }));
+      });
+      actions.append(seckillButton);
       actions.append(text("small", reminderLabel(row)));
       if (row.purchase_url) {
         const url = new URL(row.purchase_url);
