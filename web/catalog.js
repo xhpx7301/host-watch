@@ -371,6 +371,7 @@
     get("catalog-selected").textContent = `已选 ${selected.size} 项`;
     get("catalog-watch-selected").disabled = actionRunning || !selected.size;
     get("catalog-unwatch-selected").disabled = actionRunning || !selected.size;
+    get("catalog-seckill-selected").disabled = actionRunning || !selected.size;
   }
 
   function render() {
@@ -568,6 +569,11 @@
   });
   get("catalog-watch-selected").addEventListener("click", () => setReminders((data?.rows || []).filter((row) => selected.has(row.key)), true));
   get("catalog-unwatch-selected").addEventListener("click", () => setReminders((data?.rows || []).filter((row) => selected.has(row.key)), true, "notify"));
+  get("catalog-seckill-selected").addEventListener("click", () => {
+    if (actionRunning) return;
+    const rows = (data?.rows || []).filter(row => selected.has(row.key)).map(row => ({ row, product_id: existing(row)?.id || "", checked_at: data?.fetched_at || "" }));
+    if (rows.length) window.dispatchEvent(new CustomEvent("hostwatch-catalog-seckill", { detail: rows }));
+  });
   get("catalog-prev").addEventListener("click", () => { page--; renderTable(true); });
   get("catalog-next").addEventListener("click", () => { page++; renderTable(true); });
   get("catalog-open-products").addEventListener("click", () => navigatePage("monitor"));

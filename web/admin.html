@@ -893,7 +893,7 @@
       <div class="catalog-sync"><div><strong id="catalog-summary">尚未载入目录</strong><span id="catalog-updated" class="subtle"></span></div><div class="actions"><button id="catalog-refresh" type="button">刷新目录库存</button><button id="catalog-stop" type="button" class="danger" hidden>停止刷新</button></div></div>
       <p id="catalog-route" class="hint" role="status" aria-live="polite"></p>
       <p id="catalog-status" class="hint" role="status" aria-live="polite">选择商家后获取公开套餐目录；切换分类时优先使用已读取的全量快照。</p>
-      <div class="catalog-bulk"><button id="catalog-select-all" class="option-button" type="button" aria-pressed="false" aria-label="选择本页">选择本页 <span data-option-state>未全选</span></button><span id="catalog-selected" class="subtle">已选 0 项</span><button id="catalog-watch-selected" type="button" disabled>所选加入库存监控</button><button id="catalog-unwatch-selected" type="button" disabled>所选加入库存通知</button></div>
+      <div class="catalog-bulk"><button id="catalog-select-all" class="option-button" type="button" aria-pressed="false" aria-label="选择本页">选择本页 <span data-option-state>未全选</span></button><span id="catalog-selected" class="subtle">已选 0 项</span><button id="catalog-watch-selected" type="button" disabled>所选加入库存监控</button><button id="catalog-unwatch-selected" type="button" disabled>所选加入库存通知</button><button id="catalog-seckill-selected" type="button" class="primary" disabled>所选加入 VPS 补货抢购</button></div>
       <div id="catalog-results">
       <div class="catalog-table-wrap" role="region" aria-label="VPS 商品目录" tabindex="0"><table class="catalog-table"><thead><tr><th scope="col">选择</th><th scope="col">套餐</th><th scope="col">地区 / 线路</th><th scope="col">配置 / 带宽</th><th id="catalog-price-heading" scope="col">价格 / 周期</th><th scope="col">库存</th><th scope="col">监控 / 通知 / 操作</th></tr></thead><tbody id="catalog-rows"></tbody></table></div>
       <div id="catalog-empty" class="empty">尚无目录数据，点击“刷新目录库存”读取。</div>
@@ -906,7 +906,7 @@
 
   <section class="page-panel panel-card" id="page-seckill" data-page="seckill" aria-labelledby="page-title" hidden>
     <div class="section-body">
-    <div class="section-head"><div><h2>VPS 补货抢购</h2><p>从 VPS 库存监控或 VPS 库存通知逐个加入商品。下架商品仍可保留目标链接，恢复上架后继续检查。</p></div><div class="actions"><span id="seckill-task-state" class="state">未运行</span></div></div>
+    <div class="section-head"><div><h2>VPS 补货抢购</h2><p>从库存大盘选择套餐批量加入，也可从 VPS 库存监控或通知逐个添加。商品设置保存后，可绑定网站账户并选择手动或自动模式。</p></div><div class="actions"><span id="seckill-task-state" class="state">未运行</span></div></div>
       <div class="seckill-control-grid">
       <div class="seckill-panel vps-seckill-panel">
         <div class="section-head"><div><h3>执行模式</h3><p>每个商家独立设置策略和检查间隔。自动模式只创建待付款订单，付款由你到官网完成。</p></div><div class="actions"><button id="vps-seckill-test" type="button">测试抢购配置</button><button id="vps-seckill-test-stop" type="button" class="danger" hidden>停止测试</button><button id="vps-seckill-start" type="button" class="primary">启动补货抢购</button><button id="vps-seckill-stop" type="button" class="danger" hidden>暂停补货抢购</button></div></div>

@@ -3430,6 +3430,35 @@ function addToVpsSeckill(product) {
   }
   renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); setMessage(`${product.name} 已加入 VPS 补货抢购${addedDefaults ? `：${addedDefaults}` : ""}，正在自动保存。`, "pending", true, false);
 }
+window.addEventListener("hostwatch-catalog-seckill", event => {
+  if (actionRunning) return;
+  const rows = Array.isArray(event.detail) ? event.detail : [];
+  const items = seckillItems();
+  let added = 0;
+  for (const entry of rows) {
+    const row = entry?.row;
+    if (!row?.watch || !row.key) continue;
+    let product = entry.product_id ? config.products.find(item => item.id === entry.product_id) : null;
+    if (!product) {
+      if (config.products.length >= 100) break;
+      product = { ...structuredClone(row.watch), id: crypto.randomUUID(), enabled: false, watch_enabled: false, notify_enabled: false };
+      config.products.push(product);
+    }
+    product.snapshot = { name: row.name, region: row.region, specs: row.specs, traffic: row.traffic || "", price: row.price, available: row.available, stock_mode: row.stock_mode, url: row.purchase_url, node_capacity: row.node_capacity || null, checked_at: entry.checked_at || "" };
+    if (row.watch.adapter === "dmit") product.snapshot.stock_version = 0;
+    if (items.some(item => item.product_id === product.id)) continue;
+    if (items.length >= 100) break;
+    items.push({ id: product.id, product_id: product.id, label: product.name, quantity: 1, ...seckillAddDefaults(product), target_url: product.purchase_url || product.snapshot.url || "", enabled: true });
+    added++;
+  }
+  if (!added) {
+    setMessage("所选套餐已加入抢购，或已达到商品配置上限。", "success");
+    return;
+  }
+  renderProducts(); renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill");
+  navigatePage("seckill");
+  setMessage(`已从库存大盘加入 ${added} 个套餐到 VPS 补货抢购，请检查账户和商品设置后启动。`, "pending", true, false);
+});
 function addSeckillAccountItem(item, product) {
   if (!item || actionRunning) return;
   const items = seckillItems();
