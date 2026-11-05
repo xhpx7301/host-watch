@@ -352,14 +352,20 @@
           detail: [{ row, product_id: item?.id || "", checked_at: data?.fetched_at || "" }],
         }));
       });
-      actions.append(seckillButton);
-      actions.append(text("small", reminderLabel(row)));
+      const purchaseActions = text("div", "", "catalog-purchase-actions");
+      purchaseActions.append(seckillButton);
+      let purchaseUrl = null;
       if (row.purchase_url) {
-        const url = new URL(row.purchase_url);
-        if (url.protocol === "https:" && ["app.vmiss.com", "www.vps.soy", "akile.ai", "dash.fuckip.me", "isvoro.com", "www.dmit.io", "bwh81.net", "www.bwh81.net", "bandwagonhost.com", "www.bandwagonhost.com", "hyvps.hytron.io"].includes(url.hostname) && !url.username && !url.password) {
-          const link = text("a", "直接购买", "buy-link"); link.href = affiliatePurchaseURL(url.href, row.watch.adapter, row.watch); link.target = "_blank"; link.rel = "noopener noreferrer"; actions.append(link);
-        }
+        try {
+          const url = new URL(row.purchase_url);
+          if (url.protocol === "https:" && ["app.vmiss.com", "www.vps.soy", "akile.ai", "dash.fuckip.me", "isvoro.com", "www.dmit.io", "bwh81.net", "www.bwh81.net", "bandwagonhost.com", "www.bandwagonhost.com", "hyvps.hytron.io"].includes(url.hostname) && !url.username && !url.password) purchaseUrl = affiliatePurchaseURL(url.href, row.watch.adapter, row.watch);
+        } catch { /* Invalid purchase URLs are not rendered as links. */ }
       }
+      if (purchaseUrl) {
+        const link = text("a", "直接购买", "buy-link"); link.href = purchaseUrl; link.target = "_blank"; link.rel = "noopener noreferrer"; purchaseActions.append(link);
+      }
+      actions.append(purchaseActions);
+      actions.append(text("small", reminderLabel(row)));
       cell().append(actions);
       return tr;
     }));
