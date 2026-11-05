@@ -69,6 +69,19 @@ class AdminAPITests(unittest.TestCase):
             self.assertEqual(code, 200)
             refresh.assert_called_once_with(account_id="ak", evaluate=True, rule_id="rule-1")
 
+    def test_expired_session_does_not_trigger_browser_basic_auth_prompt(self):
+        with patch.object(admin, "authorized", return_value=False):
+            connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port)
+            self.addCleanup(connection.close)
+            connection.request("POST", "/api/manage", json.dumps({"action": "status"}), {"Content-Type": "application/json"})
+            response = connection.getresponse()
+            self.assertEqual(response.status, 401)
+            self.assertIsNone(response.getheader("WWW-Authenticate"))
+            self.assertEqual(json.loads(response.read())["code"], "admin_auth_required")
+            code, body = self.get_request("/")
+            self.assertEqual(code, 200)
+            self.assertIn("<title>登录".encode(), body)
+
     def test_market_test_notification_sends_explicit_sample_to_saved_telegram(self):
         with patch.object(admin, "authorized", return_value=False), patch.object(admin, "telegram_call") as send:
             code, _ = self.request("/api/market/test-notification", {})

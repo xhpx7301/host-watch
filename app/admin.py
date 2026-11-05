@@ -6521,7 +6521,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(401)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         body = json.dumps({"error": "需要登录管理员账号", "code": "admin_auth_required"}, ensure_ascii=False).encode("utf-8")
-        self.send_header("WWW-Authenticate", 'Basic realm="HostWatch admin", charset="UTF-8"')
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
