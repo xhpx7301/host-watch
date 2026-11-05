@@ -326,6 +326,13 @@ class OrderTaskTests(unittest.TestCase):
         self.assertEqual(normalized['vps_seckill']['items'][0]['billing_cycle'], '')
         self.assertEqual(normalized['vps_seckill']['items'][0]['payment_method'], '')
 
+    def test_bandwagon_accepts_its_supported_billing_cycles(self):
+        self.config['products'][0]['adapter'] = 'bwh'
+        self.config['products'][0]['bwh_offer_key'] = '87:USCA_9:semiannually:9999'
+        self.config['vps_seckill']['items'][0]['billing_cycle'] = 'semiannually'
+        normalized = admin.validate_config(self.config)
+        self.assertEqual(normalized['vps_seckill']['items'][0]['billing_cycle'], 'semiannually')
+
     def test_checkout_without_explicit_no_payment_contract_is_blocked(self):
         for capability in ({}, {**self.capability, 'automatic_payment': True}):
             with self.subTest(capability=capability):
@@ -627,9 +634,9 @@ class BwhOrderTests(unittest.TestCase):
         invoice = VmissResponse('<h3>Invoice 24290771: Unpaid</h3><p>SPECIAL 20G KVM PROMO V5 - CN2 GIA ECOMMERCE</p><p>Location: NL - Amsterdam DC1 (EUNL_1)</p>', url='https://bwh81.net/billing/24290771')
         session.get.side_effect = [config, checkout, invoice]
         session.post.side_effect = [config, redirect]
-        product = Product('87:EUNL_1:annually:16999', 'SPECIAL 20G KVM PROMO V5 - CN2 GIA ECOMMERCE · 年付', 1,
-                          'https://bwh81.net/cart.php?a=add&pid=87&billingcycle=annually&configoption%5B17%5D=158')
-        result = admin.bwh_order(session, {'quantity': 1, 'billing_cycle': 'annually', 'payment_method': 'alipay'},
+        product = Product('87:EUNL_1:semiannually:9999', 'SPECIAL 20G KVM PROMO V5 - CN2 GIA ECOMMERCE · 半年付', 1,
+                          'https://bwh81.net/cart.php?a=add&pid=87&billingcycle=semiannually&configoption%5B17%5D=158')
+        result = admin.bwh_order(session, {'quantity': 1, 'billing_cycle': 'semiannually', 'payment_method': 'alipay'},
                                  {'username': 'user@example.com'}, product, product.url)
         self.assertEqual(result['order_id'], '24290771')
         self.assertEqual(result['payment_status'], 'unpaid')
@@ -638,6 +645,7 @@ class BwhOrderTests(unittest.TestCase):
         self.assertEqual(payload['accepttos'], 'on')
         self.assertNotIn('ccnumber', payload)
         self.assertNotIn('payment', session.get.call_args_list[-1].args[0])
+        self.assertEqual(session.get.call_args_list[0].args[0], 'https://bwh81.net/cart.php?a=add&pid=87&billingcycle=semiannually&configoption%5B17%5D=158')
 
     def test_accepts_invoice_link_and_pending_status_variant(self):
         response = VmissResponse('<a href="/billing/24290771">View invoice</a><span>Pending</span>')

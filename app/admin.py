@@ -456,6 +456,7 @@ ORDER_PROTOCOL = "hostwatch-unpaid-v1"
 # ``payment_mode`` remains the safety contract (always manual); these fields
 # describe the invoice that the user will pay later on the merchant site.
 ORDER_BILLING_CYCLES = {"monthly", "quarterly", "annually"}
+BWH_ORDER_BILLING_CYCLES = {"monthly", "quarterly", "semiannually", "annually", "biennially", "triennially"}
 ORDER_PAYMENT_METHODS = {"alipay", "credit_card", "usdt"}
 BWH_PAYMENT_METHODS = {
     "alipay": "payssionalipaycn",
@@ -3237,8 +3238,8 @@ def bwh_order(session, item: dict, account: dict, product, url: str, key: str | 
     parsed = urlsplit(cart_url)
     query = parse_qs(parsed.query, keep_blank_values=True)
     cycle = str(item.get("billing_cycle") or (query.get("billingcycle") or [""])[0]).strip().casefold()
-    if cycle not in ORDER_BILLING_CYCLES:
-        raise ValueError("搬瓦工付款周期必须是月付、季付、半年付或年付")
+    if cycle not in BWH_ORDER_BILLING_CYCLES:
+        raise ValueError("搬瓦工付款周期无效")
     query["billingcycle"] = [cycle]
     cart_url = urlunsplit(("https", "bwh81.net", parsed.path, urlencode(query, doseq=True), ""))
     response = session.get(cart_url, timeout=(5, 20), allow_redirects=True, headers={**MERCHANT_BROWSER_HEADERS, "Sec-Fetch-Site": "same-origin"})
@@ -4754,7 +4755,7 @@ def normalize_vps_soy_url(value: object) -> str:
     return "https://www.vps.soy/cart" + ("?" + urlencode(sorted(query)) if query else "")
 
 
-def normalize_seckill(value: object, product_ids: set[str]) -> dict:
+def normalize_seckill(value: object, product_ids: set[str], product_adapters: dict[str, str] | None = None) -> dict:
     """Validate the VPS seckill draft without making any order request."""
     if value is None:
         value = {}
@@ -4849,7 +4850,9 @@ def normalize_seckill(value: object, product_ids: set[str]) -> dict:
             raise ValueError(f"VPS 秒杀商品 {item_id} 的下单数量必须是 1 到 100 的整数")
         if len(operating_system) > 80:
             raise ValueError(f"VPS 秒杀商品 {item_id} 的系统名称过长")
-        if billing_cycle not in {"", *ORDER_BILLING_CYCLES}:
+        product_adapter = str((product_adapters or {}).get(product_id, "")).casefold()
+        allowed_billing_cycles = BWH_ORDER_BILLING_CYCLES if product_adapter == "bwh" else ORDER_BILLING_CYCLES
+        if billing_cycle not in {"", *allowed_billing_cycles}:
             raise ValueError(f"VPS 秒杀商品 {item_id} 的付款周期无效")
         if payment_method not in {"", *ORDER_PAYMENT_METHODS}:
             raise ValueError(f"VPS 秒杀商品 {item_id} 的付款方式无效")
@@ -4963,6 +4966,7 @@ def validate_config(value: object) -> dict:
         raise ValueError("产品列表无效或超过 100 项")
     normalized = []
     seen_ids = set()
+    product_adapters = {}
     for item in products:
         if not isinstance(item, dict):
             raise ValueError("产品配置必须是对象")
@@ -5172,6 +5176,7 @@ def validate_config(value: object) -> dict:
             normalized_item["snapshot"]["stock_version"] = max(0, snapshot["stock_version"])
         normalized_item["request_mode"] = request_mode
         seen_ids.add(product_id)
+        product_adapters[product_id] = adapter
         normalized.append(normalized_item)
     enabled = value.get("enabled", False)
     if enabled and not any(item["enabled"] for item in normalized) and not value.get("isvoro_seckill", False):
@@ -5180,7 +5185,7 @@ def validate_config(value: object) -> dict:
     telegram = normalize_telegram(value.get("telegram", {}))
     telegram_routes = normalize_telegram_routes(value.get("telegram_routes", {}))
     egress_config = egress.normalize(value.get("egress", {}))
-    vps_seckill = normalize_seckill(value.get("vps_seckill", {}), seen_ids)
+    vps_seckill = normalize_seckill(value.get("vps_seckill", {}), seen_ids, product_adapters)
     provider_schedules = normalize_provider_schedules(value.get("provider_schedules"), {
         "catalog": catalog_schedule, "monitor": monitor_schedule, "notify": notify_schedule,
         "seckill": {"mode": vps_seckill["mode"], "interval_seconds": vps_seckill["interval_seconds"]},
