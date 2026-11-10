@@ -3404,13 +3404,14 @@ function seckillAddDefaults(product) {
   const vmissElite = provider === "vmiss" && String(product?.name || "").trim().toLowerCase() === "us.la.cmin2.elite";
   const vmiss = provider === "vmiss";
   const akile = provider === "akile";
+  const narwhal = provider === "narwhal";
   return {
     account_id: account?.id || "",
     egress_node_id: provider ? config.egress?.routes?.[provider] || "" : "",
     coupon_code: vmissElite ? "10%OFF" : coupon,
     operating_system: vmiss || akile ? "Debian 12" : "",
-    billing_cycle: vmiss || akile ? "monthly" : "",
-    payment_method: vmiss ? "alipay" : "",
+    billing_cycle: vmiss || akile || narwhal ? "monthly" : "",
+    payment_method: narwhal ? "balance" : vmiss ? "alipay" : "",
     akile_protocol_agreed: akile,
     akile_broadcast_ip_ack: akile,
   };
@@ -3506,16 +3507,22 @@ function renderVpsSeckill() {
   if (!seckillItems().length) itemTarget.append(text("p", "还没有补货抢购商品，请从 VPS 库存监控或 VPS 库存通知的“更多”中逐个加入。", "empty"));
   seckillItems().forEach(item => {
     const product = products.get(item.product_id), card = text("article", "", "seckill-item"); card.dataset.id = item.id;
+    const providerKey = seckillProviderKey(product?.adapter) || seckillProviderKey(product?.provider);
     const title = text("strong", product?.name || item.label || item.product_id || "已下架商品");
     const head = text("div", "", "seckill-item-head"); head.append(title, text("small", product ? `${product.provider} · ${item.product_id}` : "商品已下架，保留补货抢购配置", "subtle")); card.append(head);
     const grid = text("div", "", "form-grid");
     const quantity = document.createElement("input"); quantity.type = "number"; quantity.min = "1"; quantity.max = "100"; quantity.step = "1"; quantity.value = item.quantity ?? 1;
     quantity.addEventListener("input", () => { item.quantity = Number(quantity.value); updateDraftState(); scheduleAutoSave("seckill"); });
     const coupon = document.createElement("input"); coupon.value = item.coupon_code || ""; coupon.maxLength = 256; coupon.placeholder = "可选专属优惠码"; coupon.addEventListener("input", () => { item.coupon_code = coupon.value; updateDraftState(); scheduleAutoSave("seckill"); });
-    const operatingSystem = document.createElement("select");
-    [["", "跟随商家默认系统"], ["AlmaLinux 9", "AlmaLinux 9"], ["AlmaLinux 10", "AlmaLinux 10"], ["Debian 11", "Debian 11"], ["Debian 12", "Debian 12"], ["Debian 13", "Debian 13"], ["Ubuntu 22", "Ubuntu 22"], ["Ubuntu 24", "Ubuntu 24"]].forEach(([value, label]) => operatingSystem.add(new Option(label, value)));
+    const operatingSystem = document.createElement(providerKey === "narwhal" ? "input" : "select");
+    if (providerKey === "narwhal") {
+      operatingSystem.placeholder = "留空跟随节点默认；或填写官网系统名 / 镜像 ID";
+      operatingSystem.maxLength = 256;
+    } else {
+      [["", "跟随商家默认系统"], ["AlmaLinux 9", "AlmaLinux 9"], ["AlmaLinux 10", "AlmaLinux 10"], ["Debian 11", "Debian 11"], ["Debian 12", "Debian 12"], ["Debian 13", "Debian 13"], ["Ubuntu 22", "Ubuntu 22"], ["Ubuntu 24", "Ubuntu 24"]].forEach(([value, label]) => operatingSystem.add(new Option(label, value)));
+    }
     operatingSystem.value = item.operating_system || "";
-    operatingSystem.addEventListener("change", () => { item.operating_system = operatingSystem.value; updateDraftState(); scheduleAutoSave("seckill"); });
+    operatingSystem.addEventListener(providerKey === "narwhal" ? "input" : "change", () => { item.operating_system = operatingSystem.value; updateDraftState(); scheduleAutoSave("seckill"); });
     const billingCycle = document.createElement("select");
     [["", "跟随商家默认周期"], ["monthly", "月付"], ["quarterly", "季付"], ["annually", "年付"]].forEach(([value, label]) => billingCycle.add(new Option(label, value)));
     billingCycle.value = item.billing_cycle || "";
@@ -3527,7 +3534,13 @@ function renderVpsSeckill() {
     const account = document.createElement("select"); account.replaceChildren(...accountOptions.map(option => option.cloneNode(true))); account.value = item.account_id || ""; account.addEventListener("change", () => { item.account_id = account.value; seckillAccountChecks.delete(item.id); renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); });
     const egressSelect = document.createElement("select"); const egressOptions = [new Option("跟随商家出口（未分配则直连）", "")]; egressNodes().forEach(node => egressOptions.push(new Option(node.name || node.id, node.id))); egressSelect.replaceChildren(...egressOptions); egressSelect.value = item.egress_node_id || ""; egressSelect.addEventListener("change", () => { item.egress_node_id = egressSelect.value; seckillAccountChecks.delete(item.id); renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); });
     const target = document.createElement("input"); target.type = "url"; target.value = item.target_url || product?.purchase_url || ""; target.placeholder = "下架商品目标购买链接（可选）"; target.addEventListener("input", () => { item.target_url = target.value; updateDraftState(); scheduleAutoSave("seckill"); });
-    const providerKey = seckillProviderKey(product?.adapter) || seckillProviderKey(product?.provider);
+    if (providerKey === "narwhal") {
+      quantity.max = "1";
+      billingCycle.replaceChildren(new Option("月付", "monthly")); billingCycle.value = "monthly"; billingCycle.disabled = true;
+      paymentMethod.replaceChildren(new Option("账户余额（直接扣款）", "balance")); paymentMethod.value = "balance"; paymentMethod.disabled = true;
+      item.billing_cycle = "monthly";
+      item.payment_method = "balance";
+    }
     if (providerKey === "akile" || providerKey === "vmiss") {
       item.operating_system = "Debian 12";
       item.billing_cycle = "monthly";
@@ -3538,6 +3551,8 @@ function renderVpsSeckill() {
     }
     const submitHint = text("p", providerKey === "vmiss"
       ? "VMISS 使用内置官网结算适配：密码登录时自动启用官网 Remember Me，请求更持久的登录 Cookie；认证会话在内存中缓存最长 30 天，验证仍有效时会续延本地缓存。自动模式会预填商品配置并创建待付款发票；不会自动付款。"
+      : providerKey === "narwhal"
+        ? "独角鲸自动模式会直接扣账户余额并创建实例：每项 1 台、月付，关闭自动续费。系统密码随机生成，可到官网实例详情查看；结果待核对时请勿重复启动。需要退款请到官网操作，金额以官网退款预览为准。"
       : providerKey === "akile"
         ? "Akile 使用内置待付款适配：固定 Debian 12 和 1 个月周期创建订单；不会自动付款。"
         : providerKey === "bwh"
@@ -3547,7 +3562,7 @@ function renderVpsSeckill() {
           : providerKey === "dmit"
             ? "DMIT 下单适配尚未完成，实际自动下单暂不可用。请使用手动模式在官网下单；账户检查或配置测试通过不代表能成功下单。"
           : "该商家尚未内置自动抢购适配。请使用手动模式打开购买链接；选择自动模式会提示未适配，账户检查通过也不会创建订单。", "hint span-2");
-    [["下单数量（台，1–100）", quantity], ["优惠码", coupon], ["系统", operatingSystem], ["付款周期", billingCycle], ["付款方式", paymentMethod], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
+    [[providerKey === "narwhal" ? "购买数量（仅支持 1 台）" : "下单数量（台，1–100）", quantity], ["优惠码", coupon], ["系统", operatingSystem], ["付款周期", billingCycle], ["付款方式", paymentMethod], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
     const enabled = settingButton("商品状态", item.enabled !== false, value => { item.enabled = value; renderVpsSeckillTask(); updateDraftState(); scheduleAutoSave("seckill"); }, ["已停用", "已启用"]);
     const flags = text("div", "", "actions"); flags.append(enabled);
     const addAccount = text("button", "添加其他账号抢购"); addAccount.type = "button"; addAccount.disabled = actionRunning; addAccount.dataset.seckillAddAccount = "true";
@@ -3570,7 +3585,7 @@ function renderVpsSeckill() {
     const table = document.createElement("table"); table.className = "merchant-auth-table";
     table.innerHTML = `<thead><tr><th>商家</th><th>主方案</th><th>Cookie 备用</th><th>浏览器增强 / 恢复</th><th>自动抢购适配</th></tr></thead><tbody>
       <tr><th>Akile</th><td>官方 API + 令牌校验</td><td>不作为常规方案</td><td>API 异常时人工恢复</td><td>已适配：普通商店待付款订单；二手市场仅提醒</td></tr>
-      <tr><th>独角鲸云</th><td>邮箱密码登录 API + Bearer 令牌，核对账户邮箱</td><td>暂不支持导入，令牌最长缓存 30 天</td><td>API 异常或安全验证时到官网人工处理</td><td>未适配：支持账户检查与余额通知</td></tr>
+      <tr><th>独角鲸云</th><td>邮箱密码登录 API + Bearer 令牌，核对账户邮箱</td><td>暂不支持导入，令牌最长缓存 30 天</td><td>API 异常或安全验证时到官网人工处理</td><td>已适配：直接扣余额开通单台月付实例，关闭自动续费</td></tr>
       <tr><th>Hytron</th><td>邮箱密码登录 API + Bearer 令牌，核对账户邮箱</td><td>暂不支持手动导入；认证会话本地加密保存，最长缓存 30 天</td><td>令牌失效后正常重新登录；安全验证或 API 异常时到官网人工处理</td><td>未适配：支持节点监控、账户检查与余额通知</td></tr>
       <tr><th>Isvoro</th><td>Cookie 主方案 + refresh Cookie</td><td>主方案</td><td>refresh 失败后人工 hCaptcha 恢复</td><td>已适配：普通商品待付款订单；二手市场仅提醒</td></tr>
       <tr><th>VMISS</th><td>账号密码 + Remember Me</td><td>支持导入后验证</td><td>Cloudflare 或安全验证时使用</td><td>已适配：待付款发票</td></tr>
@@ -3845,13 +3860,14 @@ function renderVpsSeckillTask() {
   const state = document.querySelector("#seckill-task-state"), start = document.querySelector("#vps-seckill-start"), stop = document.querySelector("#vps-seckill-stop");
   const running = vpsSeckillTask && vpsSeckillTask.pending !== false; state.textContent = running ? "执行中" : vpsSeckillTask?.not_found ? "无活动任务" : vpsSeckillTask ? (vpsSeckillTask.cancelled ? "已暂停" : "已完成") : "未运行"; state.className = `state ${running ? "pending" : vpsSeckillTask?.cancelled || vpsSeckillTask?.not_found ? "error" : vpsSeckillTask ? "ok" : ""}`; start.disabled = Boolean(running) || actionRunning || !seckillItems().some(item => item.enabled !== false); stop.hidden = !running; stop.disabled = !running;
   const results = document.querySelector("#vps-seckill-results"); results.replaceChildren();
-  const labels = { submitted: "已创建待付款订单", ready: "请手动下单", uncertain: "结果待核对，请勿重复下单", blocked: "预检查未通过", failed_before_submit: "配置失败，未提交账单", cancelled: "已停止" };
+  const labels = { submitted: "已创建待付款订单", purchased: "已扣余额并创建实例", ready: "请手动下单", uncertain: "结果待核对，请勿重复下单", blocked: "预检查未通过", failed_before_submit: "配置失败，未提交账单", cancelled: "已停止" };
   (vpsSeckillTask?.items || []).forEach(result => {
     const item = seckillItems().find(row => row.id === result.item_id);
     const row = text("div", "", "seckill-result");
     row.append(text("strong", `${item?.label || result.item_id} · ${labels[result.status] || result.status}${result.quantity ? ` · ${result.quantity} 台` : ""}`));
+    if (result.vm_id) row.append(text("p", `实例编号：${result.vm_id}。${result.status === "purchased" ? "自动续费已关闭；查看密码或退款请到官网。" : "可能已扣余额，请先核对官网实例和交易记录。"}`, "hint"));
     if (result.order_id) row.append(text("p", `订单号：${result.order_id}。请登录官网手动支付。`, "hint"));
-    try { const url = new URL(result.url); if (url.protocol === "https:" && !url.username && !url.password) { const link = text("a", "前往官网核对 / 手动支付"); link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer"; row.append(link); } } catch {}
+    try { const url = new URL(result.url); if (url.protocol === "https:" && !url.username && !url.password) { const link = text("a", ["paid", "unknown"].includes(result.payment_status) || result.vm_id ? "前往官网查看实例 / 核对交易" : "前往官网核对 / 手动支付"); link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer"; row.append(link); } } catch {}
     results.append(row);
   });
   const logs = vpsSeckillTask?.logs || []; document.querySelector("#vps-seckill-logs").textContent = logs.length ? logs.map(log => `[${formatBeijingDate(log.at)}] ${log.message}`).join("\n") : "暂无日志"; document.querySelector("#vps-seckill-log-note").textContent = vpsSeckillTask?.not_found ? vpsSeckillTask.message : vpsSeckillTask ? `${vpsSeckillTask.mode || ""} · ${logs.length} 条日志` : "尚未启动补货抢购任务。"; renderOverview();

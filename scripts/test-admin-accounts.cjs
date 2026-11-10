@@ -7,6 +7,50 @@ const { test } = require('node:test');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'admin.js'), 'utf8');
 const copy = value => JSON.parse(JSON.stringify(value));
 
+test('Narwhal purchase defaults select balance and monthly while other merchants retain invoice preferences', () => {
+  const context = load({
+    config: { egress: { routes: { narwhal: 'node-one' } } },
+    seckillProviderKey: value => value,
+    seckillAccounts: () => [{ id: 'narwhal-account', provider: 'narwhal' }],
+  }, ['seckillAddDefaults']);
+  const defaults = context.seckillAddDefaults({ adapter: 'narwhal' });
+  assert.equal(defaults.account_id, 'narwhal-account');
+  assert.equal(defaults.egress_node_id, 'node-one');
+  assert.equal(defaults.operating_system, '');
+  assert.equal(defaults.billing_cycle, 'monthly');
+  assert.equal(defaults.payment_method, 'balance');
+  assert.equal(context.seckillAddDefaults({ adapter: 'vmiss' }).payment_method, 'alipay');
+  assert.equal(context.seckillAddDefaults({ adapter: 'akile' }).payment_method, '');
+});
+
+test('purchase results distinguish paid instances, uncertain debits and unpaid invoices', () => {
+  function element(tag, value = '') {
+    return { tag, textContent: value, children: [], append(...nodes) { this.children.push(...nodes); },
+      replaceChildren(...nodes) { this.children = nodes; } };
+  }
+  for (const [result, expected, forbidden] of [
+    [{ status: 'purchased', payment_status: 'paid', vm_id: 'vm-one' }, '已扣余额并创建实例', '手动支付'],
+    [{ status: 'uncertain', payment_status: 'unknown' }, '结果待核对', '手动支付'],
+    [{ status: 'submitted', payment_status: 'unpaid', order_id: 'order-one' }, '已创建待付款订单', '已扣余额'],
+  ]) {
+    const nodes = new Map();
+    const context = load({
+      document: { querySelectorAll: () => [], querySelector: selector => {
+        if (!nodes.has(selector)) nodes.set(selector, element('div'));
+        return nodes.get(selector);
+      } },
+      URL, text: element, actionRunning: false, seckillAccounts: () => [],
+      seckillItems: () => [{ id: 'one', label: 'Plan' }], renderOverview() {},
+      vpsSeckillTask: { pending: false, logs: [], items: [{ item_id: 'one', quantity: 1,
+        url: 'https://dash.fuckip.me/', ...result }] },
+    }, ['renderVpsSeckillTask']);
+    context.renderVpsSeckillTask();
+    const rendered = JSON.stringify(nodes.get('#vps-seckill-results'));
+    assert.ok(rendered.includes(expected));
+    assert.ok(!rendered.includes(forbidden));
+  }
+});
+
 // Exercise the shipped functions with browser/network boundaries stubbed.
 function load(context, names) {
   vm.createContext(context);

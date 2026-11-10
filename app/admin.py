@@ -30,6 +30,7 @@ from affiliates import AFFILIATE_PROVIDERS, DEFAULT_AFFILIATES, PROVIDERS, affil
 from time_utils import beijing_iso, format_beijing
 from notifications import hardware_text, hytron_resource_message, network_text, purchase_button, stock_message, telegram_region
 import egress
+import narwhal_orders
 
 
 ROOT = Path(__file__).resolve().parent
@@ -453,8 +454,8 @@ def stop_stock_test(task_id: str) -> dict:
 ORDER_PROTOCOL = "hostwatch-unpaid-v1"
 
 # Optional purchase preferences passed to a merchant's unpaid-order adapter.
-# ``payment_mode`` remains the safety contract (always manual); these fields
-# describe the invoice that the user will pay later on the merchant site.
+# ``payment_mode`` remains manual for unpaid-order adapters. Narwhal's separate
+# purchase adapter explicitly uses balance and does not use that protocol.
 ORDER_BILLING_CYCLES = {"monthly", "quarterly", "annually"}
 BWH_ORDER_BILLING_CYCLES = {"monthly", "quarterly", "semiannually", "annually", "biennially", "triennially"}
 ORDER_PAYMENT_METHODS = {"alipay", "credit_card", "usdt"}
@@ -3846,13 +3847,15 @@ def seckill_test(submitted: dict) -> dict:
         if required_account:
             if not account:
                 result["order_submission"] = {"ok": False, "required": True, "message": "未绑定账户，本次不会创建订单"}
-            elif (str((product or {}).get("adapter", "")).casefold() not in {"akile", "vmiss", "bwh", "isvoro", "dmit"}
+            elif (str((product or {}).get("adapter", "")).casefold() not in {"akile", "vmiss", "bwh", "isvoro", "dmit", "narwhal"}
                   and not str(item.get("submit_url", "")).strip()):
                 result["order_submission"] = {"ok": False, "required": True, "message": "未配置商家待付款下单适配，本次不会创建订单"}
             else:
                 adapter_id = str((product or {}).get("adapter", "")).casefold()
                 result["order_submission"] = {"ok": True, "required": True,
-                                                "message": ("已启用 Akile 原生待付款下单适配，启动时会固定使用 Debian 12 和 1 个月周期"
+                                                "message": ("已启用独角鲸余额购买：单台、月付，直接扣余额并创建实例，关闭自动续费；本次测试不会购买"
+                                                            if adapter_id == "narwhal" else
+                                                            "已启用 Akile 原生待付款下单适配，启动时会固定使用 Debian 12 和 1 个月周期"
                                                             if adapter_id == "akile" else
                                                             "已启用 VMISS 原生结算适配，启动时会登录、预填配置并创建待付款发票"
                                                             if adapter_id == "vmiss" else
@@ -3863,6 +3866,13 @@ def seckill_test(submitted: dict) -> dict:
                                                             "DMIT 下单适配尚未完成，实际自动下单暂不可用；配置或账户检查通过不代表能成功下单，请使用手动模式在官网下单"
                                                             if adapter_id == "dmit" else
                                                             "已配置统一 hostwatch-unpaid-v1 待付款接口，启动时还会校验接口能力")}
+                if adapter_id == "narwhal":
+                    try:
+                        narwhal_orders.validate_settings(item)
+                        if merchant_login_id(account.get("provider", "")) != "narwhal":
+                            raise ValueError("独角鲸购买必须绑定独角鲸网站账户")
+                    except ValueError as exc:
+                        result["order_submission"].update(ok=False, message=str(exc))
         try:
             with requests.Session() as session:
                 session.trust_env = False
@@ -3990,6 +4000,7 @@ class SeckillTask:
         self.done = threading.Event()
         self.lock = threading.Lock()
         self.logs = []
+        self.narwhal_attempts = set()
         self.output = {"task_id": task_id, "pending": True, "mode": mode, "logs": self.logs, "items": []}
 
     def log(self, message: str, level: str = "info", item: dict | None = None) -> None:
@@ -4051,13 +4062,14 @@ class SeckillTask:
 
     def _submit(self, session, item, account, url, product=None, fetcher=None, inspected=None):
         quantity = item.get("quantity", 1)
-        # This is an explicit unpaid-order adapter contract, never a generic checkout POST.
-        # The adapter MUST enforce no charging, including saved cards/account credit.
+        # Narwhal explicitly buys with balance. Other adapters create unpaid orders.
         if self.cancelled.is_set():
             return {"status": "cancelled", "url": url, "quantity": quantity}
         key = hashlib.sha256(f"{self.id}:{item['id']}".encode()).hexdigest()
         affiliate_url = self._affiliate_purchase_url(item, url, product) if product else url
         adapter_id = str((product or {}).get("adapter", "")).casefold()
+        if adapter_id == "narwhal":
+            return self._submit_narwhal(session, item, account, url, product, key)
         dmit_browser = (product and str(product.get("adapter", "")).casefold() == "dmit"
                         and str((fetcher or {}).get("mode", "")).casefold() == "flaresolverr")
         # Akile's official client stores aff_code in browser localStorage and
@@ -4186,11 +4198,47 @@ class SeckillTask:
     def _total_duration(self) -> float:
         return round(max(0.0, time.monotonic() - self.started), 1)
 
+    def _submit_narwhal(self, session, item, account, url, product, key):
+        identity = (str(account.get("username", "")).strip().casefold(), product.get("plan_id"))
+        try:
+            if merchant_login_id(account.get("provider", "")) != "narwhal":
+                raise ValueError("独角鲸购买必须绑定独角鲸网站账户")
+            if identity in self.narwhal_attempts:
+                raise ValueError("本任务已处理同一独角鲸账户和套餐，请先到官网核对，避免重复扣款")
+            payload = narwhal_orders.prepare_purchase(session, item, product)
+        except Exception as exc:
+            detail = _order_exception_detail(exc) if isinstance(exc, (ValueError, requests.RequestException)) else "购买配置或套餐读取异常"
+            self.log(f"独角鲸购买预检查未通过：{detail}；未提交购买、未扣款。", "error", item)
+            return {"status": "blocked", "url": url, "quantity": item.get("quantity", 1)}
+        if self.cancelled.is_set():
+            return {"status": "cancelled", "url": url, "quantity": 1}
+        # Mark before the POST: duplicate rows and notification failures must
+        # never cause a second debit for the same account/plan in this task.
+        self.narwhal_attempts.add(identity)
+        self.log("正在提交独角鲸余额购买：1 台、月付，直接扣余额，自动续费关闭。", "info", item)
+        try:
+            order = narwhal_orders.purchase(session, payload, product, key)
+        except Exception as exc:
+            vm_id = exc.vm_id if isinstance(exc, narwhal_orders.PurchaseError) else ""
+            self.log("独角鲸购买结果待核对，可能已扣余额；已停止该商品，不会自动重试，请先到官网核对实例和交易记录。", "error", item)
+            return {"status": "uncertain", "url": f"https://dash.fuckip.me/instance/{vm_id}" if vm_id else narwhal_orders.DASHBOARD_URL,
+                    "quantity": 1, "payment_status": "unknown", **({"vm_id": vm_id} if vm_id else {})}
+        self.log(f"独角鲸实例 {order['vm_id']} 已确认创建并扣余额，自动续费关闭；需要退款时请到官网操作。", "success", item)
+        try:
+            notification = self._notify_unpaid_order(item, order["vm_id"], 1, order["url"],
+                                                      duration_seconds=self._total_duration(), payment_status="paid")
+        except Exception:
+            notification = "failed"
+            self.log("独角鲸实例已购买，但 Telegram 通知失败，请到官网查看实例。", "error", item)
+        return {"status": "purchased", "quantity": 1, **order, "telegram_status": notification}
+
     def _notify_unpaid_order(self, item: dict, order_id: str, quantity: int, url: str,
-                             duration_seconds: float | None = None) -> str:
+                             duration_seconds: float | None = None, payment_status: str = "unpaid") -> str:
+        paid = payment_status == "paid"
+        result_label = "余额购买实例" if paid else "待付款订单"
         token, chat_id = effective_telegram(self.config, "seckill")
         if not token or not chat_id:
-            self.log("待付款订单已创建，但未发送 Telegram：机器人未配置或通知已关闭。", "warning", item)
+            self.log(f"{result_label}已创建，但未发送 Telegram：机器人未配置或通知已关闭。", "warning", item)
             return "unconfigured"
         label = self._item_label(item)
         product = next((row for row in self.config.get("products", []) if row.get("id") == item.get("product_id")), {})
@@ -4209,21 +4257,21 @@ class SeckillTask:
             f"商家：{escape(merchant[:80])}",
             f"商品：{escape(str(label)[:160])}",
             *([f"账户：{account_label}"] if account_label is not None else []),
-            f"订单号：{escape(str(order_id)[:128])}",
+            f"{'实例编号' if paid else '订单号'}：{escape(str(order_id)[:128])}",
             f"数量：{quantity}",
-            "状态：待付款",
+            "状态：已扣余额，实例已创建；自动续费关闭" if paid else "状态：待付款",
             f"总耗时：{duration_seconds} 秒",
             f"下单时间：{format_beijing(beijing_iso())}",
-            "请登录商家官网手动付款，系统不会自动付款。",
+            "请登录独角鲸官网查看实例和密码；需要退款时在官网操作，退款金额以官网预览为准。" if paid else "请登录商家官网手动付款，系统不会自动付款。",
         ])
-        self.log("正在发送 Telegram 待付款订单通知", "info", item)
+        self.log(f"正在发送 Telegram {result_label}通知", "info", item)
         try:
             telegram_call(token, "sendMessage", chat_id=chat_id, text=message, parse_mode="HTML",
-                          disable_web_page_preview=True, reply_markup=purchase_button(url, "💳 立即付款"))
+                          disable_web_page_preview=True, reply_markup=purchase_button(url, "🖥 查看实例" if paid else "💳 立即付款"))
         except TelegramAPIError:
-            self.log("待付款订单已创建，但 Telegram 通知发送失败；请查看服务日志并到官网核对订单。", "error", item)
+            self.log(f"{result_label}已创建，但 Telegram 通知发送失败；请查看服务日志并到官网核对。", "error", item)
             return "failed"
-        self.log("待付款订单已通过 Telegram 通知。", "success", item)
+        self.log(f"{result_label}已通过 Telegram 通知。", "success", item)
         return "sent"
 
     @staticmethod
@@ -4241,7 +4289,8 @@ class SeckillTask:
         finished, contexts = {}, {}
         next_check_at = {}
         self.publish_module_status("pending", "正在执行抢购任务")
-        self.log(f"秒杀任务已启动：{self.mode_label()}，共 {len(items)} 个商品；仅创建待付款订单，需手动到官网支付")
+        purchase_note = "独角鲸自动购买会直接扣余额并创建实例；其他商家仅创建待付款订单" if any(products.get(row.get("product_id"), {}).get("adapter") == "narwhal" for row in items) else "仅创建待付款订单，需手动到官网支付"
+        self.log(f"秒杀任务已启动：{self.mode_label()}，共 {len(items)} 个商品；{purchase_note}")
         try:
             with ExitStack() as stack:
                 # Separate stock and authenticated sessions per item, even for the same account.
@@ -4257,7 +4306,7 @@ class SeckillTask:
                         order_session = stack.enter_context(requests.Session())
                         for session in (stock_session, order_session):
                             session.trust_env = False
-                            session.headers["User-Agent"] = "HostWatch/1.0 (VPS seckill; unpaid orders only)"
+                            session.headers["User-Agent"] = "HostWatch/1.0 (VPS seckill)"
                             egress.apply_session(session, fetcher)
                         self.log("已建立库存检查会话和下单会话，开始预检查", "info", item)
                         account = accounts.get(item.get("account_id"))
@@ -4273,13 +4322,18 @@ class SeckillTask:
                         native_bwh = native_adapter == "bwh"
                         native_isvoro = native_adapter == "isvoro"
                         native_dmit = native_adapter == "dmit"
+                        native_narwhal = native_adapter == "narwhal"
                         auto_requested = item_mode != "manual"
                         if auto_requested and not account:
                             raise ValueError("自动模式必须绑定网站账户")
-                        auto = bool(auto_requested and (native_akile or native_vmiss or native_bwh or native_isvoro or native_dmit or str(item.get("submit_url", "")).strip()))
+                        auto = bool(auto_requested and (native_akile or native_vmiss or native_bwh or native_isvoro or native_dmit or native_narwhal or str(item.get("submit_url", "")).strip()))
                         if auto_requested and not auto:
                             raise ValueError("该商家尚未配置内置或兼容的待付款下单适配")
-                        if auto and not native_akile and not native_vmiss and not native_bwh and not native_isvoro and not native_dmit:
+                        if auto and native_narwhal:
+                            narwhal_orders.validate_settings(item)
+                            if merchant_login_id(account.get("provider", "")) != "narwhal":
+                                raise ValueError("独角鲸购买必须绑定独角鲸网站账户")
+                        if auto and not native_akile and not native_vmiss and not native_bwh and not native_isvoro and not native_dmit and not native_narwhal:
                             if not account.get("login_url") or urlsplit(account["login_url"]).netloc != urlsplit(item["submit_url"]).netloc:
                                 raise ValueError("账户检查接口与待付款下单接口必须同源，以复用认证会话")
                             capability = order_json(order_session.get(item["submit_url"], timeout=(5, 20), allow_redirects=False))
@@ -4350,9 +4404,9 @@ class SeckillTask:
                                     continue
                                 url = result.url or url
                             if auto:
-                                self.log("库存满足下单条件，开始提交待付款订单（不会付款）", "info", item)
+                                self.log("库存满足购买条件，开始独角鲸余额购买（直接扣款）" if product.get("adapter") == "narwhal" else "库存满足下单条件，开始提交待付款订单（不会付款）", "info", item)
                                 finished[item["id"]] = self._submit(order_session, item, account, url, product, fetcher, result)
-                                self.log(f"下单流程结束：{finished[item['id']].get('status', 'unknown')}", "info" if finished[item["id"]].get("status") in {"submitted", "ready"} else "error", item)
+                                self.log(f"下单流程结束：{finished[item['id']].get('status', 'unknown')}", "info" if finished[item["id"]].get("status") in {"submitted", "purchased", "ready"} else "error", item)
                             else:
                                 purchase_url = self._affiliate_purchase_url(item, url, product)
                                 finished[item["id"]] = {"status": "ready", "url": purchase_url, "quantity": quantity}
@@ -4378,6 +4432,12 @@ class SeckillTask:
             completed_items = list(finished.values())
             if self.output.get("cancelled"):
                 final_message = "秒杀任务已停止"
+            elif any(item.get("status") == "purchased" for item in completed_items):
+                final_message = "秒杀任务已完成；独角鲸已扣余额并创建实例"
+                if any(item.get("status") == "submitted" for item in completed_items):
+                    final_message += "；其他待付款订单请到官网手动支付"
+                if any(item.get("status") == "uncertain" for item in completed_items):
+                    final_message += "；部分商品结果待核对，请检查官网记录，勿重复启动"
             elif any(item.get("status") == "submitted" for item in completed_items):
                 final_message = "秒杀任务已完成；已确认的待付款订单请到官网手动支付"
             elif any(item.get("status") == "uncertain" for item in completed_items):
@@ -4387,7 +4447,7 @@ class SeckillTask:
             self.log(final_message)
             failed = any(item.get("status") in {"blocked", "failed_before_submit", "uncertain"} for item in completed_items)
             self.publish_module_status("error" if failed else "success", final_message,
-                log_entries=list(self.logs) if any(item.get("status") == "submitted" for item in completed_items) else None)
+                log_entries=list(self.logs) if any(item.get("status") in {"submitted", "purchased"} for item in completed_items) else None)
 
     def mode_label(self):
         return "按商家执行模式" if self.config.get("provider_schedules", {}).get("seckill") else {"rapid": "极速秒杀（自动）", "precise": "精准秒杀（自动）", "manual": "手动秒杀"}.get(self.mode, self.mode)
@@ -4848,13 +4908,19 @@ def normalize_seckill(value: object, product_ids: set[str], product_adapters: di
         quantity = item.get("quantity", 1)
         if type(quantity) is not int or not 1 <= quantity <= 100:
             raise ValueError(f"VPS 秒杀商品 {item_id} 的下单数量必须是 1 到 100 的整数")
-        if len(operating_system) > 80:
-            raise ValueError(f"VPS 秒杀商品 {item_id} 的系统名称过长")
         product_adapter = str((product_adapters or {}).get(product_id, "")).casefold()
+        narwhal_or_removed = product_adapter == "narwhal" or product_id not in product_ids
+        if len(operating_system) > (256 if narwhal_or_removed else 80):
+            raise ValueError(f"VPS 秒杀商品 {item_id} 的系统名称过长")
         allowed_billing_cycles = BWH_ORDER_BILLING_CYCLES if product_adapter == "bwh" else ORDER_BILLING_CYCLES
         if billing_cycle not in {"", *allowed_billing_cycles}:
             raise ValueError(f"VPS 秒杀商品 {item_id} 的付款周期无效")
-        if payment_method not in {"", *ORDER_PAYMENT_METHODS}:
+        # Keep legacy invoice preferences loadable on upgrade, and preserve
+        # removed products' manual links. The purchase adapter enforces balance.
+        allowed_payment_methods = {"", *ORDER_PAYMENT_METHODS}
+        if narwhal_or_removed:
+            allowed_payment_methods.add("balance")
+        if payment_method not in allowed_payment_methods:
             raise ValueError(f"VPS 秒杀商品 {item_id} 的付款方式无效")
         item_ids.add(item_id)
         normalized_items.append({"id": item_id, "product_id": product_id, "coupon_code": coupon[:256],

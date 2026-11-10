@@ -45,7 +45,7 @@ tar -xzf "$TEMP_DIR/source.tar.gz" -C "$TEMP_DIR"
 SOURCE_DIR="$(find "$TEMP_DIR" -mindepth 1 -maxdepth 1 -type d -name 'host-watch-*' -print -quit)"
 [[ -n "$SOURCE_DIR" ]] || fail "源码压缩包格式不正确。"
 
-for file in app/monitor.py app/admin.py app/catalog.py app/hytron.py app/affiliates.py app/notifications.py app/stock_alerts.py app/seckill.py app/egress.py app/dmit.py app/bwh.py app/auth.py app/manage.py app/time_utils.py deploy/native/stockwatch.sh web/admin.html web/admin.js web/login.html web/login.js web/catalog.js requirements.txt config/config.example.json config/.env.example config/admin.env.example deploy/native/vmiss-monitor.service deploy/native/hostwatch.service deploy/native/host-watch-admin.sudoers deploy/native/install-flaresolverr.sh; do
+for file in app/monitor.py app/admin.py app/catalog.py app/hytron.py app/narwhal_orders.py app/affiliates.py app/notifications.py app/stock_alerts.py app/seckill.py app/egress.py app/dmit.py app/bwh.py app/auth.py app/manage.py app/time_utils.py deploy/native/stockwatch.sh web/admin.html web/admin.js web/login.html web/login.js web/catalog.js requirements.txt config/config.example.json config/.env.example config/admin.env.example deploy/native/vmiss-monitor.service deploy/native/hostwatch.service deploy/native/host-watch-admin.sudoers deploy/native/install-flaresolverr.sh; do
   [[ -f "$SOURCE_DIR/$file" ]] || fail "源码缺少必需文件：$file"
 done
 
@@ -61,7 +61,7 @@ install -d -o root -g root -m 0755 "$INSTALL_DIR"
 install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$DATA_DIR"
 [[ ! -L "$DATA_DIR/config.json" ]] || fail "$DATA_DIR/config.json 不能是符号链接。"
 install -o root -g root -m 0644 \
-  "$SOURCE_DIR/app/monitor.py" "$SOURCE_DIR/app/admin.py" "$SOURCE_DIR/app/catalog.py" "$SOURCE_DIR/app/hytron.py" "$SOURCE_DIR/app/affiliates.py" "$SOURCE_DIR/app/notifications.py" "$SOURCE_DIR/app/stock_alerts.py" "$SOURCE_DIR/app/seckill.py" "$SOURCE_DIR/app/egress.py" "$SOURCE_DIR/app/dmit.py" "$SOURCE_DIR/app/bwh.py" "$SOURCE_DIR/app/auth.py" "$SOURCE_DIR/app/manage.py" "$SOURCE_DIR/app/time_utils.py" "$SOURCE_DIR/web/admin.html" \
+  "$SOURCE_DIR/app/monitor.py" "$SOURCE_DIR/app/admin.py" "$SOURCE_DIR/app/catalog.py" "$SOURCE_DIR/app/hytron.py" "$SOURCE_DIR/app/narwhal_orders.py" "$SOURCE_DIR/app/affiliates.py" "$SOURCE_DIR/app/notifications.py" "$SOURCE_DIR/app/stock_alerts.py" "$SOURCE_DIR/app/seckill.py" "$SOURCE_DIR/app/egress.py" "$SOURCE_DIR/app/dmit.py" "$SOURCE_DIR/app/bwh.py" "$SOURCE_DIR/app/auth.py" "$SOURCE_DIR/app/manage.py" "$SOURCE_DIR/app/time_utils.py" "$SOURCE_DIR/web/admin.html" \
   "$SOURCE_DIR/web/admin.js" "$SOURCE_DIR/web/login.html" "$SOURCE_DIR/web/login.js" "$SOURCE_DIR/web/catalog.js" "$SOURCE_DIR/requirements.txt" "$SOURCE_DIR/config/config.example.json" \
   "$SOURCE_DIR/config/.env.example" "$SOURCE_DIR/deploy/native/vmiss-monitor.service" \
   "$SOURCE_DIR/deploy/native/hostwatch.service" "$SOURCE_DIR/config/admin.env.example" "$SOURCE_DIR/deploy/native/host-watch-admin.sudoers" "$INSTALL_DIR/"
