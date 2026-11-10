@@ -10,9 +10,10 @@ import requests
 import admin
 import narwhal_orders as orders
 from monitor import parse_narwhal
-from tests.test_narwhal import MACHINE_ID, PLAN_ID, OTHER_PLAN_ID, item as product, plan
+from tests.test_narwhal import MACHINE_ID, PLAN_ID, OTHER_PLAN_ID, OTHER_MACHINE_ID, item as product, plan
 
 
+PREVIEW = {"is_valid": True, "final_amount": 0.8}
 VM_ID = "4d34a87e-62b6-4825-b3bc-36722b7c8c1a"
 
 
@@ -42,10 +43,10 @@ class NarwhalPurchaseTests(unittest.TestCase):
         self.plan = plan(supported_os=[{"id": "debian12", "name": "Debian 12"},
                                        {"id": "ubuntu24", "name": "Ubuntu 24"}])
         self.detail = {"id": VM_ID, "machine_id": MACHINE_ID, "plan_id": PLAN_ID,
-                       "os_image": "debian12", "status": "creating", "auto_renew": False,
+                       "os_image": "debian12", "status": "creating", "auto_renew": True,
                        "credentials": {"password": "private-vm-password"}}
         self.session = Mock(headers={"Authorization": "Bearer private-token"})
-        self.session.get.side_effect = [response({"plans": [self.plan]}), response(self.detail)]
+        self.session.get.side_effect = [response({"plans": [self.plan]}), response(PREVIEW), response(self.detail)]
         self.session.post.return_value = response({"vm_id": VM_ID})
         self.config = configuration()
 
@@ -62,7 +63,7 @@ class NarwhalPurchaseTests(unittest.TestCase):
         task, result = self.submit()
         self.assertEqual(result["status"], "purchased")
         self.assertEqual(result["payment_status"], "paid")
-        self.assertFalse(result["auto_renew"])
+        self.assertTrue(result["auto_renew"])
         self.assertEqual(result["url"], f"https://dash.fuckip.me/instance/{VM_ID}")
         self.session.post.assert_called_once()
         post = self.session.post.call_args
@@ -70,7 +71,7 @@ class NarwhalPurchaseTests(unittest.TestCase):
         payload = post.kwargs["json"]
         self.assertEqual(payload["plan_id"], PLAN_ID)
         self.assertEqual(payload["os_image"], "debian12")
-        self.assertFalse(payload["auto_renew"])
+        self.assertTrue(payload["auto_renew"])
         self.assertEqual(payload["promo_code"], "PROMO")
         self.assertGreaterEqual(len(payload["password"]), 24)
         self.assertNotEqual(payload["password"], "account-private-password")
@@ -87,20 +88,80 @@ class NarwhalPurchaseTests(unittest.TestCase):
         payload = orders.prepare_purchase(self.session, purchase_item(operating_system="", coupon_code=""), product())
         self.assertEqual(payload["os_image"], "debian12")
         self.assertNotIn("promo_code", payload)
+        self.assertEqual(self.session.get.call_count, 1)
+
+    def test_auto_renew_can_be_disabled_and_verified_and_reported(self):
+        self.detail["auto_renew"] = False
+        with patch.object(admin, "effective_telegram", return_value=("bot-token", "100")), \
+             patch.object(admin, "telegram_call") as send:
+            _, result = self.submit(item=purchase_item(narwhal_auto_renew=False))
+        self.assertEqual(result["status"], "purchased")
+        self.assertFalse(result["auto_renew"])
+        self.assertFalse(self.session.post.call_args.kwargs["json"]["auto_renew"])
+        self.assertIn("自动续费关闭", send.call_args.kwargs["text"])
+
+    def test_node_coupon_overrides_legacy_row_and_is_validated_for_exact_plan(self):
+        self.config["vps_seckill"]["narwhal_coupons"] = {MACHINE_ID: "NODE-PROMO"}
+        _, result = self.submit()
+        self.assertEqual(result["status"], "purchased")
+        self.assertEqual(self.session.post.call_args.kwargs["json"]["promo_code"], "NODE-PROMO")
+        preview = self.session.get.call_args_list[1]
+        self.assertEqual(preview.args[0], f"{orders.API_BASE}/promo-codes/preview")
+        self.assertEqual(preview.kwargs["params"], {"code": "NODE-PROMO", "plan_id": PLAN_ID, "amount": 1})
+        self.assertEqual(orders.coupon_for(self.config, purchase_item(), product(plan_id=OTHER_PLAN_ID)), "NODE-PROMO")
+        self.assertEqual(orders.coupon_for(self.config, purchase_item(coupon_code="OTHER"), product(machine_id=OTHER_MACHINE_ID)), "OTHER")
+
+    def test_explicit_empty_node_coupon_does_not_fall_back_to_legacy_or_merchant_code(self):
+        self.config["affiliate_coupons"]["narwhal"] = "MERCHANT"
+        self.config["vps_seckill"]["narwhal_coupons"] = {MACHINE_ID: ""}
+        self.session.get.side_effect = [response({"plans": [self.plan]}), response(self.detail)]
+        _, result = self.submit()
+        self.assertEqual(result["status"], "purchased")
+        self.assertNotIn("promo_code", self.session.post.call_args.kwargs["json"])
+        self.assertEqual(self.session.get.call_count, 2)
+
+    def test_invalid_or_unverifiable_promo_stops_without_purchasing_at_full_price(self):
+        for reply in (response({"is_valid": False, "final_amount": 1}), response({"is_valid": True}),
+                      response({"is_valid": True, "final_amount": 2}),
+                      response({"is_valid": True, "final_amount": -1}),
+                      response({"is_valid": True, "final_amount": "NaN"}), response({}, status=403),
+                      requests.Timeout("private-token")):
+            with self.subTest(reply=reply):
+                self.session.get.side_effect = [response({"plans": [self.plan]}), reply]
+                _, result = self.submit()
+                self.assertEqual(result["status"], "blocked")
+                self.session.post.assert_not_called()
+
+    def test_node_codes_and_auto_renew_survive_normalization_and_reject_invalid_settings(self):
+        config = configuration()
+        self.assertTrue(config["vps_seckill"]["items"][0]["narwhal_auto_renew"])
+        config["vps_seckill"]["items"][0]["narwhal_auto_renew"] = False
+        config["vps_seckill"]["narwhal_coupons"] = {MACHINE_ID: " CODE ", OTHER_MACHINE_ID: ""}
+        normalized = admin.validate_config(config)
+        self.assertFalse(normalized["vps_seckill"]["items"][0]["narwhal_auto_renew"])
+        self.assertEqual(normalized["vps_seckill"]["narwhal_coupons"], {MACHINE_ID: "CODE", OTHER_MACHINE_ID: ""})
+        for coupons in ([], {"invalid": "CODE"}, {MACHINE_ID: 12}, {MACHINE_ID: "CODE\n"}, {MACHINE_ID: "A" * 257}):
+            config["vps_seckill"]["narwhal_coupons"] = coupons
+            with self.assertRaises(ValueError):
+                admin.validate_config(config)
+        config["vps_seckill"]["narwhal_coupons"] = {}
+        config["vps_seckill"]["items"][0]["narwhal_auto_renew"] = "true"
+        with self.assertRaises(ValueError):
+            admin.validate_config(config)
 
     def test_container_system_name_and_image_id_match_public_catalogue_shape(self):
         image = "docker.io/narwhalcloud/debian:podman"
         catalogue = {**self.plan, "supported_os": [{"id": image, "name": "Debian (Podman)"}]}
         for selected in ("", "Debian (Podman)", image):
             self.session.get.side_effect = [response({"plans": [catalogue]})]
-            payload = orders.prepare_purchase(self.session, purchase_item(operating_system=selected), product())
+            payload = orders.prepare_purchase(self.session, purchase_item(operating_system=selected, coupon_code=""), product())
             self.assertEqual(payload["os_image"], image)
 
     def test_invalid_preferences_and_wrong_account_block_before_purchase(self):
         for changes in ({"quantity": 2}, {"quantity": True}, {"billing_cycle": "annually"},
                         {"payment_method": "alipay"}, {"operating_system": "Debian 13"}):
             with self.subTest(changes=changes):
-                self.session.get.side_effect = [response({"plans": [self.plan]})]
+                self.session.get.side_effect = [response({"plans": [self.plan]}), response(PREVIEW)]
                 _, result = self.submit(item=purchase_item(**changes))
                 self.assertEqual(result["status"], "blocked")
                 self.session.post.assert_not_called()
@@ -122,7 +183,7 @@ class NarwhalPurchaseTests(unittest.TestCase):
         for error in (requests.Timeout("password=secret-token"), RuntimeError("private-vm-password")):
             with self.subTest(error=type(error).__name__):
                 self.session.reset_mock()
-                self.session.get.side_effect = [response({"plans": [self.plan]})]
+                self.session.get.side_effect = [response({"plans": [self.plan]}), response(PREVIEW)]
                 self.session.post.side_effect = error
                 task, result = self.submit()
                 self.assertEqual(result["status"], "uncertain")
@@ -139,21 +200,21 @@ class NarwhalPurchaseTests(unittest.TestCase):
                       response({"vm_id": "https://evil.example"}), malformed):
             with self.subTest(reply=reply):
                 self.session.reset_mock()
-                self.session.get.side_effect = [response({"plans": [self.plan]})]
+                self.session.get.side_effect = [response({"plans": [self.plan]}), response(PREVIEW)]
                 self.session.post.return_value = reply
                 task, result = self.submit()
                 self.assertEqual(result["status"], "uncertain")
                 self.session.post.assert_called_once()
-                self.assertEqual(self.session.get.call_count, 1)
+                self.assertEqual(self.session.get.call_count, 2)
                 self.assertNotIn("private-vm-password", str(task.snapshot()))
 
     def test_vm_detail_mismatch_or_failure_retains_vm_link_without_repurchase(self):
         for changes in ({"id": OTHER_PLAN_ID}, {"machine_id": OTHER_PLAN_ID},
                         {"plan_id": OTHER_PLAN_ID}, {"os_image": "other"},
-                        {"status": "error"}, {"auto_renew": True}):
+                        {"status": "error"}, {"auto_renew": False}):
             with self.subTest(changes=changes):
                 self.session.reset_mock()
-                self.session.get.side_effect = [response({"plans": [self.plan]}), response({**self.detail, **changes})]
+                self.session.get.side_effect = [response({"plans": [self.plan]}), response(PREVIEW), response({**self.detail, **changes})]
                 _, result = self.submit()
                 self.assertEqual(result["status"], "uncertain")
                 self.assertEqual(result["vm_id"], VM_ID)
@@ -177,7 +238,7 @@ class NarwhalPurchaseTests(unittest.TestCase):
         self.assertEqual(result["telegram_status"], "sent")
         message = send.call_args.kwargs["text"]
         self.assertIn("已扣余额", message)
-        self.assertIn("自动续费关闭", message)
+        self.assertIn("自动续费开启", message)
         self.assertNotIn("待付款", message)
         self.assertNotIn("手动付款", message)
         button = send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]
@@ -188,7 +249,7 @@ class NarwhalPurchaseTests(unittest.TestCase):
         for mode, expected in (("rapid", "purchased"), ("precise", "purchased"), ("manual", "ready")):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 self.session.reset_mock()
-                self.session.get.side_effect = [response({"plans": [self.plan]}), response(self.detail)]
+                self.session.get.side_effect = [response({"plans": [self.plan]}), response(PREVIEW), response(self.detail)]
                 self.session.__enter__ = Mock(return_value=self.session)
                 self.session.__exit__ = Mock(return_value=False)
                 task = admin.SeckillTask(f"narwhal-{mode}", self.config, mode)
@@ -219,6 +280,19 @@ class NarwhalPurchaseTests(unittest.TestCase):
                 result = admin.seckill_test({"config": config, "mode": "rapid"})
             self.assertEqual(result["items"][0]["order_submission"]["ok"], ok)
             self.session.post.assert_not_called()
+
+    def test_configuration_test_reports_invalid_node_coupon_without_buying(self):
+        self.config["vps_seckill"]["narwhal_coupons"] = {MACHINE_ID: "INVALID"}
+        self.session.get.side_effect = [response({"plans": [self.plan]}), response({"is_valid": False})]
+        self.session.__enter__ = Mock(return_value=self.session)
+        self.session.__exit__ = Mock(return_value=False)
+        with patch.object(admin.requests, "Session", return_value=self.session), \
+             patch.object(admin, "check_order_account", return_value={"ok": True, "status": "valid", "message": "OK"}), \
+             patch("monitor.inspect_product", return_value=parse_narwhal([self.plan], product())):
+            result = admin.seckill_test({"config": self.config, "mode": "rapid"})
+        self.assertFalse(result["ok"])
+        self.assertIn("折扣码", result["items"][0]["order_submission"]["message"])
+        self.session.post.assert_not_called()
 
     def test_balance_method_is_only_accepted_for_narwhal(self):
         config = configuration()

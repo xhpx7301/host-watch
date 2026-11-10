@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 import secrets
 import uuid
+from decimal import Decimal, InvalidOperation
 
 
 API_BASE = "https://api.fuckip.me/api/v1"
@@ -32,6 +33,14 @@ def validate_settings(item: dict) -> None:
         raise PurchaseError("独角鲸余额购买仅支持月付")
     if item.get("payment_method", "") not in {"", "balance"}:
         raise PurchaseError("独角鲸购买会直接扣账户余额，请选择余额付款")
+    if type(item.get("narwhal_auto_renew", True)) is not bool:
+        raise PurchaseError("独角鲸自动续费设置必须是布尔值")
+
+
+def coupon_for(config: dict, item: dict, product: dict) -> str:
+    """Node-specific settings, including explicit blanks, override legacy rows."""
+    coupons = config.get("vps_seckill", {}).get("narwhal_coupons", {})
+    return str(coupons.get(product.get("machine_id"), item.get("coupon_code", ""))).strip()
 
 
 def api_data(response) -> dict:
@@ -75,9 +84,22 @@ def prepare_purchase(session, item: dict, product: dict) -> dict:
     selected = [os for os in systems if os["id"] == requested or normalized(os["name"]) == normalized(requested)] if requested else systems[:1]
     if len(selected) != 1:
         raise ValueError("独角鲸套餐不支持所选系统，请选择该节点可用系统或跟随默认系统")
-    payload = {"plan_id": plan_id, "os_image": selected[0]["id"],
-               "password": secrets.token_urlsafe(24), "auto_renew": False}
     coupon = str(item.get("coupon_code", "")).strip()
+    if coupon:
+        # Match the official deployment page's read-only promotion preview.
+        preview = api_data(session.get(f"{API_BASE}/promo-codes/preview",
+            params={"code": coupon, "plan_id": plan_id, "amount": plan.get("price_monthly")},
+            timeout=(5, 20), allow_redirects=False))
+        try:
+            original = Decimal(str(plan.get("price_monthly")))
+            final = Decimal(str(preview.get("final_amount")))
+            valid_amount = original.is_finite() and final.is_finite() and 0 <= final <= original
+        except (InvalidOperation, ValueError):
+            valid_amount = False
+        if preview.get("is_valid") is not True or not valid_amount:
+            raise PurchaseError("独角鲸折扣码对所选套餐无效或优惠金额无法确认，已停止购买，不会按原价下单")
+    payload = {"plan_id": plan_id, "os_image": selected[0]["id"],
+               "password": secrets.token_urlsafe(24), "auto_renew": item.get("narwhal_auto_renew", True)}
     if coupon:
         payload["promo_code"] = coupon
     return payload
@@ -97,10 +119,10 @@ def purchase(session, payload: dict, product: dict, key: str) -> dict:
                 or "plan_id" in detail and detail["plan_id"] != payload["plan_id"]
                 or "os_image" in detail and detail["os_image"] != payload["os_image"]
                 or detail.get("status") not in {"creating", "starting", "running", "stopped"}
-                or detail.get("auto_renew") is not False):
-            raise ValueError("独角鲸实例详情未能确认节点、套餐、系统、创建状态或自动续费关闭状态")
+                or detail.get("auto_renew") is not payload["auto_renew"]):
+            raise ValueError("独角鲸实例详情未能确认节点、套餐、系统、创建状态或自动续费设置")
         return {"vm_id": vm_id, "url": f"{DASHBOARD_URL}instance/{vm_id}",
-                "instance_status": detail["status"], "payment_status": "paid", "auto_renew": False}
+                "instance_status": detail["status"], "payment_status": "paid", "auto_renew": payload["auto_renew"]}
     except Exception:
         # Even malformed JSON or an unexpected response may follow a debit.
         # Do not leak exception details (they may contain VM credentials).

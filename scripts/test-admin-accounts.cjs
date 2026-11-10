@@ -12,15 +12,49 @@ test('Narwhal purchase defaults select balance and monthly while other merchants
     config: { egress: { routes: { narwhal: 'node-one' } } },
     seckillProviderKey: value => value,
     seckillAccounts: () => [{ id: 'narwhal-account', provider: 'narwhal' }],
-  }, ['seckillAddDefaults']);
+  }, ['seckillCoupon', 'seckillAddDefaults']);
   const defaults = context.seckillAddDefaults({ adapter: 'narwhal' });
   assert.equal(defaults.account_id, 'narwhal-account');
   assert.equal(defaults.egress_node_id, 'node-one');
   assert.equal(defaults.operating_system, '');
   assert.equal(defaults.billing_cycle, 'monthly');
   assert.equal(defaults.payment_method, 'balance');
+  assert.equal(defaults.narwhal_auto_renew, true);
   assert.equal(context.seckillAddDefaults({ adapter: 'vmiss' }).payment_method, 'alipay');
   assert.equal(context.seckillAddDefaults({ adapter: 'akile' }).payment_method, '');
+});
+
+test('Narwhal node coupons sync plans and accounts, persist blanks and never inherit merchant-wide codes', () => {
+  const products = [{ id: 'a', adapter: 'narwhal', machine_id: 'node-a' },
+    { id: 'b', adapter: 'narwhal', machine_id: 'node-a' },
+    { id: 'c', adapter: 'narwhal', machine_id: 'node-b' }];
+  const items = products.map(row => ({ product_id: row.id, coupon_code: 'OLD' }));
+  items.push({ product_id: 'a', account_id: 'second', coupon_code: 'OLD' });
+  const inputs = products.map(row => ({ dataset: { narwhalCoupon: row.machine_id }, value: 'OLD' }));
+  const context = load({
+    config: { products, vps_seckill: { items }, affiliate_coupons: { narwhal: 'GLOBAL' } },
+    document: { querySelectorAll: () => inputs }, seckillItems: () => items,
+    seckillProviderKey: value => value, updateDraftState() {}, scheduleAutoSave() {},
+  }, ['seckillCoupon', 'updateSeckillCoupon']);
+  assert.equal(context.seckillCoupon(null, products[0]), '');
+  context.updateSeckillCoupon(items[0], products[0], 'NODE-A');
+  assert.deepEqual(items.map(row => row.coupon_code), ['NODE-A', 'NODE-A', 'OLD', 'NODE-A']);
+  assert.deepEqual(inputs.map(input => input.value), ['NODE-A', 'NODE-A', 'OLD']);
+  context.updateSeckillCoupon(items[0], products[0], '');
+  assert.equal(context.seckillCoupon({ coupon_code: 'OLD' }, products[1]), '');
+  assert.equal(context.config.vps_seckill.narwhal_coupons['node-a'], '');
+  assert.equal(context.seckillCoupon(items[2], products[2]), 'OLD');
+});
+
+test('saving seckill settings preserves node coupons and renewal choices without saving account drafts', () => {
+  const saved = { vps_seckill: { accounts: [{ id: 'one', name: 'Saved' }] } };
+  const draft = { vps_seckill: { accounts: [{ id: 'one', name: 'Draft' }],
+    items: [{ id: 'plan', narwhal_auto_renew: false }], narwhal_coupons: { 'node-a': 'CODE' } } };
+  const context = load({}, ['cloneConfig', 'mergeConfigScope']);
+  const result = context.mergeConfigScope(saved, draft, 'seckill');
+  assert.equal(result.vps_seckill.accounts[0].name, 'Saved');
+  assert.equal(result.vps_seckill.items[0].narwhal_auto_renew, false);
+  assert.equal(result.vps_seckill.narwhal_coupons['node-a'], 'CODE');
 });
 
 test('purchase results distinguish paid instances, uncertain debits and unpaid invoices', () => {

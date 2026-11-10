@@ -3853,7 +3853,7 @@ def seckill_test(submitted: dict) -> dict:
             else:
                 adapter_id = str((product or {}).get("adapter", "")).casefold()
                 result["order_submission"] = {"ok": True, "required": True,
-                                                "message": ("已启用独角鲸余额购买：单台、月付，直接扣余额并创建实例，关闭自动续费；本次测试不会购买"
+                                                "message": ("已启用独角鲸余额购买：单台、月付，直接扣余额并创建实例，默认开启自动续费（可逐项关闭）；本次测试不会购买"
                                                             if adapter_id == "narwhal" else
                                                             "已启用 Akile 原生待付款下单适配，启动时会固定使用 Debian 12 和 1 个月周期"
                                                             if adapter_id == "akile" else
@@ -3891,6 +3891,17 @@ def seckill_test(submitted: dict) -> dict:
                 if account:
                     checked = check_order_account(session, account, fetcher)
                     result["account"] = {**public_account_check_result(checked), "required": required_account, "account_id": account["id"]}
+                if (provider == "narwhal" and required_account and result["order_submission"]["ok"]
+                        and result["account"].get("ok")):
+                    try:
+                        purchase_item = {**item, "coupon_code": narwhal_orders.coupon_for(current, item, product)}
+                        payload = narwhal_orders.prepare_purchase(session, purchase_item, product)
+                        result["order_submission"]["message"] = (
+                            f"独角鲸购买参数已核对，自动续费{'开启' if payload['auto_renew'] else '关闭'}；"
+                            + ("实例折扣码校验通过" if payload.get("promo_code") else "未使用折扣码")
+                            + "；本次测试不会购买或扣款")
+                    except (ValueError, requests.RequestException) as exc:
+                        result["order_submission"].update(ok=False, message=_order_exception_detail(exc))
         except (OSError, requests.RequestException, ValueError) as exc:
             message = str(exc)[:300] or "检查失败"
             if not result["site_access"]["ok"]:
@@ -4205,7 +4216,8 @@ class SeckillTask:
                 raise ValueError("独角鲸购买必须绑定独角鲸网站账户")
             if identity in self.narwhal_attempts:
                 raise ValueError("本任务已处理同一独角鲸账户和套餐，请先到官网核对，避免重复扣款")
-            payload = narwhal_orders.prepare_purchase(session, item, product)
+            purchase_item = {**item, "coupon_code": narwhal_orders.coupon_for(self.config, item, product)}
+            payload = narwhal_orders.prepare_purchase(session, purchase_item, product)
         except Exception as exc:
             detail = _order_exception_detail(exc) if isinstance(exc, (ValueError, requests.RequestException)) else "购买配置或套餐读取异常"
             self.log(f"独角鲸购买预检查未通过：{detail}；未提交购买、未扣款。", "error", item)
@@ -4215,7 +4227,8 @@ class SeckillTask:
         # Mark before the POST: duplicate rows and notification failures must
         # never cause a second debit for the same account/plan in this task.
         self.narwhal_attempts.add(identity)
-        self.log("正在提交独角鲸余额购买：1 台、月付，直接扣余额，自动续费关闭。", "info", item)
+        renew_label = "开启" if payload["auto_renew"] else "关闭"
+        self.log(f"正在提交独角鲸余额购买：1 台、月付，直接扣余额，自动续费{renew_label}。", "info", item)
         try:
             order = narwhal_orders.purchase(session, payload, product, key)
         except Exception as exc:
@@ -4223,17 +4236,19 @@ class SeckillTask:
             self.log("独角鲸购买结果待核对，可能已扣余额；已停止该商品，不会自动重试，请先到官网核对实例和交易记录。", "error", item)
             return {"status": "uncertain", "url": f"https://dash.fuckip.me/instance/{vm_id}" if vm_id else narwhal_orders.DASHBOARD_URL,
                     "quantity": 1, "payment_status": "unknown", **({"vm_id": vm_id} if vm_id else {})}
-        self.log(f"独角鲸实例 {order['vm_id']} 已确认创建并扣余额，自动续费关闭；需要退款时请到官网操作。", "success", item)
+        self.log(f"独角鲸实例 {order['vm_id']} 已确认创建并扣余额，自动续费{renew_label}；需要退款时请到官网操作。", "success", item)
         try:
             notification = self._notify_unpaid_order(item, order["vm_id"], 1, order["url"],
-                                                      duration_seconds=self._total_duration(), payment_status="paid")
+                                                      duration_seconds=self._total_duration(), payment_status="paid",
+                                                      auto_renew=order["auto_renew"])
         except Exception:
             notification = "failed"
             self.log("独角鲸实例已购买，但 Telegram 通知失败，请到官网查看实例。", "error", item)
         return {"status": "purchased", "quantity": 1, **order, "telegram_status": notification}
 
     def _notify_unpaid_order(self, item: dict, order_id: str, quantity: int, url: str,
-                             duration_seconds: float | None = None, payment_status: str = "unpaid") -> str:
+                             duration_seconds: float | None = None, payment_status: str = "unpaid",
+                             auto_renew: bool = True) -> str:
         paid = payment_status == "paid"
         result_label = "余额购买实例" if paid else "待付款订单"
         token, chat_id = effective_telegram(self.config, "seckill")
@@ -4259,7 +4274,7 @@ class SeckillTask:
             *([f"账户：{account_label}"] if account_label is not None else []),
             f"{'实例编号' if paid else '订单号'}：{escape(str(order_id)[:128])}",
             f"数量：{quantity}",
-            "状态：已扣余额，实例已创建；自动续费关闭" if paid else "状态：待付款",
+            f"状态：已扣余额，实例已创建；自动续费{'开启' if auto_renew else '关闭'}" if paid else "状态：待付款",
             f"总耗时：{duration_seconds} 秒",
             f"下单时间：{format_beijing(beijing_iso())}",
             "请登录独角鲸官网查看实例和密码；需要退款时在官网操作，退款金额以官网预览为准。" if paid else "请登录商家官网手动付款，系统不会自动付款。",
@@ -4900,7 +4915,7 @@ def normalize_seckill(value: object, product_ids: set[str], product_adapters: di
         for key in ("enabled", "auto_submit"):
             if key in item and not isinstance(item[key], bool):
                 raise ValueError(f"VPS 秒杀商品 {item_id} 的 {key} 必须是布尔值")
-        for key in ("akile_protocol_agreed", "akile_broadcast_ip_ack"):
+        for key in ("akile_protocol_agreed", "akile_broadcast_ip_ack", "narwhal_auto_renew"):
             if key in item and not isinstance(item[key], bool):
                 raise ValueError(f"VPS 秒杀商品 {item_id} 的 {key} 必须是布尔值")
         if account_id and account_id not in account_ids:
@@ -4930,9 +4945,21 @@ def normalize_seckill(value: object, product_ids: set[str], product_adapters: di
             "enabled": bool(item.get("enabled", True)), "auto_submit": bool(item.get("auto_submit", False)),
             "akile_protocol_agreed": bool(item.get("akile_protocol_agreed", True)),
             "akile_broadcast_ip_ack": bool(item.get("akile_broadcast_ip_ack", True)),
+            "narwhal_auto_renew": item.get("narwhal_auto_renew", True),
             "label": str(item.get("label", ""))[:160]})
+    coupons = value.get("narwhal_coupons", {})
+    if not isinstance(coupons, dict) or len(coupons) > 500:
+        raise ValueError("独角鲸实例折扣码必须是对象，最多 500 项")
+    normalized_coupons = {}
+    for machine_id, code in coupons.items():
+        identifier = narwhal_orders.identifier(machine_id)
+        if not identifier or identifier in normalized_coupons:
+            raise ValueError("独角鲸实例折扣码需要唯一的有效节点 ID")
+        if not isinstance(code, str) or len(code.strip()) > 256 or any(ord(ch) < 32 or ord(ch) == 127 for ch in code):
+            raise ValueError("独角鲸实例折扣码必须是最多 256 字符的单行文本")
+        normalized_coupons[identifier] = code.strip()
     return {"enabled": enabled, "mode": mode, "interval_seconds": interval,
-        "items": normalized_items, "accounts": normalized_accounts}
+        "items": normalized_items, "accounts": normalized_accounts, "narwhal_coupons": normalized_coupons}
 
 
 def normalize_schedule(value: object, default_mode: str, default_interval: int, label: str,

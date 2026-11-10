@@ -3397,10 +3397,29 @@ function orderedSeckillAccounts() {
   const ranks = new Map(merchantOrder().map((key, index) => [merchantNames[key], index]));
   return seckillAccounts().map((account, index) => ({ account, index })).sort((a, b) => (ranks.get(seckillAccountMerchant(a.account)) ?? 999) - (ranks.get(seckillAccountMerchant(b.account)) ?? 999) || a.index - b.index).map(entry => entry.account);
 }
+function seckillCoupon(item, product) {
+  if (seckillProviderKey(product?.adapter) === "narwhal") {
+    return String(config.vps_seckill?.narwhal_coupons?.[product.machine_id] ?? item?.coupon_code ?? product.notification_coupon_code ?? "");
+  }
+  return String(item?.coupon_code ?? product?.notification_coupon_code ?? config.affiliate_coupons?.[seckillProviderKey(product?.adapter)] ?? "");
+}
+function updateSeckillCoupon(item, product, code) {
+  item.coupon_code = code;
+  if (product?.adapter === "narwhal" && product.machine_id) {
+    const coupons = config.vps_seckill.narwhal_coupons ||= {};
+    coupons[product.machine_id] = code;
+    const related = new Set(config.products.filter(row => row.adapter === "narwhal" && row.machine_id === product.machine_id).map(row => row.id));
+    for (const row of seckillItems()) if (related.has(row.product_id)) row.coupon_code = code;
+    for (const input of document.querySelectorAll("[data-narwhal-coupon]")) {
+      if (input.dataset.narwhalCoupon === product.machine_id) input.value = code;
+    }
+  }
+  updateDraftState(); scheduleAutoSave("seckill");
+}
 function seckillAddDefaults(product) {
   const provider = seckillProviderKey(product?.adapter) || seckillProviderKey(product?.provider);
   const account = provider ? seckillAccounts().find(row => seckillProviderKey(row.provider) === provider) : null;
-  const coupon = provider ? String(product?.notification_coupon_code || config.affiliate_coupons?.[provider] || "").trim() : "";
+  const coupon = provider === "narwhal" ? seckillCoupon(null, product).trim() : provider ? String(product?.notification_coupon_code || config.affiliate_coupons?.[provider] || "").trim() : "";
   const vmissElite = provider === "vmiss" && String(product?.name || "").trim().toLowerCase() === "us.la.cmin2.elite";
   const vmiss = provider === "vmiss";
   const akile = provider === "akile";
@@ -3414,6 +3433,7 @@ function seckillAddDefaults(product) {
     payment_method: narwhal ? "balance" : vmiss ? "alipay" : "",
     akile_protocol_agreed: akile,
     akile_broadcast_ip_ack: akile,
+    narwhal_auto_renew: true,
   };
 }
 function addToVpsSeckill(product) {
@@ -3513,7 +3533,9 @@ function renderVpsSeckill() {
     const grid = text("div", "", "form-grid");
     const quantity = document.createElement("input"); quantity.type = "number"; quantity.min = "1"; quantity.max = "100"; quantity.step = "1"; quantity.value = item.quantity ?? 1;
     quantity.addEventListener("input", () => { item.quantity = Number(quantity.value); updateDraftState(); scheduleAutoSave("seckill"); });
-    const coupon = document.createElement("input"); coupon.value = item.coupon_code || ""; coupon.maxLength = 256; coupon.placeholder = "可选专属优惠码"; coupon.addEventListener("input", () => { item.coupon_code = coupon.value; updateDraftState(); scheduleAutoSave("seckill"); });
+    const coupon = document.createElement("input"); coupon.value = seckillCoupon(item, product); coupon.maxLength = 256; coupon.placeholder = providerKey === "narwhal" ? "可选；同实例套餐共用，下单前校验" : "可选专属优惠码";
+    if (providerKey === "narwhal") coupon.dataset.narwhalCoupon = product.machine_id;
+    coupon.addEventListener("input", () => updateSeckillCoupon(item, product, coupon.value));
     const operatingSystem = document.createElement(providerKey === "narwhal" ? "input" : "select");
     if (providerKey === "narwhal") {
       operatingSystem.placeholder = "留空跟随节点默认；或填写官网系统名 / 镜像 ID";
@@ -3552,7 +3574,7 @@ function renderVpsSeckill() {
     const submitHint = text("p", providerKey === "vmiss"
       ? "VMISS 使用内置官网结算适配：密码登录时自动启用官网 Remember Me，请求更持久的登录 Cookie；认证会话在内存中缓存最长 30 天，验证仍有效时会续延本地缓存。自动模式会预填商品配置并创建待付款发票；不会自动付款。"
       : providerKey === "narwhal"
-        ? "独角鲸自动模式会直接扣账户余额并创建实例：每项 1 台、月付，关闭自动续费。系统密码随机生成，可到官网实例详情查看；结果待核对时请勿重复启动。需要退款请到官网操作，金额以官网退款预览为准。"
+        ? "独角鲸自动模式会直接扣账户余额并创建实例：每项 1 台、月付，默认开启自动续费（可逐项关闭）。系统密码随机生成，可到官网实例详情查看；结果待核对时请勿重复启动。需要退款请到官网操作，金额以官网退款预览为准。"
       : providerKey === "akile"
         ? "Akile 使用内置待付款适配：固定 Debian 12 和 1 个月周期创建订单；不会自动付款。"
         : providerKey === "bwh"
@@ -3562,9 +3584,10 @@ function renderVpsSeckill() {
           : providerKey === "dmit"
             ? "DMIT 下单适配尚未完成，实际自动下单暂不可用。请使用手动模式在官网下单；账户检查或配置测试通过不代表能成功下单。"
           : "该商家尚未内置自动抢购适配。请使用手动模式打开购买链接；选择自动模式会提示未适配，账户检查通过也不会创建订单。", "hint span-2");
-    [[providerKey === "narwhal" ? "购买数量（仅支持 1 台）" : "下单数量（台，1–100）", quantity], ["优惠码", coupon], ["系统", operatingSystem], ["付款周期", billingCycle], ["付款方式", paymentMethod], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
+    [[providerKey === "narwhal" ? "购买数量（仅支持 1 台）" : "下单数量（台，1–100）", quantity], [providerKey === "narwhal" ? "实例折扣码（同节点套餐共用）" : "优惠码", coupon], ["系统", operatingSystem], ["付款周期", billingCycle], ["付款方式", paymentMethod], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
     const enabled = settingButton("商品状态", item.enabled !== false, value => { item.enabled = value; renderVpsSeckillTask(); updateDraftState(); scheduleAutoSave("seckill"); }, ["已停用", "已启用"]);
     const flags = text("div", "", "actions"); flags.append(enabled);
+    if (providerKey === "narwhal") flags.append(settingButton("自动续费", item.narwhal_auto_renew !== false, value => { item.narwhal_auto_renew = value; updateDraftState(); scheduleAutoSave("seckill"); }, ["已关闭", "已开启"]));
     const addAccount = text("button", "添加其他账号抢购"); addAccount.type = "button"; addAccount.disabled = actionRunning; addAccount.dataset.seckillAddAccount = "true";
     addAccount.setAttribute("aria-label", `为${title.textContent}添加其他账号抢购`);
     addAccount.addEventListener("click", () => addSeckillAccountItem(item, product)); flags.append(addAccount);
@@ -3585,7 +3608,7 @@ function renderVpsSeckill() {
     const table = document.createElement("table"); table.className = "merchant-auth-table";
     table.innerHTML = `<thead><tr><th>商家</th><th>主方案</th><th>Cookie 备用</th><th>浏览器增强 / 恢复</th><th>自动抢购适配</th></tr></thead><tbody>
       <tr><th>Akile</th><td>官方 API + 令牌校验</td><td>不作为常规方案</td><td>API 异常时人工恢复</td><td>已适配：普通商店待付款订单；二手市场仅提醒</td></tr>
-      <tr><th>独角鲸云</th><td>邮箱密码登录 API + Bearer 令牌，核对账户邮箱</td><td>暂不支持导入，令牌最长缓存 30 天</td><td>API 异常或安全验证时到官网人工处理</td><td>已适配：直接扣余额开通单台月付实例，关闭自动续费</td></tr>
+      <tr><th>独角鲸云</th><td>邮箱密码登录 API + Bearer 令牌，核对账户邮箱</td><td>暂不支持导入，令牌最长缓存 30 天</td><td>API 异常或安全验证时到官网人工处理</td><td>已适配：直接扣余额开通单台月付实例，默认开启自动续费（可逐项关闭）</td></tr>
       <tr><th>Hytron</th><td>邮箱密码登录 API + Bearer 令牌，核对账户邮箱</td><td>暂不支持手动导入；认证会话本地加密保存，最长缓存 30 天</td><td>令牌失效后正常重新登录；安全验证或 API 异常时到官网人工处理</td><td>未适配：支持节点监控、账户检查与余额通知</td></tr>
       <tr><th>Isvoro</th><td>Cookie 主方案 + refresh Cookie</td><td>主方案</td><td>refresh 失败后人工 hCaptcha 恢复</td><td>已适配：普通商品待付款订单；二手市场仅提醒</td></tr>
       <tr><th>VMISS</th><td>账号密码 + Remember Me</td><td>支持导入后验证</td><td>Cloudflare 或安全验证时使用</td><td>已适配：待付款发票</td></tr>
@@ -3839,6 +3862,7 @@ function comparableSeckillItem(item) {
     account_id: String(item.account_id || ""),
     egress_node_id: String(item.egress_node_id || ""),
     quantity: Number(item.quantity || 0),
+    narwhal_auto_renew: item.narwhal_auto_renew !== false,
     enabled: item.enabled !== false,
     label: String(item.label || ""),
   };
@@ -3865,7 +3889,7 @@ function renderVpsSeckillTask() {
     const item = seckillItems().find(row => row.id === result.item_id);
     const row = text("div", "", "seckill-result");
     row.append(text("strong", `${item?.label || result.item_id} · ${labels[result.status] || result.status}${result.quantity ? ` · ${result.quantity} 台` : ""}`));
-    if (result.vm_id) row.append(text("p", `实例编号：${result.vm_id}。${result.status === "purchased" ? "自动续费已关闭；查看密码或退款请到官网。" : "可能已扣余额，请先核对官网实例和交易记录。"}`, "hint"));
+    if (result.vm_id) row.append(text("p", `实例编号：${result.vm_id}。${result.status === "purchased" ? `自动续费${result.auto_renew ? "已开启" : "已关闭"}；查看密码或退款请到官网。` : "可能已扣余额，请先核对官网实例和交易记录。"}`, "hint"));
     if (result.order_id) row.append(text("p", `订单号：${result.order_id}。请登录官网手动支付。`, "hint"));
     try { const url = new URL(result.url); if (url.protocol === "https:" && !url.username && !url.password) { const link = text("a", ["paid", "unknown"].includes(result.payment_status) || result.vm_id ? "前往官网查看实例 / 核对交易" : "前往官网核对 / 手动支付"); link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer"; row.append(link); } } catch {}
     results.append(row);
