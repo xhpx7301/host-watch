@@ -97,6 +97,126 @@ test('saving seckill settings preserves node coupons and renewal choices without
   assert.equal(result.vps_seckill.narwhal_coupons['node-a'], 'CODE');
 });
 
+const machineId = '17141ff1-5623-4455-a7a5-91a0146f090e';
+const planId = 'fe7edd6f-a84c-43fc-a41a-6221b33410ff';
+const narwhalTarget = `https://dash.fuckip.me/deploy?plan_id=${planId}&machine_id=${machineId}`;
+
+test('catalog seckill selection survives scoped auto-save and reload with merchant systems intact', async () => {
+  const saved = { products: [{ id: 'existing', name: 'Saved', watch_enabled: false }],
+    vps_seckill: { accounts: [{ id: 'account', provider: 'narwhal', name: 'Saved account' }], items: [] } };
+  const draft = copy(saved);
+  Object.assign(draft.products[0], { name: 'Unsaved edit', watch_enabled: true });
+  draft.products.push({ id: 'unrelated', watch_enabled: true });
+  draft.vps_seckill.accounts[0].name = 'Unsaved account';
+  let submitted, systemReads = 0;
+  const context = load({
+    config: draft, savedConfig: JSON.stringify(saved), actionRunning: false, structuredClone, URL, autoSaveScopeNames: { seckill: '抢购' },
+    crypto: { randomUUID: () => 'catalog-product' }, merchantNames: { narwhal: '独角鲸云' },
+    document: { querySelector: () => ({ value: '' }) },
+    collectConfig: () => copy(context.config),
+    renderProducts() {}, renderVpsSeckill() {}, updateDraftState() {}, setMessage() {}, navigatePage() {},
+    scheduleAutoSave: scope => assert.equal(scope, 'seckill'), narwhalSystemRequests: new Map(),
+    Option: function(name, id) { this.text = name; this.value = id; },
+    requestJSON: async (url, options) => {
+      const payload = JSON.parse(options.body);
+      if (url === '/api/config') {
+        submitted = payload;
+        assert.equal(options.headers['X-HostWatch-Auto-Save'], '1');
+        return { config: copy(payload), service: { ok: true } };
+      }
+      assert.equal(url, '/api/seckill/systems'); systemReads++;
+      const item = payload.config.vps_seckill.items.find(row => row.id === payload.item_id);
+      const product = payload.config.products.find(row => row.id === item.product_id);
+      assert.equal(product.adapter, 'narwhal'); assert.equal(product.plan_id, planId);
+      return { systems: [{ id: 'alpine', name: 'Alpine' }], default_system: 'alpine' };
+    },
+  }, ['cloneConfig', 'mergeConfigScope', 'savedConfigSnapshot', 'seckillItems', 'seckillAccounts',
+    'seckillProviderKey', 'seckillCoupon', 'seckillAddDefaults', 'addCatalogToVpsSeckill', 'saveConfig',
+    'narwhalSystemOptions', 'loadNarwhalSystems']);
+  const row = { key: 'narwhal-plan', name: 'Test plan', purchase_url: narwhalTarget,
+    watch: { adapter: 'narwhal', provider: '独角鲸云', name: 'Test plan', machine_id: machineId, plan_id: planId } };
+  context.addCatalogToVpsSeckill([{ row }]);
+  // Existing products referenced by a new item must keep their saved values.
+  context.config.vps_seckill.items.push({ id: 'second', product_id: 'existing' });
+  // Even a simultaneous monitoring draft on the new product belongs to that card.
+  context.config.products.at(-1).watch_enabled = true;
+  await context.saveConfig('seckill', true);
+  assert.deepEqual(submitted.products.map(row => row.id), ['existing', 'catalog-product']);
+  assert.deepEqual(submitted.products[0], saved.products[0]);
+  assert.equal(submitted.products[1].watch_enabled, false);
+  assert.equal(submitted.products[1].notify_enabled, false);
+  assert.equal(submitted.vps_seckill.accounts[0].name, 'Saved account');
+  assert.equal(context.config.products[0].name, 'Unsaved edit');
+  assert.equal(context.config.products.at(-1).watch_enabled, true);
+  // Reload from the actual auto-save baseline, rather than the in-memory draft.
+  context.config = JSON.parse(context.savedConfig);
+  const item = context.config.vps_seckill.items[0];
+  const product = context.config.products.find(row => row.id === item.product_id);
+  assert.equal(context.seckillProviderKey(product.adapter), 'narwhal');
+  assert.equal(item.payment_method, 'balance'); assert.equal(item.narwhal_auto_renew, true);
+  const select = { isConnected: true, replaceChildren() {}, add() {} };
+  await context.loadNarwhalSystems(select, {}, {}, item, product);
+  assert.equal(select.value, 'alpine'); assert.equal(systemReads, 1);
+});
+
+test('Narwhal recovery recognizes only official deployment URLs with unique valid plan and node IDs', () => {
+  const context = load({ URL }, ['narwhalProductFromTarget']);
+  const item = { product_id: 'lost', label: 'Original', target_url: narwhalTarget };
+  assert.equal(context.narwhalProductFromTarget(item).machine_id, machineId);
+  for (const target_url of [
+    narwhalTarget.replace('https:', 'http:'), narwhalTarget.replace('dash.fuckip.me', 'example.com'),
+    narwhalTarget.replace('/deploy?', '/other?'), narwhalTarget.replace('dash.', 'user@dash.'),
+    narwhalTarget.replace('dash.fuckip.me', 'dash.fuckip.me:8443'), `${narwhalTarget}#fragment`,
+    `${narwhalTarget}&plan_id=${planId}`, narwhalTarget.replace(machineId, 'invalid'),
+    `https://dash.fuckip.me/deploy?plan_id=${planId}`, '',
+  ]) assert.equal(context.narwhalProductFromTarget({ ...item, target_url }), null, target_url);
+});
+
+test('recovering a missing Narwhal product verifies metadata before preserving all existing item settings', async () => {
+  for (const outcome of ['success', 'failure', 'removed', 'changed', 'limit']) {
+    const item = { id: 'item', product_id: 'lost', label: 'Original', target_url: narwhalTarget,
+      account_id: 'account', egress_node_id: 'node', coupon_code: 'CODE', operating_system: 'debian',
+      quantity: 1, narwhal_auto_renew: false, enabled: false };
+    const original = copy(item), scopes = [], messages = [];
+    const config = { products: [], vps_seckill: { items: [item], accounts: [], narwhal_coupons: { [machineId]: 'NODE' } } };
+    if (outcome === 'limit') config.products = Array.from({ length: 100 }, (_, id) => ({ id: String(id) }));
+    let finish, requests = 0;
+    const button = { disabled: false, isConnected: true };
+    const context = load({
+      config, URL, actionRunning: false, collectConfig: () => copy(config),
+      requestJSON: (url, options) => {
+        requests++; assert.equal(url, '/api/seckill/systems');
+        const payload = JSON.parse(options.body);
+        assert.equal(payload.config.products.at(-1).plan_id, planId);
+        assert.equal(config.products.length, 0, 'Recovery must wait for server verification');
+        return new Promise((resolve, reject) => { finish = () => outcome === 'failure' ? reject(Error('Unavailable')) : resolve({}); });
+      },
+      renderProducts() {}, renderVpsSeckill() {}, updateDraftState() {},
+      scheduleAutoSave: scope => scopes.push(scope), setMessage: (message, kind) => messages.push({ message, kind }),
+    }, ['narwhalProductFromTarget', 'restoreNarwhalSeckillProduct', 'seckillItems']);
+    const pending = context.restoreNarwhalSeckillProduct(item, button);
+    if (outcome === 'removed') config.vps_seckill.items = [];
+    if (outcome === 'changed') item.target_url += '&changed=1';
+    if (finish) finish();
+    await pending;
+    assert.equal(button.disabled, false);
+    assert.equal(requests, outcome === 'limit' ? 0 : 1);
+    if (outcome === 'success') {
+      assert.equal(config.products[0].id, item.product_id);
+      assert.equal(config.products[0].watch_enabled, false);
+      assert.deepEqual(item, original); assert.equal(config.vps_seckill.narwhal_coupons[machineId], 'NODE');
+      assert.deepEqual(scopes, ['seckill']);
+      const saved = context.config;
+      const merger = load({}, ['cloneConfig', 'mergeConfigScope']);
+      assert.equal(merger.mergeConfigScope({ products: [] }, saved, 'seckill').products[0].id, 'lost');
+    } else {
+      assert.equal(config.products.length, outcome === 'limit' ? 100 : 0);
+      assert.deepEqual(scopes, []);
+      if (['failure', 'limit'].includes(outcome)) assert.equal(messages.at(-1).kind, 'error');
+    }
+  }
+});
+
 test('purchase results distinguish paid instances, uncertain debits and unpaid invoices', () => {
   function element(tag, value = '') {
     return { tag, textContent: value, children: [], append(...nodes) { this.children.push(...nodes); },

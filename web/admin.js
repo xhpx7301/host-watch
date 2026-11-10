@@ -3497,9 +3497,8 @@ function addToVpsSeckill(product) {
   }
   renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); setMessage(`${product.name} 已加入 VPS 补货抢购${addedDefaults ? `：${addedDefaults}` : ""}，正在自动保存。`, "pending", true, false);
 }
-window.addEventListener("hostwatch-catalog-seckill", event => {
+function addCatalogToVpsSeckill(rows) {
   if (actionRunning) return;
-  const rows = Array.isArray(event.detail) ? event.detail : [];
   const items = seckillItems();
   let added = 0;
   for (const entry of rows) {
@@ -3525,7 +3524,51 @@ window.addEventListener("hostwatch-catalog-seckill", event => {
   renderProducts(); renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill");
   navigatePage("seckill");
   setMessage(`已从库存大盘加入 ${added} 个套餐到 VPS 补货抢购，请检查账户和商品设置后启动。`, "pending", true, false);
-});
+}
+window.addEventListener("hostwatch-catalog-seckill", event => addCatalogToVpsSeckill(Array.isArray(event.detail) ? event.detail : []));
+function narwhalProductFromTarget(item) {
+  try {
+    const url = new URL(item.target_url);
+    if (url.protocol !== "https:" || url.hostname !== "dash.fuckip.me" || url.port || url.pathname !== "/deploy" || url.username || url.password || url.hash) return null;
+    const ids = {};
+    for (const key of ["machine_id", "plan_id"]) {
+      const values = url.searchParams.getAll(key);
+      if (values.length !== 1 || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(values[0])) return null;
+      ids[key] = values[0].toLowerCase();
+    }
+    if (!item.product_id) return null;
+    return { id: item.product_id, name: String(item.label || "独角鲸套餐").slice(0, 120), provider: "独角鲸云", adapter: "narwhal", ...ids,
+      enabled: false, watch_enabled: false, notify_enabled: false };
+  } catch { return null; }
+}
+async function restoreNarwhalSeckillProduct(item, button) {
+  if (actionRunning || button.disabled) return;
+  const product = narwhalProductFromTarget(item);
+  if (!product || config.products.some(row => row.id === product.id)) return;
+  button.disabled = true;
+  const target = item.target_url;
+  setMessage("正在核对独角鲸套餐并恢复商品关联…", "pending", true, false);
+  try {
+    if (config.products.length >= 100) throw new Error("商品配置已达到 100 项上限，请先移除不需要的商品");
+    const draft = collectConfig();
+    draft.products.push(product);
+    // Read public metadata first; never infer a merchant from the account or
+    // trust a saved URL as proof that the plan still belongs to this node.
+    await requestJSON("/api/seckill/systems", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ config: draft, item_id: item.id }), timeoutMs: 70_000,
+    });
+    if (!seckillItems().includes(item) || item.product_id !== product.id || item.target_url !== target || config.products.some(row => row.id === product.id)) return;
+    if (config.products.length >= 100) throw new Error("商品配置已达到 100 项上限，请先移除不需要的商品");
+    config.products.push(product);
+    renderProducts(); renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill");
+    setMessage("已核对独角鲸套餐并恢复商品关联，原抢购设置已保留，正在自动保存。", "pending", true, false);
+  } catch (error) {
+    setMessage(`恢复商品关联失败：${error.message}`, "error");
+  } finally {
+    if (button.isConnected) button.disabled = false;
+  }
+}
 function addSeckillAccountItem(item, product) {
   if (!item || actionRunning) return;
   const items = seckillItems();
@@ -3574,8 +3617,8 @@ function renderVpsSeckill() {
   seckillItems().forEach(item => {
     const product = products.get(item.product_id), card = text("article", "", "seckill-item"); card.dataset.id = item.id;
     const providerKey = seckillProviderKey(product?.adapter) || seckillProviderKey(product?.provider);
-    const title = text("strong", product?.name || item.label || item.product_id || "已下架商品");
-    const head = text("div", "", "seckill-item-head"); head.append(title, text("small", product ? `${product.provider} · ${item.product_id}` : "商品已下架，保留补货抢购配置", "subtle")); card.append(head);
+    const title = text("strong", product?.name || item.label || item.product_id || "未关联商品");
+    const head = text("div", "", "seckill-item-head"); head.append(title, text("small", product ? `${product.provider} · ${item.product_id}` : "商品配置缺失，保留原抢购设置；不代表商家已下架", "subtle")); card.append(head);
     const grid = text("div", "", "form-grid");
     const quantity = document.createElement("input"); quantity.type = "number"; quantity.min = "1"; quantity.max = "100"; quantity.step = "1"; quantity.value = item.quantity ?? 1;
     quantity.addEventListener("input", () => { item.quantity = Number(quantity.value); updateDraftState(); scheduleAutoSave("seckill"); });
@@ -3598,7 +3641,7 @@ function renderVpsSeckill() {
     paymentMethod.addEventListener("change", () => { item.payment_method = paymentMethod.value; updateDraftState(); scheduleAutoSave("seckill"); });
     const account = document.createElement("select"); account.replaceChildren(...accountOptions.map(option => option.cloneNode(true))); account.value = item.account_id || ""; account.addEventListener("change", () => { item.account_id = account.value; seckillAccountChecks.delete(item.id); renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); });
     const egressSelect = document.createElement("select"); const egressOptions = [new Option("跟随商家出口（未分配则直连）", "")]; egressNodes().forEach(node => egressOptions.push(new Option(node.name || node.id, node.id))); egressSelect.replaceChildren(...egressOptions); egressSelect.value = item.egress_node_id || ""; egressSelect.addEventListener("change", () => { item.egress_node_id = egressSelect.value; seckillAccountChecks.delete(item.id); renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); });
-    const target = document.createElement("input"); target.type = "url"; target.value = item.target_url || product?.purchase_url || ""; target.placeholder = "下架商品目标购买链接（可选）"; target.addEventListener("input", () => { item.target_url = target.value; updateDraftState(); scheduleAutoSave("seckill"); });
+    const target = document.createElement("input"); target.type = "url"; target.value = item.target_url || product?.purchase_url || ""; target.placeholder = "目标购买链接（可选）"; target.addEventListener("input", () => { item.target_url = target.value; updateDraftState(); scheduleAutoSave("seckill"); });
     if (providerKey === "narwhal") {
       quantity.max = "1";
       billingCycle.replaceChildren(new Option("月付", "monthly")); billingCycle.value = "monthly"; billingCycle.disabled = true;
@@ -3630,6 +3673,11 @@ function renderVpsSeckill() {
     [[providerKey === "narwhal" ? "购买数量（仅支持 1 台）" : "下单数量（台，1–100）", quantity], [providerKey === "narwhal" ? "实例折扣码（同节点套餐共用）" : "优惠码", coupon], ["系统", operatingSystem], ["付款周期", billingCycle], ["付款方式", paymentMethod], ["账户", account], ["出口节点", egressSelect], ["目标购买链接", target]].forEach(([label, control]) => { const labelNode = document.createElement("label"); labelNode.append(text("span", label), control); grid.append(labelNode); });
     const enabled = settingButton("商品状态", item.enabled !== false, value => { item.enabled = value; renderVpsSeckillTask(); updateDraftState(); scheduleAutoSave("seckill"); }, ["已停用", "已启用"]);
     const flags = text("div", "", "actions"); flags.append(enabled);
+    if (!product && narwhalProductFromTarget(item)) {
+      const restore = text("button", "恢复商品关联"); restore.type = "button"; restore.disabled = actionRunning;
+      restore.title = "向独角鲸官方接口核对套餐后恢复商品及系统选项，保留原抢购设置";
+      restore.addEventListener("click", () => restoreNarwhalSeckillProduct(item, restore)); flags.append(restore);
+    }
     if (providerKey === "narwhal") flags.append(settingButton("自动续费", item.narwhal_auto_renew !== false, value => { item.narwhal_auto_renew = value; updateDraftState(); scheduleAutoSave("seckill"); }, ["已关闭", "已开启"]));
     const addAccount = text("button", "添加其他账号抢购"); addAccount.type = "button"; addAccount.disabled = actionRunning; addAccount.dataset.seckillAddAccount = "true";
     addAccount.setAttribute("aria-label", `为${title.textContent}添加其他账号抢购`);
@@ -4197,6 +4245,17 @@ function mergeConfigScope(baseValue, draftValue, scope) {
     base.provider_schedules = { ...base.provider_schedules, notify: draft.provider_schedules.notify };
     base.products = mergeProductMemberships(base.products, draft.products, "notify");
   } else if (scope === "seckill") {
+    // Catalog selections may exist only in the draft. Persist the products
+    // referenced by these items, without saving unrelated product edits or
+    // enabling another card's pending monitoring/notification memberships.
+    const products = base.products ||= [];
+    const savedProductIds = new Set(products.map(product => product.id));
+    const referencedIds = new Set((draft.vps_seckill?.items || []).map(item => item.product_id));
+    for (const product of draft.products || []) {
+      if (!referencedIds.has(product.id) || savedProductIds.has(product.id)) continue;
+      products.push({ ...product, enabled: false, watch_enabled: false, notify_enabled: false });
+      savedProductIds.add(product.id);
+    }
     const savedAccounts = base.vps_seckill?.accounts || [];
     const draftAccountIds = new Set((draft.vps_seckill?.accounts || []).map(account => account.id));
     // Product auto-save may not persist account field drafts. Deletions remain
