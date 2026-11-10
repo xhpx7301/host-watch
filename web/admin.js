@@ -3980,16 +3980,22 @@ function renderVpsSeckillTask() {
   document.querySelector("#vps-seckill-delete-all").disabled = actionRunning || !seckillItems().length;
   document.querySelector("#vps-seckill-delete-all-accounts").disabled = actionRunning || !seckillAccounts().length;
   const state = document.querySelector("#seckill-task-state"), start = document.querySelector("#vps-seckill-start"), stop = document.querySelector("#vps-seckill-stop");
-  const running = vpsSeckillTask && vpsSeckillTask.pending !== false; state.textContent = running ? "执行中" : vpsSeckillTask?.not_found ? "无活动任务" : vpsSeckillTask ? (vpsSeckillTask.cancelled ? "已暂停" : "已完成") : "未运行"; state.className = `state ${running ? "pending" : vpsSeckillTask?.cancelled || vpsSeckillTask?.not_found ? "error" : vpsSeckillTask ? "ok" : ""}`; start.disabled = Boolean(running) || actionRunning || !seckillItems().some(item => item.enabled !== false); stop.hidden = !running; stop.disabled = !running;
+  const running = vpsSeckillTask && vpsSeckillTask.pending !== false;
+  const outcomes = vpsSeckillTask?.items || [];
+  const purchaseIssue = outcomes.some(item => item.status === "uncertain") ? "结果待核对"
+    : outcomes.some(item => item.status === "rejected") ? "购买被拒" : "";
+  state.textContent = running ? "执行中" : vpsSeckillTask?.not_found ? "无活动任务" : vpsSeckillTask ? (purchaseIssue || (vpsSeckillTask.cancelled ? "已暂停" : "已完成")) : "未运行";
+  state.className = `state ${running ? "pending" : purchaseIssue || vpsSeckillTask?.cancelled || vpsSeckillTask?.not_found ? "error" : vpsSeckillTask ? "ok" : ""}`;
+  start.disabled = Boolean(running) || actionRunning || !seckillItems().some(item => item.enabled !== false); stop.hidden = !running; stop.disabled = !running;
   const results = document.querySelector("#vps-seckill-results"); results.replaceChildren();
-  const labels = { submitted: "已创建待付款订单", purchased: "已扣余额并创建实例", ready: "请手动下单", uncertain: "结果待核对，请勿重复下单", blocked: "预检查未通过", failed_before_submit: "配置失败，未提交账单", cancelled: "已停止" };
-  (vpsSeckillTask?.items || []).forEach(result => {
+  const labels = { submitted: "已创建待付款订单", purchased: "已扣余额并创建实例", ready: "请手动下单", uncertain: "结果待核对，请勿重复下单", rejected: "商家拒绝购买，请查看执行日志", blocked: "预检查未通过", failed_before_submit: "配置失败，未提交账单", cancelled: "已停止" };
+  outcomes.forEach(result => {
     const item = seckillItems().find(row => row.id === result.item_id);
     const row = text("div", "", "seckill-result");
     row.append(text("strong", `${item?.label || result.item_id} · ${labels[result.status] || result.status}${result.quantity ? ` · ${result.quantity} 台` : ""}`));
     if (result.vm_id) row.append(text("p", `实例编号：${result.vm_id}。${result.status === "purchased" ? `自动续费${result.auto_renew ? "已开启" : "已关闭"}；查看密码或退款请到官网。` : "可能已扣余额，请先核对官网实例和交易记录。"}`, "hint"));
     if (result.order_id) row.append(text("p", `订单号：${result.order_id}。请登录官网手动支付。`, "hint"));
-    try { const url = new URL(result.url); if (url.protocol === "https:" && !url.username && !url.password) { const link = text("a", ["paid", "unknown"].includes(result.payment_status) || result.vm_id ? "前往官网查看实例 / 核对交易" : "前往官网核对 / 手动支付"); link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer"; row.append(link); } } catch {}
+    try { const url = new URL(result.url); if (url.protocol === "https:" && !url.username && !url.password) { const link = text("a", result.status === "rejected" ? "前往官网检查账户" : ["paid", "unknown"].includes(result.payment_status) || result.vm_id ? "前往官网查看实例 / 核对交易" : "前往官网核对 / 手动支付"); link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer"; row.append(link); } } catch {}
     results.append(row);
   });
   const logs = vpsSeckillTask?.logs || []; document.querySelector("#vps-seckill-logs").textContent = logs.length ? logs.map(log => `[${formatBeijingDate(log.at)}] ${log.message}`).join("\n") : "暂无日志"; document.querySelector("#vps-seckill-log-note").textContent = vpsSeckillTask?.not_found ? vpsSeckillTask.message : vpsSeckillTask ? `${vpsSeckillTask.mode || ""} · ${logs.length} 条日志` : "尚未启动补货抢购任务。"; renderOverview();

@@ -217,15 +217,16 @@ test('recovering a missing Narwhal product verifies metadata before preserving a
   }
 });
 
-test('purchase results distinguish paid instances, uncertain debits and unpaid invoices', () => {
+test('purchase results distinguish paid instances, rejected purchases, uncertain debits and unpaid invoices', () => {
   function element(tag, value = '') {
     return { tag, textContent: value, children: [], append(...nodes) { this.children.push(...nodes); },
       replaceChildren(...nodes) { this.children = nodes; } };
   }
-  for (const [result, expected, forbidden] of [
-    [{ status: 'purchased', payment_status: 'paid', vm_id: 'vm-one' }, '已扣余额并创建实例', '手动支付'],
-    [{ status: 'uncertain', payment_status: 'unknown' }, '结果待核对', '手动支付'],
-    [{ status: 'submitted', payment_status: 'unpaid', order_id: 'order-one' }, '已创建待付款订单', '已扣余额'],
+  for (const [result, expected, forbidden, taskState] of [
+    [{ status: 'purchased', payment_status: 'paid', vm_id: 'vm-one' }, '已扣余额并创建实例', '手动支付', '已完成'],
+    [{ status: 'uncertain', payment_status: 'unknown' }, '结果待核对', '手动支付', '结果待核对'],
+    [{ status: 'rejected' }, '商家拒绝购买', '手动支付', '购买被拒'],
+    [{ status: 'submitted', payment_status: 'unpaid', order_id: 'order-one' }, '已创建待付款订单', '已扣余额', '已完成'],
   ]) {
     const nodes = new Map();
     const context = load({
@@ -242,6 +243,7 @@ test('purchase results distinguish paid instances, uncertain debits and unpaid i
     const rendered = JSON.stringify(nodes.get('#vps-seckill-results'));
     assert.ok(rendered.includes(expected));
     assert.ok(!rendered.includes(forbidden));
+    assert.equal(nodes.get('#seckill-task-state').textContent, taskState);
   }
 });
 

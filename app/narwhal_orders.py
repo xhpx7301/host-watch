@@ -6,6 +6,8 @@ import secrets
 import uuid
 from decimal import Decimal, InvalidOperation
 
+import requests
+
 
 API_BASE = "https://api.fuckip.me/api/v1"
 VMS_URL = f"{API_BASE}/vms"
@@ -13,10 +15,17 @@ DASHBOARD_URL = "https://dash.fuckip.me/"
 
 
 class PurchaseError(ValueError):
-    def __init__(self, message: str, *, request_sent: bool = False, vm_id: str = ""):
+    def __init__(self, message: str, *, vm_id: str = "", rejected: bool = False):
         super().__init__(message)
-        self.request_sent = request_sent
         self.vm_id = vm_id
+        self.rejected = rejected
+
+
+class APIResponseError(ValueError):
+    def __init__(self, status: int, detail: str, code: int | None = None):
+        self.status, self.code = status, code
+        error_code = f"，商家错误码 {code}" if code is not None else ""
+        super().__init__(f"{detail}（HTTP {status}{error_code}）")
 
 
 def identifier(value: object) -> str:
@@ -44,13 +53,19 @@ def coupon_for(config: dict, item: dict, product: dict) -> str:
 
 
 def api_data(response) -> dict:
-    # Never include vendor responses: VM details can contain credentials.
-    if not 200 <= response.status_code < 300:
-        raise ValueError(f"独角鲸接口返回 HTTP {response.status_code}，请检查官网余额、库存和账户状态")
-    payload = response.json()
-    if (not isinstance(payload, dict) or type(payload.get("code")) is not int
-            or payload["code"] != 0 or not isinstance(payload.get("data"), dict)):
-        raise ValueError("独角鲸接口未确认成功，请到官网检查余额、库存和实例")
+    # Expose only numeric status codes and our own messages. VM responses,
+    # error messages, and JSON parsing exceptions can contain credentials.
+    status = response.status_code
+    try:
+        payload = response.json()
+    except ValueError:
+        raise APIResponseError(status, "独角鲸接口未返回有效 JSON") from None
+    code = payload.get("code") if isinstance(payload, dict) else None
+    error_code = code if type(code) is int and 0 < code <= 999_999_999 else None
+    if not 200 <= status < 300 or error_code is not None:
+        raise APIResponseError(status, "独角鲸接口返回错误", error_code)
+    if type(code) is not int or code != 0 or not isinstance(payload.get("data"), dict):
+        raise APIResponseError(status, "独角鲸接口返回结构无法确认")
     return payload["data"]
 
 
@@ -125,23 +140,43 @@ def prepare_purchase(session, item: dict, product: dict) -> dict:
 def purchase(session, payload: dict, product: dict, key: str) -> dict:
     """Send one purchase POST, then read that VM; never retry, pay again or refund."""
     vm_id = ""
+    stage = "提交购买"
     try:
-        data = api_data(session.post(VMS_URL, json=payload, headers={"Idempotency-Key": key},
-                                     timeout=(5, 60), allow_redirects=False))
+        response = session.post(VMS_URL, json=payload, headers={"Idempotency-Key": key},
+                                timeout=(5, 60), allow_redirects=False)
+        data = api_data(response)
         vm_id = identifier(data.get("vm_id"))
         if not vm_id:
-            raise ValueError("独角鲸购买响应缺少有效实例编号")
+            raise APIResponseError(response.status_code, "购买响应缺少有效实例编号")
+        stage = "核对实例"
         detail = api_data(session.get(f"{VMS_URL}/{vm_id}", timeout=(5, 20), allow_redirects=False))
-        if (detail.get("id") != vm_id or detail.get("machine_id") != product["machine_id"]
-                or "plan_id" in detail and detail["plan_id"] != payload["plan_id"]
-                or "os_image" in detail and detail["os_image"] != payload["os_image"]
-                or detail.get("status") not in {"creating", "starting", "running", "stopped"}
-                or detail.get("auto_renew") is not payload["auto_renew"]):
-            raise ValueError("独角鲸实例详情未能确认节点、套餐、系统、创建状态或自动续费设置")
+        checks = (
+            ("实例编号", detail.get("id") == vm_id),
+            ("节点", detail.get("machine_id") == product["machine_id"]),
+            ("套餐", detail.get("plan_id", payload["plan_id"]) == payload["plan_id"]),
+            ("系统", detail.get("os_image", payload["os_image"]) == payload["os_image"]),
+            ("创建状态", detail.get("status") in ("creating", "starting", "running", "stopped")),
+            ("自动续费", detail.get("auto_renew") is payload["auto_renew"]),
+        )
+        mismatches = [label for label, ok in checks if not ok]
+        if mismatches:
+            raise PurchaseError(f"核对实例：无法确认{'、'.join(mismatches)}", vm_id=vm_id)
         return {"vm_id": vm_id, "url": f"{DASHBOARD_URL}instance/{vm_id}",
                 "instance_status": detail["status"], "payment_status": "paid", "auto_renew": payload["auto_renew"]}
-    except Exception:
-        # Even malformed JSON or an unexpected response may follow a debit.
-        # Do not leak exception details (they may contain VM credentials).
-        raise PurchaseError("独角鲸购买请求已发送，可能已扣余额；请到官网核对实例和交易记录，勿重复启动",
-                            request_sent=True, vm_id=vm_id) from None
+    except APIResponseError as exc:
+        # Only classify specific, known pre-purchase refusals as rejected.
+        # An error while reading details cannot undo an accepted purchase.
+        refusal = None
+        if stage == "提交购买":
+            if (exc.status, exc.code) == (401, 10002):
+                refusal = "独角鲸拒绝购买认证，请重新检查网站账户"
+            elif 400 <= exc.status < 500:
+                refusal = {13200: "节点商家已限制此账户购买", 13201: "此账户已屏蔽该节点商家"}.get(exc.code)
+        message = f"{stage}：{exc}" + (f"；{refusal}" if refusal else "")
+        raise PurchaseError(message, vm_id=vm_id, rejected=refusal is not None) from None
+    except PurchaseError:
+        raise
+    except Exception as exc:
+        reason = "请求超时" if isinstance(exc, requests.Timeout) else (
+            "网络请求异常" if isinstance(exc, (requests.RequestException, OSError)) else "未能确认接口结果")
+        raise PurchaseError(f"{stage}：{reason}", vm_id=vm_id) from None

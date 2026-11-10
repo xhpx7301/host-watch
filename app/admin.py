@@ -4252,8 +4252,13 @@ class SeckillTask:
         try:
             order = narwhal_orders.purchase(session, payload, product, key)
         except Exception as exc:
-            vm_id = exc.vm_id if isinstance(exc, narwhal_orders.PurchaseError) else ""
-            self.log("独角鲸购买结果待核对，可能已扣余额；已停止该商品，不会自动重试，请先到官网核对实例和交易记录。", "error", item)
+            error = exc if isinstance(exc, narwhal_orders.PurchaseError) else None
+            if error and error.rejected:
+                self.log(f"独角鲸购买被拒：{error}；已停止该商品。", "error", item)
+                return {"status": "rejected", "url": narwhal_orders.DASHBOARD_URL, "quantity": 1}
+            vm_id = error.vm_id if error else ""
+            detail = str(error) if error else "未能确认接口结果"
+            self.log(f"独角鲸购买结果待核对：{detail}；可能已扣余额，已停止该商品，不会自动重试。请先到官网核对实例和交易记录。", "error", item)
             return {"status": "uncertain", "url": f"https://dash.fuckip.me/instance/{vm_id}" if vm_id else narwhal_orders.DASHBOARD_URL,
                     "quantity": 1, "payment_status": "unknown", **({"vm_id": vm_id} if vm_id else {})}
         self.log(f"独角鲸实例 {order['vm_id']} 已确认创建并扣余额，自动续费{renew_label}；需要退款时请到官网操作。", "success", item)
@@ -4477,10 +4482,15 @@ class SeckillTask:
                 final_message = "秒杀任务已完成；已确认的待付款订单请到官网手动支付"
             elif any(item.get("status") == "uncertain" for item in completed_items):
                 final_message = "秒杀任务已完成；存在结果待核对商品，请先检查官网账单，勿重复启动"
+            elif any(item.get("status") == "rejected" for item in completed_items):
+                final_message = "秒杀任务已完成；独角鲸拒绝购买，请查看执行日志"
             else:
                 final_message = "秒杀任务已完成；没有确认创建待付款订单"
+            if any(item.get("status") == "rejected" for item in completed_items) and any(
+                    item.get("status") in {"purchased", "submitted", "uncertain"} for item in completed_items):
+                final_message += "；部分独角鲸购买被拒，请查看执行日志"
             self.log(final_message)
-            failed = any(item.get("status") in {"blocked", "failed_before_submit", "uncertain"} for item in completed_items)
+            failed = any(item.get("status") in {"blocked", "failed_before_submit", "rejected", "uncertain"} for item in completed_items)
             self.publish_module_status("error" if failed else "success", final_message,
                 log_entries=list(self.logs) if any(item.get("status") in {"submitted", "purchased"} for item in completed_items) else None)
 

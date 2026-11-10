@@ -231,14 +231,21 @@ class NarwhalPurchaseTests(unittest.TestCase):
                 _, duplicate = self.submit(task=task, item=purchase_item(id="duplicate"))
                 self.assertEqual(duplicate["status"], "blocked")
                 self.session.post.assert_called_once()
+                self.assertIn("提交购买：请求超时" if isinstance(error, requests.Timeout) else "提交购买：未能确认接口结果",
+                              str(task.snapshot()))
                 self.assertNotIn("private-vm-password", str(task.snapshot()))
+                self.assertNotIn("secret-token", str(task.snapshot()))
 
-    def test_rejected_malformed_or_redirected_purchase_stops_as_uncertain(self):
+    def test_unconfirmed_purchase_logs_status_and_code_without_exposing_vendor_response(self):
         malformed = Mock(status_code=200)
         malformed.json.side_effect = ValueError("private-vm-password")
-        for reply in (response({}, status=402), response({}, status=302), response({}, code=1001),
-                      response({"vm_id": "https://evil.example"}), malformed):
-            with self.subTest(reply=reply):
+        unrecognized = response({}, code=1001)
+        unrecognized.json.return_value["msg"] = "private-vm-password"
+        for reply, expected in ((response({}, status=402), "HTTP 402"), (response({}, status=302), "HTTP 302"),
+                                (unrecognized, "商家错误码 1001"), (malformed, "未返回有效 JSON"),
+                                (response({"vm_id": "https://evil.example"}), "缺少有效实例编号"),
+                                (response({}, status=500, code=13200), "HTTP 500")):
+            with self.subTest(expected=expected):
                 self.session.reset_mock()
                 self.session.get.side_effect = [response({"plans": [self.plan]}), response(PREVIEW)]
                 self.session.post.return_value = reply
@@ -246,7 +253,38 @@ class NarwhalPurchaseTests(unittest.TestCase):
                 self.assertEqual(result["status"], "uncertain")
                 self.session.post.assert_called_once()
                 self.assertEqual(self.session.get.call_count, 2)
-                self.assertNotIn("private-vm-password", str(task.snapshot()))
+                public = str(task.snapshot())
+                self.assertIn("提交购买：", public)
+                self.assertIn(expected, public)
+                self.assertNotIn("private-vm-password", public)
+                self.assertNotIn("https://evil.example", public)
+
+    def test_confirmed_merchant_refusals_are_distinct_and_never_retry(self):
+        for status, code, message in ((401, 10002, "重新检查网站账户"),
+                                      (403, 13200, "节点商家已限制此账户购买"),
+                                      (403, 13201, "此账户已屏蔽该节点商家")):
+            with self.subTest(code=code):
+                self.session.reset_mock()
+                self.session.get.side_effect = [response({"plans": [self.plan]}), response(PREVIEW)]
+                self.session.post.return_value = response(None, status=status, code=code)
+                task, result = self.submit()
+                self.assertEqual(result["status"], "rejected")
+                self.assertIn(message, str(task.snapshot()))
+                self.assertIn(f"HTTP {status}，商家错误码 {code}", str(task.snapshot()))
+                _, duplicate = self.submit(task=task, item=purchase_item(id="duplicate"))
+                self.assertEqual(duplicate["status"], "blocked")
+                self.session.post.assert_called_once()
+                self.assertEqual(self.session.get.call_count, 2)
+
+    def test_details_auth_error_is_uncertain_after_accepted_purchase(self):
+        self.session.get.side_effect = [response({"plans": [self.plan]}), response(PREVIEW),
+                                        response(None, status=401, code=10002)]
+        task, result = self.submit()
+        self.assertEqual(result["status"], "uncertain")
+        self.assertEqual(result["vm_id"], VM_ID)
+        self.assertEqual(result["payment_status"], "unknown")
+        self.assertIn("核对实例：独角鲸接口返回错误（HTTP 401，商家错误码 10002）", str(task.snapshot()))
+        self.session.post.assert_called_once()
 
     def test_vm_detail_mismatch_or_failure_retains_vm_link_without_repurchase(self):
         for changes in ({"id": OTHER_PLAN_ID}, {"machine_id": OTHER_PLAN_ID},
