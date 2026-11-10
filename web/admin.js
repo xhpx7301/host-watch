@@ -2055,11 +2055,14 @@ function renderProviderScheduleSummary() {
     const entries = orderedMerchantEntries().filter(([provider]) => module !== "notify" || provider !== "hytron");
     target.replaceChildren(...entries.map(([provider, name]) => {
       const schedule = providerSchedule(module, provider);
+      const manualOnly = module === "seckill" && (provider === "dmit" || (["vps_soy", "hytron", "html"].includes(provider) &&
+        !config.vps_seckill?.items?.some(item => item.enabled !== false && item.submit_url?.trim() &&
+          config.products.some(product => product.id === item.product_id && product.adapter === provider))));
       const modeLabel = module === "seckill"
-        ? ({ rapid: "极速抢购（自动）", precise: "精准抢购（自动）", manual: "手动抢购" })[schedule.mode] || schedule.mode
+        ? manualOnly ? "仅支持手动购买" : ({ rapid: "极速抢购（自动）", precise: "精准抢购（自动）", manual: "手动抢购" })[schedule.mode] || schedule.mode
         : schedule.mode === "auto" ? "自动刷新" : "仅手动刷新";
       const row = text("span", "");
-      row.append(text("strong", name), text("span", modeLabel + " · " + schedule.interval_seconds + " 秒"));
+      row.append(text("strong", name), text("span", manualOnly ? modeLabel : modeLabel + " · " + schedule.interval_seconds + " 秒"));
       return row;
     }));
   }
@@ -3993,9 +3996,13 @@ function renderVpsSeckillTask() {
     const item = seckillItems().find(row => row.id === result.item_id);
     const row = text("div", "", "seckill-result");
     row.append(text("strong", `${item?.label || result.item_id} · ${labels[result.status] || result.status}${result.quantity ? ` · ${result.quantity} 台` : ""}`));
+    if (result.status === "purchased") {
+      const details = [result.node, result.system, result.quote ? `下单前报价 ${result.quote}${result.has_coupon ? "（含折扣预览）" : ""}` : ""].filter(Boolean);
+      if (details.length) row.append(text("p", details.join(" · "), "hint"));
+    }
     if (result.vm_id) row.append(text("p", `实例编号：${result.vm_id}。${result.status === "purchased" ? `自动续费${result.auto_renew ? "已开启" : "已关闭"}；查看密码或退款请到官网。` : "可能已扣余额，请先核对官网实例和交易记录。"}`, "hint"));
     if (result.order_id) row.append(text("p", `订单号：${result.order_id}。请登录官网手动支付。`, "hint"));
-    try { const url = new URL(result.url); if (url.protocol === "https:" && !url.username && !url.password) { const link = text("a", result.status === "rejected" ? "前往官网检查账户" : ["paid", "unknown"].includes(result.payment_status) || result.vm_id ? "前往官网查看实例 / 核对交易" : "前往官网核对 / 手动支付"); link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer"; row.append(link); } } catch {}
+    try { const url = new URL(result.url); if (url.protocol === "https:" && !url.username && !url.password) { const link = text("a", result.status === "purchased" ? "前往官网查看实例" : result.status === "rejected" ? "前往官网检查账户" : result.status === "uncertain" ? "前往官网核对交易" : result.status === "submitted" ? "前往官网查看待付款订单" : "前往官网购买"); link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer"; row.append(link); } } catch {}
     results.append(row);
   });
   const logs = vpsSeckillTask?.logs || []; document.querySelector("#vps-seckill-logs").textContent = logs.length ? logs.map(log => `[${formatBeijingDate(log.at)}] ${log.message}`).join("\n") : "暂无日志"; document.querySelector("#vps-seckill-log-note").textContent = vpsSeckillTask?.not_found ? vpsSeckillTask.message : vpsSeckillTask ? `${vpsSeckillTask.mode || ""} · ${logs.length} 条日志` : "尚未启动补货抢购任务。"; renderOverview();

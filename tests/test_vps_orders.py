@@ -221,9 +221,9 @@ class OrderTaskTests(unittest.TestCase):
         self.assertIn('账户：Main', payload['text'])
         self.assertIn('订单号：order-123', payload['text'])
         self.assertNotIn('<code>', payload['text'])
-        self.assertIn('商家：ExampleHost', payload['text'])
-        self.assertIn('状态：待付款', payload['text'])
-        self.assertEqual(payload['reply_markup']['inline_keyboard'][0][0]['text'], '💳 立即付款')
+        self.assertIn('ExampleHost · ', payload['text'])
+        self.assertIn('付款：待付款', payload['text'])
+        self.assertEqual(payload['reply_markup']['inline_keyboard'][0][0]['text'], '🧾 查看待付款订单')
         self.assertEqual(payload['reply_markup']['inline_keyboard'][0][0]['url'], 'https://shop.example.com/buy')
 
     def test_unpaid_order_notification_does_not_link_account_email_or_order_id(self):
@@ -250,6 +250,30 @@ class OrderTaskTests(unittest.TestCase):
         self.assertTrue(result['items'][0]['site_access']['ok'])
         self.assertTrue(result['items'][0]['page_recognition']['ok'])
         self.assertTrue(result['items'][0]['account']['ok'])
+        self.assertEqual(self.orders(), [])
+
+    def test_unsupported_adapter_and_mismatched_account_are_blocked_in_test_and_run(self):
+        for adapter, account_provider, message in (
+                ("dmit", "dmit", "待付款结算尚未验证"),
+                ("hytron", "hytron", "未配置商家待付款下单适配"),
+                ("vps_soy", "vps_soy", "未配置商家待付款下单适配"),
+                ("vmiss", "narwhal", "与商品商家一致")):
+            with self.subTest(adapter=adapter):
+                self.config = configuration()
+                self.config["products"][0]["adapter"] = adapter
+                self.config["vps_seckill"]["accounts"][0]["provider"] = account_provider
+                self.config["vps_seckill"]["items"][0]["submit_url"] = ""
+                with patch.object(admin, "_seckill_action_config", return_value=copy.deepcopy(self.config)), \
+                     patch.object(admin, "check_order_account", return_value={"ok": True, "status": "valid"}):
+                    test = admin.seckill_test({"mode": "rapid"})
+                self.assertFalse(test["items"][0]["order_submission"]["ok"])
+                self.assertIn(message, test["items"][0]["order_submission"]["message"])
+                with patch.object(admin, "check_order_account") as login, patch.object(admin.SeckillTask, "_submit") as submit:
+                    run = self.run_task()
+                self.assertEqual(run["items"][0]["status"], "blocked")
+                self.assertTrue(any(message in line["message"] for line in run["logs"]))
+                login.assert_not_called()
+                submit.assert_not_called()
         self.assertEqual(self.orders(), [])
 
     def test_seckill_test_rejects_auto_submission_without_unpaid_endpoint(self):
@@ -1416,7 +1440,7 @@ class AccountVerificationTests(unittest.TestCase):
              patch.object(admin, 'telegram_call') as send:
             self.assertEqual(task._notify_unpaid_order({'product_id': 'plan'}, 'invoice-1', 1, 'https://app.vmiss.com/viewinvoice.php?id=1'), 'sent')
         self.assertIn('CN.HK.BGP.Pro', send.call_args.kwargs['text'])
-        self.assertIn('商家：ExampleHost', send.call_args.kwargs['text'])
+        self.assertIn('ExampleHost · ', send.call_args.kwargs['text'])
 
     def test_akile_cached_auth_session_skips_api_login(self):
         account = configuration()['vps_seckill']['accounts'][0]

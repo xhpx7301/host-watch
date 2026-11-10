@@ -190,6 +190,36 @@ def telegram_region(value: str) -> str:
     return region
 
 
+def seckill_order_message(*, merchant: str, label: str, account: str, identifier: str, quantity: int,
+                          checked_at: str, duration: float, paid: bool, auto_renew: bool,
+                          details: dict | None = None) -> str:
+    def safe(value, limit=120):
+        return escape(" ".join(str(value or "").split())[:limit]).replace("@", "@\u200b")
+
+    details = details or {}
+    title = "✅ HostWatch · 实例已开通" if paid else "🧾 HostWatch · 已生成待付款订单"
+    lines = [f"<b>{title}</b>", f"<b>{safe(merchant, 80)} · {safe(label, 160)}</b>", ""]
+    if account:
+        lines.append(f"账户：{safe(account)}")
+    if paid:
+        node = " · ".join(part for part in (telegram_region(details.get("region", "")), details.get("node", "")) if part)
+        if node:
+            lines.append(f"节点：{safe(node, 160)}")
+        if details.get("system"):
+            lines.append(f"系统：{safe(details['system'])}")
+        if details.get("quote"):
+            suffix = "（含折扣预览）" if details.get("has_coupon") else ""
+            lines.append(f"下单前报价：{safe(details['quote'], 40)}{suffix}")
+    lines.extend([
+        f"数量：{quantity} 台",
+        f"付款：已从余额扣款 · 自动续费{'开启' if auto_renew else '关闭'}" if paid else "付款：待付款，请到商家官网核对",
+        "",
+        f"{'实例编号' if paid else '订单号'}：{safe(identifier, 128)}",
+        f"{format_beijing(checked_at)} · 耗时 {duration} 秒",
+    ])
+    return "\n".join(lines)
+
+
 def stock_message(*, vendor: str, name: str, available: int, stock_mode: str, region: str = "", specs: str = "",
                   traffic: str = "", price: str = "", line: str = "", item: dict | None = None,
                   old_count: int | None = None, checked_at: str = "", test: bool = False,

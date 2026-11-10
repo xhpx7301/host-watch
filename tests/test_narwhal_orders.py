@@ -286,6 +286,17 @@ class NarwhalPurchaseTests(unittest.TestCase):
         self.assertIn("核对实例：独角鲸接口返回错误（HTTP 401，商家错误码 10002）", str(task.snapshot()))
         self.session.post.assert_called_once()
 
+    def test_new_instance_visibility_delay_retries_details_but_never_posts_again(self):
+        self.session.get.side_effect = [response({"plans": [self.plan]}), response(PREVIEW),
+                                        response(None, status=404), response(self.detail)]
+        with patch.object(orders.time, "sleep") as wait:
+            _, result = self.submit()
+        self.assertEqual(result["status"], "purchased")
+        self.assertEqual(self.session.get.call_count, 4)
+        self.assertEqual(self.session.get.call_args_list[-2], self.session.get.call_args_list[-1])
+        self.session.post.assert_called_once()
+        wait.assert_called_once_with(0.5)
+
     def test_vm_detail_mismatch_or_failure_retains_vm_link_without_repurchase(self):
         for changes in ({"id": OTHER_PLAN_ID}, {"machine_id": OTHER_PLAN_ID},
                         {"plan_id": OTHER_PLAN_ID}, {"os_image": "other"},
@@ -315,8 +326,13 @@ class NarwhalPurchaseTests(unittest.TestCase):
             _, result = self.submit()
         self.assertEqual(result["telegram_status"], "sent")
         message = send.call_args.kwargs["text"]
-        self.assertIn("已扣余额", message)
+        self.assertIn("已从余额扣款", message)
         self.assertIn("自动续费开启", message)
+        self.assertIn("东京实例", message)
+        self.assertIn("系统：Debian 12", message)
+        self.assertIn("下单前报价：$0.80/月（含折扣预览）", message)
+        self.assertNotIn("PROMO", message)
+        self.assertNotIn("private-vm-password", message)
         self.assertNotIn("待付款", message)
         self.assertNotIn("手动付款", message)
         button = send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]

@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import re
 import secrets
+import time
 import uuid
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
 import requests
@@ -12,6 +14,15 @@ import requests
 API_BASE = "https://api.fuckip.me/api/v1"
 VMS_URL = f"{API_BASE}/vms"
 DASHBOARD_URL = "https://dash.fuckip.me/"
+
+
+@dataclass(frozen=True)
+class PreparedPurchase:
+    payload: dict
+    system: str
+    node: str
+    region: str
+    quote: str
 
 
 class PurchaseError(ValueError):
@@ -100,7 +111,7 @@ def default_system(systems: list[dict]) -> str:
     return next((os["id"] for os in systems if re.search(r"\balpine\b", os["name"], re.I)), systems[0]["id"])
 
 
-def prepare_purchase(session, item: dict, product: dict) -> dict:
+def prepare_purchase_details(session, item: dict, product: dict) -> PreparedPurchase:
     validate_settings(item)
     plan = load_plan(session, product)
     plan_id = plan["id"]
@@ -116,6 +127,13 @@ def prepare_purchase(session, item: dict, product: dict) -> dict:
     selected = [os for os in systems if os["id"] == requested or normalized(os["name"]) == normalized(requested)] if requested else [os for os in systems if os["id"] == default_system(systems)]
     if len(selected) != 1:
         raise ValueError("独角鲸套餐不支持所选系统，请选择该节点可用系统或跟随默认系统")
+    try:
+        original = Decimal(str(plan.get("price_monthly")))
+        if not original.is_finite() or not 0 <= original <= 1_000_000_000:
+            raise ValueError
+    except (InvalidOperation, ValueError):
+        raise PurchaseError("独角鲸套餐月付价格无法确认，未提交购买") from None
+    quote = original
     coupon = str(item.get("coupon_code", "")).strip()
     if coupon:
         # Match the official deployment page's read-only promotion preview.
@@ -123,18 +141,41 @@ def prepare_purchase(session, item: dict, product: dict) -> dict:
             params={"code": coupon, "plan_id": plan_id, "amount": plan.get("price_monthly")},
             timeout=(5, 20), allow_redirects=False))
         try:
-            original = Decimal(str(plan.get("price_monthly")))
             final = Decimal(str(preview.get("final_amount")))
-            valid_amount = original.is_finite() and final.is_finite() and 0 <= final <= original
+            valid_amount = final.is_finite() and 0 <= final <= original
         except (InvalidOperation, ValueError):
             valid_amount = False
         if preview.get("is_valid") is not True or not valid_amount:
             raise PurchaseError("独角鲸折扣码对所选套餐无效或优惠金额无法确认，已停止购买，不会按原价下单")
+        quote = final
     payload = {"plan_id": plan_id, "os_image": selected[0]["id"],
                "password": secrets.token_urlsafe(24), "auto_renew": item.get("narwhal_auto_renew", True)}
     if coupon:
         payload["promo_code"] = coupon
-    return payload
+    def label(key):
+        value = plan.get(key)
+        return " ".join(value.split())[:120] if isinstance(value, str) else ""
+
+    # This is the checkout quote, not a receipt or a renewal price.
+    amount = format(quote, ".2f")
+    return PreparedPurchase(payload, selected[0]["name"][:120], label("machine_name"), label("machine_region"),
+                            f"${amount}/月")
+
+
+def prepare_purchase(session, item: dict, product: dict) -> dict:
+    return prepare_purchase_details(session, item, product).payload
+
+
+def _read_created_vm(session, vm_id: str) -> dict:
+    # A newly accepted VM may take a moment to appear in the detail endpoint.
+    # Retry only this GET, once, for a transient read failure.
+    for attempt in range(2):
+        try:
+            return api_data(session.get(f"{VMS_URL}/{vm_id}", timeout=(5, 20), allow_redirects=False))
+        except (requests.Timeout, requests.ConnectionError, APIResponseError) as exc:
+            if attempt or isinstance(exc, APIResponseError) and exc.status not in {404, 502, 503, 504}:
+                raise
+            time.sleep(0.5)
 
 
 def purchase(session, payload: dict, product: dict, key: str) -> dict:
@@ -149,7 +190,7 @@ def purchase(session, payload: dict, product: dict, key: str) -> dict:
         if not vm_id:
             raise APIResponseError(response.status_code, "购买响应缺少有效实例编号")
         stage = "核对实例"
-        detail = api_data(session.get(f"{VMS_URL}/{vm_id}", timeout=(5, 20), allow_redirects=False))
+        detail = _read_created_vm(session, vm_id)
         checks = (
             ("实例编号", detail.get("id") == vm_id),
             ("节点", detail.get("machine_id") == product["machine_id"]),

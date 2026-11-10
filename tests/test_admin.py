@@ -172,9 +172,9 @@ class AdminAPITests(unittest.TestCase):
                                                duration_seconds=21.4)
         self.assertEqual(result, "sent")
         message = send.call_args.kwargs["text"]
-        self.assertIn("商家：VMISS", message)
+        self.assertIn("VMISS · US Basic", message)
         self.assertIn("账户：VMISS 备用账号", message)
-        self.assertIn("总耗时：21.4 秒", message)
+        self.assertIn("耗时 21.4 秒", message)
 
     def test_older_config_save_preserves_market_settings(self):
         from test_akile_market import config as market_config
