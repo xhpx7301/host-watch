@@ -90,6 +90,46 @@ class NarwhalPurchaseTests(unittest.TestCase):
         self.assertNotIn("promo_code", payload)
         self.assertEqual(self.session.get.call_count, 1)
 
+    def test_blank_system_prefers_alpine_and_explicit_selection_is_preserved(self):
+        systems = [{"id": "debian", "name": "Debian (Podman)"},
+                   {"id": "docker.io/narwhalcloud/alpine:podman", "name": "Alpine (Podman)"}]
+        for requested, expected in (("", systems[1]["id"]), ("Debian (Podman)", "debian"), ("debian", "debian")):
+            with self.subTest(requested=requested):
+                self.session.get.side_effect = [response({"plans": [{**self.plan, "supported_os": systems}]})]
+                payload = orders.prepare_purchase(self.session, purchase_item(operating_system=requested, coupon_code=""), product())
+                self.assertEqual(payload["os_image"], expected)
+
+    def test_system_lookup_is_read_only_works_sold_out_and_uses_item_egress(self):
+        systems = [{"id": "debian", "name": "Debian (Podman)"}, {"id": "alpine", "name": "Alpine (Podman)"}]
+        self.session.get.side_effect = [response({"plans": [{**self.plan, "sold_out": True, "supported_os": systems}]})]
+        self.session.__enter__ = Mock(return_value=self.session)
+        self.session.__exit__ = Mock(return_value=False)
+        with patch.object(admin, "_seckill_action_config", return_value=self.config), \
+             patch.object(admin.requests, "Session", return_value=self.session), \
+             patch.object(admin.egress, "apply_session") as route, \
+             patch.object(admin, "check_order_account") as authenticate:
+            result = admin.seckill_systems({"item_id": "buy-one"})
+        self.assertEqual(result["systems"], systems)
+        self.assertEqual(result["default_system"], "alpine")
+        self.assertEqual(result["plan_id"], PLAN_ID)
+        self.assertFalse(self.session.trust_env)
+        route.assert_called_once()
+        authenticate.assert_not_called()
+        self.session.post.assert_not_called()
+        self.session.get.assert_called_once_with(f"{orders.API_BASE}/plans", params={"machine_id": MACHINE_ID},
+                                                 timeout=(5, 60), allow_redirects=False)
+
+    def test_system_lookup_rejects_unknown_items_or_invalid_lists(self):
+        with patch.object(admin, "_seckill_action_config", return_value=self.config), \
+             patch.object(admin.requests, "Session") as session:
+            with self.assertRaises(ValueError):
+                admin.seckill_systems({"item_id": "missing"})
+            session.assert_not_called()
+        for systems in ([], [None], [{"id": "", "name": "Alpine"}], [{"id": "os", "name": ""}],
+                        [{"id": "same", "name": "Debian"}, {"id": "same", "name": "Alpine"}]):
+            with self.subTest(systems=systems), self.assertRaises(ValueError):
+                orders.supported_systems({"supported_os": systems})
+
     def test_auto_renew_can_be_disabled_and_verified_and_reported(self):
         self.detail["auto_renew"] = False
         with patch.object(admin, "effective_telegram", return_value=("bot-token", "100")), \

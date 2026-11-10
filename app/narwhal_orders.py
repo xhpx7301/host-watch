@@ -54,8 +54,8 @@ def api_data(response) -> dict:
     return payload["data"]
 
 
-def prepare_purchase(session, item: dict, product: dict) -> dict:
-    validate_settings(item)
+def load_plan(session, product: dict) -> dict:
+    """Read exact plan metadata, including systems, even while sold out."""
     plan_id, machine_id = identifier(product.get("plan_id")), identifier(product.get("machine_id"))
     if not plan_id or not machine_id:
         raise PurchaseError("独角鲸套餐或节点标识无效，未提交购买")
@@ -67,21 +67,38 @@ def prepare_purchase(session, item: dict, product: dict) -> dict:
     matches = [p for p in plans if p.get("id") == plan_id and p.get("machine_id") == machine_id]
     if len(matches) != 1:
         raise ValueError("独角鲸套餐与所选节点不匹配或已下架")
-    plan = matches[0]
+    return matches[0]
+
+
+def supported_systems(plan: dict) -> list[dict]:
+    systems = plan.get("supported_os")
+    if (not isinstance(systems, list) or not systems
+            or any(not isinstance(os, dict) or not isinstance(os.get("id"), str)
+                   or not 1 <= len(os["id"].strip()) <= 256 or not isinstance(os.get("name"), str)
+                   or not os["name"].strip() for os in systems)
+            or len({os["id"] for os in systems}) != len(systems)):
+        raise ValueError("独角鲸未返回有效的可用系统列表")
+    return [{"id": os["id"], "name": os["name"]} for os in systems]
+
+
+def default_system(systems: list[dict]) -> str:
+    return next((os["id"] for os in systems if re.search(r"\balpine\b", os["name"], re.I)), systems[0]["id"])
+
+
+def prepare_purchase(session, item: dict, product: dict) -> dict:
+    validate_settings(item)
+    plan = load_plan(session, product)
+    plan_id = plan["id"]
     if (plan.get("status") != "active" or plan.get("machine_status") != "online"
             or plan.get("sold_out") is not False or plan.get("ram_insufficient") is True
             or type(plan.get("remaining")) is not int or plan["remaining"] < 0):
         raise ValueError("独角鲸套餐缺货、节点离线或库存无法确认")
-    systems = plan.get("supported_os")
-    if (not isinstance(systems, list) or not systems
-            or any(not isinstance(os, dict) or not isinstance(os.get("id"), str)
-                   or not os["id"].strip() or not isinstance(os.get("name"), str) for os in systems)):
-        raise ValueError("独角鲸未返回有效的可用系统列表")
+    systems = supported_systems(plan)
     requested = str(item.get("operating_system", "")).strip()
     def normalized(text):
         return re.sub(r"[\W_]", "", text.casefold())
 
-    selected = [os for os in systems if os["id"] == requested or normalized(os["name"]) == normalized(requested)] if requested else systems[:1]
+    selected = [os for os in systems if os["id"] == requested or normalized(os["name"]) == normalized(requested)] if requested else [os for os in systems if os["id"] == default_system(systems)]
     if len(selected) != 1:
         raise ValueError("独角鲸套餐不支持所选系统，请选择该节点可用系统或跟随默认系统")
     coupon = str(item.get("coupon_code", "")).strip()

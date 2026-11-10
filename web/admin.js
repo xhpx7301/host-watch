@@ -3376,6 +3376,52 @@ function scheduleAccountHealthCheck(delay = 1_000) {
   accountHealthTimer = setTimeout(refreshAccountHealth, delay);
 }
 let vpsSeckillPoll = null;
+const narwhalSystemRequests = new Map();
+function narwhalSystemOptions(select, systems, requested, defaultId) {
+  const normalized = value => String(value).toLowerCase().replace(/[\W_]/g, "");
+  const matching = systems.filter(os => os.id === requested || normalized(os.name) === normalized(requested));
+  const chosen = requested ? matching.length === 1 ? matching[0].id : requested : defaultId;
+  select.replaceChildren(...systems.map(os => new Option(os.name, os.id)));
+  if (requested && !systems.some(os => os.id === chosen)) {
+    const unavailable = new Option(`原选择不可用：${requested}（请重新选择）`, requested);
+    unavailable.disabled = true; select.add(unavailable);
+  }
+  select.value = chosen;
+  select.disabled = false;
+  return chosen;
+}
+async function loadNarwhalSystems(select, note, retry, item, product, refresh = false) {
+  const key = JSON.stringify([product.machine_id, product.plan_id, item.egress_node_id || config.egress?.routes?.narwhal || "", config.egress]);
+  select.disabled = true;
+  select.replaceChildren(new Option("正在读取套餐支持的系统…", ""));
+  retry.disabled = true; note.textContent = "自动识别可用系统，优先选择 Alpine。";
+  if (refresh) narwhalSystemRequests.delete(key);
+  if (!narwhalSystemRequests.has(key)) {
+    narwhalSystemRequests.set(key, requestJSON("/api/seckill/systems", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ config, item_id: item.id }), timeoutMs: 70_000,
+    }));
+  }
+  try {
+    const result = await narwhalSystemRequests.get(key);
+    if (!select.isConnected) return;
+    const previous = item.operating_system || "";
+    const chosen = narwhalSystemOptions(select, result.systems, previous, result.default_system);
+    const valid = result.systems.some(os => os.id === chosen);
+    note.textContent = !valid ? "原系统已不在可用列表，请重新选择；不会自动更换已保存的系统。"
+      : result.systems.some(os => /\balpine\b/i.test(os.name)) ? "已读取套餐可用系统，默认优先 Alpine。"
+      : "此套餐未提供 Alpine，默认选择第一个可用系统。";
+    if (valid && chosen !== previous) {
+      item.operating_system = chosen; updateDraftState(); scheduleAutoSave("seckill");
+    }
+  } catch {
+    if (!select.isConnected) return;
+    select.replaceChildren(new Option("读取失败，请点击重新读取", ""));
+    note.textContent = "读取失败，已保留原系统设置；可重新读取。";
+  } finally {
+    if (select.isConnected) retry.disabled = false;
+  }
+}
 function seckillItemId() { return `seckill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; }
 function seckillItems() { return config.vps_seckill?.items || (config.vps_seckill = { enabled: false, mode: "manual", interval_seconds: 5, items: [], accounts: [] }).items; }
 function seckillAccounts() { return config.vps_seckill?.accounts || (config.vps_seckill.accounts = []); }
@@ -3536,15 +3582,12 @@ function renderVpsSeckill() {
     const coupon = document.createElement("input"); coupon.value = seckillCoupon(item, product); coupon.maxLength = 256; coupon.placeholder = providerKey === "narwhal" ? "可选；同实例套餐共用，下单前校验" : "可选专属优惠码";
     if (providerKey === "narwhal") coupon.dataset.narwhalCoupon = product.machine_id;
     coupon.addEventListener("input", () => updateSeckillCoupon(item, product, coupon.value));
-    const operatingSystem = document.createElement(providerKey === "narwhal" ? "input" : "select");
-    if (providerKey === "narwhal") {
-      operatingSystem.placeholder = "留空跟随节点默认；或填写官网系统名 / 镜像 ID";
-      operatingSystem.maxLength = 256;
-    } else {
+    const operatingSystem = document.createElement("select");
+    if (providerKey !== "narwhal") {
       [["", "跟随商家默认系统"], ["AlmaLinux 9", "AlmaLinux 9"], ["AlmaLinux 10", "AlmaLinux 10"], ["Debian 11", "Debian 11"], ["Debian 12", "Debian 12"], ["Debian 13", "Debian 13"], ["Ubuntu 22", "Ubuntu 22"], ["Ubuntu 24", "Ubuntu 24"]].forEach(([value, label]) => operatingSystem.add(new Option(label, value)));
     }
     operatingSystem.value = item.operating_system || "";
-    operatingSystem.addEventListener(providerKey === "narwhal" ? "input" : "change", () => { item.operating_system = operatingSystem.value; updateDraftState(); scheduleAutoSave("seckill"); });
+    operatingSystem.addEventListener("change", () => { item.operating_system = operatingSystem.value; updateDraftState(); scheduleAutoSave("seckill"); });
     const billingCycle = document.createElement("select");
     [["", "跟随商家默认周期"], ["monthly", "月付"], ["quarterly", "季付"], ["annually", "年付"]].forEach(([value, label]) => billingCycle.add(new Option(label, value)));
     billingCycle.value = item.billing_cycle || "";
@@ -3597,6 +3640,13 @@ function renderVpsSeckill() {
     remove.setAttribute("aria-label", `删除补货抢购商品 ${title.textContent}`);
     remove.addEventListener("click", () => { const index = seckillItems().indexOf(item); if (index >= 0) seckillItems().splice(index, 1); renderVpsSeckill(); updateDraftState(); scheduleAutoSave("seckill"); setMessage("已删除该补货抢购商品，正在自动保存。", "pending"); }); flags.append(remove);
     card.append(grid, submitHint, flags); itemTarget.append(card);
+    if (providerKey === "narwhal") {
+      const systemNote = text("small", "", "hint"); systemNote.setAttribute("role", "status");
+      const retrySystems = text("button", "重新读取系统"); retrySystems.type = "button";
+      operatingSystem.parentElement.append(systemNote, retrySystems);
+      retrySystems.addEventListener("click", () => loadNarwhalSystems(operatingSystem, systemNote, retrySystems, item, product, true));
+      loadNarwhalSystems(operatingSystem, systemNote, retrySystems, item, product);
+    }
   });
   const accountTarget = document.querySelector("#vps-seckill-accounts"); accountTarget.replaceChildren();
   const accountPanel = accountTarget.closest(".seckill-panel");

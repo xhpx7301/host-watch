@@ -3673,6 +3673,26 @@ def _seckill_action_config(submitted: dict) -> dict:
     return value
 
 
+def seckill_systems(submitted: dict) -> dict:
+    """Read public plan systems through the item's egress, without login/buying."""
+    from monitor import product_fetcher
+    config = _seckill_action_config(submitted)
+    item = next((row for row in config["vps_seckill"]["items"] if row["id"] == submitted.get("item_id")), None)
+    product = next((row for row in config["products"] if item and row["id"] == item["product_id"]), None)
+    if not product or product.get("adapter") != "narwhal":
+        raise ValueError("请选择有效的独角鲸抢购套餐")
+    fetcher = product_fetcher(config.get("fetcher"), {**product, "egress_node_id": item.get("egress_node_id", "")})
+    try:
+        with requests.Session() as session:
+            session.trust_env = False
+            egress.apply_session(session, fetcher)
+            systems = narwhal_orders.supported_systems(narwhal_orders.load_plan(session, product))
+    except (requests.RequestException, ValueError, TypeError, AttributeError):
+        raise ValueError("独角鲸可用系统读取失败，请检查套餐和出口后重试") from None
+    return {"item_id": item["id"], "plan_id": product["plan_id"], "machine_id": product["machine_id"],
+            "systems": systems, "default_system": narwhal_orders.default_system(systems)}
+
+
 def seckill_account_check(submitted: dict) -> dict:
     from monitor import product_fetcher
     account_override = submitted.get("account")
@@ -6877,7 +6897,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(403)
             return
         # Stopping and polling tests must never wait behind config/service locks.
-        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-status", "/api/seckill/account-verification", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/account-balance/check", "/api/account-balance/test-notification", "/api/egress/probe"}:
+        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-status", "/api/seckill/systems", "/api/seckill/account-verification", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/account-balance/check", "/api/account-balance/test-notification", "/api/egress/probe"}:
             self._post_action()
             return
         if not MUTATION_LOCK.acquire(blocking=False):
@@ -6889,7 +6909,7 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/refresh", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-status", "/api/seckill/account-verification", "/api/seckill/account-cache-clear", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/account-balance/check", "/api/account-balance/test-notification", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
+        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/refresh", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-status", "/api/seckill/systems", "/api/seckill/account-verification", "/api/seckill/account-cache-clear", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/account-balance/check", "/api/account-balance/test-notification", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
             self.send_error(404)
             return
         try:
@@ -7015,6 +7035,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not submitted.get("task_id"):
                     raise ValueError("请刷新管理页后重试，以使用可停止的商品测试")
                 output = start_stock_test(submitted)
+                self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
+                return
+            if self.path == "/api/seckill/systems":
+                output = seckill_systems(submitted)
                 self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
                 return
             if self.path == "/api/seckill/account-check":

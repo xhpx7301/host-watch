@@ -51,6 +51,18 @@ class AdminAPITests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(run.call_args.kwargs["timeout"], 180)
 
+    def test_seckill_systems_endpoint_requires_auth_and_dispatches_without_mutation_lock(self):
+        with patch.object(admin, "authorized", return_value=False), patch.object(admin, "seckill_systems") as lookup:
+            code, _ = self.request("/api/seckill/systems", {"item_id": "plan"})
+            self.assertEqual(code, 401)
+            lookup.assert_not_called()
+        with patch.object(admin, "seckill_systems", return_value={"systems": [{"id": "alpine", "name": "Alpine"}]}) as lookup:
+            with admin.MUTATION_LOCK:
+                code, body = self.request("/api/seckill/systems", {"item_id": "plan"})
+            self.assertEqual(code, 200)
+            self.assertEqual(json.loads(body)["systems"][0]["id"], "alpine")
+            lookup.assert_called_once_with({"item_id": "plan"})
+
     def test_market_endpoints_require_auth_and_refresh_does_not_evaluate(self):
         with patch.object(admin, "authorized", return_value=False), patch.object(admin, "refresh_akile_market") as refresh:
             code, _ = self.request("/api/market/refresh", {"account_id": "ak"})

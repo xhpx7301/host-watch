@@ -7,6 +7,46 @@ const { test } = require('node:test');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'admin.js'), 'utf8');
 const copy = value => JSON.parse(JSON.stringify(value));
 
+test('Narwhal system select defaults to Alpine while preserving explicit and unavailable choices', () => {
+  const systems = [{ id: 'debian', name: 'Debian (Podman)' }, { id: 'alpine', name: 'Alpine (Podman)' }];
+  const context = load({ Option: function(name, id) { this.text = name; this.value = id; } }, ['narwhalSystemOptions']);
+  for (const [requested, expected] of [['', 'alpine'], ['Debian (Podman)', 'debian'], ['debian', 'debian'], ['old-os', 'old-os']]) {
+    const select = { replaceChildren(...options) { this.options = options; }, add(option) { this.options.push(option); } };
+    assert.equal(context.narwhalSystemOptions(select, systems, requested, 'alpine'), expected);
+    assert.equal(select.value, expected);
+    assert.equal(select.disabled, false);
+    if (requested === 'old-os') assert.equal(select.options.at(-1).disabled, true);
+  }
+});
+
+test('Narwhal system loading shares requests and saves defaults, failures retain saved choice for retry', async () => {
+  const systems = [{ id: 'debian', name: 'Debian' }, { id: 'alpine', name: 'Alpine' }];
+  let calls = 0, saves = 0, fail = false;
+  const context = load({
+    config: { egress: {} }, narwhalSystemRequests: new Map(),
+    Option: function(name, id) { this.text = name; this.value = id; },
+    requestJSON: async () => { calls++; if (fail) throw Error('Network'); return { systems, default_system: 'alpine' }; },
+    updateDraftState() {}, scheduleAutoSave() { saves++; },
+  }, ['narwhalSystemOptions', 'loadNarwhalSystems']);
+  const makeSelect = () => ({ isConnected: true, replaceChildren(...options) { this.options = options; }, add(option) { this.options.push(option); } });
+  const first = {}, second = { operating_system: 'debian' }, product = { machine_id: 'node', plan_id: 'plan' };
+  await context.loadNarwhalSystems(makeSelect(), {}, {}, first, product);
+  await context.loadNarwhalSystems(makeSelect(), {}, {}, second, product);
+  assert.equal(first.operating_system, 'alpine'); assert.equal(second.operating_system, 'debian');
+  assert.equal(calls, 1); assert.equal(saves, 1);
+  fail = true;
+  const select = makeSelect(), note = {}, retry = {};
+  await context.loadNarwhalSystems(select, note, retry, second, product, true);
+  assert.equal(second.operating_system, 'debian'); assert.equal(select.disabled, true); assert.equal(retry.disabled, false);
+  fail = false;
+  await context.loadNarwhalSystems(select, note, retry, second, product, true);
+  assert.equal(select.value, 'debian'); assert.equal(calls, 3);
+  const detached = makeSelect(); detached.isConnected = false;
+  const removed = {};
+  await context.loadNarwhalSystems(detached, {}, {}, removed, product);
+  assert.equal(removed.operating_system, undefined);
+});
+
 test('Narwhal purchase defaults select balance and monthly while other merchants retain invoice preferences', () => {
   const context = load({
     config: { egress: { routes: { narwhal: 'node-one' } } },
