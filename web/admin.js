@@ -167,7 +167,9 @@ window.addEventListener("hashchange", () => navigatePage(location.hash.slice(1),
 const initialPage = location.hash.slice(1) || sessionStorage.getItem("hostwatch-current-page") || "overview";
 navigatePage(initialPage, { history: false, focus: false });
 
-let marketSnapshot = { items: [], results: [], updated_at: "", error: "" };
+const emptyMarketSnapshot = () => ({ items: [], results: [], updated_at: "", error: "" });
+const marketSnapshotsByProvider = { akile: emptyMarketSnapshot(), isvoro: emptyMarketSnapshot() };
+let marketSnapshot = marketSnapshotsByProvider.akile;
 let marketBusy = false;
 let marketRuleTestBusy = "";
 const marketRuleTestMessages = new Map();
@@ -618,19 +620,31 @@ function renderMarket() {
 }
 async function loadMarketSnapshot() {
   if (marketBusy) return;
-  try { marketSnapshot = await requestJSON(`/api/market?provider=${activeMarketProvider()}`); renderMarketRuleDetails(); renderMarket(); }
+  const provider = activeMarketProvider();
+  try {
+    const result = await requestJSON(`/api/market?provider=${provider}`);
+    marketSnapshotsByProvider[provider] = result;
+    if (activeMarketProvider() === provider) {
+      marketSnapshot = result;
+      renderMarketRuleDetails();
+      renderMarket();
+    }
+  }
   catch (error) { document.querySelector("#market-snapshot-state").textContent = error.message; }
 }
 async function refreshMarket(evaluate) {
   if (marketBusy) return;
   if (evaluate && scopeIsDirty("market")) { setMessage("请先保存交易市场规则后再检查。", "error"); return; }
+  const provider = activeMarketProvider();
   marketBusy = true; renderMarket();
   try {
-    marketSnapshot = await requestJSON(evaluate ? "/api/market/check" : "/api/market/refresh", {
+    const result = await requestJSON(evaluate ? "/api/market/check" : "/api/market/refresh", {
       method:"POST", headers:{"Content-Type":"application/json"}, timeoutMs:120000,
-      body: JSON.stringify({ provider: activeMarketProvider(), account_id:document.querySelector("#market-account").value }),
+      body: JSON.stringify({ provider, account_id:document.querySelector("#market-account").value }),
     });
-    setMessage(evaluate ? "已检查保存的规则，触发结果见下方。" : `${activeMarketProvider() === "isvoro" ? "Isvoro" : "Akile"} 市场商品已刷新。`, "success", true, false);
+    marketSnapshotsByProvider[provider] = result;
+    if (activeMarketProvider() === provider) marketSnapshot = result;
+    setMessage(evaluate ? "已检查保存的规则，触发结果见下方。" : `${provider === "isvoro" ? "Isvoro" : "Akile"} 市场商品已刷新。`, "success", true, false);
   } catch(error) { marketSnapshot.error = error.message; setMessage(error.message, "error"); }
   finally { marketBusy = false; renderMarketRuleDetails(); renderMarket(); }
 }
@@ -677,11 +691,32 @@ for (const id of ["market-account", "market-notification-account", "market-notif
   renderMarket();
 });
 for (const id of ["market-provider", "market-notification-provider"]) document.getElementById(id).addEventListener("change", event => {
-  document.getElementById(id === "market-provider" ? "market-notification-provider" : "market-provider").value = event.currentTarget.value;
-  marketPage = 0; renderMarketSettings(); void loadMarketSnapshot();
+  const nextProvider = event.currentTarget.value;
+  document.getElementById(id === "market-provider" ? "market-notification-provider" : "market-provider").value = nextProvider;
+  marketSnapshot = marketSnapshotsByProvider[nextProvider] ||= emptyMarketSnapshot();
+  marketPage = 0; renderMarketSettings(); renderMarketRuleDetails(); renderMarket(); void loadMarketSnapshot();
 });
 document.querySelector("#market-open-notifications").addEventListener("click", () => navigatePage("market-notifications"));
-for (const id of ["market-search", "market-region", "market-product"]) document.getElementById(id).addEventListener("input", () => { marketPage = 0; renderMarket(); });
+let marketSearchTimer;
+function syncMarketResetButton() {
+  const button = document.querySelector("#market-reset");
+  if (!button) return;
+  const active = Boolean(document.querySelector("#market-search")?.value.trim()) ||
+    (document.querySelector("#market-region")?.value || "all") !== "all" ||
+    (document.querySelector("#market-product")?.value || "all") !== "all";
+  button.hidden = !active;
+}
+document.querySelector("#market-search").addEventListener("input", () => {
+  clearTimeout(marketSearchTimer);
+  marketSearchTimer = setTimeout(() => { marketPage = 0; syncMarketResetButton(); renderMarket(); }, 180);
+});
+for (const id of ["market-region", "market-product"]) document.getElementById(id).addEventListener("change", () => { marketPage = 0; syncMarketResetButton(); renderMarket(); });
+document.querySelector("#market-reset")?.addEventListener("click", () => {
+  document.querySelector("#market-search").value = "";
+  document.querySelector("#market-region").value = "all";
+  document.querySelector("#market-product").value = "all";
+  marketPage = 0; syncMarketResetButton(); renderMarket();
+});
 document.querySelector("#market-prev").addEventListener("click", () => { marketPage--; renderMarket(); });
 document.querySelector("#market-next").addEventListener("click", () => { marketPage++; renderMarket(); });
 window.addEventListener("hostwatch-page-change", event => {
@@ -707,6 +742,11 @@ document.querySelector("#account-balance-test-notification").addEventListener("c
   void testAccountBalanceNotification();
 });
 
+let toastDurationMs = 4500;
+function scheduleToastDismiss(delay = toastDurationMs) {
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toastNode.hidden = true; }, delay);
+}
 function setMessage(message, kind = "", notify = true, inline = true) {
   if (inline) {
     messageNode.textContent = message;
@@ -716,16 +756,16 @@ function setMessage(message, kind = "", notify = true, inline = true) {
     messageNode.className = "";
   }
   if (!notify) return;
-  clearTimeout(toastTimer);
   toastNode.className = `toast ${kind}`;
   toastNode.hidden = false;
   document.querySelector("#toast-label").textContent = ({ pending: "操作提示", success: "操作成功", error: "操作失败" })[kind] || "操作提示";
   document.querySelector("#toast-message").textContent = message;
-  // Keep every operation result visible long enough to read, then dismiss it
-  // automatically so a stale error cannot remain over the page indefinitely.
-  toastTimer = setTimeout(() => { toastNode.hidden = true; }, TOAST_TIMEOUT_MS);
+  toastDurationMs = kind === "success" ? 3800 : kind === "error" ? 12000 : 10000;
+  scheduleToastDismiss(toastDurationMs);
 }
 
+toastNode?.addEventListener("mouseenter", () => clearTimeout(toastTimer));
+toastNode?.addEventListener("mouseleave", () => { if (!toastNode.hidden) scheduleToastDismiss(Math.min(toastDurationMs, 3000)); });
 document.querySelector("#toast-close").addEventListener("click", () => {
   clearTimeout(toastTimer);
   toastNode.hidden = true;
@@ -744,32 +784,44 @@ document.querySelector("#logout-button")?.addEventListener("click", async event 
   window.location.replace("/");
 });
 
+const inflightGetRequests = new Map();
 async function requestJSON(url, options = {}) {
-  const controller = new AbortController();
-  const { timeoutMs = 40000, signal, ...fetchOptions } = options;
-  const cancel = () => controller.abort();
-  if (signal?.aborted) cancel();
-  else signal?.addEventListener("abort", cancel, { once: true });
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, { cache: "no-store", ...fetchOptions, signal: controller.signal });
-    let result;
-    try { result = await response.json(); }
-    catch {
-      if (!response.ok) throw new Error(`请求失败（HTTP ${response.status}），请检查登录状态或服务器。`);
-      throw new Error("服务器响应无法识别，请刷新状态核对结果。");
-    }
-    if (response.status === 401 && !url.startsWith("/api/auth/")) {
-      window.location.replace("/");
-      throw Object.assign(new Error("登录状态已失效，正在返回登录页"), { status: response.status });
-    }
-    if (!response.ok) throw Object.assign(new Error(result.error || `请求失败（HTTP ${response.status}）`), { status: response.status });
-    return result;
-  } catch (error) {
-    if (controller.signal.aborted) throw new Error("请求超时，请核对结果及反向代理超时设置后重试。");
-    if (error instanceof TypeError) throw new Error("网络连接失败，请检查连接并刷新状态核对结果。");
-    throw error;
-  } finally { clearTimeout(timer); signal?.removeEventListener("abort", cancel); }
+  const method = String(options.method || "GET").toUpperCase();
+  const dedupeKey = method === "GET" && !options.signal && !options.noDedupe ? url : "";
+  if (dedupeKey && inflightGetRequests.has(dedupeKey)) {
+    return inflightGetRequests.get(dedupeKey);
+  }
+  const run = (async () => {
+    const controller = new AbortController();
+    const { timeoutMs = 40000, signal, noDedupe: _ignore, ...fetchOptions } = options;
+    const cancel = () => controller.abort();
+    if (signal?.aborted) cancel();
+    else signal?.addEventListener("abort", cancel, { once: true });
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, { cache: "no-store", ...fetchOptions, signal: controller.signal });
+      let result;
+      try { result = await response.json(); }
+      catch {
+        if (!response.ok) throw new Error(`请求失败（HTTP ${response.status}），请检查登录状态或服务器。`);
+        throw new Error("服务器响应无法识别，请刷新状态核对结果。");
+      }
+      if (response.status === 401 && !url.startsWith("/api/auth/")) {
+        window.location.replace("/");
+        throw Object.assign(new Error("登录状态已失效，正在返回登录页"), { status: response.status });
+      }
+      if (!response.ok) throw Object.assign(new Error(result.error || `请求失败（HTTP ${response.status}）`), { status: response.status });
+      return result;
+    } catch (error) {
+      if (controller.signal.aborted) throw new Error("请求超时，请核对结果及反向代理超时设置后重试。");
+      if (error instanceof TypeError) throw new Error("网络连接失败，请检查连接并刷新状态核对结果。");
+      throw error;
+    } finally { clearTimeout(timer); signal?.removeEventListener("abort", cancel); }
+  })();
+  if (!dedupeKey) return run;
+  inflightGetRequests.set(dedupeKey, run);
+  try { return await run; }
+  finally { if (inflightGetRequests.get(dedupeKey) === run) inflightGetRequests.delete(dedupeKey); }
 }
 
 async function runAction(button, label, message, action, notify = true, inline = true) {
@@ -3062,7 +3114,39 @@ function renderNotificationList() {
   restoreProductSortFocus(target, focusedSortId);
 }
 
+function renderNavBadgesAndKpis() {
+  const watchedList = config.products.filter(item => membership(item, "watch"));
+  const notifiedList = config.products.filter(item => membership(item, "notify"));
+  const seckillCount = (config.vps_seckill?.items || []).length;
+  const accountCount = (config.vps_seckill?.accounts || []).length;
+  const latest = new Map((lastStatus?.products || []).map(product => [product.id, product]));
+  const inStockCount = watchedList.filter(item => ((item.adapter === "dmit" ? productSnapshot(item, latest.get(item.id)) : productSnapshot(item, latest.get(item.id)))?.available || 0) > 0).length;
+  const setBadge = (key, count) => {
+    const node = document.querySelector(`[data-nav-badge="${key}"]`);
+    if (!node) return;
+    node.textContent = String(count);
+    node.hidden = count <= 0;
+  };
+  setBadge("monitor", watchedList.length);
+  setBadge("notifications", notifiedList.length);
+  setBadge("seckill", seckillCount);
+  setBadge("accounts", accountCount);
+  const kpiWatched = document.querySelector("#kpi-watched");
+  if (kpiWatched) {
+    kpiWatched.textContent = String(watchedList.length);
+    const vendors = new Set(watchedList.map(item => item.provider).filter(Boolean));
+    document.querySelector("#kpi-watched-sub").textContent = vendors.size ? `覆盖 ${vendors.size} 家商家` : "点击前往库存监控";
+    document.querySelector("#kpi-instock").textContent = String(inStockCount);
+    document.querySelector("#kpi-instock-sub").textContent = watchedList.length ? `有货占比 ${Math.round((inStockCount / watchedList.length) * 100)}%` : "基于最近库存快照";
+    document.querySelector("#kpi-notified").textContent = String(notifiedList.length);
+    document.querySelector("#kpi-notified-sub").textContent = config.telegram?.configured && !config.telegram?.disabled ? "Telegram 推送已就绪" : "请先检查 Telegram 配置";
+    document.querySelector("#kpi-seckill").textContent = `${seckillCount} / ${accountCount}`;
+    document.querySelector("#kpi-seckill-sub").textContent = vpsSeckillTask?.pending ? "抢购任务运行中" : `${seckillCount} 款抢购商品 · ${accountCount} 个账户`;
+  }
+}
+
 function renderOverview() {
+  renderNavBadgesAndKpis();
   const enabled = config.products.filter((item) => item.enabled);
   const vendors = new Set(enabled.map((item) => item.provider).filter(Boolean));
   const latest = new Map((lastStatus?.products || []).map((product) => [product.id, product]));
@@ -4672,9 +4756,47 @@ document.querySelector("#catalog-open-seckill").addEventListener("click", () => 
 document.querySelector("#requests-open-seckill").addEventListener("click", () => navigatePage("seckill"));
 document.querySelector("#notification-browse").addEventListener("click", () => navigatePage("catalog"));
 document.querySelector("#watchlist-browse").addEventListener("click", () => navigatePage("catalog"));
-for (const id of ["watchlist-search", "watchlist-provider", "watchlist-stock", "notification-search", "notification-provider", "notification-stock"]) document.getElementById(id).addEventListener(id.endsWith("search") ? "input" : "change", () => {
+const syncWatchlistResetButtons = () => {
+  const wReset = document.querySelector("#watchlist-reset");
+  if (wReset) {
+    wReset.hidden = !(document.querySelector("#watchlist-search")?.value.trim() ||
+      (document.querySelector("#watchlist-provider")?.value || "all") !== "all" ||
+      (document.querySelector("#watchlist-stock")?.value || "all") !== "all");
+  }
+  const nReset = document.querySelector("#notification-reset");
+  if (nReset) {
+    nReset.hidden = !(document.querySelector("#notification-search")?.value.trim() ||
+      (document.querySelector("#notification-provider")?.value || "all") !== "all" ||
+      (document.querySelector("#notification-stock")?.value || "all") !== "all");
+  }
+};
+let watchFilterTimer;
+for (const id of ["watchlist-search", "watchlist-provider", "watchlist-stock", "notification-search", "notification-provider", "notification-stock"]) {
+  const isSearch = id.endsWith("search");
+  document.getElementById(id).addEventListener(isSearch ? "input" : "change", () => {
+    syncWatchlistResetButtons();
+    if (isSearch) {
+      clearTimeout(watchFilterTimer);
+      watchFilterTimer = setTimeout(() => renderProductList(), 160);
+    } else {
+      renderProductList();
+      animateFilterResult(id.startsWith("notification-") ? document.querySelector("#notification-list") : listNode);
+    }
+  });
+}
+document.querySelector("#watchlist-reset")?.addEventListener("click", () => {
+  document.querySelector("#watchlist-search").value = "";
+  document.querySelector("#watchlist-provider").value = "all";
+  document.querySelector("#watchlist-stock").value = "all";
+  syncWatchlistResetButtons();
   renderProductList();
-  animateFilterResult(id.startsWith("notification-") ? document.querySelector("#notification-list") : listNode);
+});
+document.querySelector("#notification-reset")?.addEventListener("click", () => {
+  document.querySelector("#notification-search").value = "";
+  document.querySelector("#notification-provider").value = "all";
+  document.querySelector("#notification-stock").value = "all";
+  syncWatchlistResetButtons();
+  renderNotificationList();
 });
 document.querySelector("#watch-compare-start").addEventListener("click", openCompareDialog);
 document.querySelector("#watch-compare-clear").addEventListener("click", () => {
@@ -4927,6 +5049,241 @@ async function saveConfig(scope = "all", automatic = false, { feedback = true } 
   catch (error) { document.querySelector("#manage-task-status").textContent = `配置已保存，管理状态刷新失败：${error.message}`; }
   return result;
 }
+/* Theme Engine (Light / Dark) */
+(() => {
+  const button = document.querySelector("#theme-toggle");
+  const sunSvg = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32 1.41-1.41"/></svg>';
+  const moonSvg = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>';
+  const applyTheme = (theme) => {
+    const resolved = theme === "dark" ? "dark" : "light";
+    document.documentElement.dataset.theme = resolved;
+    if (button) {
+      button.innerHTML = resolved === "dark" ? sunSvg : moonSvg;
+      button.title = resolved === "dark" ? "切换到浅色主题" : "切换到深色主题";
+      button.setAttribute("aria-label", button.title);
+    }
+  };
+  let savedTheme = null;
+  try { savedTheme = localStorage.getItem("hostwatch-theme"); } catch {}
+  applyTheme(savedTheme || (window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+  button?.addEventListener("click", () => {
+    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    applyTheme(next);
+    try { localStorage.setItem("hostwatch-theme", next); } catch {}
+  });
+})();
+
+/* Overview KPI & Module Quick Jumps */
+document.addEventListener("click", event => {
+  const trigger = event.target.closest("[data-page-jump]");
+  if (!trigger) return;
+  navigatePage(trigger.dataset.pageJump);
+});
+window.addEventListener("hostwatch-draft-change", () => {
+  if (typeof renderNavBadgesAndKpis === "function") renderNavBadgesAndKpis();
+});
+
+/* Quick Jump Command Palette (Ctrl+K / Cmd+K) & "/" Search Focus */
+(() => {
+  const dialog = document.querySelector("#quick-jump-dialog");
+  const openBtn = document.querySelector("#quick-jump-open");
+  const closeBtn = document.querySelector("#quick-jump-close");
+  const input = document.querySelector("#quick-jump-input");
+  const list = document.querySelector("#quick-jump-list");
+  if (!dialog || !input || !list) return;
+  let items = [];
+  let activeIndex = 0;
+
+  function buildItems(query) {
+    const q = query.trim().toLowerCase();
+    const scored = [];
+    for (const [id, meta] of Object.entries(pages)) {
+      const title = meta.title.toLowerCase();
+      const desc = meta.description.toLowerCase();
+      let score = 0;
+      if (!q) score = 10;
+      else if (title === q || id === q) score = 100;
+      else if (title.startsWith(q) || id.startsWith(q)) score = 80;
+      else if (title.includes(q)) score = 60;
+      else if (id.includes(q)) score = 40;
+      else if (desc.includes(q)) score = 20;
+      if (score > 0) {
+        scored.push({ score, title: meta.title, sub: "栏目", run: () => navigatePage(id) });
+      }
+    }
+    if (q) {
+      let productCount = 0;
+      for (const product of (config.products || [])) {
+        const name = String(product.name || "").toLowerCase();
+        const hay = `${product.name || ""} ${product.provider || ""} ${product.remarks || ""}`.toLowerCase();
+        if (hay.includes(q)) {
+          const targetPage = membership(product, "watch") ? "monitor" : membership(product, "notify") ? "notifications" : "products";
+          const score = name === q ? 90 : name.includes(q) ? 55 : 25;
+          scored.push({
+            score,
+            title: `${product.provider || ""} · ${product.name || ""}`,
+            sub: targetPage === "monitor" ? "库存监控" : targetPage === "notifications" ? "库存通知" : "自定义商品",
+            run: () => {
+              navigatePage(targetPage);
+              const searchId = targetPage === "monitor" ? "#watchlist-search" : targetPage === "notifications" ? "#notification-search" : "";
+              if (searchId) {
+                const searchInput = document.querySelector(searchId);
+                if (searchInput) {
+                  searchInput.value = product.name || "";
+                  searchInput.dispatchEvent(new Event("input"));
+                }
+              }
+            }
+          });
+          productCount += 1;
+        }
+        if (productCount >= 16) break;
+      }
+    }
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, 24);
+  }
+
+  function renderPalette() {
+    items = buildItems(input.value);
+    activeIndex = Math.max(0, Math.min(activeIndex, items.length - 1));
+    if (!items.length) {
+      list.replaceChildren(text("div", "没有匹配的栏目或已关注商品。", "hint"));
+      return;
+    }
+    list.replaceChildren(...items.map((item, idx) => {
+      const btn = text("button", "", `quick-jump-item${idx === activeIndex ? " is-active" : ""}`);
+      btn.type = "button";
+      btn.setAttribute("role", "option");
+      btn.setAttribute("aria-selected", String(idx === activeIndex));
+      btn.append(text("span", item.title), text("small", item.sub));
+      btn.addEventListener("click", () => { dialog.close(); item.run(); });
+      return btn;
+    }));
+  }
+
+  function openPalette() {
+    input.value = "";
+    activeIndex = 0;
+    renderPalette();
+    if (!dialog.open) dialog.showModal();
+    input.focus();
+  }
+
+  openBtn?.addEventListener("click", openPalette);
+  closeBtn?.addEventListener("click", () => dialog.close());
+  dialog.addEventListener("click", event => { if (event.target === dialog) dialog.close(); });
+  input.addEventListener("input", () => { activeIndex = 0; renderPalette(); });
+  input.addEventListener("keydown", event => {
+    if (event.key === "ArrowDown") { event.preventDefault(); activeIndex = Math.min(items.length - 1, activeIndex + 1); renderPalette(); }
+    else if (event.key === "ArrowUp") { event.preventDefault(); activeIndex = Math.max(0, activeIndex - 1); renderPalette(); }
+    else if (event.key === "Enter" && items[activeIndex]) { event.preventDefault(); dialog.close(); items[activeIndex].run(); }
+  });
+
+  const pageSearchSelectors = {
+    catalog: "#catalog-search",
+    monitor: "#watchlist-search",
+    notifications: "#notification-search",
+    market: "#market-search",
+  };
+  document.addEventListener("keydown", event => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      if (dialog.open) dialog.close();
+      else openPalette();
+      return;
+    }
+    if (event.key === "/" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      const tag = document.activeElement?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || document.activeElement?.isContentEditable || dialog.open) return;
+      const selector = pageSearchSelectors[currentPage];
+      const target = selector && document.querySelector(selector);
+      if (target && !target.disabled) {
+        event.preventDefault();
+        target.focus();
+        target.select();
+      }
+    }
+  });
+})();
+
+/* Unsaved Manual-Card Protection */
+window.addEventListener("beforeunload", event => {
+  if (!savedConfig) return;
+  const manualScopes = ["telegram", "affiliates", "market", "account-balance"];
+  if (manualScopes.some(scope => scopeIsDirty(scope))) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+});
+
+/* Runtime Cache Inspection & Safe Clear Panel (Settings) */
+function renderCacheSummary(summary) {
+  if (!summary) return;
+  const catalog = summary.catalog || {};
+  const rates = summary.rates || {};
+  const market = summary.market || {};
+  const auth = summary.merchant_auth || {};
+  const setText = (id, value) => { const node = document.querySelector(id); if (node) node.textContent = value; };
+  setText("#cache-catalog-metric", `${catalog.entries || 0} 份 · ${formatBytes(catalog.size_bytes || 0)}`);
+  setText("#cache-catalog-sub", catalog.rows ? `共 ${catalog.rows} 条套餐${catalog.latest_fetched_at ? ` · 最近 ${formatBeijingDate(catalog.latest_fetched_at)}` : ""}` : "尚无目录快照");
+  setText("#cache-rates-metric", rates.count ? `${rates.count} 种货币` : "尚未缓存");
+  setText("#cache-rates-sub", rates.fetched_at ? `${rates.fresh ? "有效缓存" : "已过 TTL"} · ${formatBeijingDate(Number(rates.fetched_at) * 1000)}` : "使用内置参考值");
+  const marketCount = (market.akile?.items || 0) + (market.isvoro?.items || 0);
+  setText("#cache-market-metric", `${marketCount} 条挂单`);
+  setText("#cache-market-sub", `Akile ${market.akile?.items || 0} 条 · Isvoro ${market.isvoro?.items || 0} 条`);
+  setText("#cache-auth-metric", `${auth.sessions || 0} 个会话`);
+  setText("#cache-auth-sub", auth.size_bytes ? `本地加密文件 ${formatBytes(auth.size_bytes)}` : "仅在账户检查后写入");
+  const assets = summary.assets || {};
+  const versionText = Object.entries(assets).map(([name, hash]) => `${name}@${hash}`).join(" · ");
+  setText("#cache-summary-note", versionText ? `当前静态资源内容指纹（自动防旧缓存）：${versionText}` : "");
+}
+
+async function loadCacheSummary() {
+  try {
+    renderCacheSummary(await requestJSON("/api/cache", { timeoutMs: 12000 }));
+  } catch (error) {
+    const note = document.querySelector("#cache-summary-note");
+    if (note) note.textContent = `缓存状态读取失败：${error.message}`;
+  }
+}
+
+async function triggerCacheClear(target, button, label, pendingText) {
+  await runAction(button, label, pendingText, async () => {
+    const result = await requestJSON("/api/cache/clear", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target }),
+      timeoutMs: 25000,
+    });
+    if (result.summary) renderCacheSummary(result.summary);
+    if (target === "rates" || target === "all") await loadExchangeRates();
+    if (target === "market" || target === "all") {
+      marketSnapshotsByProvider.akile = emptyMarketSnapshot();
+      marketSnapshotsByProvider.isvoro = emptyMarketSnapshot();
+      marketSnapshot = marketSnapshotsByProvider[activeMarketProvider()];
+      renderMarket();
+    }
+    window.dispatchEvent(new CustomEvent("hostwatch-cache-cleared", { detail: { target } }));
+    setMessage(result.message || "缓存操作已完成。", "success");
+  });
+}
+
+document.querySelector("#cache-refresh-stats")?.addEventListener("click", event =>
+  runAction(event.currentTarget, "刷新中…", "正在读取缓存统计…", async () => {
+    await loadCacheSummary();
+    setMessage("缓存状态已刷新。", "success");
+  }));
+document.querySelector("#cache-refresh-rates")?.addEventListener("click", event =>
+  triggerCacheClear("rates", event.currentTarget, "更新中…", "正在强制刷新实时汇率缓存…"));
+document.querySelector("#cache-clear-market")?.addEventListener("click", event =>
+  triggerCacheClear("market", event.currentTarget, "清理中…", "正在清空二手市场内存缓存…"));
+document.querySelector("#cache-clear-catalog")?.addEventListener("click", event =>
+  triggerCacheClear("catalog", event.currentTarget, "清理中…", "正在清理大盘目录缓存…"));
+window.addEventListener("hostwatch-page-change", event => {
+  if (event.detail === "settings") void loadCacheSummary();
+});
+
 document.addEventListener("click", event => {
   const button = event.target.closest("[data-save-card]");
   if (!button || button.getAttribute("aria-busy") === "true") return;
@@ -4938,5 +5295,6 @@ exchangeClockTimer = setInterval(renderCurrentTime, 1_000);
 exchangeRateRefreshTimer = setInterval(() => { if (!document.hidden) void loadExchangeRates(); }, 60 * 60 * 1000);
 runAction(null, "", "正在载入配置和监控状态…", () => reloadConfig(false), false);
 bindManagementActions();
+if (currentPage === "settings") void loadCacheSummary();
 if (updateUnit) pollUpdateStatus();
 resumeUpdateReload();

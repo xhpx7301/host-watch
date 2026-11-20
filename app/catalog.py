@@ -304,16 +304,92 @@ class CatalogService:
         self.lock = threading.Lock()
         self.task = None
         self.process = None
+        self._cache_lock = threading.Lock()
+        self._disk_cache_key = None
+        self._disk_cache_data = None
 
     def read_cache(self) -> dict:
         path = self.cache_path()
         try:
-            if path.stat().st_size > 8 * 1024 * 1024:
+            stat = path.stat()
+            if stat.st_size > 8 * 1024 * 1024:
                 return {}
+            cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
+            with self._cache_lock:
+                if self._disk_cache_key == cache_key and isinstance(self._disk_cache_data, dict):
+                    return dict(self._disk_cache_data)
             data = json.loads(path.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else {}
+            if not isinstance(data, dict):
+                return {}
+            with self._cache_lock:
+                self._disk_cache_key = cache_key
+                self._disk_cache_data = data
+            return dict(data)
         except (OSError, ValueError):
+            with self._cache_lock:
+                if self._disk_cache_key and self._disk_cache_key[0] == str(path):
+                    self._disk_cache_key = None
+                    self._disk_cache_data = None
             return {}
+
+    def _write_cache(self, cache: dict) -> None:
+        path = self.cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(prefix="catalog-", suffix=".tmp", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(cache, stream, ensure_ascii=False)
+            os.replace(name, path)
+        finally:
+            if os.path.exists(name):
+                os.unlink(name)
+        try:
+            stat = path.stat()
+            with self._cache_lock:
+                self._disk_cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
+                self._disk_cache_data = dict(cache)
+        except OSError:
+            with self._cache_lock:
+                self._disk_cache_key = None
+                self._disk_cache_data = None
+
+    def cache_stats(self) -> dict:
+        path = self.cache_path()
+        cache = self.read_cache()
+        try:
+            size_bytes = path.stat().st_size if path.exists() else 0
+        except OSError:
+            size_bytes = 0
+        providers = sorted({str(item.get("provider")) for item in cache.values() if isinstance(item, dict) and item.get("provider")})
+        latest = max((str(item.get("fetched_at", "")) for item in cache.values() if isinstance(item, dict) and item.get("fetched_at")), default="")
+        row_count = sum(len(item.get("rows", [])) for item in cache.values() if isinstance(item, dict) and isinstance(item.get("rows"), list))
+        return {"entries": len(cache), "rows": row_count, "providers": providers, "size_bytes": size_bytes, "latest_fetched_at": latest}
+
+    def clear_cache(self, provider: str = "") -> dict:
+        if provider:
+            provider, _ = validate_source(provider, "")
+        with self.lock:
+            if self.task and self.task.get("pending"):
+                raise CatalogBusy("已有目录刷新正在执行，请先停止或等待完成后再清理缓存")
+            cache = self.read_cache()
+            if provider:
+                remaining = {key: value for key, value in cache.items() if not (isinstance(value, dict) and value.get("provider") == provider)}
+                removed = len(cache) - len(remaining)
+            else:
+                remaining = {}
+                removed = len(cache)
+            if remaining:
+                self._write_cache(remaining)
+            else:
+                path = self.cache_path()
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    self._write_cache({})
+                with self._cache_lock:
+                    self._disk_cache_key = None
+                    self._disk_cache_data = None
+        return {"ok": True, "removed": removed, "provider": provider, "stats": self.cache_stats()}
 
     def snapshot(self, provider: str, scope: str = "") -> dict:
         provider, scope = validate_source(provider, scope)
@@ -437,16 +513,7 @@ class CatalogService:
                 cache = dict(sorted(cache.items(), key=lambda pair: pair[1]["fetched_at"])[-64:])
                 while len(cache) > 1 and len(json.dumps(cache, ensure_ascii=False).encode("utf-8")) > 8 * 1024 * 1024:
                     del cache[next(iter(cache))]
-                path = self.cache_path()
-                path.parent.mkdir(parents=True, exist_ok=True)
-                fd, name = tempfile.mkstemp(prefix="catalog-", suffix=".tmp", dir=path.parent)
-                try:
-                    with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                        json.dump(cache, stream, ensure_ascii=False)
-                    os.replace(name, path)
-                finally:
-                    if os.path.exists(name):
-                        os.unlink(name)
+                self._write_cache(cache)
         except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
             module_result = "error"
             module_message = str(exc)[:500] or "目录刷新失败"

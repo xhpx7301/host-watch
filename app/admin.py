@@ -114,6 +114,53 @@ CLOUDSCRAPER_TEST_TARGETS = {
 }
 EXCHANGE_RATES_URL = "https://api.frankfurter.app/latest?base=CNY"
 EXCHANGE_RATE_MAX_AGE = 24 * 60 * 60
+STATIC_ASSET_LOCK = threading.Lock()
+STATIC_ASSET_CACHE: dict[str, tuple[tuple[int, int], bytes, str]] = {}
+_HTML_SCRIPT_RE = re.compile(r'src="/(admin\.js|catalog\.js|login\.js)(?:\?v=[^"]*)?"')
+
+
+def _static_asset_entry(path: Path) -> tuple[bytes, str]:
+    """Read a static asset with (mtime_ns, size) in-memory caching and content digest."""
+    key = str(path)
+    stat = path.stat()
+    signature = (stat.st_mtime_ns, stat.st_size)
+    with STATIC_ASSET_LOCK:
+        cached = STATIC_ASSET_CACHE.get(key)
+        if cached and cached[0] == signature:
+            return cached[1], cached[2]
+    body = path.read_bytes()
+    digest = hashlib.sha256(body).hexdigest()[:12]
+    with STATIC_ASSET_LOCK:
+        STATIC_ASSET_CACHE[key] = (signature, body, digest)
+    return body, digest
+
+
+def _render_versioned_html(path: Path) -> bytes:
+    """Serve HTML with automatic content-hash ?v= suffixes for local JS assets."""
+    body, _ = _static_asset_entry(path)
+    text = body.decode("utf-8")
+
+    def _replace(match: re.Match[str]) -> str:
+        asset_name = match.group(1)
+        asset_path = WEB_ROOT / asset_name
+        try:
+            _, digest = _static_asset_entry(asset_path)
+            return f'src="/{asset_name}?v={digest}"'
+        except OSError:
+            return match.group(0)
+
+    return _HTML_SCRIPT_RE.sub(_replace, text).encode("utf-8")
+
+
+def _etag_matches(header_value: str, etag: str) -> bool:
+    if not header_value:
+        return False
+    target = etag.removeprefix("W/").strip()
+    for part in header_value.split(","):
+        candidate = part.strip()
+        if candidate == "*" or candidate.removeprefix("W/").strip() == target:
+            return True
+    return False
 
 
 def _read_rates_cache() -> dict:
@@ -141,24 +188,26 @@ def _write_rates_cache(value: dict) -> None:
             os.unlink(temporary)
 
 
-def exchange_rates() -> dict:
-    """Return cached CNY rates, refreshing at most once per day."""
+def exchange_rates(force: bool = False) -> dict:
+    """Return cached CNY rates, refreshing at most once per day unless forced."""
     cached = _read_rates_cache()
-    fetched_at = cached.get("fetched_at", 0)
-    try:
-        fresh = time.time() - float(fetched_at) < EXCHANGE_RATE_MAX_AGE
-    except (TypeError, ValueError):
-        fresh = False
-    if fresh:
-        return {"base": "CNY", **cached, "stale": False}
-    with RATES_LOCK:
-        cached = _read_rates_cache()
+    if not force:
+        fetched_at = cached.get("fetched_at", 0)
         try:
-            fresh = time.time() - float(cached.get("fetched_at", 0)) < EXCHANGE_RATE_MAX_AGE
+            fresh = time.time() - float(fetched_at) < EXCHANGE_RATE_MAX_AGE
         except (TypeError, ValueError):
             fresh = False
         if fresh:
             return {"base": "CNY", **cached, "stale": False}
+    with RATES_LOCK:
+        cached = _read_rates_cache()
+        if not force:
+            try:
+                fresh = time.time() - float(cached.get("fetched_at", 0)) < EXCHANGE_RATE_MAX_AGE
+            except (TypeError, ValueError):
+                fresh = False
+            if fresh:
+                return {"base": "CNY", **cached, "stale": False}
         try:
             response = requests.get(EXCHANGE_RATES_URL, timeout=(3, 8))
             response.raise_for_status()
@@ -176,6 +225,78 @@ def exchange_rates() -> dict:
             if cached.get("rates"):
                 return {"base": "CNY", **cached, "stale": True, "error": "实时汇率暂时不可用，继续使用上次成功更新的汇率"}
             return {"base": "CNY", "rates": {}, "stale": True, "error": "实时汇率暂时不可用"}
+
+
+def cache_summary() -> dict:
+    """Return non-sensitive metadata about runtime caches for visibility and management."""
+    rates_cached = _read_rates_cache()
+    rates_fetched = rates_cached.get("fetched_at", 0)
+    try:
+        rates_fresh = bool(rates_cached.get("rates")) and (time.time() - float(rates_fetched) < EXCHANGE_RATE_MAX_AGE)
+    except (TypeError, ValueError):
+        rates_fresh = False
+    with SECKILL_LOCK:
+        auth_session_count = len(MERCHANT_AUTH_SESSIONS)
+    auth_cache_path, _ = _merchant_auth_cache_paths()
+    try:
+        auth_cache_bytes = auth_cache_path.stat().st_size if auth_cache_path.exists() else 0
+    except OSError:
+        auth_cache_bytes = 0
+    with AKILE_MARKET_LOCK:
+        akile_market_info = {"items": len(AKILE_MARKET_CACHE.get("items") or []), "updated_at": AKILE_MARKET_CACHE.get("updated_at", "")}
+    with ISVORO_MARKET_LOCK:
+        isvoro_market_info = {"items": len(ISVORO_MARKET_CACHE.get("items") or []), "updated_at": ISVORO_MARKET_CACHE.get("updated_at", "")}
+    asset_versions = {}
+    for name in ("admin.js", "catalog.js", "login.js"):
+        try:
+            _, digest = _static_asset_entry(WEB_ROOT / name)
+            asset_versions[name] = digest
+        except OSError:
+            pass
+    return {
+        "catalog": CATALOG.cache_stats(),
+        "rates": {
+            "count": len(rates_cached.get("rates") or {}),
+            "date": str(rates_cached.get("date", "")),
+            "fetched_at": rates_fetched or 0,
+            "fresh": rates_fresh,
+            "max_age_seconds": EXCHANGE_RATE_MAX_AGE,
+        },
+        "market": {"akile": akile_market_info, "isvoro": isvoro_market_info},
+        "merchant_auth": {"sessions": auth_session_count, "size_bytes": auth_cache_bytes},
+        "assets": asset_versions,
+    }
+
+
+def clear_runtime_cache(target: str = "all", provider: str = "") -> dict:
+    """Safely clear or refresh non-config runtime caches without touching user settings or credentials."""
+    target = str(target or "all").strip().lower()
+    if target not in {"catalog", "rates", "market", "all"}:
+        raise ValueError("不支持的缓存清理目标")
+    actions: list[str] = []
+    rates_result = None
+    if target in {"catalog", "all"}:
+        cleared = CATALOG.clear_cache(str(provider or "").strip())
+        actions.append(f"已清理 {cleared['removed']} 条大盘快照")
+    if target in {"market", "all"}:
+        with AKILE_MARKET_LOCK:
+            AKILE_MARKET_CACHE.update(updated_at="", items=[], error="")
+        with ISVORO_MARKET_LOCK:
+            ISVORO_MARKET_CACHE.update(updated_at="", items=[], error="")
+        actions.append("已清空二手市场内存缓存")
+    if target in {"rates", "all"}:
+        rates_result = exchange_rates(force=True)
+        if rates_result.get("error"):
+            actions.append(f"汇率刷新未成功：{rates_result['error']}")
+        else:
+            actions.append(f"已刷新 {len(rates_result.get('rates') or {})} 种汇率缓存")
+    return {
+        "ok": True,
+        "target": target,
+        "message": "；".join(actions) if actions else "缓存操作已完成",
+        "rates": rates_result,
+        "summary": cache_summary(),
+    }
 
 
 def destroy_test_browser(endpoint: str, session_id: str, creation_uncertain: bool = False) -> str:
@@ -6600,7 +6721,7 @@ class Handler(BaseHTTPRequestHandler):
         if _admin_session_username(self.headers.get("Cookie", "")) or authorized(self.headers.get("Authorization", "")):
             return True
         if urlsplit(self.path).path in {"/", "/admin.html"}:
-            self._send(200, "text/html; charset=utf-8", LOGIN_PAGE_PATH.read_bytes())
+            self._send(200, "text/html; charset=utf-8", _render_versioned_html(LOGIN_PAGE_PATH))
             return False
         self._send_unauthorized()
         return False
@@ -6658,17 +6779,35 @@ class Handler(BaseHTTPRequestHandler):
         reusable = status < 400
         if not reusable:
             self.close_connection = True
+        extra = headers or {}
+        cache_control = extra.get("Cache-Control", "no-store")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Connection", "keep-alive" if reusable else "close")
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache_control)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'")
-        for name, value in (headers or {}).items():
-            self.send_header(name, value)
+        for name, value in extra.items():
+            if name.casefold() != "cache-control":
+                self.send_header(name, value)
         self.end_headers()
-        self.wfile.write(body)
+        if body:
+            self.wfile.write(body)
+
+    def _send_static_js(self, path: Path) -> None:
+        body, digest = _static_asset_entry(path)
+        etag = f'"{digest}"'
+        headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
+        if _etag_matches(self.headers.get("If-None-Match", ""), etag):
+            self.send_response(304)
+            self.send_header("Connection", "keep-alive")
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "private, no-cache")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            return
+        self._send(200, "text/javascript; charset=utf-8", body, headers)
 
     def _send_download(self, filename: str, body: bytes) -> None:
         self.send_response(200)
@@ -6686,10 +6825,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         path = urlsplit(self.path).path
         if path == "/login.html":
-            self._send(200, "text/html; charset=utf-8", LOGIN_PAGE_PATH.read_bytes())
+            self._send(200, "text/html; charset=utf-8", _render_versioned_html(LOGIN_PAGE_PATH))
             return
         if path == "/login.js":
-            self._send(200, "text/javascript; charset=utf-8", LOGIN_SCRIPT_PATH.read_bytes())
+            self._send_static_js(LOGIN_SCRIPT_PATH)
             return
         if path == "/api/auth/status":
             self._auth_status()
@@ -6697,9 +6836,11 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorized():
             return
         if path in {"/", "/admin.html"}:
-            self._send(200, "text/html; charset=utf-8", PAGE_PATH.read_bytes())
+            self._send(200, "text/html; charset=utf-8", _render_versioned_html(PAGE_PATH))
         elif path in {"/admin.js", "/catalog.js"}:
-            self._send(200, "text/javascript; charset=utf-8", (WEB_ROOT / path[1:]).read_bytes())
+            self._send_static_js(WEB_ROOT / path[1:])
+        elif path == "/api/cache":
+            self._send(200, "application/json; charset=utf-8", json.dumps(cache_summary(), ensure_ascii=False).encode("utf-8"))
         elif path == "/api/config":
             try:
                 raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else default_config()
@@ -6729,7 +6870,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, "application/json; charset=utf-8", json.dumps({"error": f"出口节点配置无法读取：{exc}"}, ensure_ascii=False).encode("utf-8")); return
             self._send(200, "application/json; charset=utf-8", data)
         elif path == "/api/rates":
-            self._send(200, "application/json; charset=utf-8", json.dumps(exchange_rates(), ensure_ascii=False).encode("utf-8"))
+            query = dict(parse_qsl(urlsplit(self.path).query))
+            force = query.get("refresh") in {"1", "true"}
+            self._send(200, "application/json; charset=utf-8", json.dumps(exchange_rates(force=force), ensure_ascii=False).encode("utf-8"))
         elif path == "/api/status":
             status = read_json(STATUS_PATH, {"state": "unknown", "products": []})
             status["account_checks"] = read_merchant_account_checks()
@@ -6873,7 +7016,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(403)
             return
         # Stopping and polling tests must never wait behind config/service locks.
-        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-status", "/api/seckill/systems", "/api/seckill/account-verification", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/account-balance/check", "/api/account-balance/test-notification", "/api/egress/probe"}:
+        if self.path in {"/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/cache/clear", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-status", "/api/seckill/systems", "/api/seckill/account-verification", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/account-balance/check", "/api/account-balance/test-notification", "/api/egress/probe"}:
             self._post_action()
             return
         if not MUTATION_LOCK.acquire(blocking=False):
@@ -6885,7 +7028,7 @@ class Handler(BaseHTTPRequestHandler):
             MUTATION_LOCK.release()
 
     def _post_action(self) -> None:
-        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/refresh", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-status", "/api/seckill/systems", "/api/seckill/account-verification", "/api/seckill/account-cache-clear", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/account-balance/check", "/api/account-balance/test-notification", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
+        if urlsplit(self.path).path not in {"/api/config", "/api/telegram/test", "/api/telegram/chats", "/api/manage", "/api/manage/backup-import", "/api/fetcher/test", "/api/products/test", "/api/products/test/stop", "/api/catalog/refresh", "/api/catalog/stop", "/api/cache/clear", "/api/refresh", "/api/seckill/start", "/api/seckill/stop", "/api/seckill/account-check", "/api/seckill/account-status", "/api/seckill/systems", "/api/seckill/account-verification", "/api/seckill/account-cache-clear", "/api/seckill/test", "/api/seckill/test/stop", "/api/market/refresh", "/api/market/check", "/api/market/test-notification", "/api/account-balance/check", "/api/account-balance/test-notification", "/api/egress/probe", "/api/egress/install-command", "/api/egress/import"}:
             self.send_error(404)
             return
         try:
@@ -6937,6 +7080,14 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/egress/import":
                 result = register_egress_node(submitted, "Bearer " + str(submitted.get("token", "")))
                 self._send(200, "application/json; charset=utf-8", json.dumps({**result, "egress": egress.public(current_config()["egress"])}, ensure_ascii=False).encode()); return
+            if self.path == "/api/cache/clear":
+                try:
+                    output = clear_runtime_cache(submitted.get("target", "all"), submitted.get("provider", ""))
+                except CatalogBusy as exc:
+                    self._send(409, "application/json; charset=utf-8", json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"))
+                    return
+                self._send(200, "application/json; charset=utf-8", json.dumps(output, ensure_ascii=False).encode("utf-8"))
+                return
             if self.path in {"/api/catalog/refresh", "/api/catalog/stop"}:
                 try:
                     if self.path.endswith("/stop"):

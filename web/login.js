@@ -5,6 +5,27 @@
   const submit = document.querySelector("#login-submit");
   const error = document.querySelector("#login-error");
   const toggle = document.querySelector("#toggle-password");
+  const caps = document.querySelector("#login-caps");
+  const themeToggle = document.querySelector("#login-theme-toggle");
+
+  const applyTheme = (theme) => {
+    const resolved = theme === "dark" ? "dark" : "light";
+    document.documentElement.dataset.theme = resolved;
+    if (themeToggle) {
+      themeToggle.title = resolved === "dark" ? "切换到浅色主题" : "切换到深色主题";
+      themeToggle.setAttribute("aria-label", themeToggle.title);
+    }
+  };
+  const savedTheme = (() => {
+    try { return localStorage.getItem("hostwatch-theme"); } catch { return null; }
+  })();
+  applyTheme(savedTheme || (window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+  themeToggle?.addEventListener("click", () => {
+    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    applyTheme(next);
+    try { localStorage.setItem("hostwatch-theme", next); } catch {}
+  });
+
   if (!form || !username || !password || !submit || !error) return;
 
   toggle?.addEventListener("click", () => {
@@ -13,6 +34,14 @@
     toggle.setAttribute("aria-label", visible ? "显示密码" : "隐藏密码");
   });
 
+  const updateCaps = (event) => {
+    if (!caps || typeof event.getModifierState !== "function") return;
+    caps.hidden = !event.getModifierState("CapsLock");
+  };
+  password.addEventListener("keydown", updateCaps);
+  password.addEventListener("keyup", updateCaps);
+  password.addEventListener("blur", () => { if (caps) caps.hidden = true; });
+
   form.addEventListener("submit", async event => {
     event.preventDefault();
     error.textContent = "";
@@ -20,6 +49,7 @@
     const secret = password.value;
     if (!name || !secret) {
       error.textContent = "请输入用户名和密码";
+      (name ? password : username).focus();
       return;
     }
     submit.disabled = true;

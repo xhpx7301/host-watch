@@ -512,6 +512,57 @@ class AdminAPITests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertTrue(json.loads(body)["config"]["enabled"])
 
+    def test_static_js_supports_etag_304_and_html_injects_content_hashes(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port)
+        self.addCleanup(connection.close)
+        connection.request("GET", "/admin.js")
+        first = connection.getresponse()
+        body = first.read()
+        self.assertEqual(first.status, 200)
+        etag = first.getheader("ETag")
+        self.assertTrue(etag)
+        self.assertEqual(first.getheader("Cache-Control"), "private, no-cache")
+        self.assertEqual(body, (Path(admin.WEB_ROOT) / "admin.js").read_bytes())
+
+        connection.request("GET", "/admin.js", headers={"If-None-Match": etag})
+        second = connection.getresponse()
+        self.assertEqual(second.status, 304)
+        self.assertEqual(second.read(), b"")
+        self.assertEqual(second.getheader("ETag"), etag)
+
+        status, html = self.get_request("/admin.html")
+        self.assertEqual(status, 200)
+        digest = etag.strip('"')
+        self.assertIn(f'/admin.js?v={digest}'.encode("utf-8"), html)
+
+    def test_cache_summary_and_safe_clear_endpoints(self):
+        catalog_path = self.config.parent / "catalog.json"
+        catalog_path.write_text(json.dumps({
+            "akile:all": {"provider": "akile", "scope": "all", "scopes": [], "rows": [{"key": "a"}], "fetched_at": "2026-11-21T00:00:00+08:00"}
+        }), encoding="utf-8")
+        with admin.AKILE_MARKET_LOCK:
+            admin.AKILE_MARKET_CACHE.update(updated_at="2026-11-21T00:00:00+08:00", items=[{"id": 1}], error="")
+        status, body = self.get_request("/api/cache")
+        self.assertEqual(status, 200)
+        summary = json.loads(body)
+        self.assertEqual(summary["catalog"]["entries"], 1)
+        self.assertEqual(summary["market"]["akile"]["items"], 1)
+        self.assertIn("admin.js", summary["assets"])
+
+        status, body = self.request("/api/cache/clear", {"target": "catalog"})
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["summary"]["catalog"]["entries"], 0)
+        self.assertFalse(catalog_path.exists())
+
+        status, body = self.request("/api/cache/clear", {"target": "market"})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["summary"]["market"]["akile"]["items"], 0)
+
+        status, _ = self.request("/api/cache/clear", {"target": "invalid"})
+        self.assertEqual(status, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

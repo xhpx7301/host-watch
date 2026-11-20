@@ -1,4 +1,4 @@
-/* VPS browsing uses cached read-only snapshots; only explicit selection edits config. */
+/* VPS browsing uses cached read-only snapshots with client SWR; only explicit selection edits config. */
 (() => {
   const providers = { vmiss: "VMISS", vps_soy: "VPS.SOY", akile: "Akile", narwhal: "独角鲸云", isvoro: "Isvoro", dmit: "DMIT", bwh: "搬瓦工", hytron: "Hytron" };
   const get = (id) => document.getElementById(id);
@@ -12,6 +12,76 @@
   let akileArea = "", akileNode = "";
   const facetState = { bwh: { region: "", datacenter: "" }, dmit: { network: "", hardware: "" } };
   const networkNames = { PREMIUM: "Premium（Pro）", EYEBALL: "Eyeball（EB）", TIER1: "Tier 1（T1）" };
+
+  /* Client-side SWR cache & per-provider UI state memory */
+  const snapshotCache = new Map();
+  const providerUiState = new Map();
+  const cacheKey = (prov, sc) => `${prov}:${sc || "__default__"}`;
+  function readClientCache(prov, sc) {
+    return snapshotCache.get(cacheKey(prov, sc)) || (sc ? null : snapshotCache.get(cacheKey(prov, "all"))) || null;
+  }
+  function writeClientCache(prov, requestedScope, result) {
+    if (!result?.data) return;
+    const entry = { data: result.data, route: result.route, needs_refresh: Boolean(result.needs_refresh), savedAt: Date.now() };
+    snapshotCache.set(cacheKey(prov, requestedScope), entry);
+    if (result.data.scope) snapshotCache.set(cacheKey(prov, result.data.scope), entry);
+  }
+  function saveCurrentUiState() {
+    providerUiState.set(provider, {
+      scope,
+      page,
+      search: get("catalog-search")?.value || "",
+      stock: get("catalog-stock")?.value || "all",
+      narwhalRegion,
+      narwhalMachine,
+      narwhalMachineSearch: get("narwhal-machine-search")?.value || "",
+      akileArea,
+      akileNode,
+      akileNodeSearch: get("akile-node-search")?.value || "",
+      bwh: { ...facetState.bwh },
+      dmit: { ...facetState.dmit },
+    });
+  }
+  function restoreUiState(targetProvider) {
+    const saved = providerUiState.get(targetProvider);
+    if (!saved) return false;
+    scope = saved.scope || (["akile", "narwhal", "bwh", "hytron"].includes(targetProvider) ? "all" : "");
+    page = saved.page || 0;
+    if (get("catalog-search")) get("catalog-search").value = saved.search || "";
+    if (get("catalog-stock")) get("catalog-stock").value = saved.stock || "all";
+    narwhalRegion = saved.narwhalRegion || "";
+    narwhalMachine = saved.narwhalMachine || "";
+    if (get("narwhal-machine-search")) get("narwhal-machine-search").value = saved.narwhalMachineSearch || "";
+    akileArea = saved.akileArea || "";
+    akileNode = saved.akileNode || "";
+    if (get("akile-node-search")) get("akile-node-search").value = saved.akileNodeSearch || "";
+    facetState.bwh = { region: saved.bwh?.region || "", datacenter: saved.bwh?.datacenter || "" };
+    facetState.dmit = { network: saved.dmit?.network || "", hardware: saved.dmit?.hardware || "" };
+    defaultRegionPending.delete(targetProvider);
+    return true;
+  }
+
+  function debounce(fn, delay = 180) {
+    let timer;
+    return (...args) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => fn(...args), delay);
+    };
+  }
+
+  function formatRelativeAge(isoString) {
+    if (!isoString) return "";
+    const diffMs = Date.now() - Date.parse(isoString);
+    if (!Number.isFinite(diffMs) || diffMs < 0) return "刚刚";
+    const sec = Math.floor(diffMs / 1000);
+    if (sec < 45) return "刚刚";
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min} 分钟前`;
+    const hours = Math.floor(min / 60);
+    if (hours < 24) return `${hours} 小时前`;
+    return `${Math.floor(hours / 24)} 天前`;
+  }
+
   function facetValue(row, key) {
     if (key === "region") return row.region || "未标注地区";
     if (key === "datacenter") return row.watch.bwh_datacenter_id || "未标注机房";
@@ -182,7 +252,7 @@
     document.querySelector(".catalog-table th:nth-child(3)").textContent = active ? "地区" : provider === "akile" ? "地区 / 节点" : provider === "bwh" ? "地区 / 机房" : provider === "dmit" ? "地区 / 网络 / 处理器" : "地区 / 线路";
     document.querySelector(".catalog-merchants").parentElement.hidden = false;
     document.querySelector(".catalog-intro h2").textContent = active ? "发现 NAT 实例，关注套餐补货" : "发现套餐，关注补货";
-    document.querySelector(".catalog-intro p").textContent = active ? "全部地区、实例与套餐统一检索，按指定实例和套餐加入监控或 Telegram 通知。" : "商家公开目录直接同步，分别选择库存监控或 Telegram 通知。无需先配置每一款商品。";
+    document.querySelector(".catalog-intro p").textContent = active ? "全部地区、实例与套餐统一检索，按指定实例和套餐加入监控或 Telegram 通知。" : "商家公开目录直接同步，分别选择库存监控或 Telegram 通知。切换商家自动保留筛选与本地缓存，秒开无闪烁。";
     get("catalog-search").placeholder = active ? "实例、套餐、地区或配置，例如 HK、香港、SoftBank" : provider === "akile" ? "套餐、节点、地区或配置，例如 HKL、香港" : "名称、地区、线路或配置";
     get("catalog-help").textContent = active ? "独角鲸云一次读取全部公开套餐，地区和实例筛选、套餐搜索使用同一份库存快照；支持全目录自动刷新。大盘自动刷新仅在此栏目打开且页面可见时运行。加入库存通知并开启通知自动刷新后，服务器会在关闭网页后继续检查指定套餐，通过 Telegram 提醒补货；大盘刷新本身不发送通知。" : defaultCatalogHelp;
     if (provider === "akile") {
@@ -232,6 +302,31 @@
     get("narwhal-machine-search").value = "";
     get("catalog-search").value = ""; get("catalog-stock").value = "all";
     page = 0; selected.clear();
+  }
+
+  function hasActiveCatalogFilters() {
+    const search = get("catalog-search")?.value.trim() || "";
+    const stock = get("catalog-stock")?.value || "all";
+    if (search || stock !== "all") return true;
+    if (provider === "akile" && (akileArea || akileNode || get("akile-node-search")?.value.trim())) return true;
+    if (provider === "narwhal" && (narwhalRegion || narwhalMachine || get("narwhal-machine-search")?.value.trim())) return true;
+    if (provider === "bwh" && (facetState.bwh.region || facetState.bwh.datacenter)) return true;
+    if (provider === "dmit" && (facetState.dmit.network || facetState.dmit.hardware)) return true;
+    return false;
+  }
+
+  function syncQuickFilterButtons() {
+    const inStockBtn = get("catalog-instock-only");
+    if (inStockBtn) {
+      const onlyIn = get("catalog-stock")?.value === "in";
+      inStockBtn.setAttribute("aria-pressed", String(onlyIn));
+      inStockBtn.disabled = actionRunning;
+    }
+    const resetAllBtn = get("catalog-reset-all");
+    if (resetAllBtn) {
+      resetAllBtn.hidden = !hasActiveCatalogFilters();
+      resetAllBtn.disabled = actionRunning;
+    }
   }
 
   function filtered() {
@@ -290,6 +385,7 @@
   function renderTable(animate = false) {
     if (animate) animateFilterResult(get("catalog-results"));
     renderPriceHeading();
+    syncQuickFilterButtons();
     const rows = filtered();
     if (provider === "bwh") get("bwh-filter-note").textContent = `全目录 ${new Set((data?.rows || []).map(row => facetValue(row, "datacenter"))).size} 个机房 / ${data?.rows.length || 0} 个套餐报价 · 当前筛选 ${new Set(rows.map(row => facetValue(row, "datacenter"))).size} 个机房 / ${rows.length} 个套餐报价。不同计费周期分别计数。`;
     if (provider === "dmit") get("dmit-filter-note").textContent = `当前${scope === "all" ? "全部地区" : "地区 / 分类"}快照 ${data?.rows.length || 0} 个套餐 · 筛选后 ${new Set(rows.map(row => facetValue(row, "network"))).size} 种网络 / ${new Set(rows.map(row => facetValue(row, "hardware"))).size} 种处理器平台 / ${rows.length} 个套餐。`;
@@ -396,6 +492,30 @@
     get("catalog-seckill-selected").disabled = actionRunning || !selected.size;
   }
 
+  function renderFreshnessPill(busy, stale) {
+    const pill = get("catalog-freshness");
+    if (!pill) return;
+    if (busy) {
+      pill.className = "freshness-pill syncing";
+      pill.textContent = task?.cancelled ? "正在停止…" : "正在刷新…";
+    } else if (loading && data?.fetched_at) {
+      pill.className = "freshness-pill syncing";
+      pill.textContent = "校对缓存中…";
+    } else if (!data?.fetched_at) {
+      pill.className = "freshness-pill";
+      pill.textContent = loading ? "读取中…" : "暂无快照";
+    } else if (metadataOutdated) {
+      pill.className = "freshness-pill stale";
+      pill.textContent = "旧版快照 · 建议刷新";
+    } else if (stale) {
+      pill.className = "freshness-pill stale";
+      pill.textContent = `历史缓存 · ${formatRelativeAge(data.fetched_at)}`;
+    } else {
+      pill.className = "freshness-pill fresh";
+      pill.textContent = `缓存新鲜 · ${formatRelativeAge(data.fetched_at)}`;
+    }
+  }
+
   function render() {
     renderDirectoryFilters();
     renderCatalogSchedule();
@@ -432,14 +552,15 @@
     }
     routeHint.textContent = hints.join(" ");
     routeHint.className = `hint${effectiveRoute.error ? " error" : changed ? " stale" : ""}`;
-    const stale = data && Date.now() - Date.parse(data.fetched_at) > 300000;
+    const stale = Boolean(data?.fetched_at && Date.now() - Date.parse(data.fetched_at) > 300000);
+    renderFreshnessPill(busy, stale);
     status.className = "hint";
     if (busy) { status.classList.add("pending"); status.textContent = task.cancelled ? "正在终止目录刷新，保留上次快照…" : `正在刷新 ${providers[task.provider] || "商家"}${task.provider === "narwhal" ? "全部实例与套餐" : task.provider === "akile" ? "全部地区、节点与套餐" : task.provider === "bwh" ? "全部地区、机房与套餐" : task.provider === "hytron" ? "全部公开节点" : task.scope === "all" ? "全部公开套餐（会读取多个分类）" : "目录"}，页面仍可操作；可点击“停止刷新”。`; }
     else if (task?.provider === provider && task.error) { status.classList.add("error"); status.textContent = task.error; }
     else if (task?.provider === provider && task.cancelled) status.textContent = "刷新已停止，保留上次快照。";
-    else if (loading) status.textContent = "正在读取目录缓存…";
+    else if (loading && !data?.fetched_at) status.textContent = "正在读取目录缓存…";
     else if (metadataOutdated) { status.classList.add("stale"); status.textContent = provider === "narwhal" ? "此目录为旧版快照，请刷新以读取全部地区、实例与套餐。" : provider === "dmit" ? "此分类为旧版快照，有货记录尚未校验购买页，请刷新目录库存。" : "此分类为旧版快照，带宽信息尚未更新，请刷新分类库存。"; }
-    else { status.textContent = data ? `已读取${provider === "narwhal" ? "全部实例与套餐" : provider === "akile" ? "全部地区、节点与套餐" : provider === "bwh" ? "全部地区、机房与套餐" : provider === "hytron" ? "全部公开节点" : scope === "all" ? "全部公开套餐（仅手动刷新）" : "此分类"}。${data.unknown ? `${data.unknown} 个${provider === "hytron" ? "节点" : "套餐"}库存未知，未当作缺货或现货。` : ""}${stale ? "当前为历史快照，请刷新后核对。" : "库存以此快照的检查时间为准。"}` : "选择商家后刷新公开套餐目录，无需先开启自动监控。"; if (stale) status.classList.add("stale"); }
+    else { status.textContent = data?.fetched_at ? `已读取${provider === "narwhal" ? "全部实例与套餐" : provider === "akile" ? "全部地区、节点与套餐" : provider === "bwh" ? "全部地区、机房与套餐" : provider === "hytron" ? "全部公开节点" : scope === "all" ? "全部公开套餐（仅手动刷新）" : "此分类"}。${data.unknown ? `${data.unknown} 个${provider === "hytron" ? "节点" : "套餐"}库存未知，未当作缺货或现货。` : ""}${stale ? "当前为历史快照，请刷新后核对。" : "库存以此快照的检查时间为准。"}` : "选择商家后刷新公开套餐目录，无需先开启自动监控。"; if (stale) status.classList.add("stale"); }
     const filterArrived = filterGeneration === generation && !loading && (data?.fetched_at || !task?.pending);
     renderTable(Boolean(filterArrived));
     if (filterArrived) filterGeneration = null;
@@ -477,12 +598,22 @@
 
   async function loadSnapshot(refreshMissing = true) {
     const version = generation, requestedProvider = provider, requestedScope = scope;
+    const cached = readClientCache(requestedProvider, requestedScope);
+    if (cached && !data?.fetched_at) {
+      data = cached.data;
+      route = cached.route;
+      routeConfig = savedConfig;
+      metadataOutdated = cached.needs_refresh;
+      if (data?.scopes) knownScopes.set(requestedProvider, data.scopes);
+      applyDefaultRegion();
+    }
     loading = true; render();
     try {
       const result = await requestJSON(`/api/catalog?${new URLSearchParams({ provider: requestedProvider, scope: requestedScope })}`, { timeoutMs: 30000 });
       if (version !== generation || !catalogPage()) return;
       data = result.data; task = result.task; route = result.route; routeConfig = savedConfig; metadataOutdated = Boolean(result.needs_refresh);
       if (data) {
+        writeClientCache(requestedProvider, requestedScope, result);
         applyDefaultRegion();
         scope = data.scope;
         knownScopes.set(provider, data.scopes);
@@ -513,24 +644,45 @@
 
   document.querySelectorAll("[data-catalog-provider]").forEach((button) => button.addEventListener("click", () => {
     if (provider === button.dataset.catalogProvider) return;
-    generation++; provider = button.dataset.catalogProvider; scope = fullDirectory() ? "all" : ""; data = null; route = null; metadataOutdated = false; page = 0; selected.clear();
-    resetNarwhalFilters();
-    resetAkileFilters();
-    resetFacetFilters("bwh"); resetFacetFilters("dmit");
-    defaultRegionPending.add(provider);
+    saveCurrentUiState();
+    generation++;
+    provider = button.dataset.catalogProvider;
+    selected.clear();
+    const restored = restoreUiState(provider);
+    if (!restored) {
+      scope = fullDirectory() ? "all" : "";
+      page = 0;
+      resetNarwhalFilters();
+      resetAkileFilters();
+      resetFacetFilters("bwh");
+      resetFacetFilters("dmit");
+      defaultRegionPending.add(provider);
+      get("catalog-search").value = "";
+      get("catalog-stock").value = "all";
+    }
+    const cached = readClientCache(provider, scope);
+    data = cached?.data || null;
+    route = cached?.route || null;
+    metadataOutdated = Boolean(cached?.needs_refresh);
     filterGeneration = generation;
     sessionStorage.setItem("hostwatch-catalog-provider", provider);
-    get("catalog-search").value = ""; get("catalog-stock").value = "all";
     void loadSnapshot();
-    animateFilterResult(get("catalog-results"));
+    if (!cached) animateFilterResult(get("catalog-results"));
   }));
   function catalogPage() { return currentPage === "catalog"; }
   function changeScope(value) {
     generation++; scope = value; page = 0; selected.clear();
     filterGeneration = generation;
-    const scopes = data?.scopes || knownScopes.get(provider) || []; data = { provider, scope, scopes, rows: [] }; metadataOutdated = false;
+    const cached = readClientCache(provider, scope);
+    if (cached) {
+      data = cached.data; route = cached.route; metadataOutdated = cached.needs_refresh;
+    } else {
+      const scopes = data?.scopes || knownScopes.get(provider) || [];
+      data = { provider, scope, scopes, rows: [] };
+      metadataOutdated = false;
+    }
     void loadSnapshot();
-    animateFilterResult(get("catalog-results"));
+    if (!cached) animateFilterResult(get("catalog-results"));
   }
   get("catalog-scope").addEventListener("change", () => changeScope(get("catalog-scope").value));
   get("dmit-region").addEventListener("change", () => { resetFacetFilters("dmit"); changeScope(get("dmit-region").value); });
@@ -547,19 +699,55 @@
       else render();
     });
   }
-  for (const id of ["catalog-search", "catalog-stock"]) get(id).addEventListener(id === "catalog-search" ? "input" : "change", () => { page = 0; if (hierarchicalDirectory()) selected.clear(); renderTable(true); });
-  for (const id of ["akile-region", "akile-node", "akile-node-search"]) get(id).addEventListener(id.endsWith("search") ? "input" : "change", () => {
-    if (id === "akile-region") { akileArea = get(id).value; akileNode = ""; get("akile-node-search").value = ""; }
-    if (id === "akile-node") akileNode = get(id).value;
-    page = 0; selected.clear(); renderDirectoryFilters(); renderTable(true);
+  const debouncedCatalogSearch = debounce(() => {
+    page = 0;
+    if (hierarchicalDirectory()) selected.clear();
+    renderTable(false);
+  }, 180);
+  get("catalog-search").addEventListener("input", debouncedCatalogSearch);
+  get("catalog-stock").addEventListener("change", () => { page = 0; if (hierarchicalDirectory()) selected.clear(); renderTable(true); });
+  get("catalog-instock-only")?.addEventListener("click", () => {
+    const select = get("catalog-stock");
+    select.value = select.value === "in" ? "all" : "in";
+    page = 0;
+    if (hierarchicalDirectory()) selected.clear();
+    renderTable(true);
   });
+  get("catalog-reset-all")?.addEventListener("click", () => {
+    if (provider === "akile") resetAkileFilters();
+    else if (provider === "narwhal") resetNarwhalFilters();
+    else if (provider === "bwh") resetFacetFilters("bwh");
+    else if (provider === "dmit") resetFacetFilters("dmit");
+    else {
+      get("catalog-search").value = "";
+      get("catalog-stock").value = "all";
+      page = 0; selected.clear();
+    }
+    render();
+  });
+
+  const debouncedAkileSearch = debounce(() => { page = 0; selected.clear(); renderDirectoryFilters(); renderTable(false); }, 180);
+  for (const id of ["akile-region", "akile-node", "akile-node-search"]) {
+    if (id.endsWith("search")) get(id).addEventListener("input", debouncedAkileSearch);
+    else get(id).addEventListener("change", () => {
+      if (id === "akile-region") { akileArea = get(id).value; akileNode = ""; get("akile-node-search").value = ""; }
+      if (id === "akile-node") akileNode = get(id).value;
+      page = 0; selected.clear(); renderDirectoryFilters(); renderTable(true);
+    });
+  }
   get("akile-reset").addEventListener("click", () => { resetAkileFilters(); render(); });
-  for (const id of ["narwhal-region", "narwhal-machine", "narwhal-machine-search"]) get(id).addEventListener(id.endsWith("search") ? "input" : "change", () => {
-    if (id === "narwhal-region") { narwhalRegion = get(id).value; narwhalMachine = ""; get("narwhal-machine-search").value = ""; }
-    if (id === "narwhal-machine") narwhalMachine = get(id).value;
-    page = 0; selected.clear(); renderDirectoryFilters(); renderTable(true);
-  });
+
+  const debouncedNarwhalSearch = debounce(() => { page = 0; selected.clear(); renderDirectoryFilters(); renderTable(false); }, 180);
+  for (const id of ["narwhal-region", "narwhal-machine", "narwhal-machine-search"]) {
+    if (id.endsWith("search")) get(id).addEventListener("input", debouncedNarwhalSearch);
+    else get(id).addEventListener("change", () => {
+      if (id === "narwhal-region") { narwhalRegion = get(id).value; narwhalMachine = ""; get("narwhal-machine-search").value = ""; }
+      if (id === "narwhal-machine") narwhalMachine = get(id).value;
+      page = 0; selected.clear(); renderDirectoryFilters(); renderTable(true);
+    });
+  }
   get("narwhal-reset").addEventListener("click", () => { resetNarwhalFilters(); render(); });
+
   const saveCatalogSchedule = () => {
     const value = Number(get("catalog-interval").value || 0);
     const providerSchedule = { mode: get("catalog-schedule-mode").value, interval_seconds: value };
@@ -602,12 +790,26 @@
   window.addEventListener("hostwatch-page-change", (event) => {
     generation++; filterGeneration = null; clearTimeout(autoTimer); clearTimeout(pollTimer); loading = false;
     if (event.detail === "narwhal") {
-      provider = "narwhal"; scope = "all"; data = null; route = null; metadataOutdated = false; page = 0; selected.clear();
+      saveCurrentUiState();
+      provider = "narwhal"; scope = "all"; data = readClientCache("narwhal", "all")?.data || null; route = null; metadataOutdated = false; page = 0; selected.clear();
       resetNarwhalFilters();
       sessionStorage.setItem("hostwatch-catalog-provider", provider);
       document.querySelectorAll("[data-catalog-provider]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.catalogProvider === provider)));
       void loadSnapshot();
-    } else if (event.detail === "catalog") void loadSnapshot();
+    } else if (event.detail === "catalog") {
+      const cached = readClientCache(provider, scope);
+      if (cached && !data?.fetched_at) { data = cached.data; route = cached.route; metadataOutdated = cached.needs_refresh; }
+      void loadSnapshot();
+    }
+  });
+  window.addEventListener("hostwatch-cache-cleared", (event) => {
+    const target = event.detail?.target || "all";
+    if (target === "catalog" || target === "all") {
+      snapshotCache.clear();
+      tableSignature = "";
+      data = null;
+      if (catalogPage()) void loadSnapshot(false);
+    }
   });
   for (const event of ["hostwatch-draft-change", "hostwatch-service-change"]) window.addEventListener(event, () => { if (catalogPage()) render(); });
   window.addEventListener("hostwatch-action-change", () => {

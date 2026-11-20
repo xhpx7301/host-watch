@@ -363,6 +363,25 @@ class CatalogAPITests(unittest.TestCase):
         code, _ = self.request("GET", "/api/catalog?provider=not-supported")
         self.assertEqual(code, 400)
 
+    def test_catalog_service_caches_unchanged_disk_file_and_clears_safely(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "catalog-mem.json"
+            service = catalog.CatalogService(lambda: path)
+            sample = {"akile:all": {"provider": "akile", "scope": "all", "scopes": [], "rows": [{"key": "k1"}], "fetched_at": "2026-11-21T00:00:00+08:00"}}
+            path.write_text(json.dumps(sample), encoding="utf-8")
+            with patch("catalog.json.loads", wraps=json.loads) as loader:
+                first = service.read_cache()
+                second = service.read_cache()
+                self.assertEqual(first, sample)
+                self.assertEqual(second, sample)
+                self.assertEqual(loader.call_count, 1)
+            stats = service.cache_stats()
+            self.assertEqual(stats["entries"], 1)
+            self.assertEqual(stats["rows"], 1)
+            cleared = service.clear_cache("akile")
+            self.assertEqual(cleared["removed"], 1)
+            self.assertEqual(service.read_cache(), {})
+
 
 if __name__ == "__main__":
     unittest.main()

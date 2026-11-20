@@ -3,79 +3,342 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="light dark">
   <title>登录 · HostWatch</title>
   <style>
-    :root { color-scheme: light; --navy:#10213f; --navy-soft:#25466d; --blue:#2f6fed; --cyan:#54c4ce; --ink:#16253c; --muted:#74829a; --line:#e0e7f1; --paper:#fff; }
-    * { box-sizing:border-box; }
-    html,body { min-height:100%; }
-    body { margin:0; min-height:100vh; color:var(--ink); background:#f4f7fb; font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
-    button,input { font:inherit; }
-    .login-shell { position:relative; display:grid; grid-template-columns:minmax(360px,.92fr) minmax(460px,1.08fr); min-height:100vh; overflow:hidden; }
-    .login-brand { position:relative; display:flex; flex-direction:column; justify-content:space-between; padding:42px clamp(32px,7vw,112px) 36px; color:#fff; background:linear-gradient(145deg,#10213f 0%,#193964 55%,#24617c 100%); overflow:hidden; }
-    .login-brand::before,.login-brand::after { content:""; position:absolute; border:1px solid rgba(255,255,255,.13); border-radius:50%; pointer-events:none; }
-    .login-brand::before { width:560px; height:560px; right:-260px; top:-170px; box-shadow:0 0 0 72px rgba(255,255,255,.035),0 0 0 144px rgba(255,255,255,.025); }
-    .login-brand::after { width:300px; height:300px; left:-180px; bottom:-120px; box-shadow:0 0 0 54px rgba(84,196,206,.08); }
-    .brand-lockup,.brand-copy,.brand-foot { position:relative; z-index:1; }
-    .brand-lockup { display:flex; align-items:center; gap:13px; }
-    .brand-mark { display:grid; place-items:center; width:42px; height:42px; border-radius:13px; color:#14314a; background:linear-gradient(145deg,#9ce7dd,#4bc3d0); box-shadow:0 10px 26px rgba(2,18,41,.24); font-size:22px; font-weight:800; }
-    .brand-name { font-size:20px; font-weight:760; letter-spacing:-.4px; }
-    .brand-copy { max-width:430px; margin-top:auto; margin-bottom:auto; padding:70px 0 55px; }
-    .brand-copy .kicker { margin:0 0 16px; color:#9ce7dd; font-size:11px; font-weight:750; letter-spacing:2.4px; text-transform:uppercase; }
-    .brand-copy h1 { margin:0; max-width:420px; font-size:clamp(30px,4vw,48px); line-height:1.1; letter-spacing:-1.8px; }
-    .brand-copy p { max-width:380px; margin:22px 0 0; color:rgba(255,255,255,.72); font-size:15px; line-height:1.75; }
-    .brand-points { display:grid; gap:11px; margin-top:28px; color:rgba(255,255,255,.82); font-size:13px; }
-    .brand-points span { display:flex; align-items:center; gap:9px; }
-    .brand-points i { display:grid; place-items:center; width:19px; height:19px; border:1px solid rgba(156,231,221,.55); border-radius:50%; color:#9ce7dd; font-style:normal; font-size:11px; }
-    .brand-foot { color:rgba(255,255,255,.52); font-size:12px; }
-    .login-main { display:grid; place-items:center; padding:32px; background:radial-gradient(circle at 20% 15%,#fff 0,#f4f7fb 55%); }
-    .login-card { width:min(440px,100%); padding:42px 42px 34px; border:1px solid rgba(211,221,235,.9); border-radius:22px; background:rgba(255,255,255,.94); box-shadow:0 24px 70px rgba(23,48,81,.12); }
-    .login-card h2 { margin:0; color:var(--navy); font-size:28px; letter-spacing:-.8px; }
-    .login-card .intro { margin:8px 0 30px; color:var(--muted); }
-    .field { display:grid; gap:8px; margin-top:18px; }
-    .field label { color:#44536a; font-size:13px; font-weight:700; }
-    .input-wrap { position:relative; }
-    .field input { width:100%; height:48px; padding:0 14px; border:1px solid #d7e0ec; border-radius:11px; outline:none; color:var(--ink); background:#fbfcfe; transition:border-color .18s,box-shadow .18s,background-color .18s; }
-    .field input:focus { border-color:var(--blue); background:#fff; box-shadow:0 0 0 4px rgba(47,111,237,.12); }
-    .field input[type=password] { padding-right:52px; }
-    .toggle-password { position:absolute; top:50%; right:8px; display:grid; place-items:center; width:34px; height:34px; padding:0; border:0; border-radius:8px; color:#78879b; background:transparent; cursor:pointer; transform:translateY(-50%); }
-    .toggle-password:hover { color:var(--blue); background:#eef4ff; }
-    .toggle-password svg { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
-    .login-submit { width:100%; height:50px; margin-top:28px; border:0; border-radius:11px; color:#fff; background:linear-gradient(135deg,#316fea,#2457c8); box-shadow:0 9px 20px rgba(47,111,237,.24); cursor:pointer; font-weight:750; transition:transform .18s,box-shadow .18s,opacity .18s; }
-    .login-submit:hover:not(:disabled) { box-shadow:0 12px 24px rgba(47,111,237,.32); transform:translateY(-1px); }
-    .login-submit:disabled { opacity:.66; cursor:wait; }
-    .login-submit[aria-busy="true"] { display:inline-flex; align-items:center; justify-content:center; gap:10px; }
-    .login-submit[aria-busy="true"]::before { content:""; width:16px; height:16px; border:2px solid rgba(255,255,255,.42); border-top-color:#fff; border-radius:50%; animation:login-spin .72s linear infinite; }
-    @keyframes login-spin { to { transform:rotate(360deg); } }
-    .login-error { min-height:20px; margin:16px 0 0; color:#c44754; font-size:13px; }
-    .login-note { display:flex; gap:8px; margin:26px 0 0; padding-top:20px; border-top:1px solid #edf1f6; color:#8a96a8; font-size:12px; line-height:1.6; }
-    .login-note svg { flex:0 0 auto; width:16px; height:16px; margin-top:2px; fill:none; stroke:#6c89ad; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
-    .login-copyright { display:none; }
-    @media (max-width:860px) { .login-shell { grid-template-columns:1fr; } .login-brand { min-height:270px; padding:27px 28px; } .brand-copy { padding:40px 0 18px; } .brand-copy h1 { font-size:32px; } .brand-copy p,.brand-points { display:none; } .brand-foot { display:none; } .login-main { min-height:calc(100vh - 270px); padding:28px 20px 34px; } .login-card { padding:32px 25px 28px; } }
-    @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto !important; transition-duration:.01ms !important; animation-duration:.01ms !important; } }
+    :root {
+      color-scheme: light;
+      --bg: #f4f7fb;
+      --surface: rgba(255, 255, 255, .94);
+      --surface-solid: #ffffff;
+      --input-bg: #f8fafd;
+      --ink: #0f172a;
+      --ink-secondary: #475569;
+      --muted: #64748b;
+      --line: #e2e8f0;
+      --line-strong: #cbd5e1;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --accent-ring: rgba(37, 99, 235, .16);
+      --danger: #dc2626;
+      --danger-soft: #fef2f2;
+      --shadow-card: 0 24px 64px -16px rgba(15, 23, 42, .12), 0 4px 16px -4px rgba(15, 23, 42, .05);
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #090e1a;
+      --surface: rgba(17, 24, 39, .92);
+      --surface-solid: #111827;
+      --input-bg: #0f172a;
+      --ink: #f1f5f9;
+      --ink-secondary: #cbd5e1;
+      --muted: #94a3b8;
+      --line: #1f2c42;
+      --line-strong: #334155;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --accent-ring: rgba(59, 130, 246, .25);
+      --danger: #f87171;
+      --danger-soft: rgba(220, 38, 38, .12);
+      --shadow-card: 0 28px 72px -12px rgba(0, 0, 0, .55);
+    }
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background: var(--bg);
+      font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input { font: inherit; }
+    .login-shell {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(380px, .94fr) minmax(460px, 1.06fr);
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    .login-brand {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 40px clamp(32px, 6vw, 88px) 34px;
+      color: #f8fafc;
+      background:
+        radial-gradient(640px circle at 12% 8%, rgba(56, 189, 248, .22), transparent 55%),
+        radial-gradient(560px circle at 92% 88%, rgba(37, 99, 235, .30), transparent 58%),
+        linear-gradient(155deg, #0b1327 0%, #10203d 52%, #132c4c 100%);
+      overflow: hidden;
+    }
+    .login-brand::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image: radial-gradient(rgba(255, 255, 255, .12) 1px, transparent 1px);
+      background-size: 24px 24px;
+      mask-image: radial-gradient(ellipse 80% 70% at 35% 40%, #000 35%, transparent 100%);
+      pointer-events: none;
+    }
+    .login-brand::after {
+      content: "";
+      position: absolute;
+      width: 520px;
+      height: 520px;
+      right: -220px;
+      top: -160px;
+      border-radius: 50%;
+      border: 1px solid rgba(148, 163, 184, .18);
+      box-shadow: 0 0 0 64px rgba(255, 255, 255, .02), 0 0 0 128px rgba(255, 255, 255, .015);
+      pointer-events: none;
+    }
+    .brand-lockup, .brand-copy, .brand-foot { position: relative; z-index: 1; }
+    .brand-lockup { display: flex; align-items: center; gap: 12px; }
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 40px;
+      height: 40px;
+      border-radius: 11px;
+      color: #fff;
+      background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%);
+      box-shadow: 0 10px 24px rgba(6, 182, 212, .28), inset 0 1px 0 rgba(255, 255, 255, .32);
+    }
+    .brand-mark svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .brand-name { font-size: 19px; font-weight: 750; letter-spacing: -.4px; }
+    .brand-tag {
+      margin-left: 2px;
+      padding: 2px 8px;
+      border: 1px solid rgba(148, 163, 184, .28);
+      border-radius: 999px;
+      color: #cbd5e1;
+      background: rgba(255, 255, 255, .06);
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .brand-copy { max-width: 440px; margin: auto 0; padding: 56px 0 44px; }
+    .brand-copy .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 18px;
+      padding: 5px 11px;
+      border: 1px solid rgba(56, 189, 248, .30);
+      border-radius: 999px;
+      color: #7dd3fc;
+      background: rgba(56, 189, 248, .10);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+    }
+    .brand-copy h1 {
+      margin: 0;
+      font-size: clamp(28px, 3.6vw, 42px);
+      font-weight: 780;
+      line-height: 1.18;
+      letter-spacing: -1.1px;
+    }
+    .brand-copy p {
+      max-width: 390px;
+      margin: 18px 0 0;
+      color: rgba(226, 232, 240, .78);
+      font-size: 14.5px;
+      line-height: 1.75;
+    }
+    .brand-points {
+      display: grid;
+      gap: 11px;
+      margin-top: 28px;
+      padding-top: 22px;
+      border-top: 1px solid rgba(148, 163, 184, .18);
+      color: rgba(241, 245, 249, .88);
+      font-size: 13px;
+    }
+    .brand-points span { display: flex; align-items: center; gap: 10px; }
+    .brand-points i {
+      display: grid;
+      place-items: center;
+      width: 20px;
+      height: 20px;
+      border-radius: 6px;
+      color: #38bdf8;
+      background: rgba(56, 189, 248, .14);
+      font-style: normal;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .brand-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: rgba(148, 163, 184, .75); font-size: 12px; }
+    .login-main {
+      position: relative;
+      display: grid;
+      place-items: center;
+      padding: 32px;
+      background:
+        radial-gradient(600px circle at 78% 12%, rgba(37, 99, 235, .07), transparent 55%),
+        var(--bg);
+    }
+    .login-card {
+      width: min(430px, 100%);
+      padding: 38px 38px 32px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--surface);
+      backdrop-filter: blur(12px);
+      box-shadow: var(--shadow-card);
+    }
+    .login-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .login-card h2 { margin: 0; color: var(--ink); font-size: 25px; font-weight: 760; letter-spacing: -.6px; }
+    .login-card .intro { margin: 6px 0 26px; color: var(--muted); font-size: 13.5px; }
+    .theme-toggle {
+      display: inline-grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      color: var(--muted);
+      background: var(--surface-solid);
+      cursor: pointer;
+      transition: border-color .18s, color .18s, background-color .18s;
+    }
+    .theme-toggle:hover { border-color: var(--line-strong); color: var(--ink); }
+    .theme-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .field { display: grid; gap: 7px; margin-top: 16px; }
+    .field label { color: var(--ink-secondary); font-size: 12.5px; font-weight: 650; }
+    .input-wrap { position: relative; }
+    .field input {
+      width: 100%;
+      height: 46px;
+      padding: 0 14px;
+      border: 1px solid var(--line-strong);
+      border-radius: 10px;
+      outline: none;
+      color: var(--ink);
+      background: var(--input-bg);
+      transition: border-color .18s, box-shadow .18s, background-color .18s;
+    }
+    .field input::placeholder { color: var(--muted); opacity: .75; }
+    .field input:focus {
+      border-color: var(--accent);
+      background: var(--surface-solid);
+      box-shadow: 0 0 0 3.5px var(--accent-ring);
+    }
+    .field input[type=password] { padding-right: 48px; }
+    .toggle-password {
+      position: absolute;
+      top: 50%;
+      right: 7px;
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      border: 0;
+      border-radius: 8px;
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+      transform: translateY(-50%);
+      transition: color .16s, background-color .16s;
+    }
+    .toggle-password:hover { color: var(--accent); background: var(--accent-ring); }
+    .toggle-password svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .login-caps { min-height: 16px; margin: 6px 0 0; color: #d97706; font-size: 12px; }
+    .login-submit {
+      width: 100%;
+      height: 46px;
+      margin-top: 18px;
+      border: 0;
+      border-radius: 10px;
+      color: #fff;
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+      box-shadow: 0 8px 20px -4px rgba(37, 99, 235, .42);
+      cursor: pointer;
+      font-weight: 700;
+      letter-spacing: .2px;
+      transition: transform .16s, box-shadow .16s, opacity .16s, filter .16s;
+    }
+    .login-submit:hover:not(:disabled) { filter: brightness(1.05); box-shadow: 0 12px 24px -4px rgba(37, 99, 235, .48); transform: translateY(-1px); }
+    .login-submit:active:not(:disabled) { transform: translateY(0); }
+    .login-submit:disabled { opacity: .66; cursor: wait; }
+    .login-submit[aria-busy="true"] { display: inline-flex; align-items: center; justify-content: center; gap: 10px; }
+    .login-submit[aria-busy="true"]::before { content: ""; width: 16px; height: 16px; border: 2px solid rgba(255, 255, 255, .42); border-top-color: #fff; border-radius: 50%; animation: login-spin .72s linear infinite; }
+    @keyframes login-spin { to { transform: rotate(360deg); } }
+    .login-error { min-height: 20px; margin: 12px 0 0; color: var(--danger); font-size: 13px; font-weight: 500; }
+    .login-error:not(:empty) { padding: 8px 11px; border-radius: 8px; background: var(--danger-soft); }
+    .login-note { display: flex; gap: 9px; margin: 22px 0 0; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .login-note svg { flex: 0 0 auto; width: 16px; height: 16px; margin-top: 2px; fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    @media (max-width: 860px) {
+      .login-shell { grid-template-columns: 1fr; }
+      .login-brand { min-height: 210px; padding: 26px 24px; }
+      .brand-copy { padding: 28px 0 10px; }
+      .brand-copy h1 { font-size: 28px; }
+      .brand-copy p, .brand-points, .brand-foot { display: none; }
+      .login-main { min-height: calc(100vh - 210px); padding: 24px 18px 34px; }
+      .login-card { padding: 30px 24px 26px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
+    }
   </style>
 </head>
 <body>
   <main class="login-shell">
     <section class="login-brand" aria-label="HostWatch 产品介绍">
-      <div class="brand-lockup"><div class="brand-mark" aria-hidden="true">H</div><div class="brand-name">HostWatch</div></div>
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M4 12h4l2.5-6 3.5 12 2.5-6H20"></path></svg>
+        </div>
+        <div class="brand-name">HostWatch</div>
+        <span class="brand-tag">Console</span>
+      </div>
       <div class="brand-copy">
         <p class="kicker">SERVER · INVENTORY · CONTROL</p>
         <h1>让每一次库存变化，都及时被看见。</h1>
-        <p>集中管理主机库存、补货通知与自动化任务，让服务器运维更清晰、更从容。</p>
-        <div class="brand-points"><span><i>✓</i>统一查看多家商家库存</span><span><i>✓</i>安全的管理员会话</span><span><i>✓</i>实时任务与通知状态</span></div>
+        <p>集中管理多商家主机库存、Telegram 补货提醒、二手市场挂单与自动化任务，掌控每台心仪节点。</p>
+        <div class="brand-points">
+          <span><i>✓</i>多商家公开目录快照与极速本地缓存</span>
+          <span><i>✓</i>安全管理员会话与独立出口节点路由</span>
+          <span><i>✓</i>实时补货通知、抢购任务与余额监测</span>
+        </div>
       </div>
-      <div class="brand-foot">HostWatch Admin · 安全控制台</div>
+      <div class="brand-foot"><span>HostWatch Admin · 自托管安全控制台</span></div>
     </section>
     <section class="login-main">
       <form id="login-form" class="login-card" novalidate>
-        <h2>欢迎回来</h2>
-        <p class="intro">登录管理员账号，继续管理你的 HostWatch。</p>
-        <div class="field"><label for="login-username">用户名</label><input id="login-username" name="username" type="text" autocomplete="username" maxlength="64" placeholder="请输入用户名" required></div>
-        <div class="field"><label for="login-password">密码</label><div class="input-wrap"><input id="login-password" name="password" type="password" autocomplete="current-password" maxlength="256" placeholder="请输入密码" required><button type="button" class="toggle-password" id="toggle-password" aria-label="显示密码"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-5 9.5-5 9.5 5 9.5 5-3.5 5-9.5 5-9.5-5-9.5-5Z"></path><circle cx="12" cy="12" r="2.5"></circle></svg></button></div></div>
+        <div class="login-card-top">
+          <div>
+            <h2>欢迎回来</h2>
+            <p class="intro">登录管理员账号，继续管理你的 HostWatch。</p>
+          </div>
+          <button type="button" id="login-theme-toggle" class="theme-toggle" aria-label="切换浅色或深色主题" title="切换主题">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"></path></svg>
+          </button>
+        </div>
+        <div class="field">
+          <label for="login-username">用户名</label>
+          <input id="login-username" name="username" type="text" autocomplete="username" maxlength="64" placeholder="请输入用户名" autofocus required>
+        </div>
+        <div class="field">
+          <label for="login-password">密码</label>
+          <div class="input-wrap">
+            <input id="login-password" name="password" type="password" autocomplete="current-password" maxlength="256" placeholder="请输入密码" required>
+            <button type="button" class="toggle-password" id="toggle-password" aria-label="显示密码">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-5 9.5-5 9.5 5 9.5 5-3.5 5-9.5 5-9.5-5-9.5-5Z"></path><circle cx="12" cy="12" r="2.5"></circle></svg>
+            </button>
+          </div>
+          <p id="login-caps" class="login-caps" hidden>提示：当前已开启大写锁定（Caps Lock）</p>
+        </div>
         <p id="login-error" class="login-error" role="alert" aria-live="polite"></p>
         <button id="login-submit" class="login-submit" type="submit">登录管理台</button>
-        <p class="login-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.6 2.8 8.1 7 10 4.2-1.9 7-5.4 7-10V6l-7-3Z"></path><path d="m9 12 2 2 4-4"></path></svg><span>登录状态仅保存在当前浏览器的安全会话中。请勿在公共设备上保存密码。</span></p>
+        <p class="login-note">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.6 2.8 8.1 7 10 4.2-1.9 7-5.4 7-10V6l-7-3Z"></path><path d="m9 12 2 2 4-4"></path></svg>
+          <span>登录状态仅保存在当前浏览器的 HttpOnly 安全会话中。请勿在公共设备上保存密码。</span>
+        </p>
       </form>
     </section>
   </main>
